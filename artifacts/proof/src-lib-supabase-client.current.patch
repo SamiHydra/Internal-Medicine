@@ -1,0 +1,34 @@
+diff --git a/src/lib/supabase/client.ts b/src/lib/supabase/client.ts
+new file mode 100644
+index 0000000..3c34b38
+--- /dev/null
++++ b/src/lib/supabase/client.ts
+@@ -0,0 +1,28 @@
++import { createClient, type SupabaseClient } from '@supabase/supabase-js'
++
++import { isSupabaseConfigured, supabaseEnv } from '@/lib/supabase/env'
++
++let browserClient: SupabaseClient | null = null
++
++export function getSupabaseBrowserClient() {
++  if (!isSupabaseConfigured) {
++    return null
++  }
++
++  if (!browserClient) {
++    browserClient = createClient(supabaseEnv.url!, supabaseEnv.anonKey!, {
++      auth: {
++        persistSession: true,
++        autoRefreshToken: true,
++        detectSessionInUrl: true,
++        flowType: 'pkce',
++      },
++    })
++  }
++
++  return browserClient
++}
++
++export const supabase = getSupabaseBrowserClient()
++
++export { isSupabaseConfigured } from '@/lib/supabase/env'

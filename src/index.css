@@ -1,0 +1,350 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+:root {
+  color: #091223;
+  background: #e7f0fb;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', sans-serif;
+  --font-display: 'Fraunces', serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  color: #091223;
+  background:
+    radial-gradient(circle at 12% 12%, rgba(56, 189, 248, 0.22), transparent 28%),
+    radial-gradient(circle at 88% 14%, rgba(45, 212, 191, 0.18), transparent 26%),
+    radial-gradient(circle at 72% 74%, rgba(59, 130, 246, 0.14), transparent 30%),
+    linear-gradient(180deg, #eff7ff 0%, #f7fbff 38%, #eaf4ff 100%);
+}
+
+body::before,
+body::after {
+  content: '';
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+}
+
+body::before {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.36) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.36) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(circle at center, black 30%, transparent 82%);
+  opacity: 0.22;
+}
+
+body::after {
+  inset: -12%;
+  background:
+    radial-gradient(circle at 18% 26%, rgba(34, 211, 238, 0.18), transparent 24%),
+    radial-gradient(circle at 82% 22%, rgba(59, 130, 246, 0.15), transparent 22%),
+    radial-gradient(circle at 54% 86%, rgba(16, 185, 129, 0.14), transparent 24%);
+  filter: blur(40px);
+  animation: aurora-drift 18s ease-in-out infinite alternate;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+::selection {
+  background: rgba(56, 189, 248, 0.28);
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(226, 232, 240, 0.7);
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(226, 232, 240, 0.8);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(8, 145, 178, 0.9), rgba(59, 130, 246, 0.9));
+}
+
+@keyframes aurora-drift {
+  0% {
+    transform: translate3d(-1%, -1%, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(1.5%, 1%, 0) scale(1.04);
+  }
+  100% {
+    transform: translate3d(-1%, 2%, 0) scale(1.08);
+  }
+}
+
+@keyframes float-slow {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.22);
+  }
+  100% {
+    box-shadow: 0 0 0 18px rgba(34, 211, 238, 0);
+  }
+}
+
+@keyframes login-grid-drift {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-28px, 18px, 0);
+  }
+}
+
+@keyframes login-ambient-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(1.5%, -2%, 0) scale(1.05);
+  }
+  100% {
+    transform: translate3d(-1.5%, 1.5%, 0) scale(0.98);
+  }
+}
+
+@keyframes login-ambient-drift-reverse {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-2%, 1.5%, 0) scale(1.04);
+  }
+  100% {
+    transform: translate3d(1.25%, -1.25%, 0) scale(1.01);
+  }
+}
+
+@keyframes login-ring-orbit {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(8px, -10px, 0) rotate(4deg);
+  }
+  100% {
+    transform: translate3d(-6px, 6px, 0) rotate(-3deg);
+  }
+}
+
+@keyframes login-glass-shimmer {
+  0% {
+    background-position: 0% 50%;
+    opacity: 0.5;
+  }
+  50% {
+    background-position: 100% 50%;
+    opacity: 0.78;
+  }
+  100% {
+    background-position: 0% 50%;
+    opacity: 0.58;
+  }
+}
+
+@keyframes login-line-flow {
+  0% {
+    background-position: 200% 50%;
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.75;
+  }
+  100% {
+    background-position: -60% 50%;
+    opacity: 0.3;
+  }
+}
+
+@keyframes login-reveal-up {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 22px, 0) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes login-chip-float {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -6px, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes login-bar-breathe {
+  0% {
+    opacity: 0.68;
+    transform: scaleY(0.86);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleY(1.04);
+  }
+  100% {
+    opacity: 0.74;
+    transform: scaleY(0.9);
+  }
+}
+
+@keyframes login-dot-blink {
+  0% {
+    opacity: 0.3;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 0.42;
+    transform: scale(0.96);
+  }
+}
+
+.float-slow {
+  animation: float-slow 9s ease-in-out infinite;
+}
+
+.pulse-ring {
+  animation: pulse-ring 2.8s ease-out infinite;
+}
+
+.login-grid-drift {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.24) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.24) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(circle at 38% 52%, black 18%, transparent 74%);
+  opacity: 0.4;
+  animation: login-grid-drift 24s linear infinite;
+}
+
+.login-ambient-drift {
+  animation: login-ambient-drift 18s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+.login-ambient-drift-reverse {
+  animation: login-ambient-drift-reverse 22s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+.login-ring-orbit {
+  animation: login-ring-orbit 20s ease-in-out infinite alternate;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.login-glass-shimmer {
+  background-size: 160% 160%;
+  animation: login-glass-shimmer 16s ease-in-out infinite;
+}
+
+.login-line-flow {
+  background-size: 200% 100%;
+  animation: login-line-flow 14s linear infinite;
+}
+
+.login-reveal {
+  opacity: 0;
+  animation: login-reveal-up 900ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.login-chip-float {
+  animation: login-chip-float 8s ease-in-out infinite;
+  will-change: transform;
+}
+
+.login-bar-breathe {
+  animation: login-bar-breathe 3.4s ease-in-out infinite;
+  transform-origin: bottom;
+  will-change: transform, opacity;
+}
+
+.login-dot-blink {
+  animation: login-dot-blink 4.4s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::after,
+  .float-slow,
+  .pulse-ring,
+  .login-grid-drift,
+  .login-ambient-drift,
+  .login-ambient-drift-reverse,
+  .login-ring-orbit,
+  .login-glass-shimmer,
+  .login-line-flow,
+  .login-reveal,
+  .login-chip-float,
+  .login-bar-breathe,
+  .login-dot-blink {
+    animation: none !important;
+  }
+
+  .login-reveal {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
