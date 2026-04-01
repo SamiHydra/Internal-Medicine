@@ -205,6 +205,79 @@ function formatPeriodLabel(weekStart: string, weekEnd: string) {
   return `${format(parseISO(toIsoDate(weekStart)), 'MMM d')} - ${format(parseISO(toIsoDate(weekEnd)), 'MMM d, yyyy')}`
 }
 
+const liveReportingStartDate = new Date('2026-03-30T00:00:00.000Z')
+
+function getCurrentReportingPeriodId(rows: ReportingPeriodRow[]) {
+  if (!rows.length) {
+    return null
+  }
+
+  const referenceDate = new Date()
+  const currentPeriod =
+    [...rows]
+      .sort(
+        (left, right) =>
+          new Date(left.week_start).getTime() - new Date(right.week_start).getTime(),
+      )
+      .filter((row) => new Date(row.week_start).getTime() <= referenceDate.getTime())
+      .at(-1) ?? rows[0]
+
+  return currentPeriod.id
+}
+
+function getVisibleReportingPeriodIds(rows: ReportingPeriodRow[]) {
+  const currentPeriodId = getCurrentReportingPeriodId(rows)
+
+  if (!currentPeriodId) {
+    return new Set<string>()
+  }
+
+  const currentPeriod = rows.find((row) => row.id === currentPeriodId)
+  if (!currentPeriod) {
+    return new Set<string>()
+  }
+
+  const currentPeriodStart = new Date(currentPeriod.week_start).getTime()
+
+  return new Set(
+    rows
+      .filter((row) => {
+        const weekStart = new Date(row.week_start).getTime()
+        return weekStart >= liveReportingStartDate.getTime() && weekStart <= currentPeriodStart
+      })
+      .map((row) => row.id),
+  )
+}
+
+function getReportingPeriodIdFromRoute(route: string | null) {
+  if (!route) {
+    return null
+  }
+
+  const matchedRoute = route.match(/^\/reports\/[^/]+\/([^/]+)$/)
+  return matchedRoute?.[1] ?? null
+}
+
+function filterVisibleNotifications(
+  notifications: NotificationRow[],
+  reportingPeriods: ReportingPeriodRow[],
+) {
+  const visiblePeriodIds = getVisibleReportingPeriodIds(reportingPeriods)
+
+  if (!visiblePeriodIds.size) {
+    return notifications
+  }
+
+  return notifications.filter((notification) => {
+    if (notification.type !== 'overdue_report') {
+      return true
+    }
+
+    const periodId = getReportingPeriodIdFromRoute(notification.related_route)
+    return periodId ? visiblePeriodIds.has(periodId) : false
+  })
+}
+
 function mapProfileRow(row: CurrentProfileRow): UserProfile {
   return {
     id: row.id,
@@ -457,7 +530,10 @@ export async function fetchLiveAppState(
   const assignmentRows = (assignmentsResponse.data ?? []) as AssignmentRow[]
   const accessRequestRows = (accessRequestsResponse.data ?? []) as AccessRequestRow[]
   const reportRows = (reportsResponse.data ?? []) as ReportRow[]
-  const notificationRows = (notificationsResponse.data ?? []) as NotificationRow[]
+  const notificationRows = filterVisibleNotifications(
+    (notificationsResponse.data ?? []) as NotificationRow[],
+    periodRows,
+  )
 
   const requestIds = accessRequestRows.map((row) => row.id)
   const reportIds = reportRows.map((row) => row.id)

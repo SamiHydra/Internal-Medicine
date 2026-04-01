@@ -58,6 +58,7 @@ type AppDataContextValue = {
   state: AppState
   currentUser: UserProfile | null
   isBootstrapping: boolean
+  isSyncing: boolean
   isConfigured: boolean
   missingEnvVars: string[]
   error: string | null
@@ -100,11 +101,28 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const client = getSupabaseBrowserClient()
   const [state, setState] = useState<AppState>(() => createEmptyAppState())
   const [isBootstrapping, setIsBootstrapping] = useState(isSupabaseConfigured)
+  const [isSyncing, setIsSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const referencesRef = useRef<SupabaseReferenceState>(createEmptyReferenceState())
   const loadVersionRef = useRef(0)
+  const currentUserIdRef = useRef<string | null>(null)
+  const syncPendingCountRef = useRef(0)
+  const syncIndicatorTimeoutRef = useRef<number | null>(null)
 
   const currentUser = getCurrentUser(state)
+
+  useEffect(() => {
+    currentUserIdRef.current = state.currentUserId
+  }, [state.currentUserId])
+
+  useEffect(
+    () => () => {
+      if (syncIndicatorTimeoutRef.current !== null) {
+        window.clearTimeout(syncIndicatorTimeoutRef.current)
+      }
+    },
+    [],
+  )
 
   const loadUserState = useCallback(
     async (
@@ -121,6 +139,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       if (showBootstrapping) {
         setIsBootstrapping(true)
+      } else {
+        syncPendingCountRef.current += 1
+
+        if (syncPendingCountRef.current === 1 && syncIndicatorTimeoutRef.current === null) {
+          syncIndicatorTimeoutRef.current = window.setTimeout(() => {
+            if (syncPendingCountRef.current > 0) {
+              setIsSyncing(true)
+            }
+
+            syncIndicatorTimeoutRef.current = null
+          }, 220)
+        }
       }
       setError(null)
 
@@ -144,6 +174,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       } finally {
         if (showBootstrapping && loadVersion === loadVersionRef.current) {
           setIsBootstrapping(false)
+        } else if (!showBootstrapping) {
+          syncPendingCountRef.current = Math.max(0, syncPendingCountRef.current - 1)
+
+          if (syncPendingCountRef.current === 0) {
+            if (syncIndicatorTimeoutRef.current !== null) {
+              window.clearTimeout(syncIndicatorTimeoutRef.current)
+              syncIndicatorTimeoutRef.current = null
+            }
+
+            setIsSyncing(false)
+          }
         }
       }
     },
@@ -186,6 +227,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!client) {
       setIsBootstrapping(false)
+      setIsSyncing(false)
       setState(createEmptyAppState())
       setError(null)
       return
@@ -206,6 +248,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (sessionError) {
         setError(getMessage(sessionError, 'Unable to read the current session.'))
         setIsBootstrapping(false)
+        setIsSyncing(false)
         return
       }
 
@@ -213,6 +256,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!userId) {
         setState(createEmptyAppState())
         setIsBootstrapping(false)
+        setIsSyncing(false)
         return
       }
 
@@ -234,11 +278,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         setState(createEmptyAppState())
         setError(null)
         setIsBootstrapping(false)
+        setIsSyncing(false)
         return
       }
 
+      const isSameUserSession = currentUserIdRef.current === userId
       const shouldShowBootstrapping =
-        event === 'SIGNED_IN' || event === 'INITIAL_SESSION'
+        event === 'INITIAL_SESSION' ||
+        (event === 'SIGNED_IN' && !isSameUserSession && !currentUserIdRef.current)
 
       void loadUserState(userId, 'Unable to update the signed-in workspace.', {
         showBootstrapping: shouldShowBootstrapping,
@@ -259,6 +306,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     state,
     currentUser,
     isBootstrapping,
+    isSyncing,
     isConfigured: isSupabaseConfigured,
     missingEnvVars: missingSupabaseEnvKeys,
     error,
@@ -294,6 +342,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         referencesRef.current = createEmptyReferenceState()
         setState(createEmptyAppState())
         setError(null)
+        setIsSyncing(false)
       } catch (logoutError) {
         toast.error(getMessage(logoutError, 'Unable to sign out.'))
       }

@@ -14,7 +14,7 @@ import {
 import {
   getCurrentPeriod,
   getDashboardSummary,
-  getSortedReportingPeriods,
+  getVisibleReportingPeriods,
   getSubmissionBoard,
 } from '@/data/selectors'
 import { useAppData } from '@/context/app-data-context'
@@ -43,29 +43,19 @@ const statusOptions = [
 
 export function SubmissionBoardPage() {
   const { state } = useAppData()
-  const sortedReportingPeriods = getSortedReportingPeriods(state)
-  const currentPeriodId = getCurrentPeriod(state)?.id ?? ''
+  const currentPeriod = getCurrentPeriod(state)
+  const currentPeriodId = currentPeriod?.id ?? ''
   const [periodId, setPeriodId] = useState(currentPeriodId)
   const [serviceLineFilter, setServiceLineFilter] =
     useState<ServiceLineFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
 
-  const currentPeriodIndex = currentPeriodId
-    ? sortedReportingPeriods.findIndex((period) => period.id === currentPeriodId)
-    : -1
-  const visibleReportingPeriods =
-    currentPeriodIndex >= 0
-      ? sortedReportingPeriods.slice(currentPeriodIndex)
-      : sortedReportingPeriods
-  const effectivePeriodId = sortedReportingPeriods.some(
-    (period) => period.id === periodId,
-  )
+  const visibleReportingPeriods = [...getVisibleReportingPeriods(state)].reverse()
+  const effectivePeriodId = visibleReportingPeriods.some((period) => period.id === periodId)
     ? periodId
     : currentPeriodId
-
-  const selectedPeriod = sortedReportingPeriods.find(
-    (period) => period.id === effectivePeriodId,
-  )
+  const selectedPeriod =
+    visibleReportingPeriods.find((period) => period.id === effectivePeriodId) ?? currentPeriod
   const summary = getDashboardSummary(
     state,
     effectivePeriodId,
@@ -76,7 +66,11 @@ export function SubmissionBoardPage() {
     return null
   }
 
-  const scopedBoardRows = getSubmissionBoard(state, 4, effectivePeriodId).filter(
+  const scopedBoardRows = getSubmissionBoard(
+    state,
+    visibleReportingPeriods.length,
+    effectivePeriodId,
+  ).filter(
     (row) =>
       serviceLineFilter === 'all'
         ? true
@@ -222,7 +216,7 @@ export function SubmissionBoardPage() {
               <p className="mt-2 text-lg font-semibold text-slate-950">
                 {selectedPeriod?.label ?? '-'}
               </p>
-              <p className="text-xs text-slate-500">Current week forward</p>
+              <p className="text-xs text-slate-500">Current week first</p>
             </div>
           </motion.div>
         </div>

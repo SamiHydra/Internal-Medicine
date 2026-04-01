@@ -39,8 +39,8 @@ import {
   getDashboardSummary,
   getDepartmentComparisonData,
   getLockDeadlineNote,
+  getVisibleReportingPeriods,
   getSubmissionBoard,
-  getSortedReportingPeriods,
   getTrendSeries,
   getWhatChangedThisWeek,
 } from '@/data/selectors'
@@ -98,18 +98,12 @@ function formatShare(count: number, total: number) {
 export function AdminDashboardPage() {
   const { state } = useAppData()
   const [familyFilter, setFamilyFilter] = useState<FamilyFilter>('all')
-  const sortedReportingPeriods = getSortedReportingPeriods(state)
-  const currentPeriodId = getCurrentPeriod(state)?.id ?? ''
+  const currentPeriod = getCurrentPeriod(state)
+  const currentPeriodId = currentPeriod?.id ?? ''
   const [periodId, setPeriodId] = useState(currentPeriodId)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const currentPeriodIndex = currentPeriodId
-    ? sortedReportingPeriods.findIndex((period) => period.id === currentPeriodId)
-    : -1
-  const visibleReportingPeriods =
-    currentPeriodIndex >= 0
-      ? sortedReportingPeriods.slice(currentPeriodIndex)
-      : sortedReportingPeriods
-  const effectivePeriodId = sortedReportingPeriods.some((period) => period.id === periodId)
+  const visibleReportingPeriods = [...getVisibleReportingPeriods(state)].reverse()
+  const effectivePeriodId = visibleReportingPeriods.some((period) => period.id === periodId)
     ? periodId
     : currentPeriodId
 
@@ -155,7 +149,11 @@ export function AdminDashboardPage() {
     state,
     familyFilter === 'all' ? undefined : familyFilter,
   )
-  const boardRows = getSubmissionBoard(state, 4, effectivePeriodId)
+  const boardRows = getSubmissionBoard(
+    state,
+    visibleReportingPeriods.length,
+    effectivePeriodId,
+  )
     .filter((row) =>
       familyFilter === 'all' ? true : row.department.family === familyFilter,
     )
@@ -179,7 +177,8 @@ export function AdminDashboardPage() {
     return null
   }
 
-  const selectedPeriod = sortedReportingPeriods.find((period) => period.id === effectivePeriodId)
+  const selectedPeriod =
+    visibleReportingPeriods.find((period) => period.id === effectivePeriodId) ?? currentPeriod
   const deadlineNote = getLockDeadlineNote(state, effectivePeriodId)
   const today = new Date()
   const deliveredCount =
@@ -1117,7 +1116,7 @@ export function AdminDashboardPage() {
 
       <SubmissionBoardGrid
         title="Reporting runway"
-        description="Current week forward."
+        description="Current week first, then prior weeks."
         rows={boardRows}
       />
     </div>

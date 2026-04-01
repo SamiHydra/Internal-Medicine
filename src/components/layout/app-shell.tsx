@@ -67,7 +67,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 
 export function AppShell({ children }: PropsWithChildren) {
   const navigate = useNavigate()
-  const { currentUser, logout, state } = useAppData()
+  const { currentUser, isSyncing, logout, state } = useAppData()
   const currentPeriod = useCurrentReportingPeriod()
 
   if (!currentUser) {
@@ -155,6 +155,18 @@ export function AppShell({ children }: PropsWithChildren) {
               </div>
 
               <div className="flex items-center gap-3">
+                {isSyncing ? (
+                  <div
+                    aria-live="polite"
+                    className="hidden items-center gap-2 rounded-full border border-cyan-200/70 bg-white/84 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-700 shadow-[0_16px_24px_-24px_rgba(34,211,238,0.5)] backdrop-blur sm:flex"
+                  >
+                    <span className="relative flex h-2.5 w-2.5 items-center justify-center">
+                      <span className="absolute inset-0 animate-ping rounded-full bg-cyan-400/55" />
+                      <span className="relative h-2.5 w-2.5 rounded-full bg-cyan-500" />
+                    </span>
+                    Syncing
+                  </div>
+                ) : null}
                 <Button
                   variant="secondary"
                   size="icon"

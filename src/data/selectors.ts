@@ -12,11 +12,17 @@ import type {
   ReportStatus,
 } from '@/types/domain'
 
+const liveReportingStartDate = parseISO('2026-03-30T00:00:00.000Z')
+
 export function getSortedReportingPeriods(state: AppState) {
-  return [...state.reportingPeriods].sort(
-    (left, right) =>
-      parseISO(left.weekStart).getTime() - parseISO(right.weekStart).getTime(),
-  )
+  return [...state.reportingPeriods]
+    .filter(
+      (period) => parseISO(period.weekStart).getTime() >= liveReportingStartDate.getTime(),
+    )
+    .sort(
+      (left, right) =>
+        parseISO(left.weekStart).getTime() - parseISO(right.weekStart).getTime(),
+    )
 }
 
 export function getCurrentUser(state: AppState) {
@@ -39,9 +45,24 @@ export function getCurrentPeriod(state: AppState) {
   return currentPeriod
 }
 
-export function getPreviousPeriod(state: AppState) {
+export function getVisibleReportingPeriods(state: AppState) {
   const currentPeriod = getCurrentPeriod(state)
   const reportingPeriods = getSortedReportingPeriods(state)
+
+  if (!currentPeriod) {
+    return []
+  }
+
+  const currentPeriodStart = parseISO(currentPeriod.weekStart).getTime()
+
+  return reportingPeriods.filter(
+    (period) => parseISO(period.weekStart).getTime() <= currentPeriodStart,
+  )
+}
+
+export function getPreviousPeriod(state: AppState) {
+  const currentPeriod = getCurrentPeriod(state)
+  const reportingPeriods = getVisibleReportingPeriods(state)
 
   if (!currentPeriod) {
     return null
@@ -52,6 +73,28 @@ export function getPreviousPeriod(state: AppState) {
   )
 
   return currentPeriodIndex > 0 ? reportingPeriods[currentPeriodIndex - 1] : null
+}
+
+export function getCurrentAndPreviousPeriods(state: AppState) {
+  return getReportingPeriodsBackwards(state, 2)
+}
+
+export function getReportingPeriodsBackwards(
+  state: AppState,
+  periodCount = 4,
+  startPeriodId = getCurrentPeriod(state)?.id,
+) {
+  const reportingPeriods = getVisibleReportingPeriods(state)
+  const startIndex = startPeriodId
+    ? reportingPeriods.findIndex((period) => period.id === startPeriodId)
+    : -1
+
+  if (startIndex >= 0) {
+    const startSlice = Math.max(0, startIndex - periodCount + 1)
+    return reportingPeriods.slice(startSlice, startIndex + 1).reverse()
+  }
+
+  return reportingPeriods.slice(-periodCount).reverse()
 }
 
 export function getProfileById(state: AppState, userId: string) {
@@ -416,14 +459,7 @@ export function getSubmissionBoard(
   periodCount = 4,
   startPeriodId = getCurrentPeriod(state)?.id,
 ) {
-  const reportingPeriods = getSortedReportingPeriods(state)
-  const startIndex = startPeriodId
-    ? reportingPeriods.findIndex((period) => period.id === startPeriodId)
-    : -1
-  const periods =
-    startIndex >= 0
-      ? reportingPeriods.slice(startIndex, startIndex + periodCount)
-      : reportingPeriods.slice(-periodCount)
+  const periods = getReportingPeriodsBackwards(state, periodCount, startPeriodId)
 
   return state.assignments.map((assignment) => ({
     assignment,
@@ -431,6 +467,30 @@ export function getSubmissionBoard(
     template: templateMap[assignment.templateId],
     statuses: periods.map((period) => {
       const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
+      return {
+        period,
+        report,
+        status: deriveReportStatus(state, period.id, report),
+      }
+    }),
+  }))
+}
+
+export function getNurseSubmissionBoard(state: AppState, userId: string) {
+  const visiblePeriods = getVisibleReportingPeriods(state)
+  const periods = getReportingPeriodsBackwards(state, visiblePeriods.length)
+
+  if (!periods.length) {
+    return []
+  }
+
+  return getAssignmentsForUser(state, userId).map((assignment) => ({
+    assignment,
+    department: departmentMap[assignment.departmentId],
+    template: templateMap[assignment.templateId],
+    statuses: periods.map((period) => {
+      const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
+
       return {
         period,
         report,

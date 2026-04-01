@@ -6,7 +6,11 @@ import { Link } from 'react-router-dom'
 import { SubmissionBoardGrid } from '@/components/dashboard/submission-board-grid'
 import { ReportAssignmentCard } from '@/components/reports/report-assignment-card'
 import { Button } from '@/components/ui/button'
-import { getCurrentPeriod, getCurrentWeekAssignmentCards, getSubmissionBoard } from '@/data/selectors'
+import {
+  getCurrentPeriod,
+  getCurrentWeekAssignmentCards,
+  getNurseSubmissionBoard,
+} from '@/data/selectors'
 import { useAppData } from '@/context/app-data-context'
 import { formatCompactNumber } from '@/lib/utils'
 import { cn } from '@/lib/utils'
@@ -32,7 +36,7 @@ export function ReportSelectionPage() {
   const currentCards = getCurrentWeekAssignmentCards(state, currentUser.id).filter((card) =>
     serviceLineFilter === 'all' ? true : card.department.family === serviceLineFilter,
   )
-  const boardRows = getSubmissionBoard(state)
+  const boardRows = getNurseSubmissionBoard(state, currentUser.id)
     .filter((row) => row.assignment.nurseId === currentUser.id)
     .filter((row) =>
       serviceLineFilter === 'all' ? true : row.department.family === serviceLineFilter,
@@ -273,8 +277,8 @@ export function ReportSelectionPage() {
 
       {boardRows.length ? (
         <SubmissionBoardGrid
-          title="Recent reporting track"
-          description="Current and recent weeks."
+          title="Current reporting track"
+          description="Current week first, then prior live weeks."
           rows={boardRows}
         />
       ) : (
