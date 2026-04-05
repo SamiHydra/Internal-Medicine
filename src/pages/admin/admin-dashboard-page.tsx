@@ -1,16 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
-import { motion } from 'framer-motion'
-import {
-  Activity,
-  CircleAlert,
-  ClipboardCheck,
-  Filter,
-  LockKeyhole,
-  ShieldAlert,
-  Sparkles,
-  Waves,
-} from 'lucide-react'
+import { animate, motion } from 'framer-motion'
+import { Filter, Sparkles } from 'lucide-react'
 import {
   Area,
   AreaChart,
@@ -20,13 +11,14 @@ import {
   Cell,
   Line,
   LineChart,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
 
-import { SubmissionBoardGrid } from '@/components/dashboard/submission-board-grid'
 import {
   Select,
   SelectContent,
@@ -35,17 +27,18 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
+  deriveReportStatus,
   getCurrentPeriod,
   getDashboardSummary,
-  getDepartmentComparisonData,
+  getReportForAssignmentPeriod,
   getLockDeadlineNote,
   getVisibleReportingPeriods,
-  getSubmissionBoard,
-  getTrendSeries,
-  getWhatChangedThisWeek,
 } from '@/data/selectors'
 import { useAppData } from '@/context/app-data-context'
-import { cn, formatCompactNumber, formatPercent } from '@/lib/utils'
+import { departments, departmentMap, templateMap } from '@/config/templates'
+import { computeWeeklyValue } from '@/lib/metrics'
+import { cn, formatCompactNumber } from '@/lib/utils'
+import type { ReportFamily, ReportRecord } from '@/types/domain'
 
 type FamilyFilter = 'all' | 'inpatient' | 'outpatient' | 'procedure'
 type StatusFilter =
@@ -67,24 +60,16 @@ function ChartEmptyState({
   return (
     <div
       className={cn(
-        'flex h-full flex-col items-center justify-center gap-3 rounded-[1.9rem] border border-dashed px-6 text-center',
+        'flex h-full flex-col items-center justify-center gap-3 rounded-[1.75rem] border border-dashed px-6 text-center backdrop-blur-sm',
         tone === 'dark'
-          ? 'border-white/12 bg-white/6 text-cyan-50/78'
-          : 'border-sky-100/90 bg-white/62 text-slate-500',
+          ? 'border-white/12 bg-white/6 text-cyan-50/82'
+          : 'border-sky-100/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.8),rgba(244,249,255,0.62))] text-slate-500',
       )}
     >
       <Sparkles className={cn('h-5 w-5', tone === 'dark' ? 'text-cyan-200' : 'text-sky-500')} />
       <p className="max-w-xs text-sm leading-6">{message}</p>
     </div>
   )
-}
-
-function formatDeltaNote(delta: number | null | undefined) {
-  if (delta === null || delta === undefined) {
-    return 'No prior week'
-  }
-
-  return `${delta >= 0 ? '+' : '-'}${Math.abs(delta).toFixed(0)}% vs last week`
 }
 
 function formatShare(count: number, total: number) {
@@ -95,6 +80,122 @@ function formatShare(count: number, total: number) {
   return Math.round((count / total) * 100)
 }
 
+function parseTimeToMinutes(value: string | null | undefined) {
+  if (!value) {
+    return null
+  }
+
+  const match = value.match(/^(\d{1,2}):(\d{2})/)
+  if (!match) {
+    return null
+  }
+
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) {
+    return null
+  }
+
+  return hours * 60 + minutes
+}
+
+function formatMinutesAsTime(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return '-'
+  }
+
+  const rounded = Math.round(value)
+  const hours = Math.floor(rounded / 60)
+  const minutes = rounded % 60
+
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+}
+
+function getReportWeeklyFieldValue(report: ReportRecord, fieldId: string) {
+  const field = templateMap[report.templateId]?.fields.find((item) => item.id === fieldId)
+
+  if (!field) {
+    return null
+  }
+
+  return computeWeeklyValue(field, report.values[fieldId]?.dailyValues ?? {})
+}
+
+function formatAnimatedValue(
+  value: number,
+  variant: 'compact' | 'number' | 'percent' | 'decimal',
+  digits: number,
+) {
+  if (variant === 'compact') {
+    return formatCompactNumber(value)
+  }
+
+  if (variant === 'percent') {
+    return `${value.toFixed(digits)}%`
+  }
+
+  if (variant === 'decimal') {
+    return value.toFixed(digits)
+  }
+
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: digits,
+  }).format(value)
+}
+
+function AnimatedMetric({
+  value,
+  variant = 'compact',
+  digits = 0,
+  className,
+}: {
+  value: number | null | undefined
+  variant?: 'compact' | 'number' | 'percent' | 'decimal'
+  digits?: number
+  className?: string
+}) {
+  const hasValue = value !== null && value !== undefined && !Number.isNaN(value)
+  const safeValue = hasValue ? value : 0
+  const [displayValue, setDisplayValue] = useState(safeValue)
+  const previousValueRef = useRef(safeValue)
+
+  useEffect(() => {
+    const controls = animate(previousValueRef.current, safeValue, {
+      duration: 0.9,
+      ease: 'easeOut',
+      onUpdate: (latest) => {
+        previousValueRef.current = latest
+        setDisplayValue(latest)
+      },
+    })
+
+    return () => controls.stop()
+  }, [safeValue])
+
+  if (!hasValue) {
+    return <span className={className}>-</span>
+  }
+
+  return (
+    <span className={className}>
+      {formatAnimatedValue(displayValue, variant, digits)}
+    </span>
+  )
+}
+
+function SectionAmbient() {
+  return (
+    <div className="pointer-events-none absolute inset-0">
+      <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#14b8a6]" />
+      <div className="absolute -left-10 top-10 h-40 w-40 rounded-full bg-[#1d4ed8]/10 blur-3xl" />
+      <div className="absolute right-10 top-14 h-48 w-48 rounded-full bg-[#38bdf8]/10 blur-3xl" />
+      <div className="absolute bottom-8 left-[22%] h-36 w-36 rounded-full bg-[#f59e0b]/8 blur-3xl" />
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.12)_1px,transparent_1px)] bg-[size:88px_88px] opacity-20 [mask-image:radial-gradient(circle_at_24%_20%,black_14%,transparent_74%)]" />
+    </div>
+  )
+}
+
 export function AdminDashboardPage() {
   const { state } = useAppData()
   const [familyFilter, setFamilyFilter] = useState<FamilyFilter>('all')
@@ -102,90 +203,20 @@ export function AdminDashboardPage() {
   const currentPeriodId = currentPeriod?.id ?? ''
   const [periodId, setPeriodId] = useState(currentPeriodId)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const visibleReportingPeriods = [...getVisibleReportingPeriods(state)].reverse()
-  const effectivePeriodId = visibleReportingPeriods.some((period) => period.id === periodId)
+  const availablePeriods = getVisibleReportingPeriods(state)
+  const visibleReportingPeriods = [...availablePeriods].reverse()
+  const effectivePeriodId = availablePeriods.some((period) => period.id === periodId)
     ? periodId
     : currentPeriodId
+  const scopeFamily = familyFilter === 'all' ? undefined : familyFilter
 
-  const summary = getDashboardSummary(
-    state,
-    effectivePeriodId,
-    familyFilter === 'all' ? undefined : familyFilter,
-  )
-  const admissionsTrend = getTrendSeries(
-    state,
-    'total_admitted_patients',
-    familyFilter === 'all' ? undefined : familyFilter,
-    undefined,
-    { anchorPeriodId: effectivePeriodId, periodCount: 8 },
-  )
-  const dischargesTrend = getTrendSeries(
-    state,
-    'discharged_home',
-    familyFilter === 'all' ? undefined : familyFilter,
-    undefined,
-    { anchorPeriodId: effectivePeriodId, periodCount: 8 },
-  )
-  const noShowTrend = getTrendSeries(
-    state,
-    'failed_to_come',
-    familyFilter === 'all' ? undefined : familyFilter,
-    undefined,
-    { anchorPeriodId: effectivePeriodId, periodCount: 8 },
-  )
-  const haiTrend = getTrendSeries(
-    state,
-    'total_hai',
-    familyFilter === 'all' ? undefined : familyFilter,
-    undefined,
-    { anchorPeriodId: effectivePeriodId, periodCount: 8 },
-  )
-  const departmentComparison = getDepartmentComparisonData(
-    state,
-    familyFilter === 'all' ? 'inpatient' : familyFilter,
-    effectivePeriodId,
-  )
-  const insightItems = getWhatChangedThisWeek(
-    state,
-    familyFilter === 'all' ? undefined : familyFilter,
-  )
-  const boardRows = getSubmissionBoard(
-    state,
-    visibleReportingPeriods.length,
-    effectivePeriodId,
-  )
-    .filter((row) =>
-      familyFilter === 'all' ? true : row.department.family === familyFilter,
-    )
-    .filter((row) =>
-      statusFilter === 'all'
-        ? true
-        : row.statuses.at(-1)?.status === statusFilter,
-    )
-    .slice(0, 8)
-    .map((row) => ({
-      departmentName: row.department.name,
-      templateName: row.template.name,
-      statuses: row.statuses.map((status) => ({
-        label: status.period.label.split(' - ')[0],
-        status: status.status,
-        href: `/reports/${row.assignment.id}/${status.period.id}`,
-      })),
-    }))
+  const summary = getDashboardSummary(state, effectivePeriodId, scopeFamily)
 
   if (!summary) {
     return null
   }
 
-  const selectedPeriod =
-    visibleReportingPeriods.find((period) => period.id === effectivePeriodId) ?? currentPeriod
   const deadlineNote = getLockDeadlineNote(state, effectivePeriodId)
-  const today = new Date()
-  const deliveredCount =
-    summary.current.submitted +
-    summary.current.locked +
-    summary.current.editedAfterSubmission
-  const deliveryRate = formatShare(deliveredCount, summary.current.totalExpected)
   const familyLabels = {
     all: 'All services',
     inpatient: 'Inpatient',
@@ -216,714 +247,611 @@ export function AdminDashboardPage() {
     { value: 'locked' as const, label: 'Locked' },
     { value: 'overdue' as const, label: 'Overdue' },
   ] as const
-  const admissionsSeries = admissionsTrend.map((point, index) => ({
-    ...point,
-    admissions: point.value,
-    discharges: dischargesTrend[index]?.value ?? 0,
-  }))
-  const riskSeries = haiTrend.map((point, index) => ({
-    ...point,
-    hai: point.value,
-    noShows: noShowTrend[index]?.value ?? 0,
-  }))
-  const activityMetricKey =
-    familyFilter === 'outpatient' || familyFilter === 'procedure' ? 'visits' : 'admissions'
-  const activityMetricLabel =
-    familyFilter === 'procedure'
-      ? 'Service volume'
-      : familyFilter === 'outpatient'
-        ? 'Visits'
-        : 'Admissions'
-  const departmentSeries = departmentComparison
-    .map((department) => ({
-      ...department,
-      value:
-        activityMetricKey === 'visits' ? department.visits : department.admissions,
-    }))
-    .sort((left, right) => right.value - left.value)
-    .slice(0, 7)
-  const latestAdmissionsPoint = admissionsSeries.at(-1)
-  const latestRiskPoint = riskSeries.at(-1)
-  const peakFlowPoint = admissionsSeries.reduce<(typeof admissionsSeries)[number] | null>(
-    (peak, point) => {
-      if (!peak || point.admissions > peak.admissions) {
-        return point
-      }
-
-      return peak
-    },
-    null,
+  const chartGridStroke = '#d9e7f5'
+  const chartTick = { fill: '#64748b', fontSize: 12 }
+  const grayscalePalette = {
+    ink: '#1d4ed8',
+    carbon: '#0ea5e9',
+    slate: '#14b8a6',
+    steel: '#64748b',
+    mist: '#f59e0b',
+    cloud: '#bfdbfe',
+  } as const
+  const totalExpected = summary.current.totalExpected
+  const deliveredStatuses = new Set<Exclude<StatusFilter, 'all'>>([
+    'submitted',
+    'edited_after_submission',
+    'locked',
+  ])
+  const effectivePeriodIndex = availablePeriods.findIndex((period) => period.id === effectivePeriodId)
+  const trendPeriods =
+    effectivePeriodIndex >= 0
+      ? availablePeriods.slice(0, effectivePeriodIndex + 1).slice(-8)
+      : availablePeriods.slice(-8)
+  const selectedPeriodLabel =
+    availablePeriods.find((period) => period.id === effectivePeriodId)?.label ??
+    currentPeriod?.label ??
+    'Current reporting period'
+  const scopedAssignments = state.assignments.filter((assignment) =>
+    familyFilter === 'all' ? true : departmentMap[assignment.departmentId].family === familyFilter,
   )
-  const busiestDepartment = departmentSeries[0]
-  const currentFlowBalance =
-    (latestAdmissionsPoint?.admissions ?? 0) - (latestAdmissionsPoint?.discharges ?? 0)
-  const hasFlowSignal = admissionsSeries.some(
+  const getPeriodReports = (periodId: string, family: ReportFamily) =>
+    state.reports.filter(
+      (report) =>
+        report.reportingPeriodId === periodId &&
+        departmentMap[report.departmentId].family === family,
+    )
+  const sumFieldTotals = (periodId: string, family: ReportFamily, fieldIds: string[]) =>
+    getPeriodReports(periodId, family).reduce((total, report) => {
+      const reportTotal = fieldIds.reduce((fieldTotal, fieldId) => {
+        const value = getReportWeeklyFieldValue(report, fieldId)
+        return fieldTotal + (typeof value === 'number' ? value : 0)
+      }, 0)
+
+      return total + reportTotal
+    }, 0)
+  const averageFieldValue = (periodId: string, family: ReportFamily, fieldId: string) => {
+    const values = getPeriodReports(periodId, family)
+      .map((report) => getReportWeeklyFieldValue(report, fieldId))
+      .filter((value): value is number => typeof value === 'number' && !Number.isNaN(value))
+
+    if (!values.length) {
+      return null
+    }
+
+    return values.reduce((sum, value) => sum + value, 0) / values.length
+  }
+  const averageTimeValue = (periodId: string, family: ReportFamily, fieldId: string) => {
+    const values = getPeriodReports(periodId, family)
+      .map((report) => parseTimeToMinutes(getReportWeeklyFieldValue(report, fieldId) as string | null))
+      .filter((value): value is number => value !== null)
+
+    if (!values.length) {
+      return null
+    }
+
+    return values.reduce((sum, value) => sum + value, 0) / values.length
+  }
+  const scopedStatuses = scopedAssignments.map((assignment) =>
+      deriveReportStatus(
+        state,
+        effectivePeriodId,
+        getReportForAssignmentPeriod(state, assignment.id, effectivePeriodId),
+      ),
+    )
+  const countStatus = (status: Exclude<StatusFilter, 'all'>) =>
+    scopedStatuses.filter((value) => value === status).length
+  const statusDistribution = [
+    { key: 'submitted' as const, label: 'Submitted', count: countStatus('submitted'), fill: grayscalePalette.ink },
+    {
+      key: 'edited_after_submission' as const,
+      label: 'Edited',
+      count: countStatus('edited_after_submission'),
+      fill: grayscalePalette.carbon,
+    },
+    { key: 'locked' as const, label: 'Locked', count: countStatus('locked'), fill: grayscalePalette.slate },
+    { key: 'draft' as const, label: 'Draft', count: countStatus('draft'), fill: grayscalePalette.steel },
+    { key: 'overdue' as const, label: 'Overdue', count: countStatus('overdue'), fill: grayscalePalette.mist },
+    {
+      key: 'not_started' as const,
+      label: 'Not started',
+      count: countStatus('not_started'),
+      fill: grayscalePalette.cloud,
+    },
+  ]
+  const deliveredCount = statusDistribution
+    .filter((item) => deliveredStatuses.has(item.key))
+    .reduce((sum, item) => sum + item.count, 0)
+  const openCount = Math.max(totalExpected - deliveredCount, 0)
+  const deliveryRate = formatShare(deliveredCount, totalExpected)
+  const statusFocusValue =
+    statusFilter === 'all'
+      ? deliveredCount
+      : statusDistribution.find((item) => item.key === statusFilter)?.count ?? 0
+  const statusFocusRate = formatShare(statusFocusValue, totalExpected)
+  const statusCenterLabel = statusFilter === 'all' ? 'Delivered' : statusLabels[statusFilter]
+  const reportingTrendSeries = trendPeriods.map((period) => {
+    const statuses = scopedAssignments.map((assignment) =>
+      deriveReportStatus(state, period.id, getReportForAssignmentPeriod(state, assignment.id, period.id)),
+    )
+    const delivered = statuses.filter((value) => deliveredStatuses.has(value)).length
+    const overdue = statuses.filter((value) => value === 'overdue').length
+
+    return {
+      label: format(new Date(period.weekStart), 'MMM d'),
+      delivered,
+      open: Math.max(statuses.length - delivered, 0),
+      overdue,
+    }
+  })
+  const showInpatientSection = familyFilter === 'all' || familyFilter === 'inpatient'
+  const showOutpatientSection = familyFilter === 'all' || familyFilter === 'outpatient'
+  const showProcedureSection = familyFilter === 'all' || familyFilter === 'procedure'
+  const inpatientFlowSeries = trendPeriods.map((period) => ({
+    label: format(new Date(period.weekStart), 'MMM d'),
+    admissions: sumFieldTotals(period.id, 'inpatient', ['total_admitted_patients']),
+    discharges: sumFieldTotals(period.id, 'inpatient', ['discharged_home', 'discharged_ama']),
+  }))
+  const inpatientSafetySeries = trendPeriods.map((period) => ({
+    label: format(new Date(period.weekStart), 'MMM d'),
+    deaths: sumFieldTotals(period.id, 'inpatient', ['new_deaths']),
+    ulcers: sumFieldTotals(period.id, 'inpatient', ['new_pressure_ulcer']),
+    hai: sumFieldTotals(period.id, 'inpatient', ['total_hai']),
+  }))
+  const inpatientOccupancySeries = trendPeriods.map((period) => {
+    const periodSummary = getDashboardSummary(state, period.id, 'inpatient')
+
+    return {
+      label: format(new Date(period.weekStart), 'MMM d'),
+      bor: periodSummary?.current.borPercent ?? null,
+      btr: periodSummary?.current.btr ?? null,
+      alos: periodSummary?.current.alos ?? null,
+    }
+  })
+  const outpatientSeenSeries = trendPeriods.map((period) => ({
+    label: format(new Date(period.weekStart), 'MMM d'),
+    seen: sumFieldTotals(period.id, 'outpatient', ['total_patients_seen']),
+    notSeenSameDay: sumFieldTotals(period.id, 'outpatient', ['not_seen_same_day']),
+  }))
+  const outpatientFollowUpWaitSeries = trendPeriods.map((period) => ({
+    label: format(new Date(period.weekStart), 'MMM d'),
+    wait: averageFieldValue(period.id, 'outpatient', 'wait_time_followup_months'),
+  }))
+  const outpatientClinicStartSeries = trendPeriods.map((period) => ({
+    label: format(new Date(period.weekStart), 'MMM d'),
+    startMinutes: averageTimeValue(period.id, 'outpatient', 'clinic_start_time'),
+  }))
+  const currentOutpatientReports = getPeriodReports(effectivePeriodId, 'outpatient')
+  const availabilityOptions = ['Full day', 'Partial day', 'Unavailable'] as const
+  const outpatientAvailability = availabilityOptions.map((label) => ({
+    label,
+    value: currentOutpatientReports.filter(
+      (report) => getReportWeeklyFieldValue(report, 'senior_physician_availability') === label,
+    ).length,
+    fill:
+      label === 'Full day'
+        ? grayscalePalette.ink
+        : label === 'Partial day'
+          ? grayscalePalette.steel
+          : grayscalePalette.cloud,
+  }))
+  const outpatientVolumeMix = departments
+    .filter((department) => department.family === 'outpatient')
+    .map((department) => {
+      const report = state.reports.find(
+        (item) =>
+          item.reportingPeriodId === effectivePeriodId && item.departmentId === department.id,
+      )
+      const totalSeen = report
+        ? (getReportWeeklyFieldValue(report, 'total_patients_seen') as number | null) ?? 0
+        : 0
+      const newPatients = report
+        ? (getReportWeeklyFieldValue(report, 'new_patients_seen') as number | null) ?? 0
+        : 0
+      const followUp = report
+        ? (getReportWeeklyFieldValue(report, 'follow_up_patients') as number | null) ?? 0
+        : 0
+
+      return {
+        id: department.id,
+        name: department.name,
+        totalSeen,
+        newPatients,
+        followUp,
+        accent: department.accent,
+      }
+    })
+    .filter((department) => department.totalSeen > 0)
+    .sort((left, right) => right.totalSeen - left.totalSeen)
+    .slice(0, 8)
+  const procedureTotals = [
+    { label: 'Echo', value: sumFieldTotals(effectivePeriodId, 'procedure', ['echo_done']), fill: grayscalePalette.ink },
+    { label: 'ECG', value: sumFieldTotals(effectivePeriodId, 'procedure', ['ecg_done']), fill: grayscalePalette.carbon },
+    { label: 'EEG', value: sumFieldTotals(effectivePeriodId, 'procedure', ['eeg_done']), fill: grayscalePalette.steel },
+    {
+      label: 'Endoscopy',
+      value: sumFieldTotals(effectivePeriodId, 'procedure', [
+        'upper_gi_elective',
+        'upper_gi_emergency',
+        'ercp',
+        'therapeutic_upper_gi',
+        'esophageal_dilation',
+        'variceal_ligation',
+        'stenting',
+      ]),
+      fill: grayscalePalette.mist,
+    },
+  ]
+  const endoscopyMix = [
+    {
+      label: 'UGI',
+      value: sumFieldTotals(effectivePeriodId, 'procedure', ['upper_gi_elective', 'upper_gi_emergency']),
+      fill: grayscalePalette.ink,
+    },
+    { label: 'Colonoscopy', value: sumFieldTotals(effectivePeriodId, 'procedure', ['colonoscopy']), fill: grayscalePalette.slate },
+    { label: 'Bronchoscopy', value: sumFieldTotals(effectivePeriodId, 'procedure', ['bronchoscopy']), fill: grayscalePalette.steel },
+    { label: 'Ligation', value: sumFieldTotals(effectivePeriodId, 'procedure', ['variceal_ligation']), fill: grayscalePalette.cloud },
+  ]
+  const hasReportingTrendSignal = reportingTrendSeries.some(
+    (point) => point.delivered > 0 || point.open > 0 || point.overdue > 0,
+  )
+  const hasInpatientFlowSignal = inpatientFlowSeries.some(
     (point) => point.admissions > 0 || point.discharges > 0,
   )
-  const hasRiskSignal = riskSeries.some(
-    (point) => point.hai > 0 || point.noShows > 0,
+  const hasInpatientSafetySignal = inpatientSafetySeries.some(
+    (point) => point.deaths > 0 || point.ulcers > 0 || point.hai > 0,
   )
-  const hasDepartmentSignal = departmentSeries.some((department) => department.value > 0)
+  const hasInpatientOccupancySignal = inpatientOccupancySeries.some(
+    (point) =>
+      point.bor !== null ||
+      point.btr !== null ||
+      point.alos !== null,
+  )
+  const hasOutpatientSeenSignal = outpatientSeenSeries.some(
+    (point) => point.seen > 0 || point.notSeenSameDay > 0,
+  )
+  const hasFollowUpWaitSignal = outpatientFollowUpWaitSeries.some((point) => point.wait !== null)
+  const hasClinicStartSignal = outpatientClinicStartSeries.some((point) => point.startMinutes !== null)
+  const hasAvailabilitySignal = outpatientAvailability.some((item) => item.value > 0)
+  const hasOutpatientMixSignal = outpatientVolumeMix.some((item) => item.totalSeen > 0)
+  const hasProcedureSignal = procedureTotals.some((item) => item.value > 0)
+  const hasEndoscopyMixSignal = endoscopyMix.some((item) => item.value > 0)
   const lightTooltipStyle = {
-    borderRadius: '18px',
-    border: '1px solid rgba(191,219,254,0.85)',
+    borderRadius: '16px',
+    border: '1px solid rgba(191,219,254,0.95)',
     backgroundColor: 'rgba(255,255,255,0.96)',
-    boxShadow: '0 18px 30px -22px rgba(15,23,42,0.35)',
+    boxShadow: '0 20px 40px -32px rgba(30,58,138,0.22)',
   }
-  const darkTooltipStyle = {
-    borderRadius: '18px',
-    border: '1px solid rgba(125,211,252,0.16)',
-    backgroundColor: 'rgba(5,23,41,0.92)',
-    color: '#e0f2fe',
-    boxShadow: '0 18px 30px -22px rgba(2,6,23,0.75)',
-  }
-  const workflowStats = [
-    {
-      label: 'Submitted',
-      count: summary.current.submitted,
-      delta: summary.deltas.submitted,
-      Icon: ClipboardCheck,
-      accent: 'from-cyan-400 via-sky-500 to-blue-500',
-    },
-    {
-      label: 'Missing',
-      count: summary.current.missing,
-      delta: summary.deltas.missing,
-      Icon: CircleAlert,
-      accent: 'from-amber-400 via-orange-400 to-rose-500',
-    },
-    {
-      label: 'Locked',
-      count: summary.current.locked,
-      delta: summary.deltas.locked,
-      Icon: LockKeyhole,
-      accent: 'from-blue-500 via-indigo-500 to-cyan-400',
-    },
-    {
-      label: 'Edited',
-      count: summary.current.editedAfterSubmission,
-      delta: summary.deltas.editedAfterSubmission,
-      Icon: Activity,
-      accent: 'from-emerald-400 via-teal-500 to-cyan-500',
-    },
-  ] as const
-  const pulseStats = [
-    {
-      label: 'Coverage',
-      value: `${deliveryRate}%`,
-    },
-    {
-      label: 'Admissions',
-      value: formatCompactNumber(summary.current.totalAdmissions),
-    },
-    {
-      label: 'Visits',
-      value: formatCompactNumber(summary.current.totalOutpatientVisits),
-    },
-    {
-      label: 'BOR',
-      value: formatPercent(summary.current.borPercent, 1),
-    },
-    {
-      label: 'HAI',
-      value: formatCompactNumber(summary.current.haiCount),
-    },
-    {
-      label: 'No-shows',
-      value: formatCompactNumber(summary.current.noShowCount),
-    },
-  ] as const
+  const sectionClass =
+    'relative overflow-hidden rounded-[3rem] border border-white/75 bg-[linear-gradient(135deg,rgba(255,255,255,0.94),rgba(242,248,255,0.86),rgba(236,253,245,0.72),rgba(255,248,228,0.6))] px-6 py-8 shadow-[0_34px_72px_-48px_rgba(30,58,138,0.2)] backdrop-blur-md md:px-8 md:py-9'
+  const chartPanelClass =
+    'relative overflow-hidden rounded-[2.15rem] border border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(243,248,255,0.74),rgba(255,255,255,0.66))] p-5 shadow-[0_28px_46px_-34px_rgba(30,58,138,0.18)] backdrop-blur-sm md:p-6'
+  const statCardClass =
+    'rounded-[1.8rem] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.8),rgba(238,246,255,0.66))] px-4 py-4 shadow-[0_22px_34px_-30px_rgba(30,58,138,0.18)] backdrop-blur-sm'
 
   return (
-    <div className="space-y-8">
-      <section className="relative overflow-hidden px-2 py-4 md:px-4">
-        <div className="pointer-events-none absolute inset-0">
-          <div className="login-grid-drift absolute inset-0 opacity-50" />
-          <div className="login-ambient-drift absolute left-[-4%] top-[8%] h-44 w-44 rounded-full bg-white/56 blur-3xl md:h-56 md:w-56" />
-          <div className="login-ambient-drift-reverse absolute right-[6%] top-[8%] h-64 w-64 rounded-full bg-sky-200/32 blur-3xl" />
-          <div className="login-ambient-drift absolute bottom-[8%] left-[18%] h-56 w-56 rounded-full bg-teal-200/18 blur-3xl" />
-          <div className="login-ring-orbit absolute right-[12%] top-[18%] h-24 w-24 rounded-full border border-sky-200/40" />
-          <div className="login-line-flow absolute bottom-[18%] right-[10%] h-px w-32 bg-gradient-to-r from-transparent via-sky-300/65 to-transparent" />
-        </div>
-
-        <div className="relative grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-end">
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="max-w-[760px] space-y-4"
-          >
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/72 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-700 shadow-[0_14px_30px_-24px_rgba(14,165,233,0.55)] backdrop-blur-sm">
-              <span className="h-2 w-2 rounded-full bg-sky-500" />
-              IM dashboard
-            </div>
-
-            <div className="space-y-0">
-              <h1 className="font-display max-w-[8ch] text-5xl font-semibold leading-[0.9] tracking-tight text-slate-950 md:text-[5.6rem] xl:text-[6.4rem]">
-                Weekly operations
-              </h1>
-              <p className="pt-5 text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 md:pt-6 md:text-[0.8rem]">
-                {selectedPeriod?.label ?? format(today, 'MMMM d, yyyy')}
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              <span
-                className="login-chip-float rounded-full border border-white/70 bg-white/55 px-3 py-2 backdrop-blur-sm"
-                style={{ animationDelay: '700ms' }}
-              >
-                {familyLabels[familyFilter]}
-              </span>
-              <span
-                className="login-chip-float rounded-full border border-white/70 bg-white/55 px-3 py-2 backdrop-blur-sm"
-                style={{ animationDelay: '1400ms' }}
-              >
-                {statusLabels[statusFilter]}
-              </span>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 22 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.08 }}
-            className="grid gap-4 rounded-[2rem] border border-white/65 bg-white/44 p-5 shadow-[0_24px_55px_-34px_rgba(15,23,42,0.2)] backdrop-blur-md xl:justify-self-end"
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1 border-b border-white/70 pb-4 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Coverage
-                </p>
-                <p className="mt-2 font-display text-4xl leading-none text-slate-950">
-                  {deliveryRate}%
-                </p>
-              </div>
-              <div className="space-y-1 border-b border-white/70 pb-4 text-left sm:border-b-0 sm:pb-0 sm:pl-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Deadline
-                </p>
-                <p className="mt-2 text-lg font-semibold text-slate-950">
-                  {deadlineNote ? format(deadlineNote, 'EEE, MMM d') : '-'}
-                </p>
-                <p className="text-xs text-slate-500">
-                  {deadlineNote ? format(deadlineNote, 'HH:mm') : 'No deadline'}
-                </p>
-              </div>
-            </div>
-            <div className="border-t border-white/70 pt-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                Today
-              </p>
-              <p className="mt-2 text-lg font-semibold text-slate-950">
-                {format(today, 'EEE, MMM d')}
-              </p>
-              <p className="text-xs text-slate-500">{format(today, 'yyyy')}</p>
-            </div>
-          </motion.div>
-        </div>
-      </section>
-
+    <div className="space-y-8 bg-[radial-gradient(circle_at_12%_16%,rgba(29,78,216,0.16),transparent_22%),radial-gradient(circle_at_86%_18%,rgba(56,189,248,0.14),transparent_20%),radial-gradient(circle_at_24%_80%,rgba(245,158,11,0.08),transparent_16%),linear-gradient(180deg,#f7fbff_0%,#edf6ff_42%,#eef8ff_100%)] px-4 py-6 text-slate-950 md:px-6 md:py-8">
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.28, ease: 'easeOut' }}
-        className="relative overflow-hidden rounded-[2rem] border border-white/70 bg-[linear-gradient(135deg,rgba(255,255,255,0.82),rgba(244,249,255,0.76),rgba(235,253,248,0.62))] px-5 py-5 shadow-[0_20px_42px_-34px_rgba(15,23,42,0.18)] backdrop-blur-md"
+        className="relative overflow-hidden rounded-[3.2rem] border border-white/75 bg-[linear-gradient(135deg,rgba(255,255,255,0.92),rgba(241,248,255,0.86),rgba(236,253,245,0.72),rgba(255,248,230,0.64))] px-5 py-6 shadow-[0_36px_72px_-48px_rgba(30,58,138,0.18)] backdrop-blur-md md:px-8 md:py-9"
       >
         <div className="pointer-events-none absolute inset-0">
-          <div className="login-ambient-drift absolute right-[12%] top-[-24%] h-32 w-32 rounded-full bg-sky-200/18 blur-3xl" />
-          <div className="login-line-flow absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/70 to-transparent" />
+          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#14b8a6]" />
+          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] bg-[size:76px_76px] opacity-25 [mask-image:radial-gradient(circle_at_34%_36%,black_18%,transparent_76%)]" />
+          <div className="absolute left-[-4%] top-[8%] h-52 w-52 rounded-full bg-white/48 blur-3xl md:h-64 md:w-64" />
+          <div className="absolute right-[4%] top-[8%] h-72 w-72 rounded-full bg-sky-200/24 blur-3xl" />
+          <div className="absolute bottom-[4%] left-[18%] h-52 w-52 rounded-full bg-amber-100/18 blur-3xl" />
         </div>
 
-        <div className="relative grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)] xl:gap-8">
-          <div className="min-w-0 xl:border-r xl:border-slate-200/75 xl:pr-6">
-            <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
-              <Filter className="h-4 w-4" />
-              Reporting window
-            </div>
-            <Select value={effectivePeriodId} onValueChange={setPeriodId}>
-              <SelectTrigger className="mt-3 h-auto rounded-none border-0 border-b border-slate-200/85 bg-transparent px-0 py-2.5 text-left shadow-none focus:ring-0">
-                <SelectValue placeholder="Reporting window" />
-              </SelectTrigger>
-              <SelectContent side="bottom" align="start" sideOffset={10}>
-                {visibleReportingPeriods.map((period) => (
-                  <SelectItem key={period.id} value={period.id}>
-                    {period.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="mt-5 flex items-end justify-between gap-4">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Coverage
-                </p>
-                <p className="mt-2 font-display text-4xl leading-none text-slate-950">
-                  {deliveryRate}%
-                </p>
+        <div className="relative grid gap-8 xl:grid-cols-[minmax(0,1.08fr)_minmax(420px,0.92fr)] xl:items-stretch">
+          <div className="flex min-h-full flex-col justify-between gap-8">
+            <div className="space-y-6">
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/55 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-700 shadow-[0_16px_28px_-22px_rgba(30,58,138,0.16)] backdrop-blur-md">
+                <Filter className="h-3.5 w-3.5" />
+                Reporting dashboard
               </div>
-              <div className="text-right text-sm">
-                <p className="font-semibold text-slate-700">{familyLabels[familyFilter]}</p>
-                <p className="text-slate-500">{statusLabels[statusFilter]}</p>
+              <div className="space-y-4">
+                <h1 className="max-w-4xl font-display text-5xl leading-[0.94] tracking-tight text-slate-950 md:text-6xl xl:text-[5.4rem]">
+                  {selectedPeriodLabel}
+                </h1>
+                <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600 md:text-[15px]">
+                  <span>{familyLabels[familyFilter]}</span>
+                  <span className="text-sky-300">/</span>
+                  <span>{statusLabels[statusFilter]}</span>
+                  <span className="text-sky-300">/</span>
+                  <span>
+                    {deadlineNote
+                      ? `Deadline ${format(deadlineNote, 'EEE, MMM d')} at ${format(deadlineNote, 'HH:mm')}`
+                      : 'No deadline set'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <div className="inline-flex items-center gap-3 rounded-full border border-white/75 bg-white/58 px-4 py-2 text-sm text-slate-600 shadow-[0_16px_28px_-24px_rgba(30,58,138,0.16)] backdrop-blur-md">
+                <span className="h-2.5 w-2.5 rounded-full bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#14b8a6]" />
+                <span className="font-medium">{deliveredCount} delivered</span>
+              </div>
+              <div className="inline-flex items-center gap-3 rounded-full border border-white/75 bg-white/58 px-4 py-2 text-sm text-slate-600 shadow-[0_16px_28px_-24px_rgba(30,58,138,0.16)] backdrop-blur-md">
+                <span className="h-2.5 w-2.5 rounded-full bg-[#f59e0b]" />
+                <span className="font-medium">{openCount} still open</span>
+              </div>
+              <div className="inline-flex items-center gap-3 rounded-full border border-white/75 bg-white/58 px-4 py-2 text-sm text-slate-600 shadow-[0_16px_28px_-24px_rgba(30,58,138,0.16)] backdrop-blur-md">
+                <span className="h-2.5 w-2.5 rounded-full bg-[#14b8a6]" />
+                <span className="font-medium">{deliveryRate}% delivery rate</span>
               </div>
             </div>
           </div>
 
-          <div className="min-w-0">
-            <div className="grid gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Service line
+          <div className="rounded-[2.4rem] border border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.76),rgba(240,246,255,0.68),rgba(255,255,255,0.5))] p-5 shadow-[0_28px_46px_-32px_rgba(30,58,138,0.18)] backdrop-blur-md md:p-6">
+            <div className="grid gap-4 md:grid-cols-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Reporting period
                 </p>
-                <div className="flex flex-wrap gap-x-3 gap-y-2">
-                  {serviceLineOptions.map((option) => {
-                    const isActive = familyFilter === option.value
-
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setFamilyFilter(option.value)}
-                        className={cn(
-                          'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium transition-all duration-300',
-                          isActive
-                            ? 'bg-white/88 text-slate-950 shadow-[0_14px_24px_-20px_rgba(14,165,233,0.28)]'
-                            : 'text-slate-500 hover:bg-white/45 hover:text-slate-900',
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            'h-2.5 w-2.5 rounded-full transition-all duration-300',
-                            isActive ? 'bg-gradient-to-r from-cyan-400 to-emerald-400' : 'bg-slate-300',
-                          )}
-                        />
-                        {option.label}
-                      </button>
-                    )
-                  })}
-                </div>
+                <Select value={effectivePeriodId} onValueChange={setPeriodId}>
+                  <SelectTrigger className="mt-3 h-14 rounded-[1.1rem] border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(236,245,255,0.74))] px-4 text-left text-slate-950 shadow-[0_18px_28px_-24px_rgba(30,58,138,0.16)] focus:ring-0">
+                    <SelectValue placeholder="Reporting period" />
+                  </SelectTrigger>
+                  <SelectContent side="bottom" align="start" sideOffset={10}>
+                    {visibleReportingPeriods.map((period) => (
+                      <SelectItem key={period.id} value={period.id}>
+                        {period.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Service line
+                </p>
+                <Select
+                  value={familyFilter}
+                  onValueChange={(value) => setFamilyFilter(value as FamilyFilter)}
+                >
+                  <SelectTrigger className="mt-3 h-14 rounded-[1.1rem] border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(236,245,255,0.74))] px-4 text-left text-slate-950 shadow-[0_18px_28px_-24px_rgba(30,58,138,0.16)] focus:ring-0">
+                    <SelectValue placeholder="Service line" />
+                  </SelectTrigger>
+                  <SelectContent side="bottom" align="start" sideOffset={10}>
+                    {serviceLineOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
                   Status
                 </p>
-                <div className="flex flex-wrap gap-x-3 gap-y-2">
-                  {statusOptions.map((option) => {
-                    const isActive = statusFilter === option.value
-
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setStatusFilter(option.value)}
-                        className={cn(
-                          'rounded-full px-3 py-1.5 text-sm font-medium transition-all duration-300',
-                          isActive
-                            ? 'bg-slate-950 text-white shadow-[0_14px_22px_-20px_rgba(15,23,42,0.42)]'
-                            : 'text-slate-500 hover:bg-white/45 hover:text-slate-900',
-                        )}
-                      >
+                <Select
+                  value={statusFilter}
+                  onValueChange={(value) => setStatusFilter(value as StatusFilter)}
+                >
+                  <SelectTrigger className="mt-3 h-14 rounded-[1.1rem] border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(236,245,255,0.74))] px-4 text-left text-slate-950 shadow-[0_18px_28px_-24px_rgba(30,58,138,0.16)] focus:ring-0">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent side="bottom" align="start" sideOffset={10}>
+                    {statusOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
                         {option.label}
-                      </button>
-                    )
-                  })}
-                </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 border-t border-white/60 pt-5 md:grid-cols-2">
+              <div className={statCardClass}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  In scope
+                </p>
+                <AnimatedMetric
+                  value={totalExpected}
+                  variant="compact"
+                  className="mt-2 block font-display text-4xl leading-none text-slate-950"
+                />
+              </div>
+              <div className={statCardClass}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Delivered
+                </p>
+                <AnimatedMetric
+                  value={deliveredCount}
+                  variant="compact"
+                  className="mt-2 block font-display text-4xl leading-none text-slate-950"
+                />
+              </div>
+              <div className={statCardClass}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Open
+                </p>
+                <AnimatedMetric
+                  value={openCount}
+                  variant="compact"
+                  className="mt-2 block font-display text-4xl leading-none text-slate-950"
+                />
+              </div>
+              <div className={statCardClass}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Delivery rate
+                </p>
+                <AnimatedMetric
+                  value={deliveryRate}
+                  variant="percent"
+                  className="mt-2 block font-display text-4xl leading-none text-slate-950"
+                />
               </div>
             </div>
           </div>
         </div>
       </motion.section>
 
-      <section className="grid gap-6 2xl:grid-cols-[1.35fr_0.95fr]">
-        <motion.section
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
-          className="relative overflow-hidden rounded-[2.6rem] border border-white/70 bg-[linear-gradient(140deg,rgba(255,255,255,0.92),rgba(243,249,255,0.84),rgba(236,253,248,0.72))] px-6 py-6 shadow-[0_26px_54px_-34px_rgba(15,23,42,0.22)]"
-        >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="login-grid-drift absolute inset-0 opacity-25" />
-            <div className="login-ambient-drift absolute bottom-[-16%] left-[-4%] h-52 w-52 rounded-full bg-sky-200/20 blur-3xl" />
-            <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-cyan-400 via-sky-500 to-emerald-400" />
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, ease: 'easeOut' }}
+        className={sectionClass}
+      >
+        <SectionAmbient />
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+              Reporting status
+            </p>
+            <h2 className="mt-2 font-display text-3xl text-slate-950 md:text-5xl">
+              Submission pulse
+            </h2>
           </div>
+          <p className="text-sm uppercase tracking-[0.24em] text-slate-400">
+            {familyLabels[familyFilter]} / {statusLabels[statusFilter]}
+          </p>
+        </div>
 
-          <div className="relative">
-            <div className="flex flex-wrap items-end justify-between gap-4">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
-                  Delivery
-                </p>
-                <h2 className="font-display text-3xl text-slate-950 md:text-4xl">Reporting flow</h2>
-              </div>
-
-              <div className="text-right">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Delivered
-                </p>
-                <p className="mt-2 font-display text-4xl text-slate-950">{deliveryRate}%</p>
-                <p className="text-xs text-slate-500">
-                  {formatCompactNumber(deliveredCount)} of {formatCompactNumber(summary.current.totalExpected)}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-8 grid gap-6 lg:grid-cols-4">
-              {workflowStats.map((stat, index) => {
-                const Icon = stat.Icon
-                const share = formatShare(stat.count, summary.current.totalExpected)
-
-                return (
-                  <motion.div
-                    key={stat.label}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.24, ease: 'easeOut', delay: index * 0.04 }}
-                    className="relative"
-                  >
-                    {index < workflowStats.length - 1 ? (
-                      <div className="absolute right-[-1rem] top-2 hidden h-[calc(100%-0.5rem)] w-px bg-gradient-to-b from-transparent via-sky-100 to-transparent lg:block" />
-                    ) : null}
-
-                    <div className={cn('inline-flex items-center gap-2 rounded-full bg-gradient-to-r px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white shadow-[0_12px_24px_-18px_rgba(14,165,233,0.55)]', stat.accent)}>
-                      <Icon className="h-3.5 w-3.5" />
-                      {stat.label}
-                    </div>
-
-                    <div className="mt-5 flex items-end justify-between gap-3">
-                      <p className="font-display text-5xl leading-none text-slate-950">
-                        {formatCompactNumber(stat.count)}
-                      </p>
-                      <p className="pb-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                        {share}% of view
-                      </p>
-                    </div>
-
-                    <div className="mt-4 h-2 rounded-full bg-slate-200/75">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${Math.max(share, stat.count ? 10 : 4)}%` }}
-                        transition={{ duration: 0.7, ease: 'easeOut', delay: 0.12 + index * 0.04 }}
-                        className={cn('login-line-flow h-full rounded-full bg-gradient-to-r', stat.accent)}
-                      />
-                    </div>
-
-                    <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      {formatDeltaNote(stat.delta)}
-                    </p>
-                  </motion.div>
-                )
-              })}
-            </div>
-          </div>
-        </motion.section>
-
-        <motion.section
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
-          className="relative overflow-hidden rounded-[2.6rem] border border-white/10 bg-[linear-gradient(160deg,#071a33_0%,#0b3156_42%,#0f4c81_74%,#0f766e_100%)] px-6 py-6 text-white shadow-[0_30px_58px_-30px_rgba(8,47,73,0.76)]"
-        >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="login-grid-drift absolute inset-0 opacity-18" />
-            <div className="login-ambient-drift absolute right-[-6%] top-[-10%] h-56 w-56 rounded-full bg-cyan-300/12 blur-3xl" />
-            <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-cyan-300 via-sky-400 to-emerald-300" />
-          </div>
-
-          <div className="relative">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-100">
-                  Operational pulse
-                </p>
-                <h2 className="font-display text-3xl text-white">Core movement</h2>
-              </div>
-
-              <div className="rounded-full border border-white/12 bg-white/8 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100 backdrop-blur-sm">
-                {selectedPeriod?.label ?? '-'}
-              </div>
-            </div>
-
-            <div className="mt-6 flex flex-wrap gap-3">
-              {pulseStats.map((stat) => (
-                <div
-                  key={stat.label}
-                  className="rounded-full border border-white/12 bg-white/8 px-4 py-2.5 backdrop-blur-sm"
-                >
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/65">
-                    {stat.label}
-                  </p>
-                  <p className="mt-1 text-lg font-semibold text-white">{stat.value}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-8 border-t border-white/10 pt-5">
-              <div className="mb-4 flex items-center justify-between gap-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">
-                  Flow pulse
-                </p>
-                <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-100/72">
-                  <span className="inline-flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-cyan-300" />
-                    Admissions
-                  </span>
-                  <span className="inline-flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-emerald-300" />
-                    Discharges
-                  </span>
-                </div>
-              </div>
-
-              <div className="h-36">
-                {hasFlowSignal ? (
+        <div className="relative mt-8 grid gap-6 xl:grid-cols-[280px_280px_minmax(0,1fr)]">
+          <div className={cn('space-y-4', chartPanelClass)}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+              Distribution
+            </p>
+            <div className="relative h-[280px]">
+              {totalExpected ? (
+                <>
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={admissionsSeries}>
-                      <defs>
-                        <linearGradient id="dashboardPulseAdmissions" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#67e8f9" stopOpacity={0.46} />
-                          <stop offset="100%" stopColor="#67e8f9" stopOpacity={0.02} />
-                        </linearGradient>
-                        <linearGradient id="dashboardPulseDischarges" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#34d399" stopOpacity={0.32} />
-                          <stop offset="100%" stopColor="#34d399" stopOpacity={0.02} />
-                        </linearGradient>
-                      </defs>
-                      <Tooltip
-                        contentStyle={darkTooltipStyle}
-                        cursor={{ stroke: 'rgba(103,232,249,0.16)', strokeWidth: 1.5 }}
-                      />
-                      <XAxis hide dataKey="shortLabel" />
-                      <YAxis hide />
-                      <Area
-                        type="monotone"
-                        dataKey="admissions"
-                        stroke="#67e8f9"
-                        fill="url(#dashboardPulseAdmissions)"
-                        strokeWidth={2.8}
+                    <PieChart>
+                      <Pie
+                        data={statusDistribution}
+                        dataKey="count"
+                        innerRadius={74}
+                        outerRadius={108}
+                        paddingAngle={2}
+                        stroke="rgba(255,255,255,0.96)"
+                        strokeWidth={5}
                         isAnimationActive
-                        animationDuration={1100}
+                        animationDuration={1200}
                         animationEasing="ease-out"
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="discharges"
-                        stroke="#34d399"
-                        fill="url(#dashboardPulseDischarges)"
-                        strokeWidth={2.2}
-                        isAnimationActive
-                        animationDuration={1450}
-                        animationEasing="ease-out"
-                      />
-                    </AreaChart>
+                      >
+                        {statusDistribution.map((item) => (
+                          <Cell
+                            key={item.key}
+                            fill={item.fill}
+                            fillOpacity={statusFilter === 'all' || statusFilter === item.key ? 1 : 0.2}
+                          />
+                        ))}
+                      </Pie>
+                    </PieChart>
                   </ResponsiveContainer>
-                ) : (
-                  <ChartEmptyState
-                    message="No recorded flow movement for this view yet."
-                    tone="dark"
+
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                      {statusCenterLabel}
+                    </p>
+                    <AnimatedMetric
+                      value={statusFocusValue}
+                      variant="compact"
+                      className="mt-2 block font-display text-5xl leading-none text-slate-950"
+                    />
+                    <p className="mt-2 text-xs uppercase tracking-[0.22em] text-slate-400">
+                      {statusFocusRate}% of scope
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <ChartEmptyState message="No reports were scheduled for this view." />
+              )}
+            </div>
+          </div>
+
+          <div className={cn('space-y-3', chartPanelClass)}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+              Status ledger
+            </p>
+            {statusDistribution.map((item, index) => {
+              const share = formatShare(item.count, totalExpected)
+
+              return (
+                <motion.div
+                  key={item.key}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.22, ease: 'easeOut', delay: index * 0.04 }}
+                  className={cn(
+                    'grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-4 border-b border-sky-100/80 py-3 last:border-b-0 last:pb-0',
+                    statusFilter !== 'all' && statusFilter !== item.key && 'opacity-35',
+                  )}
+                >
+                  <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.fill }} />
+                  <span className="text-sm font-medium text-slate-700">{item.label}</span>
+                  <span className="text-sm text-slate-400">{share}%</span>
+                  <AnimatedMetric
+                    value={item.count}
+                    variant="compact"
+                    className="text-lg font-semibold text-slate-950"
                   />
-                )}
-              </div>
-            </div>
-          </div>
-        </motion.section>
-      </section>
-
-      <section className="grid gap-6 2xl:grid-cols-[1.35fr_0.95fr]">
-        <motion.section
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
-          className="relative overflow-hidden rounded-[2.6rem] border border-white/70 bg-[linear-gradient(160deg,rgba(255,255,255,0.94),rgba(244,249,255,0.84),rgba(237,253,249,0.72))] px-6 py-6 shadow-[0_24px_54px_-36px_rgba(15,23,42,0.22)]"
-        >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="login-ambient-drift absolute left-[-8%] top-[-12%] h-52 w-52 rounded-full bg-sky-200/16 blur-3xl" />
-            <div className="login-grid-drift absolute inset-0 opacity-20" />
-            <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-cyan-400 via-sky-500 to-blue-500" />
+                </motion.div>
+              )
+            })}
           </div>
 
-          <div className="relative space-y-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
-                  Care flow
+          <div className={cn('space-y-4', chartPanelClass)}>
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Weekly curve
                 </p>
-                <h2 className="font-display text-3xl text-slate-950 md:text-4xl">
-                  Admissions and discharges
-                </h2>
+                <h3 className="mt-2 text-2xl font-semibold text-slate-950 md:text-3xl">
+                  Delivered, open, overdue
+                </h3>
               </div>
-
-              <div className="flex flex-wrap gap-3">
-                <span className="inline-flex items-center gap-2 rounded-full bg-sky-50/90 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-700">
-                  <span className="h-2.5 w-2.5 rounded-full bg-sky-500 shadow-[0_0_0_4px_rgba(14,165,233,0.12)]" />
-                  Admissions {formatCompactNumber(latestAdmissionsPoint?.admissions ?? 0)}
-                </span>
-                <span className="inline-flex items-center gap-2 rounded-full bg-blue-50/90 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-700">
-                  <span className="h-2.5 w-2.5 rounded-full bg-blue-500 shadow-[0_0_0_4px_rgba(59,130,246,0.12)]" />
-                  Discharges {formatCompactNumber(latestAdmissionsPoint?.discharges ?? 0)}
-                </span>
-                <span className="inline-flex items-center gap-2 rounded-full bg-white/78 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600 shadow-[0_14px_24px_-20px_rgba(15,23,42,0.15)]">
-                  Balance {currentFlowBalance >= 0 ? '+' : '-'}
-                  {formatCompactNumber(Math.abs(currentFlowBalance))}
-                </span>
-                <span className="inline-flex items-center gap-2 rounded-full bg-white/78 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600 shadow-[0_14px_24px_-20px_rgba(15,23,42,0.15)]">
-                  Peak {peakFlowPoint?.shortLabel ?? '-'}
-                </span>
-              </div>
+              <AnimatedMetric
+                value={deliveryRate}
+                variant="percent"
+                className="font-display text-4xl leading-none text-slate-950"
+              />
             </div>
-
-            <div className="h-[340px]">
-              {hasFlowSignal ? (
+            <div className="h-[300px]">
+              {hasReportingTrendSignal ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={admissionsSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                  <AreaChart
+                    data={reportingTrendSeries}
+                    margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                  >
                     <defs>
-                      <linearGradient id="dashboardAdmissionsStroke" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0%" stopColor="#06b6d4" />
-                        <stop offset="55%" stopColor="#3b82f6" />
-                        <stop offset="100%" stopColor="#2563eb" />
-                      </linearGradient>
-                      <linearGradient id="dashboardDischargesStroke" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0%" stopColor="#38bdf8" />
-                        <stop offset="55%" stopColor="#60a5fa" />
-                        <stop offset="100%" stopColor="#34d399" />
+                      <linearGradient id="reportingDeliveredFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#1d4ed8" stopOpacity={0.2} />
+                        <stop offset="100%" stopColor="#1d4ed8" stopOpacity={0.02} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="4 10" stroke="#d7e6f6" vertical={false} />
+                    <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
                     <XAxis
-                      dataKey="shortLabel"
-                      tick={{ fill: '#6b7d96', fontSize: 12 }}
+                      dataKey="label"
+                      tick={chartTick}
                       axisLine={false}
                       tickLine={false}
                       tickMargin={12}
                     />
-                    <YAxis
-                      tick={{ fill: '#6b7d96', fontSize: 12 }}
-                      axisLine={false}
-                      tickLine={false}
-                      width={36}
-                    />
+                    <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
                     <Tooltip
                       contentStyle={lightTooltipStyle}
-                      cursor={{ stroke: 'rgba(59,130,246,0.12)', strokeWidth: 1.5 }}
+                      cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }}
                     />
-                    <Line
+                    <Area
                       type="monotone"
-                      dataKey="admissions"
-                      name="Admissions"
-                      stroke="url(#dashboardAdmissionsStroke)"
-                      strokeWidth={4}
-                      dot={false}
-                      activeDot={{ r: 6, fill: '#0ea5e9', strokeWidth: 0 }}
+                      dataKey="delivered"
+                      name="Delivered"
+                      stroke={grayscalePalette.ink}
+                      fill="url(#reportingDeliveredFill)"
+                      strokeWidth={3}
                       isAnimationActive
                       animationDuration={1100}
                       animationEasing="ease-out"
                     />
                     <Line
                       type="monotone"
-                      dataKey="discharges"
-                      name="Discharges"
-                      stroke="url(#dashboardDischargesStroke)"
-                      strokeWidth={3.4}
+                      dataKey="open"
+                      name="Open"
+                      stroke={grayscalePalette.steel}
+                      strokeWidth={2.5}
                       dot={false}
-                      activeDot={{ r: 5, fill: '#34d399', strokeWidth: 0 }}
                       isAnimationActive
-                      animationDuration={1450}
+                      animationDuration={1300}
                       animationEasing="ease-out"
                     />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <ChartEmptyState message="No admissions or discharges were reported in this filtered view." />
-              )}
-            </div>
-          </div>
-        </motion.section>
-
-        <motion.section
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
-          className="relative overflow-hidden rounded-[2.6rem] border border-white/10 bg-[linear-gradient(160deg,#051729_0%,#082f49_36%,#0f4c81_74%,#115e59_100%)] px-6 py-6 text-white shadow-[0_30px_58px_-32px_rgba(2,6,23,0.72)]"
-        >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="login-grid-drift absolute inset-0 opacity-18" />
-            <div className="login-ambient-drift absolute left-[-10%] top-[6%] h-52 w-52 rounded-full bg-fuchsia-400/10 blur-3xl" />
-            <div className="login-ambient-drift-reverse absolute right-[-8%] bottom-[-12%] h-52 w-52 rounded-full bg-cyan-300/10 blur-3xl" />
-            <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-rose-400 via-amber-300 to-cyan-300" />
-          </div>
-
-          <div className="relative space-y-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-100">
-                  Risk
-                </p>
-                <h2 className="font-display text-3xl text-white">Safety and no-shows</h2>
-              </div>
-
-              <div className="flex flex-wrap gap-3">
-                <span className="rounded-full border border-white/12 bg-white/8 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-100 backdrop-blur-sm">
-                  {familyLabels[familyFilter]}
-                </span>
-                <span className="inline-flex items-center gap-2 rounded-full bg-white/8 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-100/80">
-                  <span className="h-2.5 w-2.5 rounded-full bg-rose-400 shadow-[0_0_0_4px_rgba(244,63,94,0.12)]" />
-                  HAI {formatCompactNumber(latestRiskPoint?.hai ?? 0)}
-                </span>
-                <span className="inline-flex items-center gap-2 rounded-full bg-white/8 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-100/80">
-                  <span className="h-2.5 w-2.5 rounded-full bg-amber-300 shadow-[0_0_0_4px_rgba(245,158,11,0.12)]" />
-                  No-shows {formatCompactNumber(latestRiskPoint?.noShows ?? 0)}
-                </span>
-              </div>
-            </div>
-
-            <div className="h-[340px]">
-              {hasRiskSignal ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={riskSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
-                    <defs>
-                      <linearGradient id="dashboardHaiArea" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#fb7185" stopOpacity={0.42} />
-                        <stop offset="100%" stopColor="#fb7185" stopOpacity={0.02} />
-                      </linearGradient>
-                      <linearGradient id="dashboardNoShowArea" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#fbbf24" stopOpacity={0.34} />
-                        <stop offset="100%" stopColor="#fbbf24" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="4 10" stroke="rgba(186,230,253,0.12)" vertical={false} />
-                    <XAxis
-                      dataKey="shortLabel"
-                      tick={{ fill: 'rgba(224,242,254,0.72)', fontSize: 12 }}
-                      axisLine={false}
-                      tickLine={false}
-                      tickMargin={12}
-                    />
-                    <YAxis
-                      tick={{ fill: 'rgba(224,242,254,0.72)', fontSize: 12 }}
-                      axisLine={false}
-                      tickLine={false}
-                      width={32}
-                    />
-                    <Tooltip
-                      contentStyle={darkTooltipStyle}
-                      cursor={{ stroke: 'rgba(251,191,36,0.16)', strokeWidth: 1.5 }}
-                    />
-                    <Area
+                    <Line
                       type="monotone"
-                      dataKey="hai"
-                      name="HAI"
-                      stroke="#fb7185"
-                      fill="url(#dashboardHaiArea)"
-                      strokeWidth={3}
-                      isAnimationActive
-                      animationDuration={1150}
-                      animationEasing="ease-out"
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="noShows"
-                      name="No-shows"
-                      stroke="#fbbf24"
-                      fill="url(#dashboardNoShowArea)"
-                      strokeWidth={3}
+                      dataKey="overdue"
+                      name="Overdue"
+                      stroke={grayscalePalette.cloud}
+                      strokeWidth={2.4}
+                      strokeDasharray="5 6"
+                      dot={false}
                       isAnimationActive
                       animationDuration={1500}
                       animationEasing="ease-out"
@@ -931,194 +859,349 @@ export function AdminDashboardPage() {
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
-                <ChartEmptyState
-                  message="No safety or no-show spikes have been reported in this filtered view."
-                  tone="dark"
-                />
+                <ChartEmptyState message="No reporting activity has been recorded yet." />
               )}
             </div>
           </div>
-        </motion.section>
-      </section>
+        </div>
+      </motion.section>
 
-      <section className="grid gap-6 2xl:grid-cols-[1.05fr_0.95fr]">
+      {showInpatientSection ? (
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: 'easeOut' }}
-          className="relative overflow-hidden rounded-[2.6rem] border border-white/70 bg-[linear-gradient(160deg,rgba(255,255,255,0.94),rgba(244,249,255,0.84),rgba(240,252,252,0.72))] px-6 py-6 shadow-[0_24px_54px_-36px_rgba(15,23,42,0.22)]"
+          className={sectionClass}
         >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="login-grid-drift absolute inset-0 opacity-18" />
-            <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-cyan-400 via-sky-500 to-emerald-400" />
-          </div>
-
-          <div className="relative space-y-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
-                  Department ranking
+          <SectionAmbient />
+          <div className="space-y-8">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Inpatient
                 </p>
-                <h2 className="font-display text-3xl text-slate-950">Activity by service</h2>
+                <h2 className="mt-2 font-display text-3xl text-slate-950 md:text-5xl">
+                  Ward movement and occupancy
+                </h2>
               </div>
-
-              <div className="text-right">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Leading service
-                </p>
-                <p className="mt-2 text-lg font-semibold text-slate-950">
-                  {busiestDepartment?.name ?? 'No data'}
-                </p>
-                <p className="text-sm text-slate-500">
-                  {busiestDepartment
-                    ? `${formatCompactNumber(busiestDepartment.value)} ${activityMetricLabel.toLowerCase()}`
-                    : 'No activity yet'}
-                </p>
-              </div>
+              <AnimatedMetric
+                value={inpatientFlowSeries.at(-1)?.admissions ?? 0}
+                variant="compact"
+                className="font-display text-4xl leading-none text-slate-950"
+              />
             </div>
 
-            <div className="h-[340px]">
-              {hasDepartmentSignal ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    layout="vertical"
-                    data={departmentSeries}
-                    margin={{ top: 8, right: 10, left: 4, bottom: 8 }}
-                  >
-                    <CartesianGrid strokeDasharray="4 10" stroke="#d7e6f6" horizontal={false} />
-                    <XAxis
-                      type="number"
-                      tick={{ fill: '#6b7d96', fontSize: 12 }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      dataKey="name"
-                      type="category"
-                      width={118}
-                      tick={{ fill: '#475569', fontSize: 12 }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <Tooltip contentStyle={lightTooltipStyle} cursor={{ fill: 'rgba(14,165,233,0.06)' }} />
-                    <Bar
-                      dataKey="value"
-                      name={activityMetricLabel}
-                      radius={[0, 12, 12, 0]}
-                      barSize={22}
-                      isAnimationActive
-                      animationDuration={1250}
-                      animationEasing="ease-out"
-                    >
-                      {departmentSeries.map((department) => (
-                        <Cell key={department.id} fill={department.accent} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <ChartEmptyState message="No department activity has landed in this view yet." />
-              )}
+            <div className="grid gap-6 xl:grid-cols-3">
+              <div className={cn('space-y-4', chartPanelClass)}>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Admissions vs discharges
+                </h3>
+                <div className="h-[320px]">
+                  {hasInpatientFlowSignal ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={inpatientFlowSeries}
+                        margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                      >
+                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }} />
+                        <Line type="monotone" dataKey="admissions" name="Admissions" stroke={grayscalePalette.ink} strokeWidth={3.4} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                        <Line type="monotone" dataKey="discharges" name="Discharges" stroke={grayscalePalette.steel} strokeWidth={2.8} dot={false} activeDot={{ r: 5, fill: grayscalePalette.steel, strokeWidth: 0 }} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ChartEmptyState message="No inpatient admissions or discharges in this view." />
+                  )}
+                </div>
+              </div>
+
+              <div className={cn('space-y-4', chartPanelClass)}>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Deaths, pressure ulcers, HAI
+                </h3>
+                <div className="h-[320px]">
+                  {hasInpatientSafetySignal ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={inpatientSafetySeries}
+                        margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                      >
+                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ fill: 'rgba(14,165,233,0.06)' }} />
+                        <Bar dataKey="deaths" name="Deaths" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
+                        <Bar dataKey="ulcers" name="New pressure ulcers" fill={grayscalePalette.steel} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                        <Bar dataKey="hai" name="Total HAI" fill={grayscalePalette.cloud} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ChartEmptyState message="No inpatient safety events in this view." />
+                  )}
+                </div>
+              </div>
+
+              <div className={cn('space-y-4', chartPanelClass)}>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  BOR / BTR / ALOS
+                </h3>
+                <div className="h-[320px]">
+                  {hasInpatientOccupancySignal ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={inpatientOccupancySeries}
+                        margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                      >
+                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={38} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }} />
+                        <Line type="monotone" dataKey="bor" name="BOR %" stroke={grayscalePalette.ink} strokeWidth={3.2} dot={false} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                        <Line type="monotone" dataKey="btr" name="BTR" stroke={grayscalePalette.slate} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1300} animationEasing="ease-out" />
+                        <Line type="monotone" dataKey="alos" name="ALOS" stroke={grayscalePalette.cloud} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1500} animationEasing="ease-out" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ChartEmptyState message="No BOR, BTR, or ALOS data in this view." />
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </motion.section>
+      ) : null}
 
+      {showOutpatientSection ? (
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: 'easeOut' }}
-          className="relative overflow-hidden rounded-[2.6rem] border border-white/10 bg-[linear-gradient(160deg,#07152d_0%,#0b3156_42%,#0f4c81_72%,#0f766e_100%)] px-6 py-6 text-white shadow-[0_30px_58px_-32px_rgba(8,47,73,0.76)]"
+          className={sectionClass}
         >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="login-grid-drift absolute inset-0 opacity-18" />
-            <div className="login-ambient-drift absolute right-[-8%] top-[-10%] h-52 w-52 rounded-full bg-cyan-300/12 blur-3xl" />
-            <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-cyan-300 via-sky-400 to-emerald-300" />
-          </div>
+          <SectionAmbient />
+          <div className="space-y-8">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Outpatient
+                </p>
+                <h2 className="mt-2 font-display text-3xl text-slate-950 md:text-5xl">
+                  Clinic flow and access
+                </h2>
+              </div>
+              <AnimatedMetric
+                value={outpatientSeenSeries.at(-1)?.seen ?? 0}
+                variant="compact"
+                className="font-display text-4xl leading-none text-slate-950"
+              />
+            </div>
 
-          <div className="relative">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex items-start gap-4">
-                <div className="rounded-[1.4rem] border border-white/12 bg-white/8 p-3 backdrop-blur-sm">
-                  <Waves className="h-5 w-5 text-cyan-100" />
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-100">
-                    Attention
-                  </p>
-                  <h2 className="font-display text-3xl text-white">Live change signals</h2>
+            <div className="grid gap-6 xl:grid-cols-2">
+              <div className={cn('space-y-4', chartPanelClass)}>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Seen vs not seen same day
+                </h3>
+                <div className="h-[300px]">
+                  {hasOutpatientSeenSignal ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={outpatientSeenSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                        <defs>
+                          <linearGradient id="outpatientSeenFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.2} />
+                            <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }} />
+                        <Area type="monotone" dataKey="seen" name="Seen" stroke={grayscalePalette.ink} fill="url(#outpatientSeenFill)" strokeWidth={3} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                        <Line type="monotone" dataKey="notSeenSameDay" name="Not seen same day" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ChartEmptyState message="No outpatient same-day data in this view." />
+                  )}
                 </div>
               </div>
 
-              <div className="rounded-full border border-white/12 bg-white/8 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100 backdrop-blur-sm">
-                {deliveryRate}% delivered
+              <div className={cn('space-y-4', chartPanelClass)}>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Total seen, new vs follow-up
+                </h3>
+                <div className="h-[300px]">
+                  {hasOutpatientMixSignal ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart layout="vertical" data={outpatientVolumeMix} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} horizontal={false} />
+                        <XAxis type="number" tick={chartTick} axisLine={false} tickLine={false} />
+                        <YAxis dataKey="name" type="category" width={110} tick={{ fill: '#475569', fontSize: 12 }} axisLine={false} tickLine={false} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ fill: 'rgba(14,165,233,0.06)' }} />
+                        <Bar dataKey="newPatients" name="New" stackId="outpatientMix" fill={grayscalePalette.ink} radius={[0, 0, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                        <Bar dataKey="followUp" name="Follow-up" stackId="outpatientMix" fill={grayscalePalette.cloud} radius={[0, 10, 10, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ChartEmptyState message="No outpatient clinic volume in this view." />
+                  )}
+                </div>
               </div>
             </div>
 
-            <div className="mt-8 grid gap-4 sm:grid-cols-3">
-              <div className="border-t border-white/12 pt-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/72">
-                  Missing
-                </p>
-                <p className="mt-2 text-3xl font-semibold text-white">
-                  {formatCompactNumber(summary.current.missing)}
-                </p>
-              </div>
-              <div className="border-t border-white/12 pt-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/72">
-                  Locked
-                </p>
-                <p className="mt-2 text-3xl font-semibold text-white">
-                  {formatCompactNumber(summary.current.locked)}
-                </p>
-              </div>
-              <div className="border-t border-white/12 pt-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/72">
-                  Edited
-                </p>
-                <p className="mt-2 text-3xl font-semibold text-white">
-                  {formatCompactNumber(summary.current.editedAfterSubmission)}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-8 border-t border-white/10 pt-5">
-              <div className="mb-4 flex items-center gap-3">
-                <ShieldAlert className="h-5 w-5 text-cyan-100" />
-                <p className="text-sm font-semibold text-white">Signals</p>
+            <div className="grid gap-6 border-t border-white/60 pt-8 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_280px]">
+              <div className={cn('space-y-4', chartPanelClass)}>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Follow-up wait time trend
+                </h3>
+                <div className="h-[260px]">
+                  {hasFollowUpWaitSignal ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={outpatientFollowUpWaitSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }} />
+                        <Line type="monotone" dataKey="wait" name="Follow-up wait (months)" stroke={grayscalePalette.ink} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ChartEmptyState message="No follow-up wait data in this view." />
+                  )}
+                </div>
               </div>
 
-              <div className="space-y-4">
-                {insightItems.length ? (
-                  insightItems.map((item, index) => (
-                    <motion.div
-                      key={`${item}-${index}`}
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.22, ease: 'easeOut', delay: index * 0.03 }}
-                      className="border-t border-white/10 pt-4 first:border-t-0 first:pt-0"
-                    >
-                      <div className="flex gap-3 text-sm leading-7 text-cyan-50/88">
-                        <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-cyan-300 login-dot-blink" />
-                        <span>{item}</span>
-                      </div>
-                    </motion.div>
-                  ))
-                ) : (
-                  <p className="text-sm leading-7 text-cyan-50/78">
-                    No material shifts crossed the configured thresholds this week.
-                  </p>
-                )}
+              <div className={cn('space-y-4', chartPanelClass)}>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Clinic start time trend
+                </h3>
+                <div className="h-[260px]">
+                  {hasClinicStartSignal ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={outpatientClinicStartSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                        <YAxis tickFormatter={formatMinutesAsTime} tick={chartTick} axisLine={false} tickLine={false} width={44} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }} formatter={(value) => [formatMinutesAsTime(Number(value)), 'Start time']} />
+                        <Line type="monotone" dataKey="startMinutes" name="Clinic start" stroke={grayscalePalette.steel} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.steel, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ChartEmptyState message="No clinic start time data in this view." />
+                  )}
+                </div>
+              </div>
+
+              <div className={cn('space-y-4', chartPanelClass)}>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Senior physician availability
+                </h3>
+                <div className="h-[260px]">
+                  {hasAvailabilitySignal ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={outpatientAvailability} margin={{ top: 8, right: 8, left: -12, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} interval={0} tickMargin={12} />
+                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={28} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ fill: 'rgba(14,165,233,0.06)' }} />
+                        <Bar dataKey="value" radius={[10, 10, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
+                          {outpatientAvailability.map((item) => (
+                            <Cell key={item.label} fill={item.fill} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ChartEmptyState message="No physician availability data in this view." />
+                  )}
+                </div>
               </div>
             </div>
           </div>
         </motion.section>
-      </section>
+      ) : null}
 
-      <SubmissionBoardGrid
-        title="Reporting runway"
-        description="Current week first, then prior weeks."
-        rows={boardRows}
-      />
+      {showProcedureSection ? (
+        <motion.section
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, ease: 'easeOut' }}
+          className={sectionClass}
+        >
+          <SectionAmbient />
+          <div className="space-y-8">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Procedure
+                </p>
+                <h2 className="mt-2 font-display text-3xl text-slate-950 md:text-5xl">
+                  Lab and endoscopy totals
+                </h2>
+              </div>
+              <AnimatedMetric
+                value={procedureTotals.reduce((sum, item) => sum + item.value, 0)}
+                variant="compact"
+                className="font-display text-4xl leading-none text-slate-950"
+              />
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
+              <div className={cn('space-y-4', chartPanelClass)}>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Echo, ECG, EEG, endoscopy
+                </h3>
+                <div className="h-[300px]">
+                  {hasProcedureSignal ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={procedureTotals} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ fill: 'rgba(14,165,233,0.06)' }} />
+                        <Bar dataKey="value" radius={[12, 12, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
+                          {procedureTotals.map((item) => (
+                            <Cell key={item.label} fill={item.fill} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ChartEmptyState message="No procedure totals in this view." />
+                  )}
+                </div>
+              </div>
+
+              <div className={cn('space-y-4', chartPanelClass)}>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  UGI, colonoscopy, bronchoscopy, ligation
+                </h3>
+                <div className="h-[300px]">
+                  {hasEndoscopyMixSignal ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={endoscopyMix} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ fill: 'rgba(14,165,233,0.06)' }} />
+                        <Bar dataKey="value" radius={[12, 12, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
+                          {endoscopyMix.map((item) => (
+                            <Cell key={item.label} fill={item.fill} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ChartEmptyState message="No endoscopy mix in this view." />
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </motion.section>
+      ) : null}
+
     </div>
   )
 }

@@ -305,7 +305,8 @@ a {
 }
 
 .login-reveal {
-  opacity: 0;
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
   animation: login-reveal-up 900ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
   will-change: transform, opacity;
 }
