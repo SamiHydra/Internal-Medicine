@@ -1,6 +1,7 @@
 import type { AppSettings, AppState } from '@/types/domain'
 
 export const defaultAppSettings: AppSettings = {
+  deadlineEnforced: true,
   weeklyDeadlineDay: 'monday',
   weeklyDeadlineTime: '10:00',
   autoLockHoursAfterDeadline: 36,

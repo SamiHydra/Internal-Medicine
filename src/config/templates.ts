@@ -575,10 +575,15 @@ export const reportTemplates: ReportTemplateConfig[] = [
     family: 'procedure',
     name: 'Renal Procedures',
     description: 'Weekly renal diagnostic and intervention throughput reporting.',
-    activeDays: weekdaysClinic,
+    activeDays: weekdaysAll,
     sections: procedureSections,
     fields: [
       numericField('elective_renal_biopsy', 'Total Number of Patients Who have Elective Renal Biopsy', 'throughput'),
+      numericField(
+        'central_venous_catheter_insertion',
+        'Total Number of patients with Central Venous Catheter insertion',
+        'throughput',
+      ),
       decimalAverageField('elective_renal_biopsy_wait', 'Average Waiting Time for Elective Renal Biopsy', 'turnaround', 'days'),
       numericField('hd_acute', 'Total Number of Patients Who have Haemodialysis for Acute Renal Failure', 'throughput'),
       numericField('hd_chronic', 'Total Number of Patients Who have Haemodialysis for Chronic Renal Failure', 'throughput'),
@@ -586,6 +591,13 @@ export const reportTemplates: ReportTemplateConfig[] = [
     ],
     summaryCards: [
       { id: 'elective_renal_biopsy', label: 'Renal Biopsy', sourceType: 'field', sourceId: 'elective_renal_biopsy', format: 'integer' },
+      {
+        id: 'central_venous_catheter_insertion',
+        label: 'CVC Inserts',
+        sourceType: 'field',
+        sourceId: 'central_venous_catheter_insertion',
+        format: 'integer',
+      },
       { id: 'hd_chronic', label: 'HD Chronic', sourceType: 'field', sourceId: 'hd_chronic', format: 'integer' },
       { id: 'elective_renal_biopsy_wait', label: 'Wait Time', sourceType: 'field', sourceId: 'elective_renal_biopsy_wait', format: 'days' },
     ],
@@ -596,6 +608,12 @@ export const reportTemplates: ReportTemplateConfig[] = [
         chartType: 'stacked-bar',
         series: [
           { sourceType: 'field', sourceId: 'elective_renal_biopsy', label: 'Biopsy', color: '#0f8ea8' },
+          {
+            sourceType: 'field',
+            sourceId: 'central_venous_catheter_insertion',
+            label: 'CVC',
+            color: '#446b95',
+          },
           { sourceType: 'field', sourceId: 'hd_acute', label: 'HD Acute', color: '#1a5f7a' },
           { sourceType: 'field', sourceId: 'hd_chronic', label: 'HD Chronic', color: '#0f766e' },
         ],

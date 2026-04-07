@@ -75,57 +75,49 @@ const notificationMeta: Record<
     icon: typeof Bell
     iconTone: string
     chipTone: string
-    unreadTone: string
   }
 > = {
   new_report_submitted: {
     label: 'Submitted',
     icon: CheckCircle2,
-    iconTone: 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-100/90',
-    chipTone: 'bg-cyan-50 text-cyan-800',
-    unreadTone: 'before:bg-cyan-400',
+    iconTone: 'bg-[#edf4fb] text-[#005db6]',
+    chipTone: 'border-[#cfe0f4] bg-[#edf4fb] text-[#005db6]',
   },
   submitted_report_edited: {
     label: 'Edited',
     icon: PencilLine,
-    iconTone: 'bg-amber-50 text-amber-700 ring-1 ring-amber-100/90',
-    chipTone: 'bg-amber-50 text-amber-800',
-    unreadTone: 'before:bg-amber-400',
+    iconTone: 'bg-[#fbf4e6] text-[#8a5a00]',
+    chipTone: 'border-[#f0d9aa] bg-[#fbf4e6] text-[#8a5a00]',
   },
   report_locked: {
     label: 'Locked',
     icon: FileLock2,
-    iconTone: 'bg-slate-100 text-slate-700 ring-1 ring-slate-200/90',
-    chipTone: 'bg-slate-100 text-slate-700',
-    unreadTone: 'before:bg-slate-500',
+    iconTone: 'bg-[#edf1f5] text-[#1d3047]',
+    chipTone: 'border-[#d4dde8] bg-[#edf1f5] text-[#1d3047]',
   },
   report_unlocked: {
     label: 'Unlocked',
     icon: ShieldAlert,
-    iconTone: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100/90',
-    chipTone: 'bg-emerald-50 text-emerald-800',
-    unreadTone: 'before:bg-emerald-400',
+    iconTone: 'bg-[#edf7f0] text-[#1f6b3b]',
+    chipTone: 'border-[#cfe7d9] bg-[#edf7f0] text-[#1f6b3b]',
   },
   overdue_report: {
     label: 'Overdue',
     icon: TriangleAlert,
-    iconTone: 'bg-rose-50 text-rose-700 ring-1 ring-rose-100/90',
-    chipTone: 'bg-rose-50 text-rose-800',
-    unreadTone: 'before:bg-rose-500',
+    iconTone: 'bg-[#fff1f1] text-[#9d2a2a]',
+    chipTone: 'border-[#f1d1d1] bg-[#fff1f1] text-[#9d2a2a]',
   },
   nurse_access_request: {
     label: 'Access request',
     icon: UserRoundPlus,
-    iconTone: 'bg-sky-50 text-sky-700 ring-1 ring-sky-100/90',
-    chipTone: 'bg-sky-50 text-sky-800',
-    unreadTone: 'before:bg-sky-500',
+    iconTone: 'bg-[#edf4fb] text-[#005db6]',
+    chipTone: 'border-[#cfe0f4] bg-[#edf4fb] text-[#005db6]',
   },
   access_request_reviewed: {
     label: 'Reviewed',
     icon: CheckCheck,
-    iconTone: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100/90',
-    chipTone: 'bg-emerald-50 text-emerald-800',
-    unreadTone: 'before:bg-emerald-400',
+    iconTone: 'bg-[#edf7f0] text-[#1f6b3b]',
+    chipTone: 'border-[#cfe7d9] bg-[#edf7f0] text-[#1f6b3b]',
   },
 }
 
@@ -161,23 +153,53 @@ export function NotificationsPage() {
   const restoreSnapshot = lastClearedNotifications.filter(
     (notification) => notification.userId === currentUserId,
   )
-  const hasRestoreSnapshot = restoreSnapshot.length > 0
-  const isEmptyInbox = !notifications.length
-
-  useEffect(() => {
-    if (!restoreSnapshot.length) {
-      return
-    }
-
-    const restored = restoreSnapshot.every((notification) =>
+  const restoreSnapshotAlreadyApplied =
+    restoreSnapshot.length > 0 &&
+    restoreSnapshot.every((notification) =>
       state.notifications.some((entry) => entry.id === notification.id),
     )
+  const effectiveRestoreSnapshot = restoreSnapshotAlreadyApplied ? [] : restoreSnapshot
+  const hasRestoreSnapshot = effectiveRestoreSnapshot.length > 0
+  const isEmptyInbox = !notifications.length
+  const summaryItems = [
+    {
+      label: 'Unread',
+      value: String(unreadCount),
+      note: unreadCount ? 'Needs review' : 'All caught up',
+      icon: Bell,
+      tone: 'text-[#005db6] bg-[#edf4fb] outline-[#cfe0f4]/75',
+    },
+    {
+      label: 'Total',
+      value: String(totalCount),
+      note: totalCount ? 'Current inbox' : 'No items',
+      icon: CheckCheck,
+      tone: 'text-[#1d3047] bg-[#edf1f5] outline-[#d4dde8]/75',
+    },
+    {
+      label: 'Latest',
+      value: latestNotification ? formatTimestamp(latestNotification.createdAt) : 'No items',
+      note: latestNotification ? latestNotification.title : 'Inbox clear',
+      icon: History,
+      tone: 'text-[#00468c] bg-[#edf4fb] outline-[#cfe0f4]/75',
+    },
+    {
+      label: 'Restore',
+      value: hasRestoreSnapshot ? 'Available' : 'Clear',
+      note: hasRestoreSnapshot
+        ? `${effectiveRestoreSnapshot.length} items ready`
+        : 'No cleared snapshot',
+      icon: RotateCcw,
+      tone: 'text-[#8a5a00] bg-[#fcf5e8] outline-[#edd9b0]/75',
+    },
+  ] as const
 
-    if (restored) {
-      setLastClearedNotifications([])
-      writeClearedNotificationsSnapshot([])
+  useEffect(() => {
+    if (!restoreSnapshotAlreadyApplied) {
+      return
     }
-  }, [restoreSnapshot, state.notifications])
+    writeClearedNotificationsSnapshot([])
+  }, [restoreSnapshotAlreadyApplied])
 
   useEffect(() => {
     if (isEmptyInbox) {
@@ -208,7 +230,7 @@ export function NotificationsPage() {
 
   const restoreLastClear = () => {
     scrollNotificationsToTop()
-    return void restoreNotifications(restoreSnapshot)
+    return void restoreNotifications(effectiveRestoreSnapshot)
   }
 
   if (!currentUser) {
@@ -216,185 +238,104 @@ export function NotificationsPage() {
   }
 
   return (
-    <div className="space-y-5">
-      <section className="relative overflow-hidden px-2 py-4 md:px-4">
-        <div className="pointer-events-none absolute inset-0">
-          <div className="login-grid-drift absolute inset-0 opacity-50" />
-          <div className="login-ambient-drift absolute left-[-4%] top-[8%] h-44 w-44 rounded-full bg-white/56 blur-3xl md:h-56 md:w-56" />
-          <div className="login-ambient-drift-reverse absolute right-[6%] top-[8%] h-64 w-64 rounded-full bg-sky-200/32 blur-3xl" />
-          <div className="login-ambient-drift absolute bottom-[8%] left-[18%] h-56 w-56 rounded-full bg-teal-200/18 blur-3xl" />
-          <div className="login-ring-orbit absolute right-[12%] top-[18%] h-24 w-24 rounded-full border border-sky-200/40" />
-          <div className="login-line-flow absolute bottom-[18%] right-[10%] h-px w-32 bg-gradient-to-r from-transparent via-sky-300/65 to-transparent" />
-        </div>
-
-        <div className="relative grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-end">
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="max-w-[760px] space-y-4"
-          >
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/72 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-700 shadow-[0_14px_30px_-24px_rgba(14,165,233,0.55)] backdrop-blur-sm">
-              <span className="h-2 w-2 rounded-full bg-sky-500" />
-              Notifications
-            </div>
-
-            <div className="space-y-0">
-              <h1 className="font-display max-w-[8ch] text-5xl font-semibold leading-[0.9] tracking-tight text-slate-950 md:text-[5.6rem] xl:text-[6.2rem]">
+    <div className="space-y-8">
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.26, ease: 'easeOut' }}
+        className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5 md:px-6"
+      >
+        <div className="space-y-5">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
+                Notifications
+              </p>
+              <h1 className="font-display text-[2rem] leading-[0.96] tracking-[-0.03em] text-[#000a1e] md:text-[2.35rem]">
                 Notification center
               </h1>
-              <p className="pt-5 text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 md:pt-6 md:text-[0.8rem]">
-                Unread first / current inbox
-              </p>
             </div>
 
-            <div className="flex flex-wrap gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              <span className="login-chip-float rounded-full border border-white/70 bg-white/55 px-3 py-2 backdrop-blur-sm">
-                {unreadCount ? `${unreadCount} unread` : 'All caught up'}
-              </span>
-              <span
-                className="login-chip-float rounded-full border border-white/70 bg-white/55 px-3 py-2 backdrop-blur-sm"
-                style={{ animationDelay: '700ms' }}
-              >
-                {totalCount} total
-              </span>
-              {hasRestoreSnapshot ? (
-                <span
-                  className="login-chip-float rounded-full border border-white/70 bg-white/55 px-3 py-2 backdrop-blur-sm"
-                  style={{ animationDelay: '1400ms' }}
+            <div className="flex flex-wrap gap-3">
+              {unreadCount ? (
+                <Button
+                  variant="secondary"
+                  className="bg-[none] bg-[#ffffff] shadow-none"
+                  onClick={markAllRead}
                 >
-                  Restore available
-                </span>
+                  <CheckCheck className="h-4 w-4" />
+                  Mark all read
+                </Button>
               ) : null}
+              {hasRestoreSnapshot ? (
+                <Button
+                  variant="secondary"
+                  className="bg-[none] bg-[#ffffff] shadow-none"
+                  onClick={restoreLastClear}
+                >
+                  <History className="h-4 w-4" />
+                  Restore last clear
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                className="border-[#f1d1d1] bg-[#ffffff] text-[#9d2a2a] hover:bg-[#fff1f1]"
+                onClick={clearAll}
+                disabled={!notifications.length}
+              >
+                <Trash2 className="h-4 w-4" />
+                Clear inbox
+              </Button>
             </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 22 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.08 }}
-            className="grid gap-4 rounded-[2rem] border border-white/65 bg-white/44 p-5 shadow-[0_24px_55px_-34px_rgba(15,23,42,0.2)] backdrop-blur-md xl:justify-self-end"
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1 border-b border-white/70 pb-4 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Unread
-                </p>
-                <p className="mt-2 font-display text-4xl leading-none text-slate-950">
-                  {unreadCount}
-                </p>
-              </div>
-              <div className="space-y-1 border-b border-white/70 pb-4 sm:border-b-0 sm:pb-0 sm:pl-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Total
-                </p>
-                <p className="mt-2 font-display text-4xl leading-none text-slate-950">
-                  {totalCount}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 border-t border-white/70 pt-4 sm:grid-cols-2">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Latest
-                </p>
-                <p className="mt-2 text-sm font-medium leading-6 text-slate-700">
-                  {latestNotification
-                    ? formatTimestamp(latestNotification.createdAt)
-                    : hasRestoreSnapshot
-                      ? 'Restore ready'
-                      : 'No items'}
-                </p>
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  State
-                </p>
-                <p className="mt-2 text-sm font-medium leading-6 text-slate-700">
-                  {unreadCount ? 'Needs review' : hasRestoreSnapshot ? 'Restorable' : 'Clear'}
-                </p>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      </section>
-
-      <motion.section
-        initial={{ opacity: 0, y: 14 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-[2rem] border border-white/70 bg-[linear-gradient(135deg,rgba(255,255,255,0.82),rgba(244,249,255,0.76),rgba(235,253,248,0.62))] px-5 py-5 shadow-[0_20px_42px_-34px_rgba(15,23,42,0.18)] backdrop-blur-md"
-      >
-        <div className="pointer-events-none absolute inset-0">
-          <div className="login-ambient-drift absolute right-[12%] top-[-24%] h-32 w-32 rounded-full bg-sky-200/18 blur-3xl" />
-          <div className="login-line-flow absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/70 to-transparent" />
-        </div>
-
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-slate-700">
-              {unreadCount
-                ? `${unreadCount} unread updates.`
-                : notifications.length
-                  ? 'All notifications are read.'
-                  : hasRestoreSnapshot
-                    ? 'Inbox cleared. Restore is ready.'
-                    : 'Inbox empty.'}
-            </p>
-            <p className="text-sm text-slate-500">
-              {notifications.length
-                ? 'Newest items stay at the top.'
-                : hasRestoreSnapshot
-                  ? 'Use restore if you cleared something by mistake.'
-                  : 'New updates will appear here.'}
-            </p>
           </div>
-          <div className="flex flex-wrap gap-3">
-            {unreadCount ? (
-              <Button variant="secondary" onClick={markAllRead}>
-                <CheckCheck className="h-4 w-4" />
-                Mark all read
-              </Button>
-            ) : null}
-            <Button
-              variant="outline"
-              className="border-rose-200/80 text-rose-700 hover:border-rose-300 hover:bg-rose-50/80"
-              onClick={clearAll}
-              disabled={!notifications.length}
-            >
-              <Trash2 className="h-4 w-4" />
-              Clear inbox
-            </Button>
-            {hasRestoreSnapshot ? (
-              <Button variant="secondary" onClick={restoreLastClear}>
-                <History className="h-4 w-4" />
-                Restore last clear
-              </Button>
-            ) : null}
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {summaryItems.map((item) => {
+              const Icon = item.icon
+
+              return (
+                <div
+                  key={item.label}
+                  className={`rounded-[0.35rem] px-3.5 py-3 outline outline-1 ${item.tone}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Icon className="h-3.5 w-3.5" />
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">
+                      {item.label}
+                    </p>
+                  </div>
+                  <p className="mt-3 break-words font-display text-[1.3rem] leading-[1.08] tracking-[-0.03em]">
+                    {item.value}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-current/75">{item.note}</p>
+                </div>
+              )
+            })}
           </div>
         </div>
       </motion.section>
 
-      {notifications.length ? (
-        <motion.section
-          key="notifications-list"
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="relative overflow-hidden rounded-[2.4rem] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(242,248,255,0.84))] px-5 py-6 shadow-[0_24px_54px_-36px_rgba(15,23,42,0.22)]"
-        >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="login-grid-drift absolute inset-0 opacity-12" />
-            <div className="login-ambient-drift absolute right-[-4%] top-[-12%] h-44 w-44 rounded-full bg-sky-200/12 blur-3xl" />
-            <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-cyan-400 via-sky-500 to-emerald-400" />
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: 'easeOut' }}
+        className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-6"
+      >
+        <div className="space-y-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+                Inbox
+              </p>
+              <h2 className="font-display text-[1.85rem] text-[#000a1e]">Recent activity</h2>
+            </div>
+            <div className="inline-flex items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-[#ffffff] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#44474e]">
+              <Bell className="h-4 w-4 text-[#005db6]" />
+              {unreadCount ? `${unreadCount} unread` : `${totalCount} total`}
+            </div>
           </div>
 
-          <div className="relative space-y-5">
-            <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
-                Notification center
-              </p>
-              <p className="text-sm text-slate-500">Unread first.</p>
-            </div>
-
+          {notifications.length ? (
             <div className="space-y-3">
               {notifications.map((notification, index) => {
                 const meta = notificationMeta[notification.type]
@@ -404,9 +345,9 @@ export function NotificationsPage() {
                 return (
                   <motion.div
                     key={notification.id}
-                    initial={{ opacity: 0, y: 12 }}
+                    initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.03 }}
+                    transition={{ duration: 0.22, ease: 'easeOut', delay: index * 0.02 }}
                   >
                     <Link
                       to={notification.relatedRoute}
@@ -416,20 +357,16 @@ export function NotificationsPage() {
                         }
                       }}
                       className={cn(
-                        'group relative block overflow-hidden rounded-[1.7rem] border px-5 py-5 transition-all duration-300',
-                        'before:absolute before:bottom-5 before:left-0 before:top-5 before:w-1 before:rounded-full before:content-[""]',
+                        'group block rounded-[0.35rem] border p-5 transition-colors duration-200',
                         isUnread
-                          ? cn(
-                              'border-cyan-200/75 bg-[linear-gradient(145deg,rgba(255,255,255,0.94),rgba(241,249,255,0.9),rgba(236,253,248,0.72))] shadow-[0_18px_34px_-26px_rgba(14,165,233,0.24)] hover:-translate-y-0.5 hover:shadow-[0_22px_38px_-28px_rgba(14,165,233,0.28)]',
-                              meta.unreadTone,
-                            )
-                          : 'border-slate-200/75 bg-white/82 hover:border-sky-200/75 hover:bg-white/92',
+                          ? 'border-[#cfe0f4] bg-[#f8fbff] hover:border-[#b8cfe9]'
+                          : 'border-[#d4dde8] bg-[#ffffff] hover:border-[#c4d0dd] hover:bg-[#fbfcfd]',
                       )}
                     >
-                      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[44px_minmax(0,1fr)_170px] lg:items-start">
+                      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[40px_minmax(0,1fr)_170px] lg:items-start">
                         <div
                           className={cn(
-                            'flex h-11 w-11 items-center justify-center rounded-[1.1rem] shadow-[0_14px_24px_-18px_rgba(15,23,42,0.18)]',
+                            'flex h-10 w-10 items-center justify-center rounded-[0.25rem]',
                             meta.iconTone,
                           )}
                         >
@@ -440,36 +377,36 @@ export function NotificationsPage() {
                           <div className="flex flex-wrap items-center gap-2">
                             <span
                               className={cn(
-                                'rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]',
+                                'rounded-[0.25rem] border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em]',
                                 meta.chipTone,
                               )}
                             >
                               {meta.label}
                             </span>
                             {isUnread ? (
-                              <span className="rounded-full bg-slate-950 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white">
+                              <span className="rounded-[0.25rem] border border-[#000a1e] bg-[#000a1e] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-white">
                                 Unread
                               </span>
                             ) : null}
                           </div>
-                          <p className="text-base font-semibold text-slate-950">
+                          <p className="text-base font-semibold text-[#000a1e]">
                             {notification.title}
                           </p>
-                          <p className="max-w-3xl text-sm leading-6 text-slate-600">
+                          <p className="max-w-3xl text-sm leading-6 text-[#44474e]">
                             {notification.message}
                           </p>
                         </div>
 
                         <div className="flex items-center justify-between gap-4 lg:flex-col lg:items-end lg:text-right">
                           <div className="space-y-1">
-                            <p className="text-sm font-medium text-slate-700">
+                            <p className="text-sm font-medium text-[#1d3047]">
                               {formatTimestamp(notification.createdAt)}
                             </p>
-                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                            <p className="text-xs uppercase tracking-[0.18em] text-[#74777f]">
                               {notification.readAt ? 'Read' : 'Unread'}
                             </p>
                           </div>
-                          <span className="inline-flex items-center gap-1 text-sm font-medium text-sky-700 transition-transform duration-300 group-hover:translate-x-0.5">
+                          <span className="inline-flex items-center gap-1 text-sm font-medium text-[#005db6] transition-transform duration-200 group-hover:translate-x-0.5">
                             Open
                             <ChevronRight className="h-4 w-4" />
                           </span>
@@ -480,47 +417,28 @@ export function NotificationsPage() {
                 )
               })}
             </div>
-          </div>
-        </motion.section>
-      ) : (
-        <motion.section
-          key="notifications-empty"
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="relative overflow-hidden rounded-[2rem] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(242,248,255,0.84))] px-5 py-5 shadow-[0_20px_42px_-34px_rgba(15,23,42,0.18)]"
-        >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="login-ambient-drift absolute right-[12%] top-[-30%] h-28 w-28 rounded-full bg-sky-200/14 blur-3xl" />
-            <div className="login-line-flow absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/70 to-transparent" />
-          </div>
-
-          <div className="relative flex flex-col gap-4 rounded-[1.7rem] border border-dashed border-sky-100/90 bg-white/68 px-6 py-8 text-center text-slate-500 md:flex-row md:items-center md:justify-between md:text-left">
-            <div className="flex items-center justify-center md:justify-start">
-              <div className="flex h-11 w-11 items-center justify-center rounded-[1rem] bg-sky-50 text-sky-600 ring-1 ring-sky-100/90">
-                <Bell className="h-5 w-5" />
-              </div>
-            </div>
-
-            <div className="min-w-0 flex-1 space-y-2">
-              <p className="text-sm font-medium text-slate-700">No notifications.</p>
-              <p className="text-sm leading-6 text-slate-500">
+          ) : (
+            <div className="flex min-h-[180px] flex-col items-center justify-center gap-3 rounded-[0.5rem] border border-dashed border-[#d4dde8] bg-[#ffffff] px-6 text-center text-[#74777f]">
+              <Bell className="h-5 w-5 text-[#005db6]" />
+              <p className="text-sm leading-6">
                 {hasRestoreSnapshot
                   ? 'Your last cleared notifications can still be restored.'
                   : 'New updates will appear here.'}
               </p>
-            </div>
-
-            <div className="flex justify-center md:justify-end">
               {hasRestoreSnapshot ? (
-                <Button variant="secondary" onClick={restoreLastClear}>
+                <Button
+                  variant="secondary"
+                  className="bg-[none] bg-[#ffffff] shadow-none"
+                  onClick={restoreLastClear}
+                >
                   <RotateCcw className="h-4 w-4" />
                   Restore last clear
                 </Button>
               ) : null}
             </div>
-          </div>
-        </motion.section>
-      )}
+          )}
+        </div>
+      </motion.section>
     </div>
   )
 }

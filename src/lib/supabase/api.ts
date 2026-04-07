@@ -9,6 +9,7 @@ import {
   createEmptyAppState,
   defaultAppSettings,
 } from '@/lib/app-state'
+import { createEphemeralSupabaseClient } from '@/lib/supabase/client'
 import type {
   AccessRequest,
   AppSettings,
@@ -26,11 +27,14 @@ type CurrentProfileRow = {
   id: string
   role_key: UserRole
   email: string
+  username: string | null
   full_name: string
   title: string | null
   active: boolean
   phone: string | null
 }
+
+type LegacyCurrentProfileRow = Omit<CurrentProfileRow, 'username'>
 
 type TemplateRow = {
   id: string
@@ -183,11 +187,40 @@ export type AccessRequestPayload = {
   notes?: string
 }
 
+export type ClaimSuperadminPayload = {
+  fullName: string
+  username: string
+  email: string
+  password: string
+}
+
+export type ClaimSuperadminResult = {
+  currentEmail: string
+  pendingEmail: string | null
+}
+
+export type CreateAdminAccountPayload = {
+  fullName: string
+  username: string
+  email: string
+  password: string
+  role: Extract<UserRole, 'admin' | 'doctor_admin'>
+  title?: string
+}
+
 export type SupabaseReferenceState = {
   departmentDbIdBySlug: Record<string, string>
   templateDbIdBySlug: Record<string, string>
   templateDbIdByDepartmentSlug: Record<string, string>
 }
+
+export type LiveAppStateLoadOptions = {
+  includeProfiles?: boolean
+  includeAccessRequests?: boolean
+  includeHistory?: boolean
+}
+
+export type ReportDetailRecord = Pick<ReportRecord, 'values' | 'calculatedMetrics'>
 
 export function createEmptyReferenceState(): SupabaseReferenceState {
   return {
@@ -195,6 +228,76 @@ export function createEmptyReferenceState(): SupabaseReferenceState {
     templateDbIdBySlug: {},
     templateDbIdByDepartmentSlug: {},
   }
+}
+
+export function isAdminRole(role: UserRole) {
+  return role === 'superadmin' || role === 'admin' || role === 'doctor_admin'
+}
+
+function hasMissingUsernameColumnError(error: unknown) {
+  if (typeof error !== 'object' || !error || !('message' in error)) {
+    return false
+  }
+
+  const message = error.message
+  return (
+    typeof message === 'string' &&
+    /username/i.test(message) &&
+    (/schema cache/i.test(message) || /column/i.test(message))
+  )
+}
+
+async function selectProfileRows(
+  client: SupabaseClient,
+  options?: {
+    userId?: string
+    orderByName?: boolean
+    single?: boolean
+  },
+) {
+  const withUsernameColumns = 'id, role_key, email, username, full_name, title, active, phone'
+  const legacyColumns = 'id, role_key, email, full_name, title, active, phone'
+
+  const buildQuery = (columns: string) => {
+    let query = client.from('profiles').select(columns)
+
+    if (options?.userId) {
+      query = query.eq('id', options.userId)
+    }
+
+    if (options?.orderByName) {
+      query = query.order('full_name')
+    }
+
+    return options?.single ? query.maybeSingle() : query
+  }
+
+  const response = await buildQuery(withUsernameColumns)
+
+  if (response.error && hasMissingUsernameColumnError(response.error)) {
+    const fallbackResponse = await buildQuery(legacyColumns)
+
+    if (fallbackResponse.error) {
+      return fallbackResponse
+    }
+
+    if (options?.single) {
+      const row = fallbackResponse.data as unknown as LegacyCurrentProfileRow | null
+      return {
+        data: row ? { ...row, username: null } : null,
+        error: null,
+      }
+    }
+
+    const rows = (fallbackResponse.data ?? []) as unknown as LegacyCurrentProfileRow[]
+
+    return {
+      data: rows.map((row) => ({ ...row, username: null })),
+      error: null,
+    }
+  }
+
+  return response
 }
 
 function toIsoDate(dateValue: string) {
@@ -205,7 +308,7 @@ function formatPeriodLabel(weekStart: string, weekEnd: string) {
   return `${format(parseISO(toIsoDate(weekStart)), 'MMM d')} - ${format(parseISO(toIsoDate(weekEnd)), 'MMM d, yyyy')}`
 }
 
-const liveReportingStartDate = new Date('2026-03-30T00:00:00.000Z')
+const liveReportingStartDate = new Date('2026-03-02T00:00:00.000Z')
 
 function getCurrentReportingPeriodId(rows: ReportingPeriodRow[]) {
   if (!rows.length) {
@@ -283,16 +386,55 @@ function mapProfileRow(row: CurrentProfileRow): UserProfile {
     id: row.id,
     fullName: row.full_name,
     email: row.email,
+    username: row.username ?? undefined,
     role: row.role_key,
     title:
       row.title ??
-      (row.role_key === 'admin'
+      (row.role_key === 'superadmin'
+        ? 'Super Administrator'
+        : row.role_key === 'admin'
         ? 'Administrator'
         : row.role_key === 'doctor_admin'
           ? 'Clinical Director'
           : 'Nurse'),
     active: row.active,
     phone: row.phone ?? undefined,
+  }
+}
+
+export async function fetchCurrentUserProfile(
+  client: SupabaseClient,
+  userId: string,
+) {
+  const currentProfileResponse = await selectProfileRows(client, {
+    userId,
+    single: true,
+  })
+
+  if (currentProfileResponse.error) {
+    throw new Error(
+      getErrorMessage(
+        currentProfileResponse.error,
+        'Unable to load the signed-in profile.',
+      ),
+    )
+  }
+
+  if (!currentProfileResponse.data) {
+    throw new Error(
+      'No profile record exists for this auth user. Apply the migrations and create the profile row before signing in.',
+    )
+  }
+
+  const currentUser = mapProfileRow(currentProfileResponse.data as CurrentProfileRow)
+
+  if (!currentUser.active) {
+    throw new Error('This account is inactive. Contact an administrator.')
+  }
+
+  return {
+    currentUser,
+    profileRow: currentProfileResponse.data as CurrentProfileRow,
   }
 }
 
@@ -336,6 +478,12 @@ function parseSettings(rows: SettingRow[]): AppSettings {
       const value = row.value_json as { day?: Weekday; time?: string }
       nextSettings.weeklyDeadlineDay = value.day ?? nextSettings.weeklyDeadlineDay
       nextSettings.weeklyDeadlineTime = value.time ?? nextSettings.weeklyDeadlineTime
+    }
+
+    if (row.setting_key === 'workflow_controls' && row.value_json && typeof row.value_json === 'object') {
+      const value = row.value_json as { deadline_enforced?: boolean }
+      nextSettings.deadlineEnforced =
+        value.deadline_enforced ?? nextSettings.deadlineEnforced
     }
 
     if (row.setting_key === 'locking_rules' && row.value_json && typeof row.value_json === 'object') {
@@ -396,49 +544,55 @@ async function assertNoError(
   }
 }
 
+async function resolveSignInEmail(
+  client: SupabaseClient,
+  identifier: string,
+) {
+  const normalizedIdentifier = identifier.trim().toLowerCase()
+
+  if (!normalizedIdentifier) {
+    throw new Error('Enter your email or username.')
+  }
+
+  if (normalizedIdentifier.includes('@')) {
+    return normalizedIdentifier
+  }
+
+  const { data, error } = await client.rpc('resolve_sign_in_email', {
+    p_identifier: normalizedIdentifier,
+  })
+
+  if (error) {
+    if (
+      typeof error.message === 'string' &&
+      /resolve_sign_in_email/i.test(error.message) &&
+      (/function/i.test(error.message) || /schema cache/i.test(error.message))
+    ) {
+      throw new Error(
+        'Username sign-in is not ready until the latest database migration is applied. Use your email address for now.',
+      )
+    }
+    throw new Error(getErrorMessage(error, 'Unable to resolve the sign-in account.'))
+  }
+
+  if (typeof data !== 'string' || !data.trim().length) {
+    throw new Error('No account matches that username.')
+  }
+
+  return data
+}
+
 export async function fetchLiveAppState(
   client: SupabaseClient,
   userId: string,
+  options?: LiveAppStateLoadOptions,
 ) {
-  const currentProfileResponse = await client
-    .from('profiles')
-    .select('id, role_key, email, full_name, title, active, phone')
-    .eq('id', userId)
-    .maybeSingle()
+  const includeProfiles = options?.includeProfiles ?? true
+  const includeAccessRequests = options?.includeAccessRequests ?? true
+  const includeHistory = options?.includeHistory ?? true
+  const { currentUser, profileRow } = await fetchCurrentUserProfile(client, userId)
 
-  if (currentProfileResponse.error) {
-    throw new Error(
-      getErrorMessage(
-        currentProfileResponse.error,
-        'Unable to load the signed-in profile.',
-      ),
-    )
-  }
-
-  if (!currentProfileResponse.data) {
-    throw new Error(
-      'No profile record exists for this auth user. Apply the migrations and create the profile row before signing in.',
-    )
-  }
-
-  const currentUser = mapProfileRow(currentProfileResponse.data as CurrentProfileRow)
-
-  if (!currentUser.active) {
-    throw new Error('This account is inactive. Contact an administrator.')
-  }
-
-  const overdueSyncResponse = await client.rpc('sync_overdue_notifications')
-  if (overdueSyncResponse.error) {
-    throw new Error(
-      getErrorMessage(
-        overdueSyncResponse.error,
-        'Unable to synchronize overdue notifications.',
-      ),
-    )
-  }
-
-  const isAdmin =
-    currentUser.role === 'admin' || currentUser.role === 'doctor_admin'
+  const isAdmin = isAdminRole(currentUser.role)
 
   const [
     profilesResponse,
@@ -449,16 +603,12 @@ export async function fetchLiveAppState(
     settingsResponse,
     assignmentsResponse,
     accessRequestsResponse,
-    reportsResponse,
     notificationsResponse,
   ] = await Promise.all([
-    isAdmin
-      ? client
-          .from('profiles')
-          .select('id, role_key, email, full_name, title, active, phone')
-          .order('full_name')
+    includeProfiles && isAdmin
+      ? selectProfileRows(client, { orderByName: true })
       : Promise.resolve({
-          data: [currentProfileResponse.data],
+          data: [profileRow],
           error: null,
         }),
     client
@@ -471,10 +621,12 @@ export async function fetchLiveAppState(
         'id, slug, template_id, family, name, description, accent_color, bed_count, active',
       )
       .order('name'),
-    client
-      .from('report_field_definitions')
-      .select('id, template_id, field_key, label, field_kind')
-      .order('display_order'),
+    includeHistory
+      ? client
+          .from('report_field_definitions')
+          .select('id, template_id, field_key, label, field_kind')
+          .order('display_order')
+      : Promise.resolve({ data: [], error: null }),
     client
       .from('reporting_periods')
       .select('id, week_start, week_end, deadline_at')
@@ -484,16 +636,12 @@ export async function fetchLiveAppState(
       .from('report_assignments')
       .select('id, nurse_id, department_id, template_id, active, approved_at')
       .order('approved_at', { ascending: false }),
-    client
-      .from('access_requests')
-      .select('id, user_id, email, status, notes, requested_at, reviewed_at')
-      .order('requested_at', { ascending: false }),
-    client
-      .from('reports')
-      .select(
-        'id, assignment_id, department_id, template_id, reporting_period_id, status, submitted_at, locked_at, created_by, updated_by, created_at, updated_at',
-      )
-      .order('updated_at', { ascending: false }),
+    includeAccessRequests
+      ? client
+          .from('access_requests')
+          .select('id, user_id, email, status, notes, requested_at, reviewed_at')
+          .order('requested_at', { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
     client
       .from('notifications')
       .select(
@@ -512,7 +660,6 @@ export async function fetchLiveAppState(
     settingsResponse,
     assignmentsResponse,
     accessRequestsResponse,
-    reportsResponse,
     notificationsResponse,
   ]
 
@@ -529,43 +676,45 @@ export async function fetchLiveAppState(
   const settingRows = (settingsResponse.data ?? []) as SettingRow[]
   const assignmentRows = (assignmentsResponse.data ?? []) as AssignmentRow[]
   const accessRequestRows = (accessRequestsResponse.data ?? []) as AccessRequestRow[]
-  const reportRows = (reportsResponse.data ?? []) as ReportRow[]
   const notificationRows = filterVisibleNotifications(
     (notificationsResponse.data ?? []) as NotificationRow[],
     periodRows,
   )
+  const visibleReportingPeriodIds = [...getVisibleReportingPeriodIds(periodRows)]
+
+  const reportsResponse = visibleReportingPeriodIds.length
+    ? await client
+        .from('reports')
+        .select(
+          'id, assignment_id, department_id, template_id, reporting_period_id, status, submitted_at, locked_at, created_by, updated_by, created_at, updated_at',
+        )
+        .in('reporting_period_id', visibleReportingPeriodIds)
+        .order('updated_at', { ascending: false })
+    : { data: [], error: null }
+
+  if (reportsResponse.error) {
+    throw new Error(
+      getErrorMessage(reportsResponse.error, 'Unable to load the live dashboard data.'),
+    )
+  }
+
+  const reportRows = (reportsResponse.data ?? []) as ReportRow[]
 
   const requestIds = accessRequestRows.map((row) => row.id)
   const reportIds = reportRows.map((row) => row.id)
 
   const [
     accessRequestItemsResponse,
-    reportFieldValuesResponse,
-    calculatedMetricsResponse,
     statusHistoryResponse,
     auditLogsResponse,
   ] = await Promise.all([
-    requestIds.length
+    includeAccessRequests && requestIds.length
       ? client
           .from('access_request_items')
           .select('access_request_id, department_id, template_id')
           .in('access_request_id', requestIds)
       : Promise.resolve({ data: [], error: null }),
-    reportIds.length
-      ? client
-          .from('report_field_values')
-          .select(
-            'report_id, field_definition_id, day_name, value_number, value_text, value_time, value_json',
-          )
-          .in('report_id', reportIds)
-      : Promise.resolve({ data: [], error: null }),
-    reportIds.length
-      ? client
-          .from('calculated_metrics')
-          .select('report_id, bor_percent, btr, alos')
-          .in('report_id', reportIds)
-      : Promise.resolve({ data: [], error: null }),
-    reportIds.length
+    includeHistory && reportIds.length
       ? client
           .from('report_status_history')
           .select(
@@ -574,7 +723,7 @@ export async function fetchLiveAppState(
           .in('report_id', reportIds)
           .order('changed_at', { ascending: false })
       : Promise.resolve({ data: [], error: null }),
-    isAdmin && reportIds.length
+    includeHistory && isAdmin && reportIds.length
       ? client
           .from('audit_logs')
           .select(
@@ -587,8 +736,6 @@ export async function fetchLiveAppState(
 
   const secondaryResponses = [
     accessRequestItemsResponse,
-    reportFieldValuesResponse,
-    calculatedMetricsResponse,
     statusHistoryResponse,
     auditLogsResponse,
   ]
@@ -601,8 +748,6 @@ export async function fetchLiveAppState(
   }
 
   const accessRequestItemRows = (accessRequestItemsResponse.data ?? []) as AccessRequestItemRow[]
-  const reportFieldValueRows = (reportFieldValuesResponse.data ?? []) as ReportFieldValueRow[]
-  const calculatedMetricRows = (calculatedMetricsResponse.data ?? []) as CalculatedMetricRow[]
   const statusHistoryRows = (statusHistoryResponse.data ?? []) as StatusHistoryRow[]
   const auditLogRows = (auditLogsResponse.data ?? []) as AuditLogRow[]
 
@@ -629,44 +774,6 @@ export async function fetchLiveAppState(
   const fieldDefinitionByDbId = Object.fromEntries(
     fieldDefinitionRows.map((row) => [row.id, row]),
   ) as Record<string, FieldDefinitionRow>
-
-  const fieldValuesByReportId: Record<string, Record<string, ReportFieldValue>> = {}
-  reportFieldValueRows.forEach((row) => {
-    const definition = fieldDefinitionByDbId[row.field_definition_id]
-    if (!definition) {
-      return
-    }
-
-    const reportValues = (fieldValuesByReportId[row.report_id] ??= {})
-    const fieldKey = definition.field_key
-    const entry =
-      reportValues[fieldKey] ??
-      ({
-        fieldId: fieldKey,
-        dailyValues: {},
-      } satisfies ReportFieldValue)
-
-    entry.dailyValues[coerceWeekday(row.day_name)] = valueFromRow(row)
-    reportValues[fieldKey] = entry
-  })
-
-  const metricsByReportId = Object.fromEntries(
-    calculatedMetricRows.map((row) => [
-      row.report_id,
-      {
-        borPercent: row.bor_percent,
-        btr: row.btr,
-        alos: row.alos,
-      },
-    ]),
-  ) as Record<
-    string,
-    {
-      borPercent: number | null
-      btr: number | null
-      alos: number | null
-    }
-  >
 
   const state: AppState = {
     ...createEmptyAppState(),
@@ -724,8 +831,8 @@ export async function fetchLiveAppState(
           submittedAt: row.submitted_at,
           lockedAt: row.locked_at,
           status: row.status,
-          values: fieldValuesByReportId[row.id] ?? {},
-          calculatedMetrics: metricsByReportId[row.id] ?? {},
+          values: {},
+          calculatedMetrics: {},
         }) satisfies ReportRecord,
     ),
     statusHistory: statusHistoryRows.map((row) => ({
@@ -795,11 +902,103 @@ export async function fetchLiveAppState(
   }
 }
 
+export async function fetchReportDetails(
+  client: SupabaseClient,
+  reportIds: string[],
+) {
+  const uniqueReportIds = [...new Set(reportIds.filter(Boolean))]
+
+  if (!uniqueReportIds.length) {
+    return {} as Record<string, ReportDetailRecord>
+  }
+
+  const [fieldDefinitionsResponse, reportFieldValuesResponse, calculatedMetricsResponse] =
+    await Promise.all([
+      client
+        .from('report_field_definitions')
+        .select('id, template_id, field_key, label, field_kind')
+        .order('display_order'),
+      client
+        .from('report_field_values')
+        .select(
+          'report_id, field_definition_id, day_name, value_number, value_text, value_time, value_json',
+        )
+        .in('report_id', uniqueReportIds),
+      client
+        .from('calculated_metrics')
+        .select('report_id, bor_percent, btr, alos')
+        .in('report_id', uniqueReportIds),
+    ])
+
+  const responses = [
+    fieldDefinitionsResponse,
+    reportFieldValuesResponse,
+    calculatedMetricsResponse,
+  ]
+  const responseError = responses.find((response) => response.error)
+
+  if (responseError?.error) {
+    throw new Error(
+      getErrorMessage(responseError.error, 'Unable to load report detail data.'),
+    )
+  }
+
+  const fieldDefinitionRows = (fieldDefinitionsResponse.data ?? []) as FieldDefinitionRow[]
+  const reportFieldValueRows = (reportFieldValuesResponse.data ?? []) as ReportFieldValueRow[]
+  const calculatedMetricRows = (calculatedMetricsResponse.data ?? []) as CalculatedMetricRow[]
+  const fieldDefinitionByDbId = Object.fromEntries(
+    fieldDefinitionRows.map((row) => [row.id, row]),
+  ) as Record<string, FieldDefinitionRow>
+  const fieldValuesByReportId: Record<string, Record<string, ReportFieldValue>> = {}
+
+  reportFieldValueRows.forEach((row) => {
+    const definition = fieldDefinitionByDbId[row.field_definition_id]
+    if (!definition) {
+      return
+    }
+
+    const reportValues = (fieldValuesByReportId[row.report_id] ??= {})
+    const fieldKey = definition.field_key
+    const entry =
+      reportValues[fieldKey] ??
+      ({
+        fieldId: fieldKey,
+        dailyValues: {},
+      } satisfies ReportFieldValue)
+
+    entry.dailyValues[coerceWeekday(row.day_name)] = valueFromRow(row)
+    reportValues[fieldKey] = entry
+  })
+
+  const metricsByReportId = Object.fromEntries(
+    calculatedMetricRows.map((row) => [
+      row.report_id,
+      {
+        borPercent: row.bor_percent,
+        btr: row.btr,
+        alos: row.alos,
+      },
+    ]),
+  ) as Record<string, Partial<ReportRecord['calculatedMetrics']>>
+
+  return Object.fromEntries(
+    uniqueReportIds.map((reportId) => [
+      reportId,
+      {
+        values: fieldValuesByReportId[reportId] ?? {},
+        calculatedMetrics: metricsByReportId[reportId] ?? {},
+      },
+    ]),
+  ) as Record<string, ReportDetailRecord>
+}
+
 export async function loginWithPassword(
   client: SupabaseClient,
-  email: string,
+  identifier: string,
   password: string,
 ) {
+  const email = await resolveSignInEmail(client, identifier)
+
   const { data, error } = await client.auth.signInWithPassword({
     email,
     password,
@@ -997,15 +1196,112 @@ export async function restoreNotifications(
   }
 }
 
+export async function claimSuperadmin(
+  client: SupabaseClient,
+  payload: ClaimSuperadminPayload,
+): Promise<ClaimSuperadminResult> {
+  const normalizedFullName = payload.fullName.trim().replace(/\s+/g, ' ')
+  const normalizedUsername = payload.username.trim().toLowerCase()
+  const normalizedEmail = payload.email.trim().toLowerCase()
+
+  const { data: updatedUserResponse, error: updateError } = await client.auth.updateUser({
+    email: normalizedEmail,
+    password: payload.password,
+    data: {
+      full_name: normalizedFullName,
+      username: normalizedUsername,
+      title: 'Super Administrator',
+    },
+  })
+
+  if (updateError) {
+    throw new Error(
+      getErrorMessage(updateError, 'Unable to update the superadmin credentials.'),
+    )
+  }
+
+  const { error } = await client.rpc('claim_superadmin', {
+    p_full_name: normalizedFullName,
+    p_username: normalizedUsername,
+  })
+
+  if (error) {
+    throw new Error(getErrorMessage(error, 'Unable to claim the superadmin account.'))
+  }
+
+  const currentEmail = updatedUserResponse.user?.email?.trim().toLowerCase() ?? normalizedEmail
+  const pendingEmail =
+    updatedUserResponse.user?.new_email?.trim().toLowerCase() ?? null
+
+  return {
+    currentEmail,
+    pendingEmail:
+      pendingEmail && pendingEmail !== currentEmail ? pendingEmail : null,
+  }
+}
+
+export async function createAdminAccount(
+  client: SupabaseClient,
+  payload: CreateAdminAccountPayload,
+) {
+  const adminClient = createEphemeralSupabaseClient()
+
+  if (!adminClient) {
+    throw new Error('Supabase is not configured for admin account setup.')
+  }
+
+  const normalizedEmail = payload.email.trim().toLowerCase()
+  const normalizedUsername = payload.username.trim().toLowerCase()
+  const normalizedFullName = payload.fullName.trim().replace(/\s+/g, ' ')
+  const normalizedTitle = payload.title?.trim() || null
+
+  const { data, error } = await adminClient.auth.signUp({
+    email: normalizedEmail,
+    password: payload.password,
+    options: {
+      data: {
+        full_name: normalizedFullName,
+        username: normalizedUsername,
+        title:
+          normalizedTitle ??
+          (payload.role === 'doctor_admin' ? 'Clinical Director' : 'Administrator'),
+      },
+    },
+  })
+
+  if (error) {
+    throw new Error(getErrorMessage(error, 'Unable to create the admin account.'))
+  }
+
+  if (!data.user) {
+    throw new Error('The admin account was not created in Supabase Auth.')
+  }
+
+  const { error: provisionError } = await client.rpc('provision_admin_account', {
+    p_email: normalizedEmail,
+    p_full_name: normalizedFullName,
+    p_role_key: payload.role,
+    p_title: normalizedTitle,
+    p_user_id: data.user.id,
+    p_username: normalizedUsername,
+  })
+
+  if (provisionError) {
+    throw new Error(
+      getErrorMessage(provisionError, 'Unable to provision the admin profile.'),
+    )
+  }
+}
+
 export async function updateUserActiveState(
   client: SupabaseClient,
   userId: string,
   active: boolean,
 ) {
-  const { error } = await client
-    .from('profiles')
-    .update({ active })
-    .eq('id', userId)
+  const { error } = await client.rpc('set_profile_active_state', {
+    p_active: active,
+    p_user_id: userId,
+  })
 
   if (error) {
     throw new Error(getErrorMessage(error, 'Unable to update the user status.'))
@@ -1073,6 +1369,7 @@ export async function updateAppSettings(
   settings: Partial<AppSettings>,
 ) {
   const { error } = await client.rpc('update_app_settings', {
+    p_deadline_enforced: settings.deadlineEnforced ?? null,
     p_weekly_deadline_day: settings.weeklyDeadlineDay ?? null,
     p_weekly_deadline_time: settings.weeklyDeadlineTime ?? null,
     p_auto_lock_hours_after_deadline:
@@ -1086,6 +1383,16 @@ export async function updateAppSettings(
 
   if (error) {
     throw new Error(getErrorMessage(error, 'Unable to save the app settings.'))
+  }
+}
+
+export async function syncOverdueNotifications(client: SupabaseClient) {
+  const { error } = await client.rpc('sync_overdue_notifications')
+
+  if (error) {
+    throw new Error(
+      getErrorMessage(error, 'Unable to synchronize overdue notifications.'),
+    )
   }
 }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   ArrowRightLeft,
@@ -9,14 +9,8 @@ import {
   UserRound,
 } from 'lucide-react'
 
+import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { Badge } from '@/components/ui/badge'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { departments, templateMap } from '@/config/templates'
 import { useAppData } from '@/context/app-data-context'
 import { formatTimestamp } from '@/lib/dates'
@@ -37,8 +31,12 @@ function formatAuditValue(value: string | number | null) {
 }
 
 export function AuditLogPage() {
-  const { state } = useAppData()
+  const { state, ensureHistoryData } = useAppData()
   const [departmentFilter, setDepartmentFilter] = useState('all')
+
+  useEffect(() => {
+    void ensureHistoryData()
+  }, [ensureHistoryData])
 
   const orderedEntries = [...state.auditLogs].sort((left, right) =>
     right.changedAt.localeCompare(left.changedAt),
@@ -53,191 +51,121 @@ export function AuditLogPage() {
   const actorCount = new Set(entries.map((entry) => entry.changedById)).size
   const departmentCount = new Set(entries.map((entry) => entry.departmentId)).size
   const latestEntry = entries[0] ?? null
+  const departmentOptions = [
+    { value: 'all', label: 'All departments' },
+    ...departments.map((department) => ({
+      value: department.id,
+      label: department.name,
+    })),
+  ] as const
+  const summaryItems = [
+    {
+      label: 'Entries',
+      value: formatCompactNumber(entries.length),
+      note: 'Visible after current filters',
+      icon: History,
+      tone: 'text-[#005db6] bg-[#edf4fb] outline-[#cfe0f4]/75',
+    },
+    {
+      label: 'Actors',
+      value: formatCompactNumber(actorCount),
+      note: 'Distinct editors',
+      icon: UserRound,
+      tone: 'text-[#00468c] bg-[#edf4fb] outline-[#cfe0f4]/75',
+    },
+    {
+      label: 'Departments',
+      value: formatCompactNumber(departmentCount),
+      note: selectedDepartment ? selectedDepartment.name : 'All departments',
+      icon: Building2,
+      tone: 'text-[#1d3047] bg-[#edf1f5] outline-[#d4dde8]/75',
+    },
+    {
+      label: 'Latest',
+      value: latestEntry ? formatTimestamp(latestEntry.changedAt) : 'No entries',
+      note: 'Newest first',
+      icon: Clock3,
+      tone: 'text-[#8a5a00] bg-[#fcf5e8] outline-[#edd9b0]/75',
+    },
+  ] as const
 
   return (
     <div className="space-y-8">
-      <section className="relative overflow-hidden px-2 py-4 md:px-4">
-        <div className="pointer-events-none absolute inset-0">
-          <div className="login-grid-drift absolute inset-0 opacity-50" />
-          <div className="login-ambient-drift absolute left-[-4%] top-[8%] h-44 w-44 rounded-full bg-white/56 blur-3xl md:h-56 md:w-56" />
-          <div className="login-ambient-drift-reverse absolute right-[6%] top-[8%] h-64 w-64 rounded-full bg-sky-200/32 blur-3xl" />
-          <div className="login-ambient-drift absolute bottom-[8%] left-[18%] h-56 w-56 rounded-full bg-teal-200/18 blur-3xl" />
-          <div className="login-ring-orbit absolute right-[12%] top-[18%] h-24 w-24 rounded-full border border-sky-200/40" />
-          <div className="login-line-flow absolute bottom-[18%] right-[10%] h-px w-32 bg-gradient-to-r from-transparent via-sky-300/65 to-transparent" />
-        </div>
-
-        <div className="relative grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-end">
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="max-w-[760px] space-y-4"
-          >
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/72 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-700 shadow-[0_14px_30px_-24px_rgba(14,165,233,0.55)] backdrop-blur-sm">
-              <span className="h-2 w-2 rounded-full bg-sky-500" />
+      <section className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5 md:px-6">
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
               Audit log
-            </div>
+            </p>
+            <h1 className="font-display text-[2rem] leading-[0.96] tracking-[-0.03em] text-[#000a1e] md:text-[2.35rem]">
+              Change history
+            </h1>
+          </div>
 
-            <div className="space-y-0">
-              <h1 className="font-display max-w-[8ch] text-5xl font-semibold leading-[0.9] tracking-tight text-slate-950 md:text-[5.6rem] xl:text-[6.2rem]">
-                Change history
-              </h1>
-              <p className="pt-5 text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 md:pt-6 md:text-[0.8rem]">
-                Field edits / newest first
-              </p>
-            </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {summaryItems.map((item) => {
+              const Icon = item.icon
 
-            <div className="flex flex-wrap gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              <span className="login-chip-float rounded-full border border-white/70 bg-white/55 px-3 py-2 backdrop-blur-sm">
-                {formatCompactNumber(entries.length)} visible
-              </span>
-              <span
-                className="login-chip-float rounded-full border border-white/70 bg-white/55 px-3 py-2 backdrop-blur-sm"
-                style={{ animationDelay: '700ms' }}
-              >
-                {selectedDepartment ? selectedDepartment.name : 'All departments'}
-              </span>
-            </div>
-          </motion.div>
+              return (
+                <div
+                  key={item.label}
+                  className={`rounded-[0.35rem] px-3.5 py-3 outline outline-1 ${item.tone}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Icon className="h-3.5 w-3.5" />
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">
+                      {item.label}
+                    </p>
+                  </div>
+                  <p className="mt-3 font-display text-[1.45rem] leading-none tracking-[-0.03em]">
+                    {item.value}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-current/75">{item.note}</p>
+                </div>
+              )
+            })}
+          </div>
 
-          <motion.div
-            initial={{ opacity: 0, y: 22 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.08 }}
-            className="grid gap-4 rounded-[2rem] border border-white/65 bg-white/44 p-5 shadow-[0_24px_55px_-34px_rgba(15,23,42,0.2)] backdrop-blur-md xl:justify-self-end"
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1 border-b border-white/70 pb-4 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Entries
-                </p>
-                <p className="mt-2 font-display text-4xl leading-none text-slate-950">
-                  {formatCompactNumber(entries.length)}
-                </p>
-              </div>
-              <div className="space-y-1 border-b border-white/70 pb-4 sm:border-b-0 sm:pb-0 sm:pl-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Actors
-                </p>
-                <p className="mt-2 font-display text-4xl leading-none text-slate-950">
-                  {formatCompactNumber(actorCount)}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 border-t border-white/70 pt-4 sm:grid-cols-2">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Departments
-                </p>
-                <p className="mt-2 text-lg font-semibold text-slate-950">
-                  {formatCompactNumber(departmentCount)}
-                </p>
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Latest
-                </p>
-                <p className="mt-2 text-sm font-medium leading-6 text-slate-700">
-                  {latestEntry ? formatTimestamp(latestEntry.changedAt) : 'No entries'}
-                </p>
-              </div>
-            </div>
-          </motion.div>
+          <div className="border-t border-[#d9e0e7] pt-4">
+            <ReportingScopePanel
+              className="w-full max-w-[360px]"
+              fields={[
+                {
+                  label: 'Department',
+                  options: departmentOptions,
+                  placeholder: 'Choose department',
+                  value: departmentFilter,
+                  onValueChange: setDepartmentFilter,
+                  triggerClassName: 'text-[0.95rem]',
+                },
+              ]}
+            />
+          </div>
         </div>
       </section>
-
-      <motion.section
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.28, ease: 'easeOut' }}
-        className="relative overflow-hidden rounded-[2rem] border border-white/70 bg-[linear-gradient(135deg,rgba(255,255,255,0.82),rgba(244,249,255,0.76),rgba(235,253,248,0.62))] px-5 py-5 shadow-[0_20px_42px_-34px_rgba(15,23,42,0.18)] backdrop-blur-md"
-      >
-        <div className="pointer-events-none absolute inset-0">
-          <div className="login-ambient-drift absolute right-[12%] top-[-24%] h-32 w-32 rounded-full bg-sky-200/18 blur-3xl" />
-          <div className="login-line-flow absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/70 to-transparent" />
-        </div>
-
-        <div className="relative grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)] xl:items-center">
-          <div className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
-              Department
-            </p>
-            <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
-              <SelectTrigger className="bg-white/82">
-                <SelectValue placeholder="Choose department" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All departments</SelectItem>
-                {departments.map((department) => (
-                  <SelectItem key={department.id} value={department.id}>
-                    {department.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="border-l border-white/65 pl-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                View
-              </p>
-              <p className="mt-2 text-sm font-semibold text-slate-950">
-                {selectedDepartment ? selectedDepartment.name : 'All departments'}
-              </p>
-              <p className="text-sm text-slate-500">
-                {selectedDepartment
-                  ? serviceLineLabels[selectedDepartment.family]
-                  : 'Whole workspace'}
-              </p>
-            </div>
-            <div className="border-l border-white/65 pl-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                Visible
-              </p>
-              <p className="mt-2 text-sm font-semibold text-slate-950">
-                {formatCompactNumber(entries.length)}
-              </p>
-            </div>
-            <div className="border-l border-white/65 pl-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                Order
-              </p>
-              <p className="mt-2 text-sm font-semibold text-slate-950">Newest first</p>
-            </div>
-          </div>
-        </div>
-      </motion.section>
 
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, ease: 'easeOut' }}
-        className="relative overflow-hidden rounded-[2.4rem] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(242,248,255,0.84))] px-5 py-6 shadow-[0_24px_54px_-36px_rgba(15,23,42,0.22)]"
+        className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5"
       >
-        <div className="pointer-events-none absolute inset-0">
-          <div className="login-grid-drift absolute inset-0 opacity-12" />
-          <div className="login-ambient-drift absolute right-[-4%] top-[-12%] h-44 w-44 rounded-full bg-sky-200/12 blur-3xl" />
-          <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-cyan-400 via-sky-500 to-emerald-400" />
-        </div>
-
-        <div className="relative space-y-5">
+        <div className="space-y-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#005db6]">
                 Audit stream
               </p>
-              <h2 className="font-display text-3xl text-slate-950">Entries</h2>
-              <p className="text-sm text-slate-500">Field-by-field changes.</p>
+              <h2 className="font-display text-[1.85rem] text-[#000a1e]">Entries</h2>
             </div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/72 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600 shadow-[0_14px_24px_-20px_rgba(15,23,42,0.15)]">
-              <History className="h-4 w-4 text-sky-700" />
+            <div className="inline-flex items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-[#ffffff] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#44474e]">
+              <History className="h-4 w-4 text-[#005db6]" />
               {formatCompactNumber(entries.length)} rows
             </div>
           </div>
 
           {entries.length ? (
-            <div className="overflow-hidden rounded-[1.9rem] border border-slate-200/80 bg-white/82 shadow-[0_16px_30px_-24px_rgba(15,23,42,0.18)]">
+            <div className="overflow-hidden rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff]">
               {entries.map((entry, index) => {
                 const department =
                   departments.find((candidate) => candidate.id === entry.departmentId) ?? null
@@ -255,8 +183,8 @@ export function AuditLogPage() {
                         <Badge variant="info">
                           {department ? serviceLineLabels[department.family] : 'Service line'}
                         </Badge>
-                        <span className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-slate-50/90 px-3 py-1.5 text-xs font-semibold text-slate-700">
-                          <Building2 className="h-3.5 w-3.5 text-sky-700" />
+                        <span className="inline-flex items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-[#f3f4f5] px-3 py-1.5 text-xs font-semibold text-[#44474e]">
+                          <Building2 className="h-3.5 w-3.5 text-[#005db6]" />
                           {department?.name ?? entry.departmentId}
                         </span>
                       </div>
@@ -273,33 +201,33 @@ export function AuditLogPage() {
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-[1.3rem] border border-slate-200/80 bg-slate-50/90 p-4">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#f3f4f5] p-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
                           Before
                         </p>
-                        <p className="mt-2 break-words text-sm font-medium leading-6 text-slate-800">
+                        <p className="mt-2 break-words text-sm font-medium leading-6 text-[#44474e]">
                           {formatAuditValue(entry.oldValue)}
                         </p>
                       </div>
-                      <div className="rounded-[1.3rem] border border-slate-200/80 bg-white p-4 shadow-[0_14px_24px_-22px_rgba(15,23,42,0.14)]">
+                      <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] p-4">
                         <div className="flex items-center gap-2">
-                          <ArrowRightLeft className="h-4 w-4 text-sky-700" />
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                          <ArrowRightLeft className="h-4 w-4 text-[#005db6]" />
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
                             After
                           </p>
                         </div>
-                        <p className="mt-2 break-words text-sm font-medium leading-6 text-slate-950">
+                        <p className="mt-2 break-words text-sm font-medium leading-6 text-[#000a1e]">
                           {formatAuditValue(entry.newValue)}
                         </p>
                       </div>
                     </div>
 
                     <div className="space-y-2 lg:text-right">
-                      <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-slate-50/90 px-3 py-1.5 text-xs font-semibold text-slate-600 lg:ml-auto">
-                        <Clock3 className="h-3.5 w-3.5 text-slate-400" />
+                      <div className="inline-flex items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-[#f3f4f5] px-3 py-1.5 text-xs font-semibold text-[#44474e] lg:ml-auto">
+                        <Clock3 className="h-3.5 w-3.5 text-[#74777f]" />
                         {formatTimestamp(entry.changedAt)}
                       </div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#74777f]">
                         Change log
                       </p>
                     </div>
@@ -308,11 +236,11 @@ export function AuditLogPage() {
               })}
             </div>
           ) : (
-            <div className="flex min-h-[220px] flex-col items-center justify-center gap-4 rounded-[1.9rem] border border-dashed border-sky-100/90 bg-white/62 px-6 text-center text-slate-500">
-              <Filter className="h-5 w-5 text-sky-500" />
+            <div className="flex min-h-[220px] flex-col items-center justify-center gap-4 rounded-[0.5rem] border border-dashed border-[#d4dde8] bg-[#ffffff] px-6 text-center text-[#74777f]">
+              <Filter className="h-5 w-5 text-[#005db6]" />
               <div className="space-y-2">
-                <p className="text-sm font-medium text-slate-700">No entries.</p>
-                <p className="text-sm leading-6 text-slate-500">
+                <p className="text-sm font-medium text-[#000a1e]">No entries.</p>
+                <p className="text-sm leading-6 text-[#44474e]">
                   Try another department.
                 </p>
               </div>

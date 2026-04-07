@@ -25,14 +25,13 @@ export function ChartCard({
       transition={{ duration: 0.28, ease: 'easeOut' }}
       className="h-full"
     >
-      <Card className="h-full bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(240,247,255,0.92))]">
-        <div className="pointer-events-none absolute inset-x-6 top-0 h-1 rounded-full bg-[linear-gradient(90deg,#22d3ee_0%,#3b82f6_42%,#10b981_100%)]" />
+      <Card className="h-full bg-[#eef2f6] shadow-none">
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
         <CardContent>
-          <div className="rounded-[1.75rem] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.72),rgba(236,245,255,0.72))] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+          <div className="rounded-[0.35rem] bg-[#ffffff] p-3">
             {children}
           </div>
         </CardContent>

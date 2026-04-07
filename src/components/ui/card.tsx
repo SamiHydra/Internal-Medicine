@@ -6,7 +6,7 @@ export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-[2rem] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,251,255,0.92))] shadow-[0_26px_60px_-34px_rgba(15,23,42,0.3)] backdrop-blur',
+        'relative overflow-hidden rounded-[0.35rem] bg-[#ffffff] outline outline-1 outline-[#d4dde8]/65',
         className,
       )}
       {...props}
@@ -28,7 +28,7 @@ export function CardTitle({
   return (
     <h3
       className={cn(
-        'font-display text-xl font-semibold tracking-tight text-slate-950',
+        'font-display text-lg font-semibold tracking-[-0.02em] text-[#000a1e]',
         className,
       )}
       {...props}
@@ -41,7 +41,7 @@ export function CardDescription({
   ...props
 }: HTMLAttributes<HTMLParagraphElement>) {
   return (
-    <p className={cn('text-sm leading-6 text-slate-600', className)} {...props} />
+    <p className={cn('text-sm leading-6 text-[#44474e]', className)} {...props} />
   )
 }
 

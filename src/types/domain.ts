@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'doctor_admin' | 'nurse'
+export type UserRole = 'superadmin' | 'admin' | 'doctor_admin' | 'nurse'
 
 export type ReportFamily = 'inpatient' | 'outpatient' | 'procedure'
 
@@ -46,6 +46,7 @@ export interface UserProfile {
   id: string
   fullName: string
   email: string
+  username?: string
   role: UserRole
   title: string
   active: boolean
@@ -223,6 +224,7 @@ export interface NotificationItem {
 }
 
 export interface AppSettings {
+  deadlineEnforced: boolean
   weeklyDeadlineDay: Weekday
   weeklyDeadlineTime: string
   autoLockHoursAfterDeadline: number

@@ -19,13 +19,7 @@ import {
   YAxis,
 } from 'recharts'
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import {
   deriveReportStatus,
   getCurrentPeriod,
@@ -60,13 +54,13 @@ function ChartEmptyState({
   return (
     <div
       className={cn(
-        'flex h-full flex-col items-center justify-center gap-3 rounded-[1.75rem] border border-dashed px-6 text-center backdrop-blur-sm',
+        'flex h-full flex-col items-center justify-center gap-3 rounded-[0.5rem] border border-dashed px-6 text-center',
         tone === 'dark'
-          ? 'border-white/12 bg-white/6 text-cyan-50/82'
-          : 'border-sky-100/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.8),rgba(244,249,255,0.62))] text-slate-500',
+          ? 'border-white/12 bg-white/6 text-[#c6d3e4]'
+          : 'border-[#d9e0e7] bg-[#f8fafc] text-[#6c7078]',
       )}
     >
-      <Sparkles className={cn('h-5 w-5', tone === 'dark' ? 'text-cyan-200' : 'text-sky-500')} />
+      <Sparkles className={cn('h-5 w-5', tone === 'dark' ? 'text-[#f0b429]' : 'text-[#005db6]')} />
       <p className="max-w-xs text-sm leading-6">{message}</p>
     </div>
   )
@@ -185,19 +179,11 @@ function AnimatedMetric({
 }
 
 function SectionAmbient() {
-  return (
-    <div className="pointer-events-none absolute inset-0">
-      <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#14b8a6]" />
-      <div className="absolute -left-10 top-10 h-40 w-40 rounded-full bg-[#1d4ed8]/10 blur-3xl" />
-      <div className="absolute right-10 top-14 h-48 w-48 rounded-full bg-[#38bdf8]/10 blur-3xl" />
-      <div className="absolute bottom-8 left-[22%] h-36 w-36 rounded-full bg-[#f59e0b]/8 blur-3xl" />
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.12)_1px,transparent_1px)] bg-[size:88px_88px] opacity-20 [mask-image:radial-gradient(circle_at_24%_20%,black_14%,transparent_74%)]" />
-    </div>
-  )
+  return null
 }
 
 export function AdminDashboardPage() {
-  const { state } = useAppData()
+  const { state, ensureReportDetails, isSyncing } = useAppData()
   const [familyFilter, setFamilyFilter] = useState<FamilyFilter>('all')
   const currentPeriod = getCurrentPeriod(state)
   const currentPeriodId = currentPeriod?.id ?? ''
@@ -205,15 +191,46 @@ export function AdminDashboardPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const availablePeriods = getVisibleReportingPeriods(state)
   const visibleReportingPeriods = [...availablePeriods].reverse()
+  const reportingPeriodOptions = visibleReportingPeriods.map((period) => ({
+    label: period.label,
+    value: period.id,
+  }))
   const effectivePeriodId = availablePeriods.some((period) => period.id === periodId)
     ? periodId
     : currentPeriodId
   const scopeFamily = familyFilter === 'all' ? undefined : familyFilter
+  const effectivePeriodIndex = availablePeriods.findIndex((period) => period.id === effectivePeriodId)
+  const trendPeriods =
+    effectivePeriodIndex >= 0
+      ? availablePeriods.slice(0, effectivePeriodIndex + 1).slice(-8)
+      : availablePeriods.slice(-8)
+  const detailReportingPeriodIds = new Set(trendPeriods.map((period) => period.id))
+  const detailReportIds = state.reports
+    .filter((report) => detailReportingPeriodIds.has(report.reportingPeriodId))
+    .map((report) => report.id)
+
+  useEffect(() => {
+    void ensureReportDetails(detailReportIds)
+  }, [detailReportIds, ensureReportDetails])
 
   const summary = getDashboardSummary(state, effectivePeriodId, scopeFamily)
 
   if (!summary) {
-    return null
+    return (
+      <section className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-10 md:px-6">
+        <div className="space-y-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
+            Reporting dashboard
+          </p>
+          <h1 className="font-display text-[2rem] leading-[0.98] tracking-[-0.04em] text-[#000a1e]">
+            {isSyncing ? 'Syncing dashboard data' : 'Preparing dashboard'}
+          </h1>
+          <p className="max-w-[34rem] text-sm leading-7 text-[#5b6169]">
+            Loading the reporting periods, assignments, and current service-line summary.
+          </p>
+        </div>
+      </section>
+    )
   }
 
   const deadlineNote = getLockDeadlineNote(state, effectivePeriodId)
@@ -247,27 +264,24 @@ export function AdminDashboardPage() {
     { value: 'locked' as const, label: 'Locked' },
     { value: 'overdue' as const, label: 'Overdue' },
   ] as const
-  const chartGridStroke = '#d9e7f5'
-  const chartTick = { fill: '#64748b', fontSize: 12 }
+  const chartGridStroke = '#d4dde8'
+  const chartTick = { fill: '#6c7078', fontSize: 12 }
   const grayscalePalette = {
-    ink: '#1d4ed8',
-    carbon: '#0ea5e9',
-    slate: '#14b8a6',
-    steel: '#64748b',
-    mist: '#f59e0b',
-    cloud: '#bfdbfe',
+    ink: '#005db6',
+    carbon: '#446b95',
+    slate: '#002147',
+    steel: '#67778a',
+    mist: '#f0b429',
+    cloud: '#9bb2ca',
   } as const
+  const tooltipLineCursor = { stroke: 'rgba(0,93,182,0.22)', strokeWidth: 1.2 } as const
+  const tooltipFillCursor = { fill: 'rgba(0,33,71,0.045)' } as const
   const totalExpected = summary.current.totalExpected
   const deliveredStatuses = new Set<Exclude<StatusFilter, 'all'>>([
     'submitted',
     'edited_after_submission',
     'locked',
   ])
-  const effectivePeriodIndex = availablePeriods.findIndex((period) => period.id === effectivePeriodId)
-  const trendPeriods =
-    effectivePeriodIndex >= 0
-      ? availablePeriods.slice(0, effectivePeriodIndex + 1).slice(-8)
-      : availablePeriods.slice(-8)
   const selectedPeriodLabel =
     availablePeriods.find((period) => period.id === effectivePeriodId)?.label ??
     currentPeriod?.label ??
@@ -497,50 +511,40 @@ export function AdminDashboardPage() {
   const hasProcedureSignal = procedureTotals.some((item) => item.value > 0)
   const hasEndoscopyMixSignal = endoscopyMix.some((item) => item.value > 0)
   const lightTooltipStyle = {
-    borderRadius: '16px',
-    border: '1px solid rgba(191,219,254,0.95)',
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    boxShadow: '0 20px 40px -32px rgba(30,58,138,0.22)',
+    borderRadius: '8px',
+    border: '1px solid rgba(212, 221, 232, 0.95)',
+    backgroundColor: 'rgba(255,255,255,0.98)',
+    boxShadow: '0 20px 40px rgba(0,33,71,0.08)',
   }
   const sectionClass =
-    'relative overflow-hidden rounded-[3rem] border border-white/75 bg-[linear-gradient(135deg,rgba(255,255,255,0.94),rgba(242,248,255,0.86),rgba(236,253,245,0.72),rgba(255,248,228,0.6))] px-6 py-8 shadow-[0_34px_72px_-48px_rgba(30,58,138,0.2)] backdrop-blur-md md:px-8 md:py-9'
+    'rounded-[0.35rem] bg-[#f1f4f7] px-5 py-6 md:px-6 md:py-7'
   const chartPanelClass =
-    'relative overflow-hidden rounded-[2.15rem] border border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(243,248,255,0.74),rgba(255,255,255,0.66))] p-5 shadow-[0_28px_46px_-34px_rgba(30,58,138,0.18)] backdrop-blur-sm md:p-6'
-  const statCardClass =
-    'rounded-[1.8rem] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.8),rgba(238,246,255,0.66))] px-4 py-4 shadow-[0_22px_34px_-30px_rgba(30,58,138,0.18)] backdrop-blur-sm'
+    'rounded-[0.35rem] bg-[#f8fafc] p-5 outline outline-1 outline-[#d9e0e7]/75 md:p-5'
 
   return (
-    <div className="space-y-8 bg-[radial-gradient(circle_at_12%_16%,rgba(29,78,216,0.16),transparent_22%),radial-gradient(circle_at_86%_18%,rgba(56,189,248,0.14),transparent_20%),radial-gradient(circle_at_24%_80%,rgba(245,158,11,0.08),transparent_16%),linear-gradient(180deg,#f7fbff_0%,#edf6ff_42%,#eef8ff_100%)] px-4 py-6 text-slate-950 md:px-6 md:py-8">
+    <div className="space-y-8 px-4 py-6 text-[#000a1e] md:px-6 md:py-8">
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.28, ease: 'easeOut' }}
-        className="relative overflow-hidden rounded-[3.2rem] border border-white/75 bg-[linear-gradient(135deg,rgba(255,255,255,0.92),rgba(241,248,255,0.86),rgba(236,253,245,0.72),rgba(255,248,230,0.64))] px-5 py-6 shadow-[0_36px_72px_-48px_rgba(30,58,138,0.18)] backdrop-blur-md md:px-8 md:py-9"
+        className="rounded-[0.35rem] bg-[#f1f4f7] px-5 py-5 md:px-6 md:py-5"
       >
-        <div className="pointer-events-none absolute inset-0">
-          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#14b8a6]" />
-          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] bg-[size:76px_76px] opacity-25 [mask-image:radial-gradient(circle_at_34%_36%,black_18%,transparent_76%)]" />
-          <div className="absolute left-[-4%] top-[8%] h-52 w-52 rounded-full bg-white/48 blur-3xl md:h-64 md:w-64" />
-          <div className="absolute right-[4%] top-[8%] h-72 w-72 rounded-full bg-sky-200/24 blur-3xl" />
-          <div className="absolute bottom-[4%] left-[18%] h-52 w-52 rounded-full bg-amber-100/18 blur-3xl" />
-        </div>
-
-        <div className="relative grid gap-8 xl:grid-cols-[minmax(0,1.08fr)_minmax(420px,0.92fr)] xl:items-stretch">
-          <div className="flex min-h-full flex-col justify-between gap-8">
-            <div className="space-y-6">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/55 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-700 shadow-[0_16px_28px_-22px_rgba(30,58,138,0.16)] backdrop-blur-md">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] xl:items-start">
+          <div className="space-y-4">
+            <div className="space-y-4">
+              <div className="inline-flex items-center gap-2 bg-[#edf4fb] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#00468c]">
                 <Filter className="h-3.5 w-3.5" />
                 Reporting dashboard
               </div>
-              <div className="space-y-4">
-                <h1 className="max-w-4xl font-display text-5xl leading-[0.94] tracking-tight text-slate-950 md:text-6xl xl:text-[5.4rem]">
+              <div className="space-y-2.5">
+                <h1 className="max-w-4xl font-display text-[2.2rem] leading-[0.95] tracking-[-0.03em] text-[#000a1e] md:text-[2.7rem] xl:text-[3.05rem]">
                   {selectedPeriodLabel}
                 </h1>
-                <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600 md:text-[15px]">
+                <div className="flex flex-wrap items-center gap-3 text-sm text-[#44474e] md:text-[15px]">
                   <span>{familyLabels[familyFilter]}</span>
-                  <span className="text-sky-300">/</span>
+                  <span className="text-[#f0b429]">/</span>
                   <span>{statusLabels[statusFilter]}</span>
-                  <span className="text-sky-300">/</span>
+                  <span className="text-[#f0b429]">/</span>
                   <span>
                     {deadlineNote
                       ? `Deadline ${format(deadlineNote, 'EEE, MMM d')} at ${format(deadlineNote, 'HH:mm')}`
@@ -549,129 +553,51 @@ export function AdminDashboardPage() {
                 </div>
               </div>
             </div>
-
             <div className="flex flex-wrap gap-3">
-              <div className="inline-flex items-center gap-3 rounded-full border border-white/75 bg-white/58 px-4 py-2 text-sm text-slate-600 shadow-[0_16px_28px_-24px_rgba(30,58,138,0.16)] backdrop-blur-md">
-                <span className="h-2.5 w-2.5 rounded-full bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#14b8a6]" />
+              <div className="inline-flex items-center gap-3 bg-[#edf4fb] px-3.5 py-1.5 text-sm text-[#00468c] outline outline-1 outline-[#cfe0f4]/75">
+                <span className="h-2.5 w-2.5 rounded-[999px] bg-[#005db6]" />
                 <span className="font-medium">{deliveredCount} delivered</span>
               </div>
-              <div className="inline-flex items-center gap-3 rounded-full border border-white/75 bg-white/58 px-4 py-2 text-sm text-slate-600 shadow-[0_16px_28px_-24px_rgba(30,58,138,0.16)] backdrop-blur-md">
-                <span className="h-2.5 w-2.5 rounded-full bg-[#f59e0b]" />
+              <div className="inline-flex items-center gap-3 bg-[#fcf5e8] px-3.5 py-1.5 text-sm text-[#8a5a00] outline outline-1 outline-[#edd9b0]/75">
+                <span className="h-2.5 w-2.5 rounded-[999px] bg-[#f0b429]" />
                 <span className="font-medium">{openCount} still open</span>
               </div>
-              <div className="inline-flex items-center gap-3 rounded-full border border-white/75 bg-white/58 px-4 py-2 text-sm text-slate-600 shadow-[0_16px_28px_-24px_rgba(30,58,138,0.16)] backdrop-blur-md">
-                <span className="h-2.5 w-2.5 rounded-full bg-[#14b8a6]" />
+              <div className="inline-flex items-center gap-3 bg-[#edf1f5] px-3.5 py-1.5 text-sm text-[#1d3047] outline outline-1 outline-[#d4dde8]/75">
+                <span className="h-2.5 w-2.5 rounded-[999px] bg-[#002147]" />
                 <span className="font-medium">{deliveryRate}% delivery rate</span>
               </div>
             </div>
           </div>
 
-          <div className="rounded-[2.4rem] border border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.76),rgba(240,246,255,0.68),rgba(255,255,255,0.5))] p-5 shadow-[0_28px_46px_-32px_rgba(30,58,138,0.18)] backdrop-blur-md md:p-6">
-            <div className="grid gap-4 md:grid-cols-3">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Reporting period
-                </p>
-                <Select value={effectivePeriodId} onValueChange={setPeriodId}>
-                  <SelectTrigger className="mt-3 h-14 rounded-[1.1rem] border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(236,245,255,0.74))] px-4 text-left text-slate-950 shadow-[0_18px_28px_-24px_rgba(30,58,138,0.16)] focus:ring-0">
-                    <SelectValue placeholder="Reporting period" />
-                  </SelectTrigger>
-                  <SelectContent side="bottom" align="start" sideOffset={10}>
-                    {visibleReportingPeriods.map((period) => (
-                      <SelectItem key={period.id} value={period.id}>
-                        {period.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Service line
-                </p>
-                <Select
-                  value={familyFilter}
-                  onValueChange={(value) => setFamilyFilter(value as FamilyFilter)}
-                >
-                  <SelectTrigger className="mt-3 h-14 rounded-[1.1rem] border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(236,245,255,0.74))] px-4 text-left text-slate-950 shadow-[0_18px_28px_-24px_rgba(30,58,138,0.16)] focus:ring-0">
-                    <SelectValue placeholder="Service line" />
-                  </SelectTrigger>
-                  <SelectContent side="bottom" align="start" sideOffset={10}>
-                    {serviceLineOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Status
-                </p>
-                <Select
-                  value={statusFilter}
-                  onValueChange={(value) => setStatusFilter(value as StatusFilter)}
-                >
-                  <SelectTrigger className="mt-3 h-14 rounded-[1.1rem] border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(236,245,255,0.74))] px-4 text-left text-slate-950 shadow-[0_18px_28px_-24px_rgba(30,58,138,0.16)] focus:ring-0">
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent side="bottom" align="start" sideOffset={10}>
-                    {statusOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-4 border-t border-white/60 pt-5 md:grid-cols-2">
-              <div className={statCardClass}>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  In scope
-                </p>
-                <AnimatedMetric
-                  value={totalExpected}
-                  variant="compact"
-                  className="mt-2 block font-display text-4xl leading-none text-slate-950"
-                />
-              </div>
-              <div className={statCardClass}>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Delivered
-                </p>
-                <AnimatedMetric
-                  value={deliveredCount}
-                  variant="compact"
-                  className="mt-2 block font-display text-4xl leading-none text-slate-950"
-                />
-              </div>
-              <div className={statCardClass}>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Open
-                </p>
-                <AnimatedMetric
-                  value={openCount}
-                  variant="compact"
-                  className="mt-2 block font-display text-4xl leading-none text-slate-950"
-                />
-              </div>
-              <div className={statCardClass}>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Delivery rate
-                </p>
-                <AnimatedMetric
-                  value={deliveryRate}
-                  variant="percent"
-                  className="mt-2 block font-display text-4xl leading-none text-slate-950"
-                />
-              </div>
-            </div>
-          </div>
+          <ReportingScopePanel
+            className="self-start w-full max-w-[760px] xl:justify-self-end"
+            fields={[
+              {
+                label: 'Reporting period',
+                options: reportingPeriodOptions,
+                placeholder: 'Reporting period',
+                value: effectivePeriodId,
+                onValueChange: setPeriodId,
+                triggerClassName: 'text-[0.95rem]',
+              },
+              {
+                label: 'Service line',
+                options: serviceLineOptions,
+                placeholder: 'Service line',
+                value: familyFilter,
+                onValueChange: (value) => setFamilyFilter(value as FamilyFilter),
+                triggerClassName: 'text-[0.95rem]',
+              },
+              {
+                label: 'Status',
+                options: statusOptions,
+                placeholder: 'Status',
+                value: statusFilter,
+                onValueChange: (value) => setStatusFilter(value as StatusFilter),
+                triggerClassName: 'text-[0.95rem]',
+              },
+            ]}
+          />
         </div>
       </motion.section>
 
@@ -684,21 +610,21 @@ export function AdminDashboardPage() {
         <SectionAmbient />
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#74777f]">
               Reporting status
             </p>
-            <h2 className="mt-2 font-display text-3xl text-slate-950 md:text-5xl">
+            <h2 className="mt-2 font-display text-[2rem] text-[#000a1e] md:text-[2.35rem]">
               Submission pulse
             </h2>
           </div>
-          <p className="text-sm uppercase tracking-[0.24em] text-slate-400">
+          <p className="text-sm uppercase tracking-[0.24em] text-[#74777f]">
             {familyLabels[familyFilter]} / {statusLabels[statusFilter]}
           </p>
         </div>
 
         <div className="relative mt-8 grid gap-6 xl:grid-cols-[280px_280px_minmax(0,1fr)]">
           <div className={cn('space-y-4', chartPanelClass)}>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#74777f]">
               Distribution
             </p>
             <div className="relative h-[280px]">
@@ -730,15 +656,15 @@ export function AdminDashboardPage() {
                   </ResponsiveContainer>
 
                   <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#74777f]">
                       {statusCenterLabel}
                     </p>
                     <AnimatedMetric
                       value={statusFocusValue}
                       variant="compact"
-                      className="mt-2 block font-display text-5xl leading-none text-slate-950"
+                      className="mt-2 block font-display text-[2.6rem] leading-none text-[#000a1e]"
                     />
-                    <p className="mt-2 text-xs uppercase tracking-[0.22em] text-slate-400">
+                    <p className="mt-2 text-xs uppercase tracking-[0.22em] text-[#74777f]">
                       {statusFocusRate}% of scope
                     </p>
                   </div>
@@ -750,7 +676,7 @@ export function AdminDashboardPage() {
           </div>
 
           <div className={cn('space-y-3', chartPanelClass)}>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#74777f]">
               Status ledger
             </p>
             {statusDistribution.map((item, index) => {
@@ -763,17 +689,17 @@ export function AdminDashboardPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.22, ease: 'easeOut', delay: index * 0.04 }}
                   className={cn(
-                    'grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-4 border-b border-sky-100/80 py-3 last:border-b-0 last:pb-0',
+                    'grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-4 border-b border-[#d4dde8] py-3 last:border-b-0 last:pb-0',
                     statusFilter !== 'all' && statusFilter !== item.key && 'opacity-35',
                   )}
                 >
                   <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.fill }} />
-                  <span className="text-sm font-medium text-slate-700">{item.label}</span>
-                  <span className="text-sm text-slate-400">{share}%</span>
+                  <span className="text-sm font-medium text-[#44474e]">{item.label}</span>
+                  <span className="text-sm text-[#74777f]">{share}%</span>
                   <AnimatedMetric
                     value={item.count}
                     variant="compact"
-                    className="text-lg font-semibold text-slate-950"
+                    className="text-lg font-semibold text-[#000a1e]"
                   />
                 </motion.div>
               )
@@ -783,17 +709,17 @@ export function AdminDashboardPage() {
           <div className={cn('space-y-4', chartPanelClass)}>
             <div className="flex items-end justify-between gap-4">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#74777f]">
                   Weekly curve
                 </p>
-                <h3 className="mt-2 text-2xl font-semibold text-slate-950 md:text-3xl">
+                <h3 className="mt-2 text-2xl font-semibold text-[#000a1e] md:text-3xl">
                   Delivered, open, overdue
                 </h3>
               </div>
               <AnimatedMetric
                 value={deliveryRate}
                 variant="percent"
-                className="font-display text-4xl leading-none text-slate-950"
+                className="font-display text-[2rem] leading-none text-[#000a1e]"
               />
             </div>
             <div className="h-[300px]">
@@ -805,8 +731,8 @@ export function AdminDashboardPage() {
                   >
                     <defs>
                       <linearGradient id="reportingDeliveredFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#1d4ed8" stopOpacity={0.2} />
-                        <stop offset="100%" stopColor="#1d4ed8" stopOpacity={0.02} />
+                        <stop offset="0%" stopColor="#005db6" stopOpacity={0.2} />
+                        <stop offset="100%" stopColor="#005db6" stopOpacity={0.02} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
@@ -818,10 +744,7 @@ export function AdminDashboardPage() {
                       tickMargin={12}
                     />
                     <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                    <Tooltip
-                      contentStyle={lightTooltipStyle}
-                      cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }}
-                    />
+                    <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
                     <Area
                       type="monotone"
                       dataKey="delivered"
@@ -848,7 +771,7 @@ export function AdminDashboardPage() {
                       type="monotone"
                       dataKey="overdue"
                       name="Overdue"
-                      stroke={grayscalePalette.cloud}
+                      stroke={grayscalePalette.mist}
                       strokeWidth={2.4}
                       strokeDasharray="5 6"
                       dot={false}
@@ -880,14 +803,14 @@ export function AdminDashboardPage() {
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
                   Inpatient
                 </p>
-                <h2 className="mt-2 font-display text-3xl text-slate-950 md:text-5xl">
+                <h2 className="mt-2 font-display text-[2rem] text-slate-950 md:text-[2.35rem]">
                   Ward movement and occupancy
                 </h2>
               </div>
               <AnimatedMetric
                 value={inpatientFlowSeries.at(-1)?.admissions ?? 0}
                 variant="compact"
-                className="font-display text-4xl leading-none text-slate-950"
+                className="font-display text-[2rem] leading-none text-slate-950"
               />
             </div>
 
@@ -906,7 +829,7 @@ export function AdminDashboardPage() {
                         <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                         <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
                         <Line type="monotone" dataKey="admissions" name="Admissions" stroke={grayscalePalette.ink} strokeWidth={3.4} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
                         <Line type="monotone" dataKey="discharges" name="Discharges" stroke={grayscalePalette.steel} strokeWidth={2.8} dot={false} activeDot={{ r: 5, fill: grayscalePalette.steel, strokeWidth: 0 }} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                       </LineChart>
@@ -924,18 +847,18 @@ export function AdminDashboardPage() {
                 <div className="h-[320px]">
                   {hasInpatientSafetySignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
+                      <LineChart
                         data={inpatientSafetySeries}
                         margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
                       >
                         <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                         <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ fill: 'rgba(14,165,233,0.06)' }} />
-                        <Bar dataKey="deaths" name="Deaths" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
-                        <Bar dataKey="ulcers" name="New pressure ulcers" fill={grayscalePalette.steel} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
-                        <Bar dataKey="hai" name="Total HAI" fill={grayscalePalette.cloud} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
-                      </BarChart>
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
+                        <Line type="monotone" dataKey="deaths" name="Deaths" stroke={grayscalePalette.slate} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.slate, strokeWidth: 0 }} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
+                        <Line type="monotone" dataKey="ulcers" name="New pressure ulcers" stroke={grayscalePalette.ink} strokeWidth={2.7} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                        <Line type="monotone" dataKey="hai" name="Total HAI" stroke={grayscalePalette.carbon} strokeWidth={2.7} dot={false} activeDot={{ r: 5, fill: grayscalePalette.carbon, strokeWidth: 0 }} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                      </LineChart>
                     </ResponsiveContainer>
                   ) : (
                     <ChartEmptyState message="No inpatient safety events in this view." />
@@ -957,7 +880,7 @@ export function AdminDashboardPage() {
                         <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                         <YAxis tick={chartTick} axisLine={false} tickLine={false} width={38} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
                         <Line type="monotone" dataKey="bor" name="BOR %" stroke={grayscalePalette.ink} strokeWidth={3.2} dot={false} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
                         <Line type="monotone" dataKey="btr" name="BTR" stroke={grayscalePalette.slate} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1300} animationEasing="ease-out" />
                         <Line type="monotone" dataKey="alos" name="ALOS" stroke={grayscalePalette.cloud} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1500} animationEasing="ease-out" />
@@ -987,14 +910,14 @@ export function AdminDashboardPage() {
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
                   Outpatient
                 </p>
-                <h2 className="mt-2 font-display text-3xl text-slate-950 md:text-5xl">
+                <h2 className="mt-2 font-display text-[2rem] text-slate-950 md:text-[2.35rem]">
                   Clinic flow and access
                 </h2>
               </div>
               <AnimatedMetric
                 value={outpatientSeenSeries.at(-1)?.seen ?? 0}
                 variant="compact"
-                className="font-display text-4xl leading-none text-slate-950"
+                className="font-display text-[2rem] leading-none text-slate-950"
               />
             </div>
 
@@ -1009,14 +932,14 @@ export function AdminDashboardPage() {
                       <AreaChart data={outpatientSeenSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
                         <defs>
                           <linearGradient id="outpatientSeenFill" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.2} />
-                            <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0.02} />
+                            <stop offset="0%" stopColor="#005db6" stopOpacity={0.18} />
+                            <stop offset="100%" stopColor="#005db6" stopOpacity={0.02} />
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                         <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
                         <Area type="monotone" dataKey="seen" name="Seen" stroke={grayscalePalette.ink} fill="url(#outpatientSeenFill)" strokeWidth={3} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
                         <Line type="monotone" dataKey="notSeenSameDay" name="Not seen same day" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                       </AreaChart>
@@ -1038,7 +961,7 @@ export function AdminDashboardPage() {
                         <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} horizontal={false} />
                         <XAxis type="number" tick={chartTick} axisLine={false} tickLine={false} />
                         <YAxis dataKey="name" type="category" width={110} tick={{ fill: '#475569', fontSize: 12 }} axisLine={false} tickLine={false} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ fill: 'rgba(14,165,233,0.06)' }} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
                         <Bar dataKey="newPatients" name="New" stackId="outpatientMix" fill={grayscalePalette.ink} radius={[0, 0, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
                         <Bar dataKey="followUp" name="Follow-up" stackId="outpatientMix" fill={grayscalePalette.cloud} radius={[0, 10, 10, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                       </BarChart>
@@ -1062,7 +985,7 @@ export function AdminDashboardPage() {
                         <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                         <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
                         <Line type="monotone" dataKey="wait" name="Follow-up wait (months)" stroke={grayscalePalette.ink} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
                       </LineChart>
                     </ResponsiveContainer>
@@ -1083,7 +1006,7 @@ export function AdminDashboardPage() {
                         <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                         <YAxis tickFormatter={formatMinutesAsTime} tick={chartTick} axisLine={false} tickLine={false} width={44} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ stroke: 'rgba(56,189,248,0.32)', strokeWidth: 1.2 }} formatter={(value) => [formatMinutesAsTime(Number(value)), 'Start time']} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} formatter={(value) => [formatMinutesAsTime(Number(value)), 'Start time']} />
                         <Line type="monotone" dataKey="startMinutes" name="Clinic start" stroke={grayscalePalette.steel} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.steel, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
                       </LineChart>
                     </ResponsiveContainer>
@@ -1104,7 +1027,7 @@ export function AdminDashboardPage() {
                         <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} interval={0} tickMargin={12} />
                         <YAxis tick={chartTick} axisLine={false} tickLine={false} width={28} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ fill: 'rgba(14,165,233,0.06)' }} />
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
                         <Bar dataKey="value" radius={[10, 10, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
                           {outpatientAvailability.map((item) => (
                             <Cell key={item.label} fill={item.fill} />
@@ -1136,14 +1059,14 @@ export function AdminDashboardPage() {
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
                   Procedure
                 </p>
-                <h2 className="mt-2 font-display text-3xl text-slate-950 md:text-5xl">
+                <h2 className="mt-2 font-display text-[2rem] text-slate-950 md:text-[2.35rem]">
                   Lab and endoscopy totals
                 </h2>
               </div>
               <AnimatedMetric
                 value={procedureTotals.reduce((sum, item) => sum + item.value, 0)}
                 variant="compact"
-                className="font-display text-4xl leading-none text-slate-950"
+                className="font-display text-[2rem] leading-none text-slate-950"
               />
             </div>
 
@@ -1159,8 +1082,8 @@ export function AdminDashboardPage() {
                         <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                         <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ fill: 'rgba(14,165,233,0.06)' }} />
-                        <Bar dataKey="value" radius={[12, 12, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
+                        <Bar dataKey="value" radius={[10, 10, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
                           {procedureTotals.map((item) => (
                             <Cell key={item.label} fill={item.fill} />
                           ))}
@@ -1184,8 +1107,8 @@ export function AdminDashboardPage() {
                         <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                         <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={{ fill: 'rgba(14,165,233,0.06)' }} />
-                        <Bar dataKey="value" radius={[12, 12, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
+                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
+                        <Bar dataKey="value" radius={[10, 10, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
                           {endoscopyMix.map((item) => (
                             <Cell key={item.label} fill={item.fill} />
                           ))}

@@ -1,19 +1,34 @@
 import { motion } from 'framer-motion'
-import { ClipboardList, LockKeyhole, Rows3 } from 'lucide-react'
-import { useState } from 'react'
+import {
+  CheckCircle2,
+  ClipboardList,
+  LockKeyhole,
+  PencilLine,
+  Rows3,
+} from 'lucide-react'
+import {
+  useState,
+} from 'react'
 import { Link } from 'react-router-dom'
 
 import { SubmissionBoardGrid } from '@/components/dashboard/submission-board-grid'
 import { ReportAssignmentCard } from '@/components/reports/report-assignment-card'
 import { Button } from '@/components/ui/button'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  getAssignmentCardsForPeriod,
   getCurrentPeriod,
-  getCurrentWeekAssignmentCards,
+  getVisibleReportingPeriods,
   getNurseSubmissionBoard,
 } from '@/data/selectors'
 import { useAppData } from '@/context/app-data-context'
-import { formatCompactNumber } from '@/lib/utils'
-import { cn } from '@/lib/utils'
+import { cn, formatCompactNumber } from '@/lib/utils'
 import type { ReportFamily } from '@/types/domain'
 
 const serviceLineOptions = [
@@ -27,15 +42,28 @@ export function ReportSelectionPage() {
   const { state, currentUser } = useAppData()
   const [serviceLineFilter, setServiceLineFilter] =
     useState<'all' | ReportFamily>('all')
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>('')
+
+  const currentPeriod = getCurrentPeriod(state)
+  const availablePeriods = [...getVisibleReportingPeriods(state)].reverse()
+  const fallbackPeriodId = currentPeriod?.id ?? availablePeriods[0]?.id ?? ''
+  const effectivePeriodId = availablePeriods.some((period) => period.id === selectedPeriodId)
+    ? selectedPeriodId
+    : fallbackPeriodId
 
   if (!currentUser) {
     return null
   }
 
-  const currentPeriod = getCurrentPeriod(state)
-  const currentCards = getCurrentWeekAssignmentCards(state, currentUser.id).filter((card) =>
+  const selectedPeriod =
+    availablePeriods.find((period) => period.id === effectivePeriodId) ?? currentPeriod ?? null
+  const periodCards = (effectivePeriodId
+    ? getAssignmentCardsForPeriod(state, currentUser.id, effectivePeriodId)
+    : []
+  ).filter((card) =>
     serviceLineFilter === 'all' ? true : card.department.family === serviceLineFilter,
   )
+
   const boardRows = getNurseSubmissionBoard(state, currentUser.id)
     .filter((row) => row.assignment.nurseId === currentUser.id)
     .filter((row) =>
@@ -51,164 +79,104 @@ export function ReportSelectionPage() {
       })),
     }))
 
-  const editableCount = currentCards.filter((card) => card.status !== 'locked').length
-  const submittedCount = currentCards.filter((card) => card.status === 'submitted').length
-  const lockedCount = currentCards.filter((card) => card.status === 'locked').length
+  const editableCount = periodCards.filter((card) => card.status !== 'locked').length
+  const submittedCount = periodCards.filter((card) => card.status === 'submitted').length
+  const lockedCount = periodCards.filter((card) => card.status === 'locked').length
   const activeServiceLabel =
     serviceLineOptions.find((option) => option.value === serviceLineFilter)?.label ??
     'All services'
+  const summaryItems = [
+    {
+      label: 'Assigned',
+      value: formatCompactNumber(periodCards.length),
+      note: selectedPeriod?.label ?? 'Selected week',
+      icon: ClipboardList,
+      tone: 'text-[#005db6] bg-[#edf4fb] outline-[#cfe0f4]/75',
+    },
+    {
+      label: 'Editable',
+      value: formatCompactNumber(editableCount),
+      note: 'Unlocked forms',
+      icon: PencilLine,
+      tone: 'text-[#00468c] bg-[#edf4fb] outline-[#cfe0f4]/75',
+    },
+    {
+      label: 'Submitted',
+      value: formatCompactNumber(submittedCount),
+      note: 'Sent for review',
+      icon: CheckCircle2,
+      tone: 'text-[#1f6b3b] bg-[#edf7f0] outline-[#cfe7d9]/75',
+    },
+    {
+      label: 'Locked',
+      value: formatCompactNumber(lockedCount),
+      note: 'Read only',
+      icon: LockKeyhole,
+      tone: 'text-[#1d3047] bg-[#edf1f5] outline-[#d4dde8]/75',
+    },
+  ] as const
 
   return (
     <div className="space-y-8">
-      <section className="relative overflow-hidden px-2 py-4 md:px-4">
-        <div className="pointer-events-none absolute inset-0">
-          <div className="login-grid-drift absolute inset-0 opacity-50" />
-          <div className="login-ambient-drift absolute left-[-4%] top-[8%] h-44 w-44 rounded-full bg-white/56 blur-3xl md:h-56 md:w-56" />
-          <div className="login-ambient-drift-reverse absolute right-[6%] top-[8%] h-64 w-64 rounded-full bg-sky-200/32 blur-3xl" />
-          <div className="login-ambient-drift absolute bottom-[8%] left-[18%] h-56 w-56 rounded-full bg-teal-200/18 blur-3xl" />
-          <div className="login-ring-orbit absolute right-[12%] top-[18%] h-24 w-24 rounded-full border border-sky-200/40" />
-          <div className="login-line-flow absolute bottom-[18%] right-[10%] h-px w-32 bg-gradient-to-r from-transparent via-sky-300/65 to-transparent" />
-        </div>
-
-        <div className="relative grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-end">
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="max-w-[760px] space-y-4"
-          >
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/72 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-700 shadow-[0_14px_30px_-24px_rgba(14,165,233,0.55)] backdrop-blur-sm">
-              <span className="h-2 w-2 rounded-full bg-sky-500" />
-              My reports
-            </div>
-
-            <div className="space-y-0">
-              <h1 className="font-display max-w-[8ch] text-5xl font-semibold leading-[0.9] tracking-tight text-slate-950 md:text-[5.6rem] xl:text-[6.2rem]">
-                Assigned reporting
-              </h1>
-              <p className="pt-5 text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 md:pt-6 md:text-[0.8rem]">
-                {currentPeriod?.label ?? 'Current week'} / {activeServiceLabel}
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              <span className="login-chip-float rounded-full border border-white/70 bg-white/55 px-3 py-2 backdrop-blur-sm">
-                {formatCompactNumber(currentCards.length)} current week
-              </span>
-              <span
-                className="login-chip-float rounded-full border border-white/70 bg-white/55 px-3 py-2 backdrop-blur-sm"
-                style={{ animationDelay: '700ms' }}
-              >
-                {formatCompactNumber(boardRows.length)} tracked
-              </span>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 22 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.08 }}
-            className="grid gap-4 rounded-[2rem] border border-white/65 bg-white/44 p-5 shadow-[0_24px_55px_-34px_rgba(15,23,42,0.2)] backdrop-blur-md xl:justify-self-end"
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1 border-b border-white/70 pb-4 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Editable
-                </p>
-                <p className="mt-2 font-display text-4xl leading-none text-slate-950">
-                  {formatCompactNumber(editableCount)}
-                </p>
-              </div>
-              <div className="space-y-1 border-b border-white/70 pb-4 sm:border-b-0 sm:pb-0 sm:pl-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Submitted
-                </p>
-                <p className="mt-2 font-display text-4xl leading-none text-slate-950">
-                  {formatCompactNumber(submittedCount)}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 border-t border-white/70 pt-4 sm:grid-cols-2">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Locked
-                </p>
-                <p className="mt-2 text-lg font-semibold text-slate-950">
-                  {formatCompactNumber(lockedCount)}
-                </p>
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Service line
-                </p>
-                <p className="mt-2 text-sm font-semibold text-slate-950">
-                  {activeServiceLabel}
-                </p>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      </section>
-
       <motion.section
-        initial={{ opacity: 0, y: 8 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.28, ease: 'easeOut' }}
-        className="relative overflow-hidden rounded-[2rem] border border-white/70 bg-[linear-gradient(135deg,rgba(255,255,255,0.82),rgba(244,249,255,0.76),rgba(235,253,248,0.62))] px-5 py-5 shadow-[0_20px_42px_-34px_rgba(15,23,42,0.18)] backdrop-blur-md"
+        transition={{ duration: 0.26, ease: 'easeOut' }}
+        className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5 md:px-6"
       >
-        <div className="pointer-events-none absolute inset-0">
-          <div className="login-ambient-drift absolute right-[12%] top-[-24%] h-32 w-32 rounded-full bg-sky-200/18 blur-3xl" />
-          <div className="login-line-flow absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/70 to-transparent" />
-        </div>
-
-        <div className="relative grid gap-6 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-          <div className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
-              Service line
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
+              My reports
             </p>
-            <div className="flex flex-wrap gap-2 rounded-[1.7rem] bg-white/66 p-1.5 shadow-[0_18px_30px_-24px_rgba(15,23,42,0.18)]">
-              {serviceLineOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setServiceLineFilter(option.value)}
-                  className={cn(
-                    'rounded-[1.2rem] px-4 py-2.5 text-sm font-semibold transition-all duration-300',
-                    serviceLineFilter === option.value
-                      ? 'bg-slate-950 text-white shadow-[0_16px_26px_-20px_rgba(15,23,42,0.45)]'
-                      : 'text-slate-600 hover:bg-white/82 hover:text-slate-950',
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+            <h1 className="font-display text-[2rem] leading-[0.96] tracking-[-0.03em] text-[#000a1e] md:text-[2.35rem]">
+              Assigned reporting
+            </h1>
+            <p className="text-sm text-[#44474e]">
+              {selectedPeriod?.label ?? currentPeriod?.label ?? 'Current week'} / {activeServiceLabel}
+            </p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[420px]">
-            <div className="border-l border-white/65 pl-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                View
-              </p>
-              <p className="mt-2 text-sm font-semibold text-slate-950">{activeServiceLabel}</p>
-              <p className="text-sm text-slate-500">Current week first</p>
-            </div>
-            <div className="border-l border-white/65 pl-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                Forms
-              </p>
-              <p className="mt-2 text-sm font-semibold text-slate-950">
-                {formatCompactNumber(currentCards.length)}
-              </p>
-            </div>
-            <div className="border-l border-white/65 pl-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                Board rows
-              </p>
-              <p className="mt-2 text-sm font-semibold text-slate-950">
-                {formatCompactNumber(boardRows.length)}
-              </p>
-            </div>
+          <div className="flex flex-wrap gap-2">
+            {serviceLineOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setServiceLineFilter(option.value)}
+                className={cn(
+                  'rounded-[0.25rem] border px-4 py-2 text-sm font-semibold transition-colors duration-200',
+                  serviceLineFilter === option.value
+                    ? 'border-[#000a1e] bg-[#000a1e] text-white'
+                    : 'border-[#d4dde8] bg-[#ffffff] text-[#44474e] hover:border-[#c4d0dd] hover:bg-[#f8fafc] hover:text-[#000a1e]',
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {summaryItems.map((item) => {
+              const Icon = item.icon
+
+              return (
+                <div
+                  key={item.label}
+                  className={`rounded-[0.35rem] px-3.5 py-3 outline outline-1 ${item.tone}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Icon className="h-3.5 w-3.5" />
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">
+                      {item.label}
+                    </p>
+                  </div>
+                  <p className="mt-3 font-display text-[1.45rem] leading-none tracking-[-0.03em]">
+                    {item.value}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-current/75">{item.note}</p>
+                </div>
+              )
+            })}
           </div>
         </div>
       </motion.section>
@@ -216,38 +184,47 @@ export function ReportSelectionPage() {
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, ease: 'easeOut' }}
-        className="relative overflow-hidden rounded-[2.4rem] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(242,248,255,0.84))] px-5 py-6 shadow-[0_24px_54px_-36px_rgba(15,23,42,0.22)]"
+        transition={{ duration: 0.28, ease: 'easeOut' }}
+        className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5"
       >
-        <div className="pointer-events-none absolute inset-0">
-          <div className="login-grid-drift absolute inset-0 opacity-12" />
-          <div className="login-ambient-drift absolute right-[-4%] top-[-12%] h-44 w-44 rounded-full bg-sky-200/12 blur-3xl" />
-          <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-cyan-400 via-sky-500 to-emerald-400" />
-        </div>
-
-        <div className="relative space-y-5">
+        <div className="space-y-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
-                Current week
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+                Reporting period
               </p>
-              <h2 className="font-display text-3xl text-slate-950">Open a report</h2>
-              <p className="text-sm text-slate-500">Your assigned forms.</p>
+              <h2 className="font-display text-[1.85rem] text-[#000a1e]">Open a report</h2>
             </div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/72 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600 shadow-[0_14px_24px_-20px_rgba(15,23,42,0.15)]">
-              <ClipboardList className="h-4 w-4 text-sky-700" />
-              {formatCompactNumber(currentCards.length)} items
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="min-w-[220px]">
+                <Select value={effectivePeriodId} onValueChange={setSelectedPeriodId}>
+                  <SelectTrigger className="bg-[#ffffff]">
+                    <SelectValue placeholder="Select reporting period" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availablePeriods.map((period) => (
+                      <SelectItem key={period.id} value={period.id}>
+                        {period.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="inline-flex items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-[#ffffff] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#44474e]">
+                <ClipboardList className="h-4 w-4 text-[#005db6]" />
+                {formatCompactNumber(periodCards.length)} items
+              </div>
             </div>
           </div>
 
-          {currentCards.length ? (
+          {periodCards.length ? (
             <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-              {currentCards.map((card, index) => (
+              {periodCards.map((card, index) => (
                 <motion.div
-                  key={card.assignment.id}
+                  key={`${card.assignment.id}:${card.period.id}`}
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.24, ease: 'easeOut', delay: index * 0.02 }}
+                  transition={{ duration: 0.22, ease: 'easeOut', delay: index * 0.02 }}
                 >
                   <ReportAssignmentCard
                     departmentName={card.department.name}
@@ -262,14 +239,11 @@ export function ReportSelectionPage() {
               ))}
             </div>
           ) : (
-            <div className="flex min-h-[220px] flex-col items-center justify-center gap-4 rounded-[1.9rem] border border-dashed border-sky-100/90 bg-white/62 px-6 text-center text-slate-500">
-              <Rows3 className="h-5 w-5 text-sky-500" />
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-slate-700">No reports in this view.</p>
-                <p className="text-sm leading-6 text-slate-500">
-                  Change the service line filter.
-                </p>
-              </div>
+            <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-[0.5rem] border border-dashed border-[#d4dde8] bg-[#ffffff] px-6 text-center text-[#74777f]">
+              <Rows3 className="h-5 w-5 text-[#005db6]" />
+              <p className="text-sm leading-6">
+                No reports in this view for the selected week. Change the reporting period or service line filter.
+              </p>
             </div>
           )}
         </div>
@@ -278,29 +252,21 @@ export function ReportSelectionPage() {
       {boardRows.length ? (
         <SubmissionBoardGrid
           title="Current reporting track"
-          description="Current week first, then prior live weeks."
+          description={`${activeServiceLabel} / ${formatCompactNumber(boardRows.length)} rows`}
           rows={boardRows}
         />
       ) : (
         <motion.section
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.28, ease: 'easeOut' }}
-          className="relative overflow-hidden rounded-[2.4rem] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(242,248,255,0.84))] px-5 py-6 shadow-[0_24px_54px_-36px_rgba(15,23,42,0.22)]"
+          transition={{ duration: 0.24, ease: 'easeOut' }}
+          className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-6"
         >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="login-grid-drift absolute inset-0 opacity-12" />
-            <div className="login-ambient-drift absolute right-[-4%] top-[-12%] h-44 w-44 rounded-full bg-sky-200/12 blur-3xl" />
-            <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-cyan-400 via-sky-500 to-emerald-400" />
-          </div>
-          <div className="relative flex min-h-[200px] flex-col items-center justify-center gap-4 rounded-[1.9rem] border border-dashed border-sky-100/90 bg-white/62 px-6 text-center text-slate-500">
-            <ClipboardList className="h-5 w-5 text-sky-500" />
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-slate-700">No recent board rows.</p>
-              <p className="text-sm leading-6 text-slate-500">
-                Once reports are assigned, the recent track shows up here.
-              </p>
-            </div>
+          <div className="flex min-h-[180px] flex-col items-center justify-center gap-3 rounded-[0.5rem] border border-dashed border-[#d4dde8] bg-[#ffffff] px-6 text-center text-[#74777f]">
+            <ClipboardList className="h-5 w-5 text-[#005db6]" />
+            <p className="text-sm leading-6">
+              Recent reporting rows will appear here after assignments start.
+            </p>
           </div>
         </motion.section>
       )}
@@ -308,20 +274,17 @@ export function ReportSelectionPage() {
       <motion.section
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.28, ease: 'easeOut' }}
-        className="relative overflow-hidden rounded-[2rem] border border-white/70 bg-[linear-gradient(135deg,rgba(255,255,255,0.82),rgba(244,249,255,0.76),rgba(235,253,248,0.62))] px-5 py-5 shadow-[0_20px_42px_-34px_rgba(15,23,42,0.18)] backdrop-blur-md"
+        transition={{ duration: 0.24, ease: 'easeOut' }}
+        className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5"
       >
-        <div className="pointer-events-none absolute inset-0">
-          <div className="login-ambient-drift absolute right-[12%] top-[-24%] h-32 w-32 rounded-full bg-sky-200/18 blur-3xl" />
-          <div className="login-line-flow absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/70 to-transparent" />
-        </div>
-
-        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-2">
-            <p className="text-sm font-medium text-slate-700">Need another assignment?</p>
-            <p className="text-sm text-slate-500">Use the same approval request flow.</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+              Assignments
+            </p>
+            <p className="text-sm text-[#44474e]">Need another reporting assignment?</p>
           </div>
-          <Button asChild variant="secondary">
+          <Button asChild variant="secondary" className="bg-[none] bg-[#ffffff] shadow-none">
             <Link to="/register">
               Request access
               <LockKeyhole className="h-4 w-4" />

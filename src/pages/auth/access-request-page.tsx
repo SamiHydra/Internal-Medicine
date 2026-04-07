@@ -2,34 +2,34 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import {
   ArrowLeft,
   CheckCircle2,
+  Eye,
+  EyeOff,
+  FileCheck2,
+  Info,
   LockKeyhole,
+  Mail,
   Send,
   ShieldCheck,
-  Sparkles,
+  UserRound,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { Link } from 'react-router-dom'
 import { z } from 'zod'
 
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
+import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
 import { departments } from '@/config/templates'
 import { useAppData } from '@/context/app-data-context'
 import { formatTimestamp } from '@/lib/dates'
 import { cn, formatCompactNumber } from '@/lib/utils'
 
 const requestSchema = z.object({
-  fullName: z.string().min(3),
-  email: z.string().email(),
+  fullName: z.string().trim().min(3, 'Enter your full name.'),
+  email: z.string().trim().email('Enter a valid email address.'),
   password: z.string().optional(),
   confirmPassword: z.string().optional(),
-  requestedDepartments: z.array(z.string()).min(1, 'Select at least one assignment'),
-  notes: z.string().max(240).optional(),
+  requestedDepartments: z.array(z.string()).min(1, 'Select at least one reporting assignment.'),
+  notes: z.string().max(240, 'Keep the note under 240 characters.').optional(),
 })
 
 type RequestValues = z.infer<typeof requestSchema>
@@ -37,35 +37,43 @@ type RequestValues = z.infer<typeof requestSchema>
 const familySections = [
   {
     key: 'inpatient',
-    label: 'Inpatient',
-    description: 'Ward reporting access.',
-    lineClass: 'from-cyan-400 via-sky-500 to-blue-500',
-    glowClass: 'bg-sky-200/24',
-    chipTone: 'bg-sky-50 text-sky-800 border-sky-200',
+    label: 'Inpatient services',
+    description: 'Ward coverage, rounding, and bedside reporting assignments.',
+    accent: 'bg-[#005db6]',
+    chipClass: 'bg-[#d6e3ff] text-[#00468c]',
   },
   {
     key: 'outpatient',
-    label: 'Outpatient',
-    description: 'Clinic reporting access.',
-    lineClass: 'from-teal-400 via-cyan-500 to-emerald-400',
-    glowClass: 'bg-teal-200/24',
-    chipTone: 'bg-teal-50 text-teal-800 border-teal-200',
+    label: 'Outpatient services',
+    description: 'Clinic reporting assignments and ambulatory follow-up services.',
+    accent: 'bg-[#0b7285]',
+    chipClass: 'bg-[#e1f2f6] text-[#165a67]',
   },
   {
     key: 'procedure',
-    label: 'Procedures',
-    description: 'Procedure service access.',
-    lineClass: 'from-blue-400 via-sky-500 to-cyan-400',
-    glowClass: 'bg-blue-200/24',
-    chipTone: 'bg-blue-50 text-blue-800 border-blue-200',
+    label: 'Procedure services',
+    description: 'Procedure room activity and intervention reporting access.',
+    accent: 'bg-[#4867a6]',
+    chipClass: 'bg-[#e6edf9] text-[#35507f]',
   },
 ] as const
 
-const requestFlow = ['Account', 'Departments', 'Review'] as const
+function getStatusClass(status: string) {
+  switch (status) {
+    case 'approved':
+      return 'border-[#cfe7d9] bg-[#edf7f0] text-[#1f6b3b]'
+    case 'rejected':
+      return 'border-[#f1d1d1] bg-[#fff1f1] text-[#9d2a2a]'
+    default:
+      return 'border-[#c9d7e8] bg-[#edf4fb] text-[#244261]'
+  }
+}
 
 export function AccessRequestPage() {
-  const { currentUser, state, submitAccessRequest } = useAppData()
+  const { currentUser, state, submitAccessRequest, ensureAccessRequestData } = useAppData()
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const isNewAccountFlow = !currentUser
   const backTarget = currentUser
     ? currentUser.role === 'nurse'
@@ -102,14 +110,19 @@ export function AccessRequestPage() {
     })
   }, [currentUser, form])
 
+  useEffect(() => {
+    if (!currentUser) {
+      return
+    }
+
+    void ensureAccessRequestData()
+  }, [currentUser, ensureAccessRequestData])
+
   const currentUserRequests = currentUser
     ? [...state.accessRequests]
         .filter((request) => request.userId === currentUser.id)
         .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt))
     : []
-  const pageDescription = isNewAccountFlow
-    ? 'Set up your profile and choose the departments you need.'
-    : 'Choose more departments and send your request.'
   const requestedDepartments = useWatch({
     control: form.control,
     name: 'requestedDepartments',
@@ -121,19 +134,31 @@ export function AccessRequestPage() {
       name: 'notes',
       defaultValue: '',
     }) ?? ''
+
   const selectedDepartments = departments.filter((department) =>
     requestedDepartments.includes(department.id),
   )
   const selectedCount = selectedDepartments.length
   const recentRequests = currentUserRequests.slice(0, 3)
-  const surfaceClass =
-    "relative overflow-hidden rounded-[2.5rem] border border-white/50 bg-[linear-gradient(180deg,rgba(255,255,255,0.42),rgba(246,250,255,0.26),rgba(255,250,240,0.18))] px-6 py-6 shadow-[0_28px_56px_-44px_rgba(15,23,42,0.16)] backdrop-blur-2xl before:pointer-events-none before:absolute before:inset-x-[8%] before:top-0 before:h-16 before:rounded-b-[2rem] before:bg-[linear-gradient(180deg,rgba(255,255,255,0.38),transparent)] before:content-['']"
+  const pageTitle = isNewAccountFlow
+    ? 'Request Reporting Access'
+    : 'Request Additional Access'
+  const pageDescription = isNewAccountFlow
+    ? 'Create your profile, choose the internal medicine reporting assignments you need, and submit the request for department review.'
+    : 'Choose the additional reporting assignments you need and send the update for administrator approval.'
   const inputClassName =
-    'h-12 rounded-[1.2rem] border-white/80 bg-[linear-gradient(180deg,rgba(228,238,255,0.78),rgba(245,249,255,0.96))] px-4 shadow-[0_16px_28px_-24px_rgba(30,58,138,0.28)] placeholder:text-slate-400 focus-visible:border-sky-300 focus-visible:ring-sky-200/70'
+    'h-12 w-full rounded-[4px] border border-transparent border-b-[#d4dde8] bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 text-sm text-[#191c1d] outline-none transition placeholder:text-[#9aa0a8] focus:border-[#005db6] focus:bg-[#fbfdff] disabled:cursor-not-allowed disabled:border-[#e1e3e4] disabled:bg-[#edeeef] disabled:text-[#74777f]'
+  const iconInputClassName = `${inputClassName} pl-11`
   const textareaClassName =
-    'min-h-36 rounded-[1.55rem] border-white/80 bg-[linear-gradient(180deg,rgba(228,238,255,0.78),rgba(245,249,255,0.96))] px-4 py-4 shadow-[0_16px_28px_-24px_rgba(30,58,138,0.28)] placeholder:text-slate-400 focus-visible:border-sky-300 focus-visible:ring-sky-200/70'
+    'min-h-[112px] w-full resize-none rounded-[4px] border border-transparent border-b-[#d4dde8] bg-[linear-gradient(180deg,#eef4fb_0%,#fbfdff_100%)] px-4 py-3 text-sm text-[#191c1d] outline-none transition placeholder:text-[#9aa0a8] focus:border-[#005db6] focus:bg-[#ffffff]'
+  const panelClassName =
+    'relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#ffffff_0%,#f2f5f8_100%)] p-6 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-8'
+  const labelClassName =
+    'text-[11px] font-bold uppercase tracking-[0.18em] text-[#000a1e]'
 
   const onSubmit = form.handleSubmit(async (values) => {
+    setSuccessMessage(null)
+
     if (!currentUser) {
       if (!values.password || values.password.length < 8) {
         form.setError('password', {
@@ -182,141 +207,193 @@ export function AccessRequestPage() {
   })
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_14%_16%,rgba(29,78,216,0.14),transparent_24%),radial-gradient(circle_at_82%_20%,rgba(56,189,248,0.13),transparent_22%),radial-gradient(circle_at_24%_78%,rgba(245,158,11,0.08),transparent_18%),linear-gradient(180deg,#f6fbff_0%,#edf6ff_40%,#eef8ff_100%)] px-4 py-6 md:px-6 md:py-8">
-      <div className="mx-auto max-w-[84rem] space-y-8">
-        <Button
-          asChild
-          variant="ghost"
-          className="w-fit rounded-full border border-white/80 bg-white/70 px-4 shadow-[0_18px_34px_-28px_rgba(30,58,138,0.28)] backdrop-blur-sm transition-transform duration-300 hover:-translate-y-0.5 hover:bg-white/85"
-        >
-          <Link to={backTarget}>
-            <ArrowLeft className="h-4 w-4" />
+    <div className="min-h-screen bg-[linear-gradient(180deg,#edf2f7_0%,#f7f8fa_32%,#eef2f7_100%)] px-4 py-6 md:px-8 md:py-8">
+      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,#edf2f7_0%,#f6f8fa_36%,#eef2f7_100%)]" />
+        <div className="absolute inset-x-0 top-0 h-[30rem] bg-[radial-gradient(circle_at_50%_16%,rgba(0,93,182,0.17),transparent_20%),radial-gradient(circle_at_50%_28%,rgba(99,161,255,0.10),transparent_30%)]" />
+        <div className="absolute left-[18%] top-[8rem] h-[18rem] w-[18rem] rounded-full bg-[#002147]/[0.08] blur-3xl" />
+        <div className="absolute right-[12%] top-[6rem] h-[16rem] w-[16rem] rounded-full bg-[#63a1ff]/[0.10] blur-3xl" />
+        <div className="absolute left-1/2 top-[3rem] h-[32rem] w-[32rem] -translate-x-1/2 rounded-full border border-[#d7e2f0]" />
+        <div className="absolute left-1/2 top-[-1rem] h-[42rem] w-[42rem] -translate-x-1/2 rounded-full border border-[#e2e9f3]/80" />
+        <div
+          className="absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage:
+              'radial-gradient(circle, rgba(0, 33, 71, 0.65) 1px, transparent 1px)',
+            backgroundSize: '36px 36px',
+          }}
+        />
+      </div>
+
+      <div className="mx-auto max-w-[1180px]">
+        <div className="mb-8 flex items-center justify-between gap-4">
+          <Link
+            className="inline-flex items-center gap-2 rounded-[4px] border border-[#c8d5e6] bg-[#eef4fb] px-4 py-2 text-[11px] font-bold uppercase tracking-[0.16em] text-[#000a1e] transition hover:bg-[#e3edf8]"
+            to={backTarget}
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
             {backLabel}
           </Link>
-        </Button>
 
-        <section className="relative overflow-hidden rounded-[3rem] border border-white/60 bg-[linear-gradient(135deg,rgba(255,255,255,0.52),rgba(241,248,255,0.3),rgba(236,253,245,0.22),rgba(255,247,220,0.18))] px-5 py-6 shadow-[0_34px_70px_-54px_rgba(30,58,138,0.16)] backdrop-blur-2xl md:px-8 md:py-8">
-          <div className="pointer-events-none absolute inset-0">
-            <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.2)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.2)_1px,transparent_1px)] bg-[size:76px_76px] opacity-25 [mask-image:radial-gradient(circle_at_34%_40%,black_18%,transparent_76%)]" />
-            <div className="absolute left-[-4%] top-[8%] h-48 w-48 rounded-full bg-white/56 blur-3xl md:h-64 md:w-64" />
-            <div className="absolute right-[6%] top-[12%] h-72 w-72 rounded-full bg-sky-200/24 blur-3xl" />
-            <div className="absolute bottom-[6%] left-[20%] h-56 w-56 rounded-full bg-amber-100/16 blur-3xl" />
-            <div className="absolute inset-x-[12%] top-0 h-16 bg-[linear-gradient(180deg,rgba(255,255,255,0.34),transparent)]" />
-            <div className="absolute right-[10%] top-[22%] hidden h-56 w-[22rem] rounded-[2.2rem] border border-white/28 bg-[linear-gradient(145deg,rgba(255,255,255,0.12),rgba(191,219,254,0.08),rgba(255,255,255,0.04))] shadow-[inset_0_1px_0_rgba(255,255,255,0.26)] backdrop-blur-md lg:block" />
-            <div className="absolute right-[16%] top-[34%] hidden h-20 w-20 rounded-full border border-sky-200/40 lg:block" />
-            <div className="absolute bottom-[21%] right-[16%] h-px w-44 bg-gradient-to-r from-transparent via-sky-300/45 to-transparent" />
-            <div className="absolute bottom-[17%] right-[9%] h-px w-48 bg-gradient-to-r from-transparent via-amber-300/45 to-transparent" />
+          <div className="hidden items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-[#74777f] md:flex">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            Reporting system active
           </div>
+        </div>
 
-          <div className="relative grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-end">
-            <div className="space-y-5">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.42),rgba(255,255,255,0.2))] px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#1d4ed8] shadow-[0_18px_28px_-24px_rgba(30,58,138,0.18)] backdrop-blur-2xl">
-                <ShieldCheck className="h-3.5 w-3.5" />
-                Access request
-              </div>
+        <header className="mb-10 text-center">
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center overflow-hidden rounded-[0.5rem] bg-[#002147] p-2 shadow-[0_16px_32px_rgba(0,33,71,0.16)]">
+            <img
+              src={stPaulosLogo}
+              alt="St. Paulos logo"
+              className="h-full w-full rounded-[0.25rem] object-cover"
+            />
+          </div>
+          <h1
+            className="text-[2rem] font-extrabold uppercase tracking-[-0.03em] text-[#000a1e] sm:text-[2.35rem]"
+            style={{ fontFamily: 'Manrope, sans-serif' }}
+          >
+            St. Paulos
+          </h1>
+          <p
+            className="mt-2 text-base font-semibold tracking-[0.02em] text-[#44474e]"
+            style={{ fontFamily: 'Manrope, sans-serif' }}
+          >
+            Internal Medicine Reporting System
+          </p>
+          <div className="mx-auto mt-4 h-px w-28 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_68%,#f0b429_100%)]" />
+        </header>
 
-              <div className="space-y-4">
-                <h1 className="font-display max-w-[9.8ch] text-4xl font-semibold leading-[0.88] tracking-tight text-slate-950 md:text-6xl lg:text-[5.65rem]">
-                  {isNewAccountFlow ? (
-                    <>
-                      <span className="block">Create account</span>
-                      <span className="block text-[#1d4ed8]">request access</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="block">Request access</span>
-                      <span className="block text-[#1d4ed8]">for more services</span>
-                    </>
-                  )}
-                </h1>
-                <p className="max-w-xl text-base leading-8 text-slate-600 md:text-lg">
-                  {pageDescription}
-                </p>
-              </div>
-            </div>
-
-            <div className="relative overflow-hidden rounded-[2.35rem] border border-white/55 bg-[linear-gradient(180deg,rgba(255,255,255,0.34),rgba(244,249,255,0.2),rgba(255,255,255,0.14))] p-5 shadow-[0_24px_52px_-40px_rgba(30,58,138,0.16)] backdrop-blur-2xl">
-              <div className="pointer-events-none absolute inset-x-0 top-0 h-16 rounded-t-[2.35rem] bg-[linear-gradient(180deg,rgba(255,255,255,0.34),transparent)]" />
-              <div className="relative space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#1d4ed8]">
-                    Request flow
-                  </p>
-                  <span className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/36 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-700 backdrop-blur-xl">
-                    {formatCompactNumber(selectedCount)} selected
-                  </span>
-                </div>
+        <form
+          className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start"
+          onSubmit={onSubmit}
+        >
+          <div className="space-y-6">
+            <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(135deg,#000a1e_0%,#00152f_44%,#002147_100%)] p-6 text-white shadow-[0_24px_48px_rgba(0,33,71,0.18)] outline outline-1 outline-[#11345b]/55 md:p-8">
+              <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_72%,#f0b429_100%)]" />
+              <div className="absolute right-[-10%] top-[-12%] h-48 w-48 rounded-full bg-[#63a1ff]/15 blur-3xl" />
+              <div className="relative z-10 space-y-6">
                 <div className="space-y-3">
-                  {requestFlow.map((step, index) => (
-                    <div
-                      key={step}
-                      className="rounded-[1.55rem] border border-white/55 bg-[linear-gradient(180deg,rgba(255,255,255,0.34),rgba(255,255,255,0.16))] px-4 py-4 shadow-[0_14px_26px_-24px_rgba(15,23,42,0.12)] backdrop-blur-xl"
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#f0b429]">
+                    {isNewAccountFlow ? 'New access request' : 'Access extension'}
+                  </p>
+                  <div className="space-y-2">
+                    <h2
+                      className="text-[1.9rem] font-bold tracking-[-0.035em] text-white sm:text-[2.2rem]"
+                      style={{ fontFamily: 'Manrope, sans-serif' }}
                     >
-                      <div className="mb-3 h-1 w-16 rounded-full bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#fbbf24]" />
-                      <div className="flex items-center gap-3">
-                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[linear-gradient(135deg,#1d4ed8,#0ea5e9)] text-[11px] font-semibold text-white shadow-[0_12px_18px_-14px_rgba(30,58,138,0.42)]">
-                          {index + 1}
-                        </span>
-                        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-800">
-                          {step}
-                        </p>
-                      </div>
+                      {pageTitle}
+                    </h2>
+                    <p className="max-w-[46rem] text-sm leading-7 text-[#c6d3e4] sm:text-[0.96rem]">
+                      {pageDescription}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  {[
+                    {
+                      step: '01',
+                      title: 'Profile',
+                      description: isNewAccountFlow
+                        ? 'Create your reporting identity.'
+                        : 'Current account information on file.',
+                    },
+                    {
+                      step: '02',
+                      title: 'Assignments',
+                      description: 'Choose the services you report for.',
+                    },
+                    {
+                      step: '03',
+                      title: 'Review',
+                      description: 'Department administrators confirm access.',
+                    },
+                  ].map((entry) => (
+                    <div
+                      key={entry.step}
+                      className="rounded-[0.45rem] bg-white/8 p-4 outline outline-1 outline-white/12 backdrop-blur-sm"
+                    >
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#f0b429]">
+                        Step {entry.step}
+                      </p>
+                      <h3
+                        className="mt-3 text-lg font-bold tracking-[-0.03em] text-white"
+                        style={{ fontFamily: 'Manrope, sans-serif' }}
+                      >
+                        {entry.title}
+                      </h3>
+                      <p className="mt-2 text-sm leading-6 text-[#c6d3e4]">{entry.description}</p>
                     </div>
                   ))}
                 </div>
               </div>
-            </div>
-          </div>
-        </section>
+            </section>
 
-        <form className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]" onSubmit={onSubmit}>
-          <div className="space-y-6">
-            <section className={surfaceClass}>
-              <div className="pointer-events-none absolute inset-0">
-                <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#14b8a6]" />
-                <div className="absolute right-[-6%] top-[-14%] h-44 w-44 rounded-full bg-sky-200/20 blur-3xl" />
-              </div>
-
-              <div className="relative space-y-6">
+            <section className={panelClassName}>
+              <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
+              <div className="space-y-6">
                 <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                   <div className="space-y-2">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#1d4ed8]">Account</p>
-                    <h2 className="font-display text-3xl text-slate-950">Profile details</h2>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
+                      Profile details
+                    </p>
+                    <h2
+                      className="text-[1.7rem] font-bold tracking-[-0.03em] text-[#000a1e]"
+                      style={{ fontFamily: 'Manrope, sans-serif' }}
+                    >
+                      Account information
+                    </h2>
                   </div>
-                  <div className="rounded-full border border-white/85 bg-white/74 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                    {isNewAccountFlow ? 'New profile' : 'Current profile'}
-                  </div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
+                    {isNewAccountFlow ? 'New profile setup' : 'Current profile on record'}
+                  </p>
                 </div>
 
                 <div className="grid gap-5 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="fullName">Full name</Label>
-                    <Input
-                      id="fullName"
-                      placeholder="e.g. Hana Abera"
-                      className={inputClassName}
-                      {...form.register('fullName')}
-                      disabled={Boolean(currentUser)}
-                    />
+                    <label className={labelClassName} htmlFor="fullName">
+                      Full name
+                    </label>
+                    <div className="relative">
+                      <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                      <input
+                        id="fullName"
+                        type="text"
+                        placeholder="e.g. Hana Abera"
+                        autoComplete="name"
+                        aria-invalid={form.formState.errors.fullName ? 'true' : 'false'}
+                        className={iconInputClassName}
+                        disabled={Boolean(currentUser)}
+                        {...form.register('fullName')}
+                      />
+                    </div>
                     {form.formState.errors.fullName ? (
-                      <p className="text-sm text-rose-600">
+                      <p className="text-sm text-[#ba1a1a]">
                         {form.formState.errors.fullName.message}
                       </p>
                     ) : null}
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="name@internalmedicine.org"
-                      className={inputClassName}
-                      {...form.register('email')}
-                      disabled={Boolean(currentUser)}
-                    />
+                    <label className={labelClassName} htmlFor="email">
+                      Institutional email
+                    </label>
+                    <div className="relative">
+                      <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                      <input
+                        id="email"
+                        type="email"
+                        placeholder="name@stpaulos.org"
+                        autoComplete="email"
+                        aria-invalid={form.formState.errors.email ? 'true' : 'false'}
+                        className={iconInputClassName}
+                        disabled={Boolean(currentUser)}
+                        {...form.register('email')}
+                      />
+                    </div>
                     {form.formState.errors.email ? (
-                      <p className="text-sm text-rose-600">
+                      <p className="text-sm text-[#ba1a1a]">
                         {form.formState.errors.email.message}
                       </p>
                     ) : null}
@@ -326,32 +403,70 @@ export function AccessRequestPage() {
                 {!currentUser ? (
                   <div className="grid gap-5 md:grid-cols-2">
                     <div className="space-y-2">
-                      <Label htmlFor="password">Create password</Label>
-                      <Input
-                        id="password"
-                        type="password"
-                        placeholder="At least 8 characters"
-                        className={inputClassName}
-                        {...form.register('password')}
-                      />
+                      <label className={labelClassName} htmlFor="password">
+                        Create password
+                      </label>
+                      <div className="relative">
+                        <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                        <input
+                          id="password"
+                          type={showPassword ? 'text' : 'password'}
+                          placeholder="At least 8 characters"
+                          autoComplete="new-password"
+                          aria-invalid={form.formState.errors.password ? 'true' : 'false'}
+                          className={iconInputClassName}
+                          {...form.register('password')}
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                          onClick={() => setShowPassword((current) => !current)}
+                          aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        >
+                          {showPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
                       {form.formState.errors.password ? (
-                        <p className="text-sm text-rose-600">
+                        <p className="text-sm text-[#ba1a1a]">
                           {form.formState.errors.password.message}
                         </p>
                       ) : null}
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="confirmPassword">Confirm password</Label>
-                      <Input
-                        id="confirmPassword"
-                        type="password"
-                        placeholder="Repeat your password"
-                        className={inputClassName}
-                        {...form.register('confirmPassword')}
-                      />
+                      <label className={labelClassName} htmlFor="confirmPassword">
+                        Confirm password
+                      </label>
+                      <div className="relative">
+                        <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                        <input
+                          id="confirmPassword"
+                          type={showConfirmPassword ? 'text' : 'password'}
+                          placeholder="Repeat your password"
+                          autoComplete="new-password"
+                          aria-invalid={form.formState.errors.confirmPassword ? 'true' : 'false'}
+                          className={iconInputClassName}
+                          {...form.register('confirmPassword')}
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                          onClick={() => setShowConfirmPassword((current) => !current)}
+                          aria-label={showConfirmPassword ? 'Hide confirmation password' : 'Show confirmation password'}
+                        >
+                          {showConfirmPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
                       {form.formState.errors.confirmPassword ? (
-                        <p className="text-sm text-rose-600">
+                        <p className="text-sm text-[#ba1a1a]">
                           {form.formState.errors.confirmPassword.message}
                         </p>
                       ) : null}
@@ -361,56 +476,52 @@ export function AccessRequestPage() {
               </div>
             </section>
 
-            <section className={surfaceClass}>
-              <div className="pointer-events-none absolute inset-0">
-                <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#fbbf24]" />
-                <div className="absolute right-[-8%] top-[-14%] h-48 w-48 rounded-full bg-sky-200/18 blur-3xl" />
-              </div>
-
-              <div className="relative space-y-6">
+            <section className={panelClassName}>
+              <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
+              <div className="space-y-6">
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#1d4ed8]">Access lanes</p>
-                  <h2 className="font-display text-3xl text-slate-950">Choose departments</h2>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
+                    Reporting assignments
+                  </p>
+                  <h2
+                    className="text-[1.7rem] font-bold tracking-[-0.03em] text-[#000a1e]"
+                    style={{ fontFamily: 'Manrope, sans-serif' }}
+                  >
+                    Choose departments
+                  </h2>
+                  <p className="text-sm leading-7 text-[#5b6169]">
+                    Select every department or service line that should be included in your weekly reporting scope.
+                  </p>
                 </div>
 
                 <div className="space-y-5">
                   {familySections.map((family) => (
                     <div
                       key={family.key}
-                      className="relative overflow-hidden rounded-[2rem] border border-white/85 bg-white/76 p-5 shadow-[0_20px_34px_-28px_rgba(15,23,42,0.16)]"
+                      className="overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#eef4fb_0%,#f9fbfd_100%)] outline outline-1 outline-[#c7d5e4]/26"
                     >
-                      <div className="pointer-events-none absolute inset-0">
-                        <div
-                          className={cn(
-                            'absolute inset-x-0 top-0 h-1 bg-gradient-to-r',
-                            family.lineClass,
-                          )}
-                        />
-                        <div
-                          className={cn(
-                            'absolute right-[-8%] top-[-18%] h-40 w-40 rounded-full blur-3xl',
-                            family.glowClass,
-                          )}
-                        />
-                      </div>
-
-                      <div className="relative space-y-5">
-                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className={cn('h-1 w-full', family.accent)} />
+                      <div className="space-y-5 p-5">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                           <div className="space-y-2">
-                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#1d4ed8]">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#74777f]">
                               Service line
                             </p>
-                            <h3 className="font-display text-[2rem] text-slate-950">{family.label}</h3>
-                            <p className="text-sm text-slate-500">{family.description}</p>
+                            <h3
+                              className="text-[1.35rem] font-bold tracking-[-0.03em] text-[#000a1e]"
+                              style={{ fontFamily: 'Manrope, sans-serif' }}
+                            >
+                              {family.label}
+                            </h3>
+                            <p className="text-sm leading-6 text-[#5b6169]">{family.description}</p>
                           </div>
-
                           <span
                             className={cn(
-                              'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] shadow-[0_14px_24px_-20px_rgba(15,23,42,0.15)]',
-                              family.chipTone,
+                              'inline-flex items-center rounded-[4px] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em]',
+                              family.chipClass,
                             )}
                           >
-                            {groupedDepartments[family.key].length} options
+                            {groupedDepartments[family.key].length} assignments
                           </span>
                         </div>
 
@@ -418,7 +529,7 @@ export function AccessRequestPage() {
                           control={form.control}
                           name="requestedDepartments"
                           render={({ field }) => (
-                            <div className="grid gap-4 md:grid-cols-2">
+                            <div className="grid gap-3 md:grid-cols-2">
                               {groupedDepartments[family.key].map((department) => {
                                 const checked = field.value.includes(department.id)
 
@@ -426,28 +537,36 @@ export function AccessRequestPage() {
                                   <label
                                     key={department.id}
                                     className={cn(
-                                      'group flex items-start gap-4 rounded-[1.7rem] border px-4 py-4 transition-[border-color,background-color,box-shadow] duration-200',
+                                      'flex items-start gap-3 rounded-[0.45rem] bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fb_100%)] px-4 py-4 outline outline-1 transition',
                                       checked
-                                        ? 'border-sky-300 bg-[linear-gradient(145deg,rgba(255,255,255,0.74),rgba(239,247,255,0.58),rgba(255,248,225,0.42))] shadow-[0_22px_40px_-30px_rgba(14,165,233,0.2)] backdrop-blur-xl'
-                                        : 'border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.42),rgba(255,255,255,0.22))] shadow-[0_14px_24px_-22px_rgba(15,23,42,0.12)] backdrop-blur-lg hover:border-sky-200 hover:bg-white/54',
+                                        ? 'outline-[#005db6]/28 bg-[linear-gradient(180deg,#eef5ff_0%,#f9fbff_100%)]'
+                                        : 'outline-[#c4c6cf]/18 hover:bg-[linear-gradient(180deg,#f8fbff_0%,#ffffff_100%)]',
                                     )}
                                   >
-                                    <Checkbox
-                                      className="mt-0.5 h-6 w-6 rounded-xl border-white/80 bg-white shadow-[0_14px_24px_-20px_rgba(15,23,42,0.2)]"
+                                    <input
+                                      type="checkbox"
                                       checked={checked}
-                                      onCheckedChange={(nextChecked) => {
+                                      className="mt-1 h-4 w-4 rounded-[2px] border-[#c4c6cf] accent-[#005db6]"
+                                      onChange={(event) => {
                                         field.onChange(
-                                          nextChecked
+                                          event.target.checked
                                             ? [...field.value, department.id]
                                             : field.value.filter((value) => value !== department.id),
                                         )
                                       }}
                                     />
-                                    <span className="min-w-0 space-y-1">
-                                      <span className="block text-lg font-medium text-slate-900">
-                                        {department.name}
+                                    <span className="min-w-0 space-y-1.5">
+                                      <span className="flex flex-wrap items-center gap-2">
+                                        <span className="text-sm font-semibold text-[#000a1e]">
+                                          {department.name}
+                                        </span>
+                                        {checked ? (
+                                          <span className="rounded-[4px] bg-[#d6e3ff] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#00468c]">
+                                            Selected
+                                          </span>
+                                        ) : null}
                                       </span>
-                                      <span className="block text-sm leading-6 text-slate-500">
+                                      <span className="block text-sm leading-6 text-[#5b6169]">
                                         {department.description}
                                       </span>
                                     </span>
@@ -463,155 +582,318 @@ export function AccessRequestPage() {
                 </div>
 
                 {form.formState.errors.requestedDepartments ? (
-                  <p className="text-sm text-rose-600">
+                  <p className="text-sm text-[#ba1a1a]">
                     {form.formState.errors.requestedDepartments.message}
                   </p>
                 ) : null}
               </div>
             </section>
 
-            <section className={surfaceClass}>
-              <div className="pointer-events-none absolute inset-0">
-                <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#14b8a6] via-[#38bdf8] to-[#fbbf24]" />
-                <div className="absolute right-[-4%] top-[-12%] h-44 w-44 rounded-full bg-emerald-200/18 blur-3xl" />
-              </div>
-
-              <div className="relative space-y-5">
+            <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#eef4fb_0%,#ffffff_100%)] p-6 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-8">
+              <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_78%,#f0b429_100%)]" />
+              <div className="space-y-5">
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#1d4ed8]">Notes</p>
-                  <h2 className="font-display text-3xl text-slate-950">Reviewer note</h2>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
+                    Optional note
+                  </p>
+                  <h2
+                    className="text-[1.7rem] font-bold tracking-[-0.03em] text-[#000a1e]"
+                    style={{ fontFamily: 'Manrope, sans-serif' }}
+                  >
+                    Department note
+                  </h2>
+                  <p className="text-sm leading-7 text-[#5b6169]">
+                    Add any context that will help the reviewers approve the reporting assignments you need.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="notes">Notes</Label>
-                  <Textarea
+                  <label className={labelClassName} htmlFor="notes">
+                    Reviewer note
+                  </label>
+                  <textarea
                     id="notes"
+                    placeholder="Briefly explain your service coverage, rotation, or reporting needs."
                     className={textareaClassName}
                     {...form.register('notes')}
                   />
-                  <div className="flex items-center justify-between gap-3 text-sm text-slate-500">
+                  <div className="flex items-center justify-between gap-3 text-sm text-[#74777f]">
                     <span>Optional</span>
                     <span>{notesValue.length}/240</span>
                   </div>
                   {form.formState.errors.notes ? (
-                    <p className="text-sm text-rose-600">
-                      {form.formState.errors.notes.message}
-                    </p>
+                    <p className="text-sm text-[#ba1a1a]">{form.formState.errors.notes.message}</p>
                   ) : null}
                 </div>
               </div>
             </section>
+
+            {currentUser ? (
+              <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#eef4fb_0%,#ffffff_100%)] p-6 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-8">
+                <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
+                <div className="space-y-6">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
+                        Request history
+                      </p>
+                      <h2
+                        className="text-[1.7rem] font-bold tracking-[-0.03em] text-[#000a1e]"
+                        style={{ fontFamily: 'Manrope, sans-serif' }}
+                      >
+                        Previous submissions
+                      </h2>
+                    </div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
+                      {formatCompactNumber(currentUserRequests.length)} total requests
+                    </p>
+                  </div>
+
+                  {currentUserRequests.length ? (
+                    <div className="space-y-3">
+                      {currentUserRequests.map((request) => (
+                        <article
+                          key={request.id}
+                          className="rounded-[0.5rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] p-5 outline outline-1 outline-[#c7d5e4]/24"
+                        >
+                          <div className="space-y-4">
+                            <div className="flex flex-wrap gap-2">
+                              {request.requestedAssignments.map((assignment) => (
+                                <span
+                                  key={`${request.id}-${assignment.departmentId}`}
+                                  className="rounded-[4px] bg-[#ffffff] px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#244261] outline outline-1 outline-[#c7d5e4]/30"
+                                >
+                                  {
+                                    departments.find(
+                                      (department) => department.id === assignment.departmentId,
+                                    )?.name
+                                  }
+                                </span>
+                              ))}
+                            </div>
+
+                            <div className="grid gap-3 text-sm text-[#5b6169] sm:grid-cols-2">
+                              <div className="space-y-1">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
+                                  Submitted
+                                </p>
+                                <p>{formatTimestamp(request.requestedAt)}</p>
+                              </div>
+                              <div className="space-y-1">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
+                                  Status
+                                </p>
+                                <span
+                                  className={cn(
+                                    'inline-flex rounded-[4px] border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em]',
+                                    getStatusClass(request.status),
+                                  )}
+                                >
+                                  {request.status}
+                                </span>
+                              </div>
+                            </div>
+
+                            {request.notes ? (
+                              <p className="text-sm leading-6 text-[#5b6169]">{request.notes}</p>
+                            ) : null}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-[0.5rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] px-5 py-8 text-center text-sm text-[#5b6169] outline outline-1 outline-[#c7d5e4]/24">
+                      No requests yet.
+                    </div>
+                  )}
+                </div>
+              </section>
+            ) : null}
           </div>
 
-          <aside className="space-y-6 xl:sticky xl:top-6 xl:self-start">
-            <section className="relative overflow-hidden rounded-[2.5rem] border border-white/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.58),rgba(243,248,255,0.42),rgba(255,249,238,0.3))] px-6 py-6 shadow-[0_30px_58px_-40px_rgba(30,58,138,0.18)] backdrop-blur-xl">
-              <div className="pointer-events-none absolute inset-0">
-                <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#14b8a6]" />
-                <div className="absolute right-[-8%] top-[-10%] h-52 w-52 rounded-full bg-sky-200/24 blur-3xl" />
-                <div className="absolute bottom-[-12%] left-[8%] h-40 w-40 rounded-full bg-amber-100/18 blur-3xl" />
-                <div className="absolute right-7 top-7 h-20 w-20 rounded-full border border-sky-200/45" />
-              </div>
-
-              <div className="relative space-y-5">
+          <aside className="space-y-6 xl:sticky xl:top-8">
+            <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#000a1e_0%,#00182f_46%,#002147_100%)] p-6 text-white shadow-[0_24px_48px_rgba(0,33,71,0.2)] outline outline-1 outline-[#143963]/55 md:p-8">
+              <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_72%,#f0b429_100%)]" />
+              <div className="absolute right-[-14%] top-[-8%] h-52 w-52 rounded-full bg-[#63a1ff]/16 blur-3xl" />
+              <div className="relative z-10 space-y-6">
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#1d4ed8]">Summary</p>
-                  <h2 className="font-display text-3xl text-slate-950">Submit request</h2>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#f0b429]">
+                    Request summary
+                  </p>
+                  <h2
+                    className="text-[1.7rem] font-bold tracking-[-0.03em] text-white"
+                    style={{ fontFamily: 'Manrope, sans-serif' }}
+                  >
+                    Review and submit
+                  </h2>
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                  <div className="rounded-[1.45rem] border border-white/65 bg-[linear-gradient(180deg,rgba(255,255,255,0.42),rgba(255,255,255,0.22))] p-4 shadow-[0_16px_28px_-24px_rgba(15,23,42,0.14)] backdrop-blur-lg">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d4ed8]">Selected</p>
-                    <p className="mt-3 text-3xl font-semibold text-slate-950">
+                  <div className="rounded-[0.45rem] bg-white/8 p-4 outline outline-1 outline-white/12 backdrop-blur-sm">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#f0b429]">
+                      Selected assignments
+                    </p>
+                    <p
+                      className="mt-3 text-[2rem] font-bold tracking-[-0.04em] text-white"
+                      style={{ fontFamily: 'Manrope, sans-serif' }}
+                    >
                       {formatCompactNumber(selectedCount)}
                     </p>
                   </div>
-                  <div className="rounded-[1.45rem] border border-white/65 bg-[linear-gradient(180deg,rgba(255,255,255,0.42),rgba(255,255,255,0.22))] p-4 shadow-[0_16px_28px_-24px_rgba(15,23,42,0.14)] backdrop-blur-lg">
+
+                  <div className="rounded-[0.45rem] bg-white/8 p-4 outline outline-1 outline-white/12 backdrop-blur-sm">
                     <div className="flex items-center gap-2">
-                      <LockKeyhole className="h-4 w-4 text-[#1d4ed8]" />
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d4ed8]">Approval</p>
+                      <FileCheck2 className="h-4 w-4 text-[#63a1ff]" />
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#f0b429]">
+                        Approval route
+                      </p>
                     </div>
-                    <p className="mt-3 text-base font-semibold text-slate-950">Admin approval</p>
+                    <p className="mt-3 text-sm font-semibold text-white">
+                      Department review
+                    </p>
                   </div>
                 </div>
 
-                <div className="space-y-3 rounded-[1.85rem] border border-white/65 bg-[linear-gradient(180deg,rgba(255,255,255,0.42),rgba(255,255,255,0.2))] p-4 shadow-[0_16px_28px_-24px_rgba(15,23,42,0.14)] backdrop-blur-lg">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1d4ed8]">Departments</p>
+                <div className="space-y-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#f0b429]">
+                    Selected departments
+                  </p>
                   {selectedDepartments.length ? (
                     <div className="flex flex-wrap gap-2">
                       {selectedDepartments.map((department) => (
                         <span
                           key={department.id}
-                          className="rounded-full border border-white/65 bg-white/42 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[0_10px_20px_-18px_rgba(15,23,42,0.14)] backdrop-blur-lg"
+                          className="rounded-[4px] bg-white/10 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#e2ebf6] outline outline-1 outline-white/12"
                         >
                           {department.name}
                         </span>
                       ))}
                     </div>
                   ) : (
-                    <p className="text-sm text-slate-500">Choose at least one department.</p>
+                    <p className="text-sm leading-6 text-[#c6d3e4]">
+                      No reporting assignments selected yet.
+                    </p>
                   )}
                 </div>
 
                 {successMessage ? (
-                  <div className="rounded-[1.6rem] border border-emerald-300/30 bg-emerald-100/55 p-4">
+                  <div className="rounded-[0.45rem] border border-[#cfe7d9] bg-[#edf7f0] p-4">
                     <div className="flex items-start gap-3">
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-700" />
-                      <p className="text-sm leading-6 text-emerald-900">{successMessage}</p>
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 text-[#1f6b3b]" />
+                      <p className="text-sm leading-6 text-[#1f6b3b]">{successMessage}</p>
                     </div>
                   </div>
                 ) : null}
 
-                <Button
+                <button
                   type="submit"
-                  size="lg"
-                  className="h-14 w-full rounded-[1.2rem] border-0 bg-[linear-gradient(90deg,#1d4ed8_0%,#0ea5e9_52%,#0f766e_100%)] text-base font-medium text-white shadow-[0_18px_36px_-20px_rgba(30,58,138,0.45)] transition-transform duration-300 hover:-translate-y-0.5 hover:brightness-105"
+                  className="auth-accent-button flex h-14 w-full items-center justify-center gap-3 rounded-[4px] px-6 text-[0.8rem] font-bold uppercase tracking-[0.1em]"
+                  style={{ fontFamily: 'Manrope, sans-serif' }}
                 >
                   Submit access request
-                  <Send className="h-4 w-4" />
-                </Button>
+                  <Send className="h-3.5 w-3.5" />
+                </button>
+
+                <p className="text-center text-xs leading-6 text-[#c6d3e4]">
+                  {isNewAccountFlow ? 'Existing system user? ' : 'Need to leave this form? '}
+                  <Link className="font-semibold text-[#63a1ff] hover:underline" to={backTarget}>
+                    {isNewAccountFlow ? 'Secure sign in' : 'Return to workspace'}
+                  </Link>
+                </p>
+              </div>
+            </section>
+
+            <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#eef4fb_0%,#ffffff_100%)] p-6 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-8">
+              <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#63a1ff_0%,#005db6_70%,#f0b429_100%)]" />
+              <div className="space-y-5">
+                <div className="space-y-2">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
+                    Review process
+                  </p>
+                  <h2
+                    className="text-[1.6rem] font-bold tracking-[-0.03em] text-[#000a1e]"
+                    style={{ fontFamily: 'Manrope, sans-serif' }}
+                  >
+                    What happens next
+                  </h2>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3 rounded-[0.45rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] p-4 outline outline-1 outline-[#c7d5e4]/24">
+                    <Mail className="mt-0.5 h-4 w-4 text-[#005db6]" />
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#000a1e]">
+                        Email verification
+                      </p>
+                      <p className="text-sm leading-6 text-[#5b6169]">
+                        {isNewAccountFlow
+                          ? 'New accounts receive a verification email before sign-in can begin.'
+                          : 'Your current account stays active while the additional request is reviewed.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3 rounded-[0.45rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] p-4 outline outline-1 outline-[#c7d5e4]/24">
+                    <Info className="mt-0.5 h-4 w-4 text-[#005db6]" />
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#000a1e]">
+                        Administrative review
+                      </p>
+                      <p className="text-sm leading-6 text-[#5b6169]">
+                        Reporting assignments are confirmed by department administrators before access is activated.
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
 
             {currentUser ? (
-              <section className="relative overflow-hidden rounded-[2.2rem] border border-white/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.52),rgba(243,248,255,0.38),rgba(255,255,255,0.34))] px-5 py-5 shadow-[0_24px_42px_-36px_rgba(30,58,138,0.16)] backdrop-blur-xl">
-                <div className="pointer-events-none absolute inset-0">
-                  <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#fbbf24]" />
-                </div>
-                <div className="relative space-y-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#1d4ed8]">Recent</p>
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      {formatCompactNumber(currentUserRequests.length)} total
-                    </span>
+              <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#eef4fb_0%,#ffffff_100%)] p-6 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-8">
+                <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
+                      Recent activity
+                    </p>
+                    <h2
+                      className="text-[1.6rem] font-bold tracking-[-0.03em] text-[#000a1e]"
+                      style={{ fontFamily: 'Manrope, sans-serif' }}
+                    >
+                      Latest requests
+                    </h2>
                   </div>
+
                   {recentRequests.length ? (
                     <div className="space-y-3">
                       {recentRequests.map((request) => (
                         <div
                           key={request.id}
-                          className="rounded-[1.35rem] border border-white/65 bg-white/42 p-4 shadow-[0_14px_24px_-22px_rgba(15,23,42,0.14)] backdrop-blur-lg"
+                          className="rounded-[0.45rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] p-4 outline outline-1 outline-[#c7d5e4]/24"
                         >
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-sm font-semibold text-slate-900">
-                              {formatTimestamp(request.requestedAt)}
+                          <div className="space-y-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="text-sm font-semibold text-[#000a1e]">
+                                {formatTimestamp(request.requestedAt)}
+                              </p>
+                              <span
+                                className={cn(
+                                  'inline-flex rounded-[4px] border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em]',
+                                  getStatusClass(request.status),
+                                )}
+                              >
+                                {request.status}
+                              </span>
+                            </div>
+                            <p className="text-sm leading-6 text-[#5b6169]">
+                              {request.requestedAssignments.length} assignments requested
                             </p>
-                            <Badge
-                              variant={
-                                request.status === 'approved'
-                                  ? 'success'
-                                  : request.status === 'rejected'
-                                    ? 'danger'
-                                    : 'warning'
-                              }
-                            >
-                              {request.status}
-                            </Badge>
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="text-sm text-slate-500">No requests yet.</p>
+                    <p className="text-sm leading-6 text-[#5b6169]">No requests yet.</p>
                   )}
                 </div>
               </section>
@@ -619,76 +901,16 @@ export function AccessRequestPage() {
           </aside>
         </form>
 
-        {currentUser ? (
-          <section className={surfaceClass}>
-            <div className="pointer-events-none absolute inset-0">
-              <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#1d4ed8] via-[#38bdf8] to-[#14b8a6]" />
-              <div className="absolute right-[-4%] top-[-12%] h-44 w-44 rounded-full bg-sky-200/18 blur-3xl" />
-            </div>
-
-              <div className="relative space-y-5">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="space-y-2">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#1d4ed8]">History</p>
-                    <h2 className="font-display text-3xl text-slate-950">Your requests</h2>
-                  </div>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/72 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600 shadow-[0_14px_24px_-20px_rgba(15,23,42,0.15)]">
-                    <Sparkles className="h-4 w-4 text-[#1d4ed8]" />
-                    {formatCompactNumber(currentUserRequests.length)} requests
-                </div>
-              </div>
-
-              {currentUserRequests.length ? (
-                <div className="space-y-3">
-                  {currentUserRequests.map((request) => (
-                    <div
-                      key={request.id}
-                      className="rounded-[1.8rem] border border-white/65 bg-[linear-gradient(180deg,rgba(255,255,255,0.46),rgba(255,255,255,0.24))] p-5 shadow-[0_16px_30px_-24px_rgba(15,23,42,0.14)] backdrop-blur-lg"
-                    >
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="space-y-3">
-                          <div className="flex flex-wrap gap-2">
-                            {request.requestedAssignments.map((assignment) => (
-                              <Badge key={`${request.id}-${assignment.departmentId}`} variant="info">
-                                {
-                                  departments.find(
-                                    (department) => department.id === assignment.departmentId,
-                                  )?.name
-                                }
-                              </Badge>
-                            ))}
-                          </div>
-
-                          <div className="space-y-1 text-sm text-slate-500">
-                            <p>{formatTimestamp(request.requestedAt)}</p>
-                            {request.notes ? <p>{request.notes}</p> : null}
-                          </div>
-                        </div>
-
-                        <Badge
-                          variant={
-                            request.status === 'approved'
-                              ? 'success'
-                              : request.status === 'rejected'
-                                ? 'danger'
-                                : 'warning'
-                          }
-                        >
-                          {request.status}
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex min-h-[180px] flex-col items-center justify-center gap-4 rounded-[2rem] border border-dashed border-sky-100/90 bg-white/62 px-6 text-center text-slate-500">
-                  <Sparkles className="h-5 w-5 text-sky-500" />
-                  <p className="text-sm font-medium text-slate-700">No requests yet.</p>
-                </div>
-              )}
-            </div>
-          </section>
-        ) : null}
+        <footer className="mt-8 flex flex-col gap-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[#74777f] sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <span>Reporting policy</span>
+            <span>Department review</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            HIPAA aligned workspace
+          </div>
+        </footer>
       </div>
     </div>
   )

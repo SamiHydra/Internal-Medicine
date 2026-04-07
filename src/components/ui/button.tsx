@@ -5,25 +5,25 @@ import type { ButtonHTMLAttributes } from 'react'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 rounded-xl text-sm font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-2 rounded-[0.25rem] text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#63a1ff]/45 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
         default:
-          'bg-[linear-gradient(135deg,#0891b2_0%,#2563eb_50%,#0f766e_100%)] text-white shadow-[0_18px_30px_-18px_rgba(37,99,235,0.6)] hover:-translate-y-0.5 hover:brightness-105',
+          'auth-primary-button border border-transparent !bg-[var(--brand-primary)] !text-white font-bold tracking-[0.02em] shadow-[0_16px_32px_rgba(0,93,182,0.24)] hover:!bg-[var(--brand-primary-strong)] hover:!text-white [&_svg]:!text-white',
         secondary:
-          'bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,251,255,0.92))] text-slate-700 ring-1 ring-white/80 shadow-[0_16px_28px_-22px_rgba(15,23,42,0.24)] hover:-translate-y-0.5 hover:bg-white',
-        ghost: 'text-slate-600 hover:bg-white/70 hover:text-slate-950',
+          'border border-[#d4dde8] bg-[linear-gradient(180deg,#ffffff_0%,#f3f4f5_100%)] text-[#000a1e] shadow-[0_14px_24px_-22px_rgba(0,33,71,0.18)] hover:bg-[#eef3f8]',
+        ghost: 'text-[#44474e] hover:bg-[#edf1f5] hover:text-[#000a1e]',
         outline:
-          'border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,251,255,0.92))] text-slate-700 hover:border-sky-200 hover:bg-white',
+          'border border-[#c4c6cf]/40 bg-[#ffffff] text-[#000a1e] hover:bg-[#f3f4f5]',
         destructive:
-          'bg-[linear-gradient(135deg,#ef4444_0%,#dc2626_100%)] text-white shadow-[0_18px_30px_-20px_rgba(220,38,38,0.6)] hover:-translate-y-0.5',
+          'bg-[#ba1a1a] text-white shadow-[0_16px_28px_-22px_rgba(186,26,26,0.5)] hover:bg-[#93000a]',
       },
       size: {
-        default: 'h-11 px-4',
-        sm: 'h-9 rounded-lg px-3 text-xs',
+        default: 'h-12 px-4',
+        sm: 'h-9 rounded-[0.25rem] px-3 text-xs',
         lg: 'h-12 px-6 text-sm',
-        icon: 'h-10 w-10 rounded-xl',
+        icon: 'h-10 w-10 rounded-[0.25rem]',
       },
     },
     defaultVariants: {

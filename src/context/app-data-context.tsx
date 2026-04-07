@@ -13,13 +13,21 @@ import { toast } from 'sonner'
 import { createEmptyAppState } from '@/lib/app-state'
 import type {
   AccessRequestPayload,
+  ClaimSuperadminPayload,
+  CreateAdminAccountPayload,
+  LiveAppStateLoadOptions,
   SaveReportPayload,
   SupabaseReferenceState,
 } from '@/lib/supabase/api'
 import {
   assignUserToDepartment as assignUserToDepartmentMutation,
+  claimSuperadmin as claimSuperadminMutation,
+  createAdminAccount as createAdminAccountMutation,
   createEmptyReferenceState,
+  fetchCurrentUserProfile,
+  fetchReportDetails,
   fetchLiveAppState,
+  isAdminRole,
   loginWithPassword,
   reviewAccessRequest as reviewAccessRequestMutation,
   restoreNotifications as restoreNotificationsMutation,
@@ -27,6 +35,7 @@ import {
   sessionUserId,
   setReportLockState,
   signOut as signOutMutation,
+  syncOverdueNotifications as syncOverdueNotificationsMutation,
   submitAccessRequest as submitAccessRequestMutation,
   updateAppSettings as updateAppSettingsMutation,
   updateAssignmentActiveState,
@@ -45,6 +54,7 @@ import {
 import {
   getCurrentPeriod,
   getCurrentUser,
+  getVisibleReportingPeriods,
 } from '@/data/selectors'
 import type {
   AppSettings,
@@ -68,6 +78,8 @@ type AppDataContextValue = {
   clearNotifications: (userId: string, notificationIds: string[]) => Promise<void>
   restoreNotifications: (notifications: NotificationItem[]) => Promise<void>
   submitAccessRequest: (payload: AccessRequestPayload) => Promise<boolean>
+  claimSuperadmin: (payload: ClaimSuperadminPayload) => Promise<boolean>
+  createAdminAccount: (payload: CreateAdminAccountPayload) => Promise<boolean>
   approveAccessRequest: (requestId: string, reviewerId: string) => Promise<void>
   rejectAccessRequest: (requestId: string, reviewerId: string) => Promise<void>
   saveReport: (payload: SaveReportPayload) => Promise<boolean>
@@ -81,10 +93,24 @@ type AppDataContextValue = {
     departmentId: string,
     templateId: string,
   ) => Promise<void>
-  refreshData: () => Promise<void>
+  ensureProfileDirectoryData: () => Promise<void>
+  ensureAccessRequestData: () => Promise<void>
+  ensureHistoryData: () => Promise<void>
+  ensureReportDetails: (reportIds: string[]) => Promise<void>
+  refreshData: (options?: LiveAppStateLoadOptions) => Promise<void>
 }
 
 const AppDataContext = createContext<AppDataContextValue | null>(null)
+const workspaceCacheStorageKey = 'mesay:workspace-state:v2'
+
+type WorkspaceCacheRecord = {
+  version: 2
+  userId: string
+  state: AppState
+  profileDirectoryLoaded: boolean
+  accessRequestDataLoaded: boolean
+  historyDataLoaded: boolean
+}
 
 function getMessage(error: unknown, fallback: string) {
   if (typeof error === 'object' && error && 'message' in error) {
@@ -97,6 +123,83 @@ function getMessage(error: unknown, fallback: string) {
   return fallback
 }
 
+function getLoadedReportDetailIds(state: AppState) {
+  return new Set(
+    state.reports
+      .filter(
+        (report) =>
+          Object.keys(report.values).length > 0 ||
+          Object.keys(report.calculatedMetrics).length > 0,
+      )
+      .map((report) => report.id),
+  )
+}
+
+function readWorkspaceCache(userId: string) {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    const rawValue = window.sessionStorage.getItem(workspaceCacheStorageKey)
+    if (!rawValue) {
+      return null
+    }
+
+    const parsedValue = JSON.parse(rawValue) as Partial<WorkspaceCacheRecord>
+
+    if (
+      parsedValue.version !== 2 ||
+      parsedValue.userId !== userId ||
+      !parsedValue.state
+    ) {
+      return null
+    }
+
+    return parsedValue as WorkspaceCacheRecord
+  } catch {
+    return null
+  }
+}
+
+function writeWorkspaceCache(cacheRecord: WorkspaceCacheRecord) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.sessionStorage.setItem(
+      workspaceCacheStorageKey,
+      JSON.stringify(cacheRecord),
+    )
+  } catch {
+    // Keep the app responsive even if the session cache cannot be written.
+  }
+}
+
+function clearWorkspaceCache() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.sessionStorage.removeItem(workspaceCacheStorageKey)
+  } catch {
+    // Ignore session cache cleanup errors.
+  }
+}
+
+function getAdminDashboardWarmReportIds(state: AppState) {
+  const visibleReportingPeriods = getVisibleReportingPeriods(state)
+  const dashboardPeriodIds = new Set(
+    visibleReportingPeriods.slice(-8).map((period) => period.id),
+  )
+
+  return state.reports
+    .filter((report) => dashboardPeriodIds.has(report.reportingPeriodId))
+    .map((report) => report.id)
+}
+
 export function AppDataProvider({ children }: PropsWithChildren) {
   const client = getSupabaseBrowserClient()
   const [state, setState] = useState<AppState>(() => createEmptyAppState())
@@ -106,14 +209,53 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const referencesRef = useRef<SupabaseReferenceState>(createEmptyReferenceState())
   const loadVersionRef = useRef(0)
   const currentUserIdRef = useRef<string | null>(null)
+  const currentStateRef = useRef<AppState>(createEmptyAppState())
+  const suppressNextSignedInLoadRef = useRef(false)
+  const pendingExplicitAuthUserIdRef = useRef<string | null>(null)
+  const isSigningOutRef = useRef(false)
+  const profileDirectoryLoadedRef = useRef(false)
+  const accessRequestDataLoadedRef = useRef(false)
+  const historyDataLoadedRef = useRef(false)
+  const loadedReportDetailIdsRef = useRef<Set<string>>(new Set())
+  const pendingReportDetailIdsRef = useRef<Set<string>>(new Set())
+  const overdueSyncInFlightRef = useRef(false)
+  const lastOverdueSyncAtRef = useRef(0)
   const syncPendingCountRef = useRef(0)
   const syncIndicatorTimeoutRef = useRef<number | null>(null)
 
   const currentUser = getCurrentUser(state)
 
+  const beginBackgroundSync = useCallback(() => {
+    syncPendingCountRef.current += 1
+
+    if (syncPendingCountRef.current === 1 && syncIndicatorTimeoutRef.current === null) {
+      syncIndicatorTimeoutRef.current = window.setTimeout(() => {
+        if (syncPendingCountRef.current > 0) {
+          setIsSyncing(true)
+        }
+
+        syncIndicatorTimeoutRef.current = null
+      }, 220)
+    }
+  }, [])
+
+  const endBackgroundSync = useCallback(() => {
+    syncPendingCountRef.current = Math.max(0, syncPendingCountRef.current - 1)
+
+    if (syncPendingCountRef.current === 0) {
+      if (syncIndicatorTimeoutRef.current !== null) {
+        window.clearTimeout(syncIndicatorTimeoutRef.current)
+        syncIndicatorTimeoutRef.current = null
+      }
+
+      setIsSyncing(false)
+    }
+  }, [])
+
   useEffect(() => {
     currentUserIdRef.current = state.currentUserId
-  }, [state.currentUserId])
+    currentStateRef.current = state
+  }, [state])
 
   useEffect(
     () => () => {
@@ -124,11 +266,129 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [],
   )
 
+  const scheduleOverdueSync = useCallback(() => {
+    if (!client || overdueSyncInFlightRef.current) {
+      return
+    }
+
+    const now = Date.now()
+    if (now - lastOverdueSyncAtRef.current < 60_000) {
+      return
+    }
+
+    overdueSyncInFlightRef.current = true
+
+    void syncOverdueNotificationsMutation(client)
+      .then(() => {
+        lastOverdueSyncAtRef.current = Date.now()
+      })
+      .catch(() => {
+        // Keep startup fast even if overdue notification sync fails.
+      })
+      .finally(() => {
+        overdueSyncInFlightRef.current = false
+      })
+  }, [client])
+
+  const resetDeferredDataState = useCallback(() => {
+    profileDirectoryLoadedRef.current = false
+    accessRequestDataLoadedRef.current = false
+    historyDataLoadedRef.current = false
+    loadedReportDetailIdsRef.current = new Set()
+    pendingReportDetailIdsRef.current = new Set()
+  }, [])
+
+  const persistWorkspaceCache = useCallback(
+    (
+      nextState: AppState,
+      overrides?: Partial<
+        Pick<
+          WorkspaceCacheRecord,
+          'profileDirectoryLoaded' | 'accessRequestDataLoaded' | 'historyDataLoaded'
+        >
+      >,
+    ) => {
+      if (!nextState.currentUserId) {
+        clearWorkspaceCache()
+        return
+      }
+
+      writeWorkspaceCache({
+        version: 2,
+        userId: nextState.currentUserId,
+        state: nextState,
+        profileDirectoryLoaded:
+          overrides?.profileDirectoryLoaded ?? profileDirectoryLoadedRef.current,
+        accessRequestDataLoaded:
+          overrides?.accessRequestDataLoaded ?? accessRequestDataLoadedRef.current,
+        historyDataLoaded:
+          overrides?.historyDataLoaded ?? historyDataLoadedRef.current,
+      })
+    },
+    [],
+  )
+
+  const applyWorkspaceCache = useCallback(
+    (cacheRecord: WorkspaceCacheRecord) => {
+      profileDirectoryLoadedRef.current = cacheRecord.profileDirectoryLoaded
+      accessRequestDataLoadedRef.current = cacheRecord.accessRequestDataLoaded
+      historyDataLoadedRef.current = cacheRecord.historyDataLoaded
+      loadedReportDetailIdsRef.current = getLoadedReportDetailIds(cacheRecord.state)
+      pendingReportDetailIdsRef.current = new Set()
+      setState(cacheRecord.state)
+      currentUserIdRef.current = cacheRecord.state.currentUserId
+      currentStateRef.current = cacheRecord.state
+      setError(null)
+      setIsBootstrapping(false)
+    },
+    [],
+  )
+
+  const clearSignedOutState = useCallback(() => {
+    loadVersionRef.current += 1
+    pendingExplicitAuthUserIdRef.current = null
+    referencesRef.current = createEmptyReferenceState()
+    currentUserIdRef.current = null
+    currentStateRef.current = createEmptyAppState()
+    setState(createEmptyAppState())
+    resetDeferredDataState()
+    clearWorkspaceCache()
+    setError(null)
+    setIsBootstrapping(false)
+    setIsSyncing(false)
+  }, [resetDeferredDataState])
+
+  const applyAuthenticatedProfile = useCallback(
+    (profile: UserProfile) => {
+      resetDeferredDataState()
+      profileDirectoryLoadedRef.current = !isAdminRole(profile.role)
+      setState((currentState) => {
+        const nextState =
+          currentState.currentUserId === profile.id ? currentState : createEmptyAppState()
+        const otherProfiles = nextState.profiles.filter(
+          (existingProfile) => existingProfile.id !== profile.id,
+        )
+        const resolvedState = {
+          ...nextState,
+          currentUserId: profile.id,
+          profiles: [profile, ...otherProfiles],
+        }
+
+        currentUserIdRef.current = profile.id
+        currentStateRef.current = resolvedState
+        return resolvedState
+      })
+      setError(null)
+      setIsBootstrapping(false)
+    },
+    [resetDeferredDataState],
+  )
+
   const loadUserState = useCallback(
     async (
       userId: string,
       fallbackMessage: string,
-      options?: { showBootstrapping?: boolean },
+      options?: { showBootstrapping?: boolean } & LiveAppStateLoadOptions,
     ) => {
       if (!client) {
         return null
@@ -136,38 +396,101 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       const loadVersion = ++loadVersionRef.current
       const showBootstrapping = options?.showBootstrapping ?? true
+      const includeProfiles = options?.includeProfiles ?? false
+      const includeAccessRequests = options?.includeAccessRequests ?? false
+      const includeHistory = options?.includeHistory ?? false
 
       if (showBootstrapping) {
         setIsBootstrapping(true)
       } else {
-        syncPendingCountRef.current += 1
-
-        if (syncPendingCountRef.current === 1 && syncIndicatorTimeoutRef.current === null) {
-          syncIndicatorTimeoutRef.current = window.setTimeout(() => {
-            if (syncPendingCountRef.current > 0) {
-              setIsSyncing(true)
-            }
-
-            syncIndicatorTimeoutRef.current = null
-          }, 220)
-        }
+        beginBackgroundSync()
       }
       setError(null)
 
       try {
-        const result = await fetchLiveAppState(client, userId)
+        const result = await fetchLiveAppState(client, userId, {
+          includeProfiles,
+          includeAccessRequests,
+          includeHistory,
+        })
 
         if (loadVersion !== loadVersionRef.current) {
           return result
         }
 
         referencesRef.current = result.references
-        setState(result.state)
+        const existingReportsById = Object.fromEntries(
+          currentStateRef.current.reports.map((report) => [report.id, report]),
+        ) as Record<string, AppState['reports'][number]>
+        const mergedReports = result.state.reports.map((report) => {
+          const existingReport = existingReportsById[report.id]
+
+          if (!existingReport || !loadedReportDetailIdsRef.current.has(report.id)) {
+            return report
+          }
+
+          return {
+            ...report,
+            values: existingReport.values,
+            calculatedMetrics: existingReport.calculatedMetrics,
+          }
+        })
+
+        loadedReportDetailIdsRef.current = new Set(
+          mergedReports
+            .filter((report) => Object.keys(report.values).length || Object.keys(report.calculatedMetrics).length)
+            .map((report) => report.id),
+        )
+        const mergedProfiles = includeProfiles
+          ? result.state.profiles
+          : [
+              result.currentUser,
+              ...currentStateRef.current.profiles.filter(
+                (profile) => profile.id !== result.currentUser.id,
+              ),
+            ]
+
+        const nextState = {
+          ...result.state,
+          profiles: mergedProfiles,
+          reports: mergedReports,
+          accessRequests: includeAccessRequests
+            ? result.state.accessRequests
+            : currentStateRef.current.accessRequests,
+          statusHistory: includeHistory
+            ? result.state.statusHistory
+            : currentStateRef.current.statusHistory,
+          auditLogs: includeHistory
+            ? result.state.auditLogs
+            : currentStateRef.current.auditLogs,
+        }
+
+        setState(nextState)
+        profileDirectoryLoadedRef.current =
+          includeProfiles || !isAdminRole(result.currentUser.role)
+        if (includeAccessRequests) {
+          accessRequestDataLoadedRef.current = true
+        }
+        if (includeHistory) {
+          historyDataLoadedRef.current = true
+        }
+        persistWorkspaceCache(nextState, {
+          profileDirectoryLoaded: profileDirectoryLoadedRef.current,
+          accessRequestDataLoaded: accessRequestDataLoadedRef.current,
+          historyDataLoaded: historyDataLoadedRef.current,
+        })
         setError(null)
+        scheduleOverdueSync()
         return result
       } catch (loadError) {
         if (loadVersion === loadVersionRef.current) {
-          setState(createEmptyAppState())
+          if (isSigningOutRef.current) {
+            throw loadError
+          }
+          if (!currentStateRef.current.currentUserId) {
+            setState(createEmptyAppState())
+            resetDeferredDataState()
+          }
           setError(getMessage(loadError, fallbackMessage))
         }
         throw loadError
@@ -175,60 +498,91 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         if (showBootstrapping && loadVersion === loadVersionRef.current) {
           setIsBootstrapping(false)
         } else if (!showBootstrapping) {
-          syncPendingCountRef.current = Math.max(0, syncPendingCountRef.current - 1)
-
-          if (syncPendingCountRef.current === 0) {
-            if (syncIndicatorTimeoutRef.current !== null) {
-              window.clearTimeout(syncIndicatorTimeoutRef.current)
-              syncIndicatorTimeoutRef.current = null
-            }
-
-            setIsSyncing(false)
-          }
+          endBackgroundSync()
         }
       }
     },
-    [client],
+    [
+      beginBackgroundSync,
+      client,
+      endBackgroundSync,
+      persistWorkspaceCache,
+      resetDeferredDataState,
+      scheduleOverdueSync,
+    ],
   )
 
   async function refreshData() {
-    if (!client) {
-      return
-    }
-
-    const {
-      data: { session },
-      error: sessionError,
-    } = await client.auth.getSession()
-
-    if (sessionError) {
-      setError(getMessage(sessionError, 'Unable to refresh the current session.'))
-      return
-    }
-
-    const userId = sessionUserId(session)
-    if (!userId) {
-      referencesRef.current = createEmptyReferenceState()
-      setState(createEmptyAppState())
-      setError(null)
-      setIsBootstrapping(false)
-      return
-    }
-
-    try {
-      await loadUserState(userId, 'Unable to refresh the live dashboard data.', {
-        showBootstrapping: false,
-      })
-    } catch (refreshError) {
-      toast.error(getMessage(refreshError, 'Unable to refresh the live dashboard data.'))
-    }
+    await refreshDataWithOptions()
   }
+
+  const ensureReportDetails = useCallback(
+    async (reportIds: string[]) => {
+      if (!client || !currentUserIdRef.current) {
+        return
+      }
+
+      const uniqueMissingReportIds = [...new Set(reportIds.filter(Boolean))].filter(
+        (reportId) =>
+          !loadedReportDetailIdsRef.current.has(reportId) &&
+          !pendingReportDetailIdsRef.current.has(reportId),
+      )
+
+      if (!uniqueMissingReportIds.length) {
+        return
+      }
+
+      uniqueMissingReportIds.forEach((reportId) => {
+        pendingReportDetailIdsRef.current.add(reportId)
+      })
+      beginBackgroundSync()
+
+      try {
+        const reportDetailsById = await fetchReportDetails(client, uniqueMissingReportIds)
+
+        uniqueMissingReportIds.forEach((reportId) => {
+          loadedReportDetailIdsRef.current.add(reportId)
+        })
+
+        setState((currentState) => {
+          const nextState = {
+            ...currentState,
+            reports: currentState.reports.map((report) => {
+              const details = reportDetailsById[report.id]
+
+              if (!details) {
+                return report
+              }
+
+              return {
+                ...report,
+                values: details.values,
+                calculatedMetrics: details.calculatedMetrics,
+              }
+            }),
+          }
+
+          persistWorkspaceCache(nextState)
+          return nextState
+        })
+      } catch (detailError) {
+        toast.error(getMessage(detailError, 'Unable to load report details.'))
+      } finally {
+        uniqueMissingReportIds.forEach((reportId) => {
+          pendingReportDetailIdsRef.current.delete(reportId)
+        })
+        endBackgroundSync()
+      }
+    },
+    [beginBackgroundSync, client, endBackgroundSync, persistWorkspaceCache],
+  )
 
   useEffect(() => {
     if (!client) {
       setIsBootstrapping(false)
       setIsSyncing(false)
       setState(createEmptyAppState())
+      resetDeferredDataState()
       setError(null)
       return
     }
@@ -254,16 +608,52 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       const userId = sessionUserId(session)
       if (!userId) {
-        setState(createEmptyAppState())
-        setIsBootstrapping(false)
-        setIsSyncing(false)
+        clearSignedOutState()
         return
       }
 
       try {
-        await loadUserState(userId, 'Unable to load the signed-in workspace.')
+        const cachedWorkspace = readWorkspaceCache(userId)
+
+        if (cachedWorkspace) {
+          applyWorkspaceCache(cachedWorkspace)
+          void loadUserState(userId, 'Unable to load the signed-in workspace.', {
+            showBootstrapping: false,
+          })
+            .then((result) => {
+              if (!result || !isAdminRole(result.currentUser.role)) {
+                return
+              }
+
+              void ensureReportDetails(getAdminDashboardWarmReportIds(result.state))
+            })
+            .catch((loadError) => {
+              if (!isSigningOutRef.current) {
+                toast.error(getMessage(loadError, 'Unable to load the signed-in workspace.'))
+              }
+            })
+          return
+        }
+
+        const result = await loadUserState(
+          userId,
+          'Unable to load the signed-in workspace.',
+          {
+            showBootstrapping: true,
+          },
+        )
+
+        if (!active || !result || !isAdminRole(result.currentUser.role)) {
+          return
+        }
+
+        await ensureReportDetails(getAdminDashboardWarmReportIds(result.state))
       } catch (loadError) {
-        toast.error(getMessage(loadError, 'Unable to load the signed-in workspace.'))
+        clearSignedOutState()
+        if (!isSigningOutRef.current) {
+          setError(getMessage(loadError, 'Unable to load the signed-in workspace.'))
+          toast.error(getMessage(loadError, 'Unable to load the signed-in workspace.'))
+        }
       }
     })()
 
@@ -272,35 +662,129 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return
       }
 
+      if (event === 'INITIAL_SESSION') {
+        return
+      }
+
       const userId = sessionUserId(session)
+      if (isSigningOutRef.current) {
+        if (!userId) {
+          clearSignedOutState()
+        }
+        return
+      }
+
       if (!userId) {
-        referencesRef.current = createEmptyReferenceState()
-        setState(createEmptyAppState())
-        setError(null)
-        setIsBootstrapping(false)
-        setIsSyncing(false)
+        clearSignedOutState()
+        return
+      }
+
+      if (pendingExplicitAuthUserIdRef.current === userId) {
+        return
+      }
+
+      if (event === 'SIGNED_IN' && suppressNextSignedInLoadRef.current) {
+        suppressNextSignedInLoadRef.current = false
         return
       }
 
       const isSameUserSession = currentUserIdRef.current === userId
-      const shouldShowBootstrapping =
-        event === 'INITIAL_SESSION' ||
-        (event === 'SIGNED_IN' && !isSameUserSession && !currentUserIdRef.current)
+      const handleWorkspaceRefresh = () => {
+        void loadUserState(userId, 'Unable to update the signed-in workspace.', {
+          showBootstrapping: false,
+        })
+          .then((result) => {
+            if (!result || !isAdminRole(result.currentUser.role)) {
+              return
+            }
 
-      void loadUserState(userId, 'Unable to update the signed-in workspace.', {
-        showBootstrapping: shouldShowBootstrapping,
-      }).catch((loadError) => {
-        toast.error(
-          getMessage(loadError, 'Unable to update the signed-in workspace.'),
-        )
-      })
+            void ensureReportDetails(getAdminDashboardWarmReportIds(result.state))
+          })
+          .catch((loadError) => {
+            if (!isSigningOutRef.current) {
+              toast.error(
+                getMessage(loadError, 'Unable to update the signed-in workspace.'),
+              )
+            }
+          })
+      }
+
+      if (!isSameUserSession) {
+        void fetchCurrentUserProfile(client, userId)
+          .then(({ currentUser: profile }) => {
+            if (!active) {
+              return
+            }
+
+            applyAuthenticatedProfile(profile)
+            handleWorkspaceRefresh()
+          })
+          .catch((loadError) => {
+            if (!isSigningOutRef.current) {
+              toast.error(
+                getMessage(loadError, 'Unable to update the signed-in workspace.'),
+              )
+            }
+          })
+        return
+      }
+
+      handleWorkspaceRefresh()
     })
 
     return () => {
       active = false
       authListener.data.subscription.unsubscribe()
     }
-  }, [client, loadUserState])
+  }, [
+    applyAuthenticatedProfile,
+    applyWorkspaceCache,
+    client,
+    clearSignedOutState,
+    ensureReportDetails,
+    loadUserState,
+    resetDeferredDataState,
+  ])
+
+  async function refreshDataWithOptions(options?: LiveAppStateLoadOptions) {
+    if (!client) {
+      return
+    }
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await client.auth.getSession()
+
+    if (sessionError) {
+      setError(getMessage(sessionError, 'Unable to refresh the current session.'))
+      return
+    }
+
+    const userId = sessionUserId(session)
+    if (!userId) {
+      referencesRef.current = createEmptyReferenceState()
+      setState(createEmptyAppState())
+      resetDeferredDataState()
+      clearWorkspaceCache()
+      setError(null)
+      setIsBootstrapping(false)
+      return
+    }
+
+    try {
+      await loadUserState(userId, 'Unable to refresh the live dashboard data.', {
+        showBootstrapping: false,
+        includeProfiles: options?.includeProfiles ?? profileDirectoryLoadedRef.current,
+        includeAccessRequests: options?.includeAccessRequests ?? false,
+        includeHistory: options?.includeHistory ?? false,
+      })
+    } catch (refreshError) {
+      if (!isSigningOutRef.current) {
+        toast.error(getMessage(refreshError, 'Unable to refresh the live dashboard data.'))
+      }
+    }
+  }
 
   const value: AppDataContextValue = {
     state,
@@ -318,14 +802,33 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return null
       }
 
+      isSigningOutRef.current = false
+      suppressNextSignedInLoadRef.current = true
+
       try {
         const session = await loginWithPassword(client, email, password)
+        pendingExplicitAuthUserIdRef.current = session.user.id
         const result = await loadUserState(
           session.user.id,
           'Unable to load the dashboard after sign-in.',
+          {
+            showBootstrapping: true,
+          },
         )
-        return result?.currentUser.role ?? null
+
+        if (!result) {
+          throw new Error('Unable to load the dashboard after sign-in.')
+        }
+
+        if (isAdminRole(result.currentUser.role)) {
+          await ensureReportDetails(getAdminDashboardWarmReportIds(result.state))
+        }
+
+        pendingExplicitAuthUserIdRef.current = null
+        return result.currentUser.role
       } catch (loginError) {
+        pendingExplicitAuthUserIdRef.current = null
+        suppressNextSignedInLoadRef.current = false
         const message = getMessage(loginError, 'Unable to sign in.')
         setError(message)
         toast.error(message)
@@ -338,12 +841,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       try {
+        isSigningOutRef.current = true
         await signOutMutation(client)
-        referencesRef.current = createEmptyReferenceState()
-        setState(createEmptyAppState())
-        setError(null)
-        setIsSyncing(false)
+        clearSignedOutState()
       } catch (logoutError) {
+        isSigningOutRef.current = false
         toast.error(getMessage(logoutError, 'Unable to sign out.'))
       }
     },
@@ -393,12 +895,62 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       try {
         await submitAccessRequestMutation(client, payload, currentUser)
-        await refreshData()
+        await refreshDataWithOptions({
+          includeAccessRequests: Boolean(currentUser),
+        })
         return true
       } catch (requestError) {
         toast.error(
           getMessage(requestError, 'Unable to submit the access request.'),
         )
+        return false
+      }
+    },
+    claimSuperadmin: async (payload) => {
+      if (!client) {
+        toast.error(`Supabase is not configured. ${supabaseEnvSetupHint}`)
+        return false
+      }
+
+      try {
+        const result = await claimSuperadminMutation(client, payload)
+        await refreshDataWithOptions({
+          includeProfiles: profileDirectoryLoadedRef.current,
+        })
+
+        if (result.pendingEmail) {
+          toast.success(
+            `Superadmin claimed. Email change is pending for ${result.pendingEmail}. Keep using ${result.currentEmail} until you confirm the email-change link.`,
+          )
+        } else {
+          toast.success('Superadmin account updated.')
+        }
+
+        return true
+      } catch (claimError) {
+        toast.error(getMessage(claimError, 'Unable to claim the superadmin account.'))
+        return false
+      }
+    },
+    createAdminAccount: async (payload) => {
+      if (!client) {
+        toast.error(`Supabase is not configured. ${supabaseEnvSetupHint}`)
+        return false
+      }
+
+      if (!currentUser || !isAdminRole(currentUser.role)) {
+        toast.error('Only an authenticated administrator can create admin accounts.')
+        return false
+      }
+
+      try {
+        await createAdminAccountMutation(client, payload)
+        await refreshDataWithOptions({
+          includeProfiles: profileDirectoryLoadedRef.current,
+        })
+        return true
+      } catch (createError) {
+        toast.error(getMessage(createError, 'Unable to create the admin account.'))
         return false
       }
     },
@@ -409,7 +961,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       try {
         await reviewAccessRequestMutation(client, requestId, 'approved')
-        await refreshData()
+        await refreshDataWithOptions({ includeAccessRequests: true })
       } catch (reviewError) {
         toast.error(
           getMessage(reviewError, 'Unable to approve the access request.'),
@@ -423,7 +975,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       try {
         await reviewAccessRequestMutation(client, requestId, 'rejected')
-        await refreshData()
+        await refreshDataWithOptions({ includeAccessRequests: true })
       } catch (reviewError) {
         toast.error(
           getMessage(reviewError, 'Unable to reject the access request.'),
@@ -437,7 +989,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       try {
         await saveReportMutation(client, payload)
-        await refreshData()
+        historyDataLoadedRef.current = false
+        await refreshDataWithOptions()
         return true
       } catch (saveError) {
         toast.error(getMessage(saveError, 'Unable to save the report.'))
@@ -451,7 +1004,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       try {
         await setReportLockState(client, reportId, true)
-        await refreshData()
+        historyDataLoadedRef.current = false
+        await refreshDataWithOptions()
       } catch (lockError) {
         toast.error(getMessage(lockError, 'Unable to lock the report.'))
       }
@@ -463,7 +1017,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       try {
         await setReportLockState(client, reportId, false)
-        await refreshData()
+        historyDataLoadedRef.current = false
+        await refreshDataWithOptions()
       } catch (unlockError) {
         toast.error(getMessage(unlockError, 'Unable to unlock the report.'))
       }
@@ -475,7 +1030,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       try {
         await updateAppSettingsMutation(client, settings)
-        await refreshData()
+        await refreshDataWithOptions()
       } catch (settingsError) {
         toast.error(getMessage(settingsError, 'Unable to save the settings.'))
       }
@@ -492,7 +1047,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       try {
         await updateUserActiveState(client, userId, !targetUser.active)
-        await refreshData()
+        await refreshDataWithOptions({
+          includeProfiles: profileDirectoryLoadedRef.current,
+          includeAccessRequests: accessRequestDataLoadedRef.current,
+        })
       } catch (profileError) {
         toast.error(getMessage(profileError, 'Unable to update the user status.'))
       }
@@ -515,7 +1073,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           assignmentId,
           !targetAssignment.active,
         )
-        await refreshData()
+        await refreshDataWithOptions({
+          includeProfiles: profileDirectoryLoadedRef.current,
+          includeAccessRequests: accessRequestDataLoadedRef.current,
+        })
       } catch (assignmentError) {
         toast.error(
           getMessage(assignmentError, 'Unable to update the assignment status.'),
@@ -536,14 +1097,60 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           templateId,
           currentUser.id,
         )
-        await refreshData()
+        await refreshDataWithOptions({
+          includeProfiles: profileDirectoryLoadedRef.current,
+          includeAccessRequests: accessRequestDataLoadedRef.current,
+        })
       } catch (assignmentError) {
         toast.error(
           getMessage(assignmentError, 'Unable to create the assignment.'),
         )
       }
     },
-    refreshData,
+    ensureProfileDirectoryData: async () => {
+      if (!client || !currentUserIdRef.current || profileDirectoryLoadedRef.current) {
+        return
+      }
+
+      try {
+        await loadUserState(currentUserIdRef.current, 'Unable to load the user directory.', {
+          showBootstrapping: false,
+          includeProfiles: true,
+        })
+      } catch (loadError) {
+        toast.error(getMessage(loadError, 'Unable to load the user directory.'))
+      }
+    },
+    ensureAccessRequestData: async () => {
+      if (!client || !currentUserIdRef.current || accessRequestDataLoadedRef.current) {
+        return
+      }
+
+      try {
+        await loadUserState(currentUserIdRef.current, 'Unable to load access requests.', {
+          showBootstrapping: false,
+          includeAccessRequests: true,
+        })
+      } catch (loadError) {
+        toast.error(getMessage(loadError, 'Unable to load access requests.'))
+      }
+    },
+    ensureHistoryData: async () => {
+      if (!client || !currentUserIdRef.current || historyDataLoadedRef.current) {
+        return
+      }
+
+      try {
+        await loadUserState(currentUserIdRef.current, 'Unable to load report history.', {
+          showBootstrapping: false,
+          includeHistory: true,
+        })
+      } catch (loadError) {
+        toast.error(getMessage(loadError, 'Unable to load report history.'))
+      }
+    },
+    ensureReportDetails,
+    refreshData: refreshDataWithOptions,
   }
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>

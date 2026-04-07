@@ -4,15 +4,15 @@ import type { HTMLAttributes } from 'react'
 import { cn } from '@/lib/utils'
 
 const badgeVariants = cva(
-  'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] shadow-[0_12px_22px_-18px_rgba(15,23,42,0.35)]',
+  'inline-flex items-center gap-1 rounded-[0.25rem] border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em]',
   {
     variants: {
       variant: {
-        neutral: 'border-slate-200 bg-slate-100/95 text-slate-700',
-        info: 'border-cyan-200 bg-cyan-100/90 text-cyan-800',
-        success: 'border-emerald-200 bg-emerald-100/90 text-emerald-800',
-        warning: 'border-amber-200 bg-amber-100/90 text-amber-800',
-        danger: 'border-rose-200 bg-rose-100/90 text-rose-800',
+        neutral: 'border-[#d4dde8] bg-[#edf1f5] text-[#44474e]',
+        info: 'border-[#c7d8f2] bg-[#edf4fb] text-[#00468c]',
+        success: 'border-[#cfe7d9] bg-[#edf7f0] text-[#1f6b3b]',
+        warning: 'border-[#f0d9aa] bg-[#fbf4e6] text-[#8a5a00]',
+        danger: 'border-[#f1d1d1] bg-[#fff1f1] text-[#9d2a2a]',
       },
     },
     defaultVariants: {

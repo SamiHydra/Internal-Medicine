@@ -18,6 +18,14 @@ export type NavigationItem = {
 }
 
 export const navigationByRole: Record<UserRole, NavigationItem[]> = {
+  superadmin: [
+    { label: 'Dashboard', href: '/admin', icon: LayoutDashboard },
+    { label: 'Submissions', href: '/admin/submissions', icon: ClipboardList },
+    { label: 'Users & Access', href: '/admin/users', icon: Users },
+    { label: 'Templates', href: '/admin/templates', icon: FilePenLine },
+    { label: 'Audit Log', href: '/admin/audit', icon: ShieldCheck },
+    { label: 'Settings', href: '/admin/settings', icon: Settings },
+  ],
   admin: [
     { label: 'Dashboard', href: '/admin', icon: LayoutDashboard },
     { label: 'Submissions', href: '/admin/submissions', icon: ClipboardList },

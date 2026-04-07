@@ -1,5 +1,6 @@
 insert into public.roles (role_key, label, description)
 values
+  ('superadmin', 'Superadmin', 'Single protected administrator who can provision and manage admin accounts'),
   ('admin', 'Admin 1', 'Full platform administration permissions'),
   ('doctor_admin', 'Dr. Mesay', 'Clinical director with full platform permissions'),
   ('nurse', 'Nurse', 'Weekly reporting and approved assignment access')
@@ -70,7 +71,7 @@ values
     'procedure',
     'Renal Procedures',
     'Weekly renal diagnostic and intervention throughput reporting.',
-    array['monday','tuesday','wednesday','thursday','friday'],
+    array['monday','tuesday','wednesday','thursday','friday','saturday','sunday'],
     jsonb_build_object('ui_family', 'procedure')
   )
 on conflict (slug) do update
@@ -130,6 +131,7 @@ set family = excluded.family,
 
 insert into public.app_settings (setting_key, value_json)
 values
+  ('workflow_controls', '{"deadline_enforced":true}'::jsonb),
   ('weekly_deadline', '{"day":"monday","time":"10:00"}'::jsonb),
   ('locking_rules', '{"auto_lock_hours_after_deadline":36}'::jsonb),
   ('insight_thresholds', '{"rise_percent":10,"drop_percent":10}'::jsonb),
@@ -256,10 +258,11 @@ from (
     ('bronchoscopy_weekly','turnaround','bronchoscopy_wait','Average Waiting Time for Bronchoscopy','decimal','average',20),
     ('bronchoscopy_weekly','staffing','reporting_staff','Name of Reporting Nurse or Nurse-in-Charge (NI)','text','latest',30),
     ('renal_procedures_weekly','throughput','elective_renal_biopsy','Total Number of Patients Who have Elective Renal Biopsy','integer','sum',10),
-    ('renal_procedures_weekly','turnaround','elective_renal_biopsy_wait','Average Waiting Time for Elective Renal Biopsy','decimal','average',20),
-    ('renal_procedures_weekly','throughput','hd_acute','Total Number of Patients Who have Haemodialysis for Acute Renal Failure','integer','sum',30),
-    ('renal_procedures_weekly','throughput','hd_chronic','Total Number of Patients Who have Haemodialysis for Chronic Renal Failure','integer','sum',40),
-    ('renal_procedures_weekly','staffing','reporting_staff','Name of Reporting Nurse or Nurse-in-Charge (NI)','text','latest',50)
+    ('renal_procedures_weekly','throughput','central_venous_catheter_insertion','Total Number of patients with Central Venous Catheter insertion','integer','sum',20),
+    ('renal_procedures_weekly','turnaround','elective_renal_biopsy_wait','Average Waiting Time for Elective Renal Biopsy','decimal','average',30),
+    ('renal_procedures_weekly','throughput','hd_acute','Total Number of Patients Who have Haemodialysis for Acute Renal Failure','integer','sum',40),
+    ('renal_procedures_weekly','throughput','hd_chronic','Total Number of Patients Who have Haemodialysis for Chronic Renal Failure','integer','sum',50),
+    ('renal_procedures_weekly','staffing','reporting_staff','Name of Reporting Nurse or Nurse-in-Charge (NI)','text','latest',60)
 ) as seed(template_slug, section_key, field_key, label, field_kind, aggregate_type, display_order)
 join public.report_templates template on template.slug = seed.template_slug
 on conflict (template_id, field_key) do update

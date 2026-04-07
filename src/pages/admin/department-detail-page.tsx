@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   CartesianGrid,
@@ -26,7 +27,19 @@ import { formatTimestamp } from '@/lib/dates'
 
 export function DepartmentDetailPage() {
   const { departmentId = '' } = useParams()
-  const { state } = useAppData()
+  const { state, ensureHistoryData, ensureReportDetails } = useAppData()
+  const departmentReportIds = state.reports
+    .filter((report) => report.departmentId === departmentId)
+    .map((report) => report.id)
+
+  useEffect(() => {
+    void ensureHistoryData()
+  }, [ensureHistoryData])
+
+  useEffect(() => {
+    void ensureReportDetails(departmentReportIds)
+  }, [departmentId, departmentReportIds, ensureReportDetails])
+
   const detail = getDepartmentDetail(state, departmentId)
 
   if (!detail) {
@@ -61,10 +74,10 @@ export function DepartmentDetailPage() {
         {summaryCards.map((card) => (
           <Card key={card.label}>
             <CardContent className="space-y-2 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#005db6]">
                 {card.label}
               </p>
-              <p className="font-display text-4xl text-slate-950">
+              <p className="font-display text-4xl text-[#000a1e]">
                 {card.value ?? '-'}
               </p>
             </CardContent>
@@ -84,11 +97,11 @@ export function DepartmentDetailPage() {
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={detail.trends.activity}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <CartesianGrid strokeDasharray="3 8" stroke="#d4dde8" vertical={false} />
                   <XAxis dataKey="shortLabel" />
                   <YAxis />
                   <Tooltip />
-                  <Line type="monotone" dataKey="value" stroke="#0f8ea8" strokeWidth={3} dot={false} />
+                  <Line type="monotone" dataKey="value" stroke="#005db6" strokeWidth={3} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -107,18 +120,18 @@ export function DepartmentDetailPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4">
+            <div className="flex items-center justify-between rounded-[0.5rem] border border-[#d4dde8] bg-[#f3f4f5] px-4 py-4">
               <div>
-                <p className="font-semibold text-slate-900">Latest status</p>
-                <p className="text-sm text-slate-500">
+                <p className="font-semibold text-[#000a1e]">Latest status</p>
+                <p className="text-sm text-[#44474e]">
                   Updated {formatTimestamp(detail.currentReport?.updatedAt)}
                 </p>
               </div>
               <StatusBadge status={detail.currentStatus} />
             </div>
             {detail.department.bedCount ? (
-              <p className="text-sm text-slate-600">
-                Bed count used for BOR/BTR calculations: <span className="font-semibold text-slate-900">{detail.department.bedCount}</span>
+              <p className="text-sm text-[#44474e]">
+                Bed count used for BOR/BTR calculations: <span className="font-semibold text-[#000a1e]">{detail.department.bedCount}</span>
               </p>
             ) : null}
           </CardContent>
@@ -133,12 +146,12 @@ export function DepartmentDetailPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {detail.auditHighlights.map((audit) => (
-              <div key={audit.id} className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4">
-                <p className="text-sm font-semibold text-slate-900">{audit.fieldLabel}</p>
-                <p className="mt-1 text-sm text-slate-600">
+              <div key={audit.id} className="rounded-[0.5rem] border border-[#d4dde8] bg-[#f3f4f5] px-4 py-4">
+                <p className="text-sm font-semibold text-[#000a1e]">{audit.fieldLabel}</p>
+                <p className="mt-1 text-sm text-[#44474e]">
                   {String(audit.oldValue ?? '-')} → {String(audit.newValue ?? '-')}
                 </p>
-                <p className="mt-2 text-xs text-slate-500">
+                <p className="mt-2 text-xs text-[#74777f]">
                   {audit.changedByName} at {formatTimestamp(audit.changedAt)}
                 </p>
               </div>

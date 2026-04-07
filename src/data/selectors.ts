@@ -12,7 +12,7 @@ import type {
   ReportStatus,
 } from '@/types/domain'
 
-const liveReportingStartDate = parseISO('2026-03-30T00:00:00.000Z')
+const liveReportingStartDate = parseISO('2026-03-02T00:00:00.000Z')
 
 export function getSortedReportingPeriods(state: AppState) {
   return [...state.reportingPeriods]
@@ -115,22 +115,22 @@ export function getReportForAssignmentPeriod(
   )
 }
 
-export function deriveReportStatus(
-  state: AppState,
-  periodId: string,
+function deriveReportStatusForPeriod(
+  period: AppState['reportingPeriods'][number] | null,
+  state: Pick<AppState, 'settings'>,
   report: ReportRecord | null,
 ) {
-  const period = state.reportingPeriods.find((candidate) => candidate.id === periodId)
-
   if (!period) {
     return 'not_started' as ReportStatus
   }
 
-  const deadlinePassed = isPastDeadline(
-    period,
-    state.settings.weeklyDeadlineDay,
-    state.settings.weeklyDeadlineTime,
-  )
+  const deadlinePassed = state.settings.deadlineEnforced
+    ? isPastDeadline(
+        period,
+        state.settings.weeklyDeadlineDay,
+        state.settings.weeklyDeadlineTime,
+      )
+    : false
 
   if (!report) {
     return deadlinePassed ? 'overdue' : 'not_started'
@@ -147,10 +147,53 @@ export function deriveReportStatus(
   return report.status
 }
 
+function isMissingSummaryStatus(status: ReportStatus) {
+  return status === 'not_started' || status === 'overdue'
+}
+
+export function deriveReportStatus(
+  state: AppState,
+  periodId: string,
+  report: ReportRecord | null,
+) {
+  const period = state.reportingPeriods.find((candidate) => candidate.id === periodId)
+  return deriveReportStatusForPeriod(period ?? null, state, report)
+}
+
 export function getAssignmentsForUser(state: AppState, userId: string) {
   return state.assignments.filter(
     (assignment) => assignment.nurseId === userId && assignment.active,
   )
+}
+
+export function getAssignmentCardsForPeriod(
+  state: AppState,
+  userId: string,
+  periodId: string,
+) {
+  const period = getSortedReportingPeriods(state).find((candidate) => candidate.id === periodId)
+
+  if (!period) {
+    return []
+  }
+
+  return getAssignmentsForUser(state, userId)
+    .map((assignment) => {
+      const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
+      const department = departmentMap[assignment.departmentId]
+      const template = templateMap[assignment.templateId]
+
+      return {
+        assignment,
+        department,
+        template,
+        period,
+        report,
+        status: deriveReportStatus(state, period.id, report),
+        updatedAt: report?.updatedAt ?? period.weekStart,
+      }
+    })
+    .sort((left, right) => left.department.name.localeCompare(right.department.name))
 }
 
 export function getCurrentWeekAssignmentCards(state: AppState, userId: string) {
@@ -160,23 +203,7 @@ export function getCurrentWeekAssignmentCards(state: AppState, userId: string) {
     return []
   }
 
-  return getAssignmentsForUser(state, userId)
-    .map((assignment) => {
-      const report = getReportForAssignmentPeriod(state, assignment.id, currentPeriod.id)
-      const department = departmentMap[assignment.departmentId]
-      const template = templateMap[assignment.templateId]
-
-      return {
-        assignment,
-        department,
-        template,
-        period: currentPeriod,
-        report,
-        status: deriveReportStatus(state, currentPeriod.id, report),
-        updatedAt: report?.updatedAt ?? currentPeriod.weekStart,
-      }
-    })
-    .sort((left, right) => left.department.name.localeCompare(right.department.name))
+  return getAssignmentCardsForPeriod(state, userId, currentPeriod.id)
 }
 
 function sumField(report: ReportRecord, fieldId: string) {
@@ -225,26 +252,33 @@ export function getDashboardSummary(
   const scopedDepartments = departments.filter((department) =>
     family ? department.family === family : true,
   )
+  const scopedDepartmentIds = new Set(scopedDepartments.map((department) => department.id))
   const scopedAssignments = state.assignments.filter((assignment) =>
-    scopedDepartments.some((department) => department.id === assignment.departmentId),
+    assignment.active && scopedDepartmentIds.has(assignment.departmentId),
   )
+  const reportsByAssignmentPeriod = new Map<string, ReportRecord>()
+
+  state.reports.forEach((report) => {
+    reportsByAssignmentPeriod.set(`${report.assignmentId}:${report.reportingPeriodId}`, report)
+  })
 
   const reportEntries = scopedAssignments.map((assignment) => {
-    const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
+    const report = reportsByAssignmentPeriod.get(`${assignment.id}:${period.id}`) ?? null
     return {
       assignment,
       report,
-      status: deriveReportStatus(state, period.id, report),
+      status: deriveReportStatusForPeriod(period, state, report),
     }
   })
 
   const previousReports = previousPeriod
     ? scopedAssignments.map((assignment) => {
-        const report = getReportForAssignmentPeriod(state, assignment.id, previousPeriod.id)
+        const report =
+          reportsByAssignmentPeriod.get(`${assignment.id}:${previousPeriod.id}`) ?? null
         return {
           assignment,
           report,
-          status: deriveReportStatus(state, previousPeriod.id, report),
+          status: deriveReportStatusForPeriod(previousPeriod, state, report),
         }
       })
     : []
@@ -282,7 +316,7 @@ export function getDashboardSummary(
   const metrics = {
     totalExpected: reportEntries.length,
     submitted: reportEntries.filter((entry) => entry.status === 'submitted').length,
-    missing: reportEntries.filter((entry) => entry.status === 'not_started').length,
+    missing: reportEntries.filter((entry) => isMissingSummaryStatus(entry.status)).length,
     editedAfterSubmission: reportEntries.filter(
       (entry) => entry.status === 'edited_after_submission',
     ).length,
@@ -314,7 +348,7 @@ export function getDashboardSummary(
   const previousMetrics = {
     totalExpected: previousReports.length,
     submitted: previousReports.filter((entry) => entry.status === 'submitted').length,
-    missing: previousReports.filter((entry) => entry.status === 'not_started').length,
+    missing: previousReports.filter((entry) => isMissingSummaryStatus(entry.status)).length,
     editedAfterSubmission: previousReports.filter(
       (entry) => entry.status === 'edited_after_submission',
     ).length,
@@ -461,19 +495,21 @@ export function getSubmissionBoard(
 ) {
   const periods = getReportingPeriodsBackwards(state, periodCount, startPeriodId)
 
-  return state.assignments.map((assignment) => ({
-    assignment,
-    department: departmentMap[assignment.departmentId],
-    template: templateMap[assignment.templateId],
-    statuses: periods.map((period) => {
-      const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
+  return state.assignments
+    .filter((assignment) => assignment.active)
+    .map((assignment) => ({
+      assignment,
+      department: departmentMap[assignment.departmentId],
+      template: templateMap[assignment.templateId],
+      statuses: periods.map((period) => {
+        const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
       return {
         period,
         report,
-        status: deriveReportStatus(state, period.id, report),
-      }
-    }),
-  }))
+          status: deriveReportStatus(state, period.id, report),
+        }
+      }),
+    }))
 }
 
 export function getNurseSubmissionBoard(state: AppState, userId: string) {
@@ -645,6 +681,10 @@ export function getAllTemplatesByFamily() {
 }
 
 export function getLockDeadlineNote(state: AppState, periodId: string) {
+  if (!state.settings.deadlineEnforced) {
+    return null
+  }
+
   const period = state.reportingPeriods.find((candidate) => candidate.id === periodId)
 
   if (!period) {

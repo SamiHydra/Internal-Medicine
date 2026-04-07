@@ -2,13 +2,15 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { addHours, format } from 'date-fns'
 import { motion } from 'framer-motion'
 import { useEffect } from 'react'
-import { Controller, useForm } from 'react-hook-form'
-import { Clock3, Lock, Save, Settings2, Sparkles, TrendingUpDown } from 'lucide-react'
+import { Controller, useForm, useWatch } from 'react-hook-form'
+import { Clock3, Lock, PhoneCall, Save, Settings2, Sparkles, TrendingUpDown } from 'lucide-react'
 import { z } from 'zod'
 
 import { Button } from '@/components/ui/button'
+import { technicalSupport } from '@/config/support'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -23,6 +25,7 @@ import { formatCompactNumber } from '@/lib/utils'
 import type { Weekday } from '@/types/domain'
 
 const settingsSchema = z.object({
+  deadlineEnforced: z.boolean(),
   weeklyDeadlineDay: z.enum([
     'monday',
     'tuesday',
@@ -76,7 +79,10 @@ export function SettingsPage() {
     form.reset(state.settings)
   }, [form, state.settings])
 
-  const watchedValues = form.watch()
+  const watchedValues = useWatch({
+    control: form.control,
+  })
+  const deadlineEnforced = watchedValues.deadlineEnforced ?? state.settings.deadlineEnforced
   const deadlineDay = watchedValues.weeklyDeadlineDay ?? state.settings.weeklyDeadlineDay
   const deadlineTime = watchedValues.weeklyDeadlineTime ?? state.settings.weeklyDeadlineTime
   const autoLockHours = Number(
@@ -90,11 +96,41 @@ export function SettingsPage() {
   )
 
   const currentPeriod = getCurrentPeriod(state)
-  const previewDeadline = currentPeriod
+  const previewDeadline = currentPeriod && deadlineEnforced
     ? getDeadlineForPeriod(currentPeriod, deadlineDay, deadlineTime)
     : null
   const previewLockAt = previewDeadline ? addHours(previewDeadline, autoLockHours) : null
   const criticalFieldCount = state.settings.criticalNonZeroFields.length
+  const summaryItems = [
+    {
+      label: 'Deadline day',
+      value: deadlineEnforced ? formatWeekdayLabel(deadlineDay) : 'Disabled',
+      note: deadlineEnforced ? 'Current weekly reporting close' : 'Manual lock only',
+      icon: Clock3,
+      tone: 'text-[#005db6] bg-[#edf4fb] outline-[#cfe0f4]/75',
+    },
+    {
+      label: 'Deadline time',
+      value: deadlineEnforced ? formatTimeLabel(deadlineTime) : 'Open',
+      note: deadlineEnforced ? 'Local reporting cut-off' : 'Reports stay editable',
+      icon: Clock3,
+      tone: 'text-[#00468c] bg-[#edf4fb] outline-[#cfe0f4]/75',
+    },
+    {
+      label: 'Auto-lock',
+      value: deadlineEnforced ? `${autoLockHours}h` : 'Off',
+      note: deadlineEnforced ? 'After the deadline' : 'No deadline enforcement',
+      icon: Lock,
+      tone: 'text-[#1d3047] bg-[#edf1f5] outline-[#d4dde8]/75',
+    },
+    {
+      label: 'Critical fields',
+      value: formatCompactNumber(criticalFieldCount),
+      note: `${riseThreshold}% rise / ${dropThreshold}% drop`,
+      icon: Sparkles,
+      tone: 'text-[#8a5a00] bg-[#fcf5e8] outline-[#edd9b0]/75',
+    },
+  ] as const
 
   const onSubmit = form.handleSubmit(async (values) => {
     await updateSettings(values)
@@ -102,94 +138,40 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-8">
-      <section className="relative overflow-hidden px-2 py-4 md:px-4">
-        <div className="pointer-events-none absolute inset-0">
-          <div className="login-grid-drift absolute inset-0 opacity-50" />
-          <div className="login-ambient-drift absolute left-[-4%] top-[8%] h-44 w-44 rounded-full bg-white/56 blur-3xl md:h-56 md:w-56" />
-          <div className="login-ambient-drift-reverse absolute right-[6%] top-[8%] h-64 w-64 rounded-full bg-sky-200/32 blur-3xl" />
-          <div className="login-ambient-drift absolute bottom-[8%] left-[18%] h-56 w-56 rounded-full bg-teal-200/18 blur-3xl" />
-          <div className="login-ring-orbit absolute right-[12%] top-[18%] h-24 w-24 rounded-full border border-sky-200/40" />
-          <div className="login-line-flow absolute bottom-[18%] right-[10%] h-px w-32 bg-gradient-to-r from-transparent via-sky-300/65 to-transparent" />
-        </div>
-
-        <div className="relative grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-end">
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="max-w-[760px] space-y-4"
-          >
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/72 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-700 shadow-[0_14px_30px_-24px_rgba(14,165,233,0.55)] backdrop-blur-sm">
-              <span className="h-2 w-2 rounded-full bg-sky-500" />
+      <section className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5 md:px-6">
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
               Settings
-            </div>
+            </p>
+            <h1 className="font-display text-[2rem] leading-[0.96] tracking-[-0.03em] text-[#000a1e] md:text-[2.35rem]">
+              Workflow rules
+            </h1>
+          </div>
 
-            <div className="space-y-0">
-              <h1 className="font-display max-w-[8ch] text-5xl font-semibold leading-[0.9] tracking-tight text-slate-950 md:text-[5.6rem] xl:text-[6.2rem]">
-                Workflow rules
-              </h1>
-              <p className="pt-5 text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 md:pt-6 md:text-[0.8rem]">
-                {formatWeekdayLabel(deadlineDay)} deadline / {formatTimeLabel(deadlineTime)} /{' '}
-                {autoLockHours}h lock window
-              </p>
-            </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {summaryItems.map((item) => {
+              const Icon = item.icon
 
-            <div className="flex flex-wrap gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              <span className="login-chip-float rounded-full border border-white/70 bg-white/55 px-3 py-2 backdrop-blur-sm">
-                {riseThreshold}% rise alert
-              </span>
-              <span
-                className="login-chip-float rounded-full border border-white/70 bg-white/55 px-3 py-2 backdrop-blur-sm"
-                style={{ animationDelay: '700ms' }}
-              >
-                {dropThreshold}% drop alert
-              </span>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 22 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.08 }}
-            className="grid gap-4 rounded-[2rem] border border-white/65 bg-white/44 p-5 shadow-[0_24px_55px_-34px_rgba(15,23,42,0.2)] backdrop-blur-md xl:justify-self-end"
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1 border-b border-white/70 pb-4 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Deadline
-                </p>
-                <p className="mt-2 text-lg font-semibold text-slate-950">
-                  {formatWeekdayLabel(deadlineDay)}
-                </p>
-              </div>
-              <div className="space-y-1 border-b border-white/70 pb-4 sm:border-b-0 sm:pb-0 sm:pl-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Time
-                </p>
-                <p className="mt-2 text-lg font-semibold text-slate-950">
-                  {formatTimeLabel(deadlineTime)}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 border-t border-white/70 pt-4 sm:grid-cols-2">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Auto-lock
-                </p>
-                <p className="mt-2 text-lg font-semibold text-slate-950">
-                  {autoLockHours}h
-                </p>
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Critical fields
-                </p>
-                <p className="mt-2 text-lg font-semibold text-slate-950">
-                  {formatCompactNumber(criticalFieldCount)}
-                </p>
-              </div>
-            </div>
-          </motion.div>
+              return (
+                <div
+                  key={item.label}
+                  className={`rounded-[0.35rem] px-3.5 py-3 outline outline-1 ${item.tone}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Icon className="h-3.5 w-3.5" />
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">
+                      {item.label}
+                    </p>
+                  </div>
+                  <p className="mt-3 font-display text-[1.45rem] leading-none tracking-[-0.03em]">
+                    {item.value}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-current/75">{item.note}</p>
+                </div>
+              )
+            })}
+          </div>
         </div>
       </section>
 
@@ -198,29 +180,44 @@ export function SettingsPage() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: 'easeOut' }}
-          className="relative overflow-hidden rounded-[2.4rem] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(242,248,255,0.84))] px-5 py-6 shadow-[0_24px_54px_-36px_rgba(15,23,42,0.22)]"
+          className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5"
         >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="login-grid-drift absolute inset-0 opacity-12" />
-            <div className="login-ambient-drift absolute right-[-4%] top-[-12%] h-44 w-44 rounded-full bg-sky-200/12 blur-3xl" />
-            <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-cyan-400 via-sky-500 to-emerald-400" />
-          </div>
-
-          <div className="relative space-y-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
-                  Workflow
-                </p>
-                <h2 className="font-display text-3xl text-slate-950">Rule settings</h2>
-                <p className="text-sm text-slate-500">Deadlines and alerts.</p>
+            <div className="space-y-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+                    Workflow
+                  </p>
+                  <h2 className="font-display text-[1.85rem] text-[#000a1e]">Rule settings</h2>
+                </div>
+                <div className="rounded-[0.25rem] border border-[#d4dde8] bg-[#ffffff] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#44474e]">
+                  {form.formState.isDirty ? 'Unsaved changes' : 'Saved'}
+                </div>
               </div>
-              <div className="rounded-full border border-white/80 bg-white/72 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600 shadow-[0_14px_24px_-20px_rgba(15,23,42,0.15)]">
-                {form.formState.isDirty ? 'Unsaved changes' : 'Saved'}
-              </div>
-            </div>
 
             <form className="space-y-6" onSubmit={onSubmit}>
+              <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] px-4 py-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-1">
+                    <Label htmlFor="deadline-enforced">Enforce weekly deadlines</Label>
+                    <p className="text-sm text-[#44474e]">
+                      When off, reports stay editable and submittable until an admin manually locks them.
+                    </p>
+                  </div>
+                  <Controller
+                    control={form.control}
+                    name="deadlineEnforced"
+                    render={({ field }) => (
+                      <Switch
+                        id="deadline-enforced"
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    )}
+                  />
+                </div>
+              </div>
+
               <div className="grid gap-5 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Weekly deadline day</Label>
@@ -249,52 +246,40 @@ export function SettingsPage() {
 
                 <div className="space-y-2">
                   <Label>Deadline time</Label>
-                  <Input
-                    type="time"
-                    className="h-12 rounded-2xl border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,251,255,0.92))] px-4 shadow-[0_16px_32px_-24px_rgba(15,23,42,0.22)]"
-                    {...form.register('weeklyDeadlineTime')}
-                  />
+                  <Input type="time" className="h-12 px-4" {...form.register('weeklyDeadlineTime')} />
                 </div>
 
                 <div className="space-y-2">
                   <Label>Auto-lock hours after deadline</Label>
-                  <Input
-                    type="number"
-                    className="h-12 rounded-2xl border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,251,255,0.92))] px-4 shadow-[0_16px_32px_-24px_rgba(15,23,42,0.22)]"
-                    {...form.register('autoLockHoursAfterDeadline')}
-                  />
+                  <Input type="number" className="h-12 px-4" {...form.register('autoLockHoursAfterDeadline')} />
                 </div>
 
                 <div className="space-y-2">
                   <Label>Notable rise threshold (%)</Label>
-                  <Input
-                    type="number"
-                    className="h-12 rounded-2xl border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,251,255,0.92))] px-4 shadow-[0_16px_32px_-24px_rgba(15,23,42,0.22)]"
-                    {...form.register('notableRiseThresholdPercent')}
-                  />
+                  <Input type="number" className="h-12 px-4" {...form.register('notableRiseThresholdPercent')} />
                 </div>
 
                 <div className="space-y-2 md:col-span-2">
                   <Label>Notable drop threshold (%)</Label>
-                  <Input
-                    type="number"
-                    className="h-12 rounded-2xl border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,251,255,0.92))] px-4 shadow-[0_16px_32px_-24px_rgba(15,23,42,0.22)]"
-                    {...form.register('notableDropThresholdPercent')}
-                  />
+                  <Input type="number" className="h-12 px-4" {...form.register('notableDropThresholdPercent')} />
                 </div>
               </div>
 
               <div className="flex flex-col gap-4 border-t border-slate-100/90 pt-5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="space-y-1">
-                  <p className="text-sm font-medium text-slate-700">
-                    {previewDeadline
+                  <p className="text-sm font-medium text-[#000a1e]">
+                    {deadlineEnforced
+                      ? previewDeadline
                       ? `Next deadline ${format(previewDeadline, 'EEE, MMM d / HH:mm')}.`
-                      : 'Rules apply to the current week.'}
+                      : 'Rules apply to the current week.'
+                      : 'Deadlines are disabled. Reports stay open until manually locked.'}
                   </p>
-                  <p className="text-sm text-slate-500">
-                    {previewLockAt
+                  <p className="text-sm text-[#44474e]">
+                    {deadlineEnforced
+                      ? previewLockAt
                       ? `Auto-lock ${format(previewLockAt, 'EEE, MMM d / HH:mm')}.`
-                      : 'Set a deadline to preview lock timing.'}
+                      : 'Set a deadline to preview lock timing.'
+                      : 'Overdue alerts are also turned off.'}
                   </p>
                 </div>
 
@@ -311,107 +296,118 @@ export function SettingsPage() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: 'easeOut' }}
-          className="relative overflow-hidden rounded-[2.4rem] border border-white/10 bg-[linear-gradient(160deg,#07152d_0%,#0b3156_42%,#0f4c81_72%,#0f766e_100%)] px-5 py-6 text-white shadow-[0_30px_58px_-32px_rgba(8,47,73,0.76)]"
+          className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5"
         >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="login-grid-drift absolute inset-0 opacity-18" />
-            <div className="login-ambient-drift absolute right-[-8%] top-[-10%] h-52 w-52 rounded-full bg-cyan-300/12 blur-3xl" />
-            <div className="login-line-flow absolute inset-x-6 top-0 h-1 bg-gradient-to-r from-cyan-300 via-sky-400 to-emerald-300" />
-          </div>
-
-          <div className="relative space-y-5">
+          <div className="space-y-5">
             <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-100">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#005db6]">
                 Live rule set
               </p>
-              <h2 className="font-display text-3xl text-white">Current week</h2>
-              <p className="text-sm text-cyan-50/72">
+              <h2 className="font-display text-[1.85rem] text-[#000a1e]">Current week</h2>
+              <p className="text-sm text-[#44474e]">
                 {currentPeriod ? currentPeriod.label : 'No active reporting week.'}
               </p>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-[1.4rem] border border-white/12 bg-white/8 p-4 backdrop-blur-sm">
+              <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] p-4">
                 <div className="flex items-center gap-2">
-                  <Clock3 className="h-4 w-4 text-cyan-100" />
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/72">
+                  <Clock3 className="h-4 w-4 text-[#005db6]" />
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
                     Deadline
                   </p>
                 </div>
-                <p className="mt-3 text-base font-semibold text-white">
-                  {previewDeadline ? format(previewDeadline, 'EEE, MMM d') : '-'}
+                <p className="mt-3 text-base font-semibold text-[#000a1e]">
+                  {previewDeadline ? format(previewDeadline, 'EEE, MMM d') : 'Disabled'}
                 </p>
-                <p className="text-sm text-cyan-50/72">
-                  {previewDeadline ? format(previewDeadline, 'HH:mm') : '-'}
+                <p className="text-sm text-[#44474e]">
+                  {previewDeadline ? format(previewDeadline, 'HH:mm') : 'Manual lock only'}
                 </p>
               </div>
 
-              <div className="rounded-[1.4rem] border border-white/12 bg-white/8 p-4 backdrop-blur-sm">
+              <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] p-4">
                 <div className="flex items-center gap-2">
-                  <Lock className="h-4 w-4 text-cyan-100" />
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/72">
+                  <Lock className="h-4 w-4 text-[#005db6]" />
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
                     Lock at
                   </p>
                 </div>
-                <p className="mt-3 text-base font-semibold text-white">
-                  {previewLockAt ? format(previewLockAt, 'EEE, MMM d') : '-'}
+                <p className="mt-3 text-base font-semibold text-[#000a1e]">
+                  {previewLockAt ? format(previewLockAt, 'EEE, MMM d') : 'Off'}
                 </p>
-                <p className="text-sm text-cyan-50/72">
-                  {previewLockAt ? format(previewLockAt, 'HH:mm') : '-'}
+                <p className="text-sm text-[#44474e]">
+                  {previewLockAt ? format(previewLockAt, 'HH:mm') : 'No deadline enforcement'}
                 </p>
               </div>
 
-              <div className="rounded-[1.4rem] border border-white/12 bg-white/8 p-4 backdrop-blur-sm">
+              <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] p-4">
                 <div className="flex items-center gap-2">
-                  <TrendingUpDown className="h-4 w-4 text-cyan-100" />
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/72">
+                  <TrendingUpDown className="h-4 w-4 text-[#005db6]" />
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
                     Rise
                   </p>
                 </div>
-                <p className="mt-3 text-base font-semibold text-white">{riseThreshold}%</p>
-                <p className="text-sm text-cyan-50/72">Alert threshold</p>
+                <p className="mt-3 text-base font-semibold text-[#000a1e]">{riseThreshold}%</p>
+                <p className="text-sm text-[#44474e]">Alert threshold</p>
               </div>
 
-              <div className="rounded-[1.4rem] border border-white/12 bg-white/8 p-4 backdrop-blur-sm">
+              <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] p-4">
                 <div className="flex items-center gap-2">
-                  <TrendingUpDown className="h-4 w-4 text-cyan-100" />
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/72">
+                  <TrendingUpDown className="h-4 w-4 text-[#005db6]" />
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
                     Drop
                   </p>
                 </div>
-                <p className="mt-3 text-base font-semibold text-white">{dropThreshold}%</p>
-                <p className="text-sm text-cyan-50/72">Alert threshold</p>
+                <p className="mt-3 text-base font-semibold text-[#000a1e]">{dropThreshold}%</p>
+                <p className="text-sm text-[#44474e]">Alert threshold</p>
               </div>
             </div>
 
-            <div className="rounded-[1.7rem] border border-white/12 bg-white/8 p-4 backdrop-blur-sm">
+            <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] p-4">
               <div className="flex items-center gap-3">
-                <div className="rounded-[1rem] border border-white/12 bg-white/8 p-3">
-                  <Settings2 className="h-4 w-4 text-cyan-100" />
+                <div className="rounded-[0.35rem] bg-[#edf4fb] p-3 outline outline-1 outline-[#cfe0f4]/75">
+                  <Settings2 className="h-4 w-4 text-[#005db6]" />
                 </div>
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/72">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
                     Coverage
                   </p>
-                  <p className="mt-1 text-base font-semibold text-white">
+                  <p className="mt-1 text-base font-semibold text-[#000a1e]">
                     {formatCompactNumber(criticalFieldCount)} critical fields
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="rounded-[1.7rem] border border-white/12 bg-white/8 p-4 backdrop-blur-sm">
+            <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] p-4">
               <div className="flex items-center gap-3">
-                <div className="rounded-[1rem] border border-white/12 bg-white/8 p-3">
-                  <Sparkles className="h-4 w-4 text-cyan-100" />
+                <div className="rounded-[0.35rem] bg-[#fcf5e8] p-3 outline outline-1 outline-[#edd9b0]/75">
+                  <Sparkles className="h-4 w-4 text-[#f0b429]" />
                 </div>
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/72">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8a5a00]">
                     Rule note
                   </p>
-                  <p className="mt-1 text-sm leading-6 text-cyan-50/72">
+                  <p className="mt-1 text-sm leading-6 text-[#44474e]">
                     Dashboard alerts and lock timing use this rule set.
                   </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] p-4">
+              <div className="flex items-center gap-3">
+                <div className="rounded-[0.35rem] bg-[#edf4fb] p-3 outline outline-1 outline-[#cfe0f4]/75">
+                  <PhoneCall className="h-4 w-4 text-[#005db6]" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
+                    Technical support
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-[#000a1e]">
+                    {technicalSupport.name}
+                  </p>
+                  <p className="text-sm text-[#44474e]">{technicalSupport.phone}</p>
                 </div>
               </div>
             </div>
