@@ -2,8 +2,13 @@ const requiredEnvKeys = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY'] as const
 
 type RequiredEnvKey = (typeof requiredEnvKeys)[number]
 
+const rawEnvValues = {
+  VITE_SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL,
+  VITE_SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY,
+} as const
+
 function readEnvValue(key: RequiredEnvKey) {
-  const value = import.meta.env[key]
+  const value = rawEnvValues[key]
   return typeof value === 'string' && value.trim().length ? value.trim() : null
 }
 
