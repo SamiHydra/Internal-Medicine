@@ -136,9 +136,32 @@ values
   ('locking_rules', '{"auto_lock_hours_after_deadline":36}'::jsonb),
   ('insight_thresholds', '{"rise_percent":10,"drop_percent":10}'::jsonb),
   ('critical_non_zero_fields', '["new_deaths","new_pressure_ulcer","total_hai","hai_clabsi","hai_cauti","hai_vap"]'::jsonb)
-on conflict (setting_key) do update
-set value_json = excluded.value_json,
-    updated_at = timezone('utc', now());
+on conflict (setting_key) do nothing;
+
+update public.app_settings
+set value_json = '{"deadline_enforced":true}'::jsonb,
+    updated_at = timezone('utc', now())
+where setting_key = 'workflow_controls';
+
+update public.app_settings
+set value_json = '{"day":"monday","time":"10:00"}'::jsonb,
+    updated_at = timezone('utc', now())
+where setting_key = 'weekly_deadline';
+
+update public.app_settings
+set value_json = '{"auto_lock_hours_after_deadline":36}'::jsonb,
+    updated_at = timezone('utc', now())
+where setting_key = 'locking_rules';
+
+update public.app_settings
+set value_json = '{"rise_percent":10,"drop_percent":10}'::jsonb,
+    updated_at = timezone('utc', now())
+where setting_key = 'insight_thresholds';
+
+update public.app_settings
+set value_json = '["new_deaths","new_pressure_ulcer","total_hai","hai_clabsi","hai_cauti","hai_vap"]'::jsonb,
+    updated_at = timezone('utc', now())
+where setting_key = 'critical_non_zero_fields';
 
 insert into public.reporting_periods (week_start, week_end, deadline_at, month_label, quarter_label, year_num)
 select

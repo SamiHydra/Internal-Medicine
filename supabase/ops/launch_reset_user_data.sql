@@ -16,7 +16,8 @@ delete from public.access_requests;
 delete from public.report_assignments;
 
 update public.app_settings
-set updated_by = null;
+set updated_by = null
+where updated_by is not null;
 
 delete from auth.users;
 
