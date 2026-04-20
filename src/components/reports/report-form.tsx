@@ -323,6 +323,7 @@ type ResolvedReportFormProps = Pick<
   | 'unlockReport'
   | 'ensureReportDetails'
   | 'isReportDetailLoaded'
+  | 'isSyncing'
 > & {
   currentUser: NonNullable<ReturnType<typeof useAppData>['currentUser']>
   assignment: ReportAssignment
@@ -337,6 +338,7 @@ function ResolvedReportForm({
   unlockReport,
   ensureReportDetails,
   isReportDetailLoaded,
+  isSyncing,
   assignment,
   period,
 }: ResolvedReportFormProps) {
@@ -365,6 +367,7 @@ function ResolvedReportForm({
     name: 'values',
   })
   const watchedValuesSignature = JSON.stringify(watchedValues ?? {})
+  const isLiveReportLookupPending = !report && isSyncing
 
   useEffect(() => {
     if (!report?.id || reportDetailsLoaded) {
@@ -425,6 +428,42 @@ function ResolvedReportForm({
   ])
 
   useEffect(() => {
+    if (!report?.id || !reportDetailsLoaded || !form.formState.isDirty) {
+      return
+    }
+
+    const savedDefaults = createDefaultValues(template, report)
+
+    template.fields.forEach((field) => {
+      template.activeDays.forEach((day) => {
+        const fieldPath = `values.${field.id}.${day}` as const
+
+        if (form.getFieldState(fieldPath).isDirty) {
+          return
+        }
+
+        const savedValue = savedDefaults.values[field.id]?.[day] ?? ''
+        const currentValue = form.getValues(fieldPath) ?? ''
+
+        if (currentValue !== savedValue) {
+          form.setValue(fieldPath, savedValue, {
+            shouldDirty: false,
+            shouldValidate: true,
+          })
+        }
+      })
+    })
+  }, [
+    form,
+    form.formState.isDirty,
+    report,
+    report?.id,
+    report?.updatedAt,
+    reportDetailsLoaded,
+    template,
+  ])
+
+  useEffect(() => {
     if (form.formState.isValid && formErrorMessage) {
       setFormErrorMessage(null)
     }
@@ -448,6 +487,7 @@ function ResolvedReportForm({
     if (
       !canEdit ||
       !reportDetailsLoaded ||
+      isLiveReportLookupPending ||
       !form.formState.isDirty ||
       !form.formState.isValid ||
       isAutosaving ||
@@ -505,6 +545,7 @@ function ResolvedReportForm({
     isAutosaving,
     isSavingDraft,
     isSubmittingReport,
+    isLiveReportLookupPending,
     period.id,
     reportDetailsLoaded,
     saveReport,
@@ -518,15 +559,23 @@ function ResolvedReportForm({
     !isAutosaving &&
     !isSavingDraft &&
     !isSubmittingReport
+  const isWaitingForLiveReportLookup =
+    isLiveReportLookupPending &&
+    !form.formState.isDirty &&
+    !isAutosaving &&
+    !isSavingDraft &&
+    !isSubmittingReport
 
-  if (isWaitingForReportDetails) {
+  if (isWaitingForReportDetails || isWaitingForLiveReportLookup) {
     return (
       <section className="rounded-[0.35rem] bg-[#eef2f6] px-6 py-8">
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#005db6]">
             Structured reporting
           </p>
-          <h1 className="font-display text-[2rem] text-[#000a1e]">Loading saved cells</h1>
+          <h1 className="font-display text-[2rem] text-[#000a1e]">
+            {isWaitingForLiveReportLookup ? 'Checking saved report' : 'Loading saved cells'}
+          </h1>
           <p className="max-w-xl text-sm leading-6 text-[#44474e]">
             Restoring {department.name} for {period.label}.
           </p>

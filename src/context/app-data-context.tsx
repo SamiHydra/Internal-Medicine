@@ -1071,7 +1071,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             const reportDetails = reportDetailsById[savedReportId]
 
             if (reportDetails) {
-              savedValues = reportDetails.values
+              savedValues = Object.keys(reportDetails.values).length
+                ? reportDetails.values
+                : payload.values
               savedCalculatedMetrics = reportDetails.calculatedMetrics
             }
           } catch (detailError) {
