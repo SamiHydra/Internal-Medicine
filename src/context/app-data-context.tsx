@@ -85,6 +85,7 @@ type AppDataContextValue = {
   saveReport: (payload: SaveReportPayload) => Promise<boolean>
   lockReport: (reportId: string, actorId: string) => Promise<void>
   unlockReport: (reportId: string, actorId: string) => Promise<void>
+  isReportDetailLoaded: (reportId: string) => boolean
   updateSettings: (settings: Partial<AppSettings>) => Promise<void>
   toggleUserActive: (userId: string) => Promise<void>
   toggleAssignmentActive: (assignmentId: string) => Promise<void>
@@ -419,13 +420,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
 
         referencesRef.current = result.references
+        const previouslyLoadedReportDetailIds = loadedReportDetailIdsRef.current
         const existingReportsById = Object.fromEntries(
           currentStateRef.current.reports.map((report) => [report.id, report]),
         ) as Record<string, AppState['reports'][number]>
         const mergedReports = result.state.reports.map((report) => {
           const existingReport = existingReportsById[report.id]
 
-          if (!existingReport || !loadedReportDetailIdsRef.current.has(report.id)) {
+          if (!existingReport || !previouslyLoadedReportDetailIds.has(report.id)) {
             return report
           }
 
@@ -438,7 +440,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         loadedReportDetailIdsRef.current = new Set(
           mergedReports
-            .filter((report) => Object.keys(report.values).length || Object.keys(report.calculatedMetrics).length)
+            .filter(
+              (report) =>
+                previouslyLoadedReportDetailIds.has(report.id) ||
+                Object.keys(report.values).length ||
+                Object.keys(report.calculatedMetrics).length,
+            )
             .map((report) => report.id),
         )
         const mergedProfiles = includeProfiles
@@ -465,6 +472,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             : currentStateRef.current.auditLogs,
         }
 
+        currentUserIdRef.current = nextState.currentUserId
+        currentStateRef.current = nextState
         setState(nextState)
         profileDirectoryLoadedRef.current =
           includeProfiles || !isAdminRole(result.currentUser.role)
@@ -562,6 +571,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             }),
           }
 
+          currentStateRef.current = nextState
           persistWorkspaceCache(nextState)
           return nextState
         })
@@ -786,6 +796,56 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     }
   }
 
+  const isReportDetailLoaded = useCallback((reportId: string) => {
+    return loadedReportDetailIdsRef.current.has(reportId)
+  }, [])
+
+  const applySavedReportDetails = useCallback(
+    (
+      reportId: string,
+      payload: SaveReportPayload,
+      values: SaveReportPayload['values'],
+      calculatedMetrics?: AppState['reports'][number]['calculatedMetrics'],
+    ) => {
+      loadedReportDetailIdsRef.current.add(reportId)
+
+      setState((currentState) => {
+        let matchedReport = false
+        const nextReports = currentState.reports.map((report) => {
+          const isSavedReport =
+            report.id === reportId ||
+            (report.assignmentId === payload.assignmentId &&
+              report.reportingPeriodId === payload.reportingPeriodId)
+
+          if (!isSavedReport) {
+            return report
+          }
+
+          matchedReport = true
+          return {
+            ...report,
+            values,
+            calculatedMetrics: calculatedMetrics ?? report.calculatedMetrics,
+          }
+        })
+
+        if (!matchedReport) {
+          return currentState
+        }
+
+        const nextState = {
+          ...currentState,
+          reports: nextReports,
+        }
+
+        currentStateRef.current = nextState
+        persistWorkspaceCache(nextState)
+        return nextState
+      })
+    },
+    [persistWorkspaceCache],
+  )
+
   const value: AppDataContextValue = {
     state,
     currentUser,
@@ -988,9 +1048,49 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       try {
-        await saveReportMutation(client, payload)
+        const reportId = await saveReportMutation(client, payload)
         historyDataLoadedRef.current = false
         await refreshDataWithOptions()
+        const savedReport =
+          (reportId
+            ? currentStateRef.current.reports.find((report) => report.id === reportId)
+            : null) ??
+          currentStateRef.current.reports.find(
+            (report) =>
+              report.assignmentId === payload.assignmentId &&
+              report.reportingPeriodId === payload.reportingPeriodId,
+          )
+        const savedReportId = reportId ?? savedReport?.id
+
+        if (savedReportId) {
+          let savedValues = payload.values
+          let savedCalculatedMetrics = savedReport?.calculatedMetrics
+
+          try {
+            const reportDetailsById = await fetchReportDetails(client, [savedReportId])
+            const reportDetails = reportDetailsById[savedReportId]
+
+            if (reportDetails) {
+              savedValues = reportDetails.values
+              savedCalculatedMetrics = reportDetails.calculatedMetrics
+            }
+          } catch (detailError) {
+            toast.error(
+              getMessage(
+                detailError,
+                'Report saved, but the saved cell values could not be refreshed.',
+              ),
+            )
+          }
+
+          applySavedReportDetails(
+            savedReportId,
+            payload,
+            savedValues,
+            savedCalculatedMetrics,
+          )
+        }
+
         return true
       } catch (saveError) {
         toast.error(getMessage(saveError, 'Unable to save the report.'))
@@ -1150,6 +1250,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
     },
     ensureReportDetails,
+    isReportDetailLoaded,
     refreshData: refreshDataWithOptions,
   }
 

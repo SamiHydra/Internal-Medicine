@@ -1076,7 +1076,7 @@ export async function saveReport(
   client: SupabaseClient,
   payload: SaveReportPayload,
 ) {
-  const { error } = await client.rpc('save_report', {
+  const { data, error } = await client.rpc('save_report', {
     p_assignment_id: payload.assignmentId,
     p_reporting_period_id: payload.reportingPeriodId,
     p_values: payload.values,
@@ -1086,6 +1086,8 @@ export async function saveReport(
   if (error) {
     throw new Error(getErrorMessage(error, 'Unable to save the report.'))
   }
+
+  return typeof data === 'string' && data.trim().length ? data : null
 }
 
 export async function setReportLockState(

@@ -317,7 +317,12 @@ function FieldInput({
 
 type ResolvedReportFormProps = Pick<
   ReturnType<typeof useAppData>,
-  'state' | 'saveReport' | 'lockReport' | 'unlockReport' | 'ensureReportDetails'
+  | 'state'
+  | 'saveReport'
+  | 'lockReport'
+  | 'unlockReport'
+  | 'ensureReportDetails'
+  | 'isReportDetailLoaded'
 > & {
   currentUser: NonNullable<ReturnType<typeof useAppData>['currentUser']>
   assignment: ReportAssignment
@@ -331,6 +336,7 @@ function ResolvedReportForm({
   lockReport,
   unlockReport,
   ensureReportDetails,
+  isReportDetailLoaded,
   assignment,
   period,
 }: ResolvedReportFormProps) {
@@ -342,6 +348,7 @@ function ResolvedReportForm({
   const template = templateMap[assignment.templateId]
   const department = departmentMap[assignment.departmentId]
   const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
+  const reportDetailsLoaded = !report?.id || isReportDetailLoaded(report.id)
   const reportStatus = deriveReportStatus(state, period.id, report)
   const formSchema = createTemplateSchema(template)
   const canEdit =
@@ -360,12 +367,12 @@ function ResolvedReportForm({
   const watchedValuesSignature = JSON.stringify(watchedValues ?? {})
 
   useEffect(() => {
-    if (!report?.id) {
+    if (!report?.id || reportDetailsLoaded) {
       return
     }
 
     void ensureReportDetails([report.id])
-  }, [ensureReportDetails, report?.id])
+  }, [ensureReportDetails, report?.id, reportDetailsLoaded])
 
   const getFirstFormError = (errors: FieldErrors<ReportFormValues>) => {
     const valueErrors = errors.values as
@@ -394,7 +401,13 @@ function ResolvedReportForm({
   }
 
   useEffect(() => {
-    if (form.formState.isDirty || isAutosaving || isSavingDraft || isSubmittingReport) {
+    if (
+      !reportDetailsLoaded ||
+      form.formState.isDirty ||
+      isAutosaving ||
+      isSavingDraft ||
+      isSubmittingReport
+    ) {
       return
     }
 
@@ -406,6 +419,7 @@ function ResolvedReportForm({
     isSavingDraft,
     isSubmittingReport,
     report,
+    reportDetailsLoaded,
     report?.updatedAt,
     template,
   ])
@@ -433,6 +447,7 @@ function ResolvedReportForm({
   useEffect(() => {
     if (
       !canEdit ||
+      !reportDetailsLoaded ||
       !form.formState.isDirty ||
       !form.formState.isValid ||
       isAutosaving ||
@@ -491,10 +506,34 @@ function ResolvedReportForm({
     isSavingDraft,
     isSubmittingReport,
     period.id,
+    reportDetailsLoaded,
     saveReport,
     template,
     watchedValuesSignature,
   ])
+
+  const isWaitingForReportDetails =
+    Boolean(report?.id && !reportDetailsLoaded) &&
+    !form.formState.isDirty &&
+    !isAutosaving &&
+    !isSavingDraft &&
+    !isSubmittingReport
+
+  if (isWaitingForReportDetails) {
+    return (
+      <section className="rounded-[0.35rem] bg-[#eef2f6] px-6 py-8">
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#005db6]">
+            Structured reporting
+          </p>
+          <h1 className="font-display text-[2rem] text-[#000a1e]">Loading saved cells</h1>
+          <p className="max-w-xl text-sm leading-6 text-[#44474e]">
+            Restoring {department.name} for {period.label}.
+          </p>
+        </div>
+      </section>
+    )
+  }
 
   const handleInvalidSubmit = (errors: FieldErrors<ReportFormValues>) => {
     const nextErrorMessage = getFirstFormError(errors)
