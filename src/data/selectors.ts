@@ -445,7 +445,10 @@ export function getDashboardSummary(
     btr: inpatientMetrics.btr,
     alos: inpatientMetrics.alos,
     totalAdmissions: currentReports.reduce(
-      (sum, report) => sum + sumField(report, 'total_admitted_patients'),
+      (sum, report) =>
+        sum +
+        sumField(report, 'total_admitted_patients') +
+        sumField(report, 'new_admitted_patients'),
       0,
     ),
     totalDischarges: currentReports.reduce(
@@ -479,7 +482,10 @@ export function getDashboardSummary(
     btr: previousInpatientMetrics.btr,
     alos: previousInpatientMetrics.alos,
     totalAdmissions: previousReportRecords.reduce(
-      (sum, report) => sum + sumField(report, 'total_admitted_patients'),
+      (sum, report) =>
+        sum +
+        sumField(report, 'total_admitted_patients') +
+        sumField(report, 'new_admitted_patients'),
       0,
     ),
     totalDischarges: previousReportRecords.reduce(
@@ -598,7 +604,10 @@ export function getDepartmentComparisonData(
         id: department.id,
         name: department.name,
         accent: department.accent,
-        admissions: report ? sumField(report, 'total_admitted_patients') : 0,
+        admissions: report
+          ? sumField(report, 'total_admitted_patients') +
+            sumField(report, 'new_admitted_patients')
+          : 0,
         visits: report ? sumField(report, 'total_patients_seen') : 0,
         hai: report ? sumField(report, 'total_hai') : 0,
         noShow: report ? sumField(report, 'failed_to_come') : 0,

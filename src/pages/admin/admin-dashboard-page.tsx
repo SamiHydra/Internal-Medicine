@@ -570,14 +570,18 @@ export function AdminDashboardPage() {
   const showProcedureSection = familyFilter === 'all' || familyFilter === 'procedure'
   const inpatientFlowSeries = trendBuckets.map((bucket) => ({
     label: bucket.label,
-    admissions: sumFieldTotalsForBucket(bucket, 'inpatient', ['total_admitted_patients']),
+    totalAdmissions: sumFieldTotalsForBucket(bucket, 'inpatient', [
+      'total_admitted_patients',
+      'new_admitted_patients',
+    ]),
+    newAdmissions: sumFieldTotalsForBucket(bucket, 'inpatient', ['new_admitted_patients']),
     discharges: sumFieldTotalsForBucket(bucket, 'inpatient', [
       'discharged_home',
       'discharged_ama',
     ]),
   }))
   const inpatientAdmissionsTotal = inpatientFlowSeries.reduce(
-    (sum, point) => sum + point.admissions,
+    (sum, point) => sum + point.totalAdmissions,
     0,
   )
   const inpatientSafetySeries = trendBuckets.map((bucket) => ({
@@ -716,7 +720,10 @@ export function AdminDashboardPage() {
     { label: 'Overdue', delta: getTrendDelta(reportingTrendSeries, 'overdue') },
   ] as const
   const inpatientFlowDeltas = [
-    { label: 'Admissions', delta: getTrendDelta(inpatientFlowSeries, 'admissions') },
+    {
+      label: 'Newly admitted',
+      delta: getTrendDelta(inpatientFlowSeries, 'newAdmissions'),
+    },
     { label: 'Discharges', delta: getTrendDelta(inpatientFlowSeries, 'discharges') },
   ] as const
   const inpatientSafetyDeltas = [
@@ -766,7 +773,7 @@ export function AdminDashboardPage() {
     (point) => point.delivered > 0 || point.open > 0 || point.overdue > 0,
   )
   const hasInpatientFlowSignal = inpatientFlowSeries.some(
-    (point) => point.admissions > 0 || point.discharges > 0,
+    (point) => point.newAdmissions > 0 || point.discharges > 0,
   )
   const hasInpatientSafetySignal = inpatientSafetySeries.some(
     (point) => point.deaths > 0 || point.ulcers > 0 || point.hai > 0,
@@ -1168,7 +1175,7 @@ export function AdminDashboardPage() {
             <div className="grid gap-6 xl:grid-cols-3">
               <div className={cn('space-y-4', chartPanelClass)}>
                 <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Admissions vs discharges
+                  Newly admitted vs discharges
                 </h3>
                 <TrendDeltaChips
                   items={inpatientFlowDeltas}
@@ -1186,7 +1193,7 @@ export function AdminDashboardPage() {
                           <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                           <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
                           <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
-                          <Bar dataKey="admissions" name="Admissions" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Bar dataKey="newAdmissions" name="Newly admitted" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
                           <Bar dataKey="discharges" name="Discharges" fill={grayscalePalette.steel} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                         </BarChart>
                       ) : (
@@ -1198,7 +1205,7 @@ export function AdminDashboardPage() {
                           <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                           <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
                           <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                          <Line type="monotone" dataKey="admissions" name="Admissions" stroke={grayscalePalette.ink} strokeWidth={3.4} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="newAdmissions" name="Newly admitted" stroke={grayscalePalette.ink} strokeWidth={3.4} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
                           <Line type="monotone" dataKey="discharges" name="Discharges" stroke={grayscalePalette.steel} strokeWidth={2.8} dot={false} activeDot={{ r: 5, fill: grayscalePalette.steel, strokeWidth: 0 }} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                         </LineChart>
                       )}
