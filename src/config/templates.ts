@@ -206,7 +206,7 @@ export const reportTemplates: ReportTemplateConfig[] = [
       }),
       numericField(
         'urinary_catheter',
-        'Number of patients that are on urinary catheter',
+        'Number of New Patients That Are on Urinary Catheter',
         'quality_safety',
       ),
       numericField('transferred_icu', 'Number of Patients Transferred to ICU', 'patient_flow'),

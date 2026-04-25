@@ -214,7 +214,7 @@ from (
     ('inpatient_weekly','quality_safety','hai_pneumonia','Pneumonia','integer','sum',100),
     ('inpatient_weekly','quality_safety','hai_vap','Ventilator-associated pneumonia (VAP)','integer','sum',110),
     ('inpatient_weekly','quality_safety','hai_cdi','Clostridium difficile infections (CDI)','integer','sum',120),
-    ('inpatient_weekly','quality_safety','urinary_catheter','Number of patients that are on urinary catheter','integer','sum',130),
+    ('inpatient_weekly','quality_safety','urinary_catheter','Number of New Patients That Are on Urinary Catheter','integer','sum',130),
     ('inpatient_weekly','patient_flow','transferred_icu','Number of Patients Transferred to ICU','integer','sum',140),
     ('inpatient_weekly','patient_flow','transferred_hdu','Number of Patients Transferred to HDU','integer','sum',150),
     ('inpatient_weekly','patient_flow','transferred_ward','Number of Patients Transferred to Ward','integer','sum',160),
