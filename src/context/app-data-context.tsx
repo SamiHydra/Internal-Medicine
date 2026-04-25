@@ -102,10 +102,10 @@ type AppDataContextValue = {
 }
 
 const AppDataContext = createContext<AppDataContextValue | null>(null)
-const workspaceCacheStorageKey = 'mesay:workspace-state:v2'
+const workspaceCacheStorageKey = 'mesay:workspace-state:v3'
 
 type WorkspaceCacheRecord = {
-  version: 2
+  version: 3
   userId: string
   state: AppState
   profileDirectoryLoaded: boolean
@@ -150,7 +150,7 @@ function readWorkspaceCache(userId: string) {
     const parsedValue = JSON.parse(rawValue) as Partial<WorkspaceCacheRecord>
 
     if (
-      parsedValue.version !== 2 ||
+      parsedValue.version !== 3 ||
       parsedValue.userId !== userId ||
       !parsedValue.state
     ) {
@@ -223,8 +223,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const lastOverdueSyncAtRef = useRef(0)
   const syncPendingCountRef = useRef(0)
   const syncIndicatorTimeoutRef = useRef<number | null>(null)
+  const adminLiveRefreshTimerRef = useRef<number | null>(null)
+  const adminLiveRefreshInFlightRef = useRef(false)
 
   const currentUser = getCurrentUser(state)
+  const signedInUserId = currentUser?.id
+  const signedInUserRole = currentUser?.role
 
   const beginBackgroundSync = useCallback(() => {
     syncPendingCountRef.current += 1
@@ -262,6 +266,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     () => () => {
       if (syncIndicatorTimeoutRef.current !== null) {
         window.clearTimeout(syncIndicatorTimeoutRef.current)
+      }
+
+      if (adminLiveRefreshTimerRef.current !== null) {
+        window.clearTimeout(adminLiveRefreshTimerRef.current)
       }
     },
     [],
@@ -315,7 +323,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       writeWorkspaceCache({
-        version: 2,
+        version: 3,
         userId: nextState.currentUserId,
         state: nextState,
         profileDirectoryLoaded:
@@ -769,7 +777,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     resetDeferredDataState,
   ])
 
-  async function refreshDataWithOptions(options?: LiveAppStateLoadOptions) {
+  const refreshDataWithOptions = useCallback(async (options?: LiveAppStateLoadOptions) => {
     if (!client) {
       return
     }
@@ -796,18 +804,105 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     }
 
     try {
-      await loadUserState(userId, 'Unable to refresh the live dashboard data.', {
+      const result = await loadUserState(userId, 'Unable to refresh the live dashboard data.', {
         showBootstrapping: false,
         includeProfiles: options?.includeProfiles ?? profileDirectoryLoadedRef.current,
         includeAccessRequests: options?.includeAccessRequests ?? false,
         includeHistory: options?.includeHistory ?? false,
       })
+
+      if (result && isAdminRole(result.currentUser.role)) {
+        await ensureReportDetails(getAdminDashboardWarmReportIds(currentStateRef.current))
+      }
     } catch (refreshError) {
       if (!isSigningOutRef.current) {
         toast.error(getMessage(refreshError, 'Unable to refresh the live dashboard data.'))
       }
     }
-  }
+  }, [client, ensureReportDetails, loadUserState, resetDeferredDataState])
+
+  const scheduleAdminLiveRefresh = useCallback(
+    (delayMs = 700) => {
+      if (adminLiveRefreshTimerRef.current !== null) {
+        window.clearTimeout(adminLiveRefreshTimerRef.current)
+      }
+
+      adminLiveRefreshTimerRef.current = window.setTimeout(() => {
+        adminLiveRefreshTimerRef.current = null
+
+        if (adminLiveRefreshInFlightRef.current) {
+          return
+        }
+
+        adminLiveRefreshInFlightRef.current = true
+
+        void refreshDataWithOptions({
+          includeProfiles: profileDirectoryLoadedRef.current,
+          includeAccessRequests: accessRequestDataLoadedRef.current,
+          includeHistory: historyDataLoadedRef.current,
+        }).finally(() => {
+          adminLiveRefreshInFlightRef.current = false
+        })
+      }, delayMs)
+    },
+    [refreshDataWithOptions],
+  )
+
+  useEffect(() => {
+    if (!client || !signedInUserId || !signedInUserRole || !isAdminRole(signedInUserRole)) {
+      return
+    }
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        scheduleAdminLiveRefresh(150)
+      }
+    }
+    const refreshFromRealtime = () => {
+      scheduleAdminLiveRefresh()
+    }
+    const channel = client
+      .channel(`admin-report-sync:${signedInUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reports' },
+        refreshFromRealtime,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'report_field_values' },
+        refreshFromRealtime,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'calculated_metrics' },
+        refreshFromRealtime,
+      )
+
+    void channel.subscribe()
+
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    const fallbackPollId = window.setInterval(refreshWhenVisible, 20_000)
+
+    return () => {
+      window.removeEventListener('focus', refreshWhenVisible)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.clearInterval(fallbackPollId)
+
+      if (adminLiveRefreshTimerRef.current !== null) {
+        window.clearTimeout(adminLiveRefreshTimerRef.current)
+        adminLiveRefreshTimerRef.current = null
+      }
+
+      void client.removeChannel(channel)
+    }
+  }, [
+    client,
+    scheduleAdminLiveRefresh,
+    signedInUserId,
+    signedInUserRole,
+  ])
 
   const isReportDetailLoaded = useCallback((reportId: string) => {
     return loadedReportDetailIdsRef.current.has(reportId)
