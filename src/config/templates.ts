@@ -286,8 +286,8 @@ export const reportTemplates: ReportTemplateConfig[] = [
   {
     id: 'outpatient_weekly',
     family: 'outpatient',
-    name: 'Outpatient Weekly Report',
-    description: 'Shared weekly template for clinic activity and access performance.',
+    name: 'ART',
+    description: 'Weekly outpatient ART clinic activity and access reporting.',
     activeDays: weekdaysClinic,
     sections: outpatientSections,
     fields: [
@@ -356,7 +356,7 @@ export const reportTemplates: ReportTemplateConfig[] = [
       {
         fieldId: 'total_patients_seen',
         percentThreshold: 12,
-        messageTemplate: '{department} outpatient visits changed by {deltaPercent}% compared with last week.',
+        messageTemplate: '{department} ART visits changed by {deltaPercent}% compared with last week.',
       },
       {
         fieldId: 'failed_to_come',
@@ -641,7 +641,7 @@ export const departments: Department[] = [
   { id: 'hematology_inpatient', name: 'Hematology', family: 'inpatient', templateId: 'inpatient_weekly', description: 'Hematology inpatient ward.', accent: '#0f5f74', bedCount: 16 },
   { id: 'oncology_inpatient', name: 'Oncology', family: 'inpatient', templateId: 'inpatient_weekly', description: 'Oncology inpatient ward.', accent: '#0f4c81', bedCount: 24 },
   { id: 'hdu_inpatient', name: 'HDU', family: 'inpatient', templateId: 'inpatient_weekly', description: 'High dependency unit reporting.', accent: '#164e63', bedCount: 12 },
-  { id: 'outpatient_main', name: 'Outpatient', family: 'outpatient', templateId: 'outpatient_weekly', description: 'General outpatient clinic.', accent: '#0f8ea8' },
+  { id: 'outpatient_main', name: 'ART', family: 'outpatient', templateId: 'outpatient_weekly', description: 'Outpatient ART clinic reporting.', accent: '#0f8ea8' },
   { id: 'gi_outpatient', name: 'GI', family: 'outpatient', templateId: 'outpatient_weekly', description: 'GI outpatient clinic.', accent: '#0d9488' },
   { id: 'neuro_outpatient', name: 'Neuro', family: 'outpatient', templateId: 'outpatient_weekly', description: 'Neurology outpatient clinic.', accent: '#2563eb' },
   { id: 'cardiac_outpatient', name: 'Cardiac', family: 'outpatient', templateId: 'outpatient_weekly', description: 'Cardiac outpatient clinic.', accent: '#0f766e' },

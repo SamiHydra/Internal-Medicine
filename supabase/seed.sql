@@ -21,8 +21,8 @@ values
   (
     'outpatient_weekly',
     'outpatient',
-    'Outpatient Weekly Report',
-    'Shared weekly operational template for clinic activity and access performance.',
+    'ART',
+    'Weekly outpatient ART clinic activity and access reporting.',
     array['monday','tuesday','wednesday','thursday','friday'],
     jsonb_build_object('ui_family', 'outpatient')
   ),
@@ -100,7 +100,7 @@ from (
     ('hematology_inpatient', 'inpatient', 'inpatient_weekly', 'Hematology', 'Hematology inpatient ward.', '#0f5f74', 16),
     ('oncology_inpatient', 'inpatient', 'inpatient_weekly', 'Oncology', 'Oncology inpatient ward.', '#0f4c81', 24),
     ('hdu_inpatient', 'inpatient', 'inpatient_weekly', 'HDU', 'High dependency unit reporting.', '#164e63', 12),
-    ('outpatient_main', 'outpatient', 'outpatient_weekly', 'Outpatient', 'General outpatient clinic.', '#0f8ea8', null),
+    ('outpatient_main', 'outpatient', 'outpatient_weekly', 'ART', 'Outpatient ART clinic reporting.', '#0f8ea8', null),
     ('gi_outpatient', 'outpatient', 'outpatient_weekly', 'GI', 'GI outpatient clinic.', '#0d9488', null),
     ('neuro_outpatient', 'outpatient', 'outpatient_weekly', 'Neuro', 'Neurology outpatient clinic.', '#2563eb', null),
     ('cardiac_outpatient', 'outpatient', 'outpatient_weekly', 'Cardiac', 'Cardiac outpatient clinic.', '#0f766e', null),
