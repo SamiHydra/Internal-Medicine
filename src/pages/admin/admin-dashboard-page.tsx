@@ -55,6 +55,8 @@ type TrendBucket = {
   periodIds: Set<string>
 }
 
+type TrendDeltaVariant = 'compact' | 'decimal' | 'percent' | 'time'
+
 function ChartEmptyState({
   message,
   tone = 'light',
@@ -115,6 +117,86 @@ function formatMinutesAsTime(value: number | null | undefined) {
   const minutes = rounded % 60
 
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+}
+
+function getTrendDelta<T extends Record<string, unknown>>(series: T[], key: keyof T) {
+  const currentValue = series.at(-1)?.[key]
+  const previousValue = series.at(-2)?.[key]
+
+  if (
+    typeof currentValue !== 'number' ||
+    typeof previousValue !== 'number' ||
+    Number.isNaN(currentValue) ||
+    Number.isNaN(previousValue)
+  ) {
+    return null
+  }
+
+  return currentValue - previousValue
+}
+
+function formatTrendDeltaValue(delta: number, variant: TrendDeltaVariant) {
+  const magnitude = Math.abs(delta)
+
+  if (variant === 'percent') {
+    return `${magnitude.toFixed(1)} pp`
+  }
+
+  if (variant === 'decimal') {
+    return magnitude.toFixed(1)
+  }
+
+  if (variant === 'time') {
+    return `${Math.round(magnitude)} min`
+  }
+
+  return formatCompactNumber(magnitude)
+}
+
+function TrendDeltaChips({
+  items,
+  comparisonLabel,
+}: {
+  items: readonly {
+    label: string
+    delta: number | null
+    variant?: TrendDeltaVariant
+  }[]
+  comparisonLabel: string
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {items.map((item) => {
+        const delta = item.delta
+        const variant = item.variant ?? 'compact'
+        const label =
+          delta === null
+            ? `No prior ${comparisonLabel}`
+            : delta === 0
+              ? `No change vs previous ${comparisonLabel}`
+              : `${delta > 0 ? '+' : '-'}${formatTrendDeltaValue(
+                  delta,
+                  variant,
+                )} vs previous ${comparisonLabel}`
+
+        return (
+          <span
+            key={item.label}
+            className={cn(
+              'rounded-[0.25rem] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] outline outline-1',
+              delta === null || delta === 0
+                ? 'bg-[#edf1f5] text-[#1d3047] outline-[#d4dde8]/75'
+                : delta > 0
+                  ? 'bg-[#edf4fb] text-[#00468c] outline-[#cfe0f4]/75'
+                  : 'bg-[#fcf5e8] text-[#8a5a00] outline-[#edd9b0]/75',
+            )}
+          >
+            {item.label}: {label}
+          </span>
+        )
+      })}
+    </div>
+  )
 }
 
 function getReportWeeklyFieldValue(report: ReportRecord, fieldId: string) {
@@ -199,7 +281,7 @@ export function AdminDashboardPage() {
   const currentPeriod = getCurrentPeriod(state)
   const currentPeriodId = currentPeriod?.id ?? ''
   const [periodId, setPeriodId] = useState(currentPeriodId)
-  const [timeRange, setTimeRange] = useState<ReportingTimeRange>('current')
+  const [timeRange, setTimeRange] = useState<ReportingTimeRange>('last8')
   const [trendScale, setTrendScale] = useState<TrendScale>('weekly')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const availablePeriods = getVisibleReportingPeriods(state)
@@ -627,6 +709,59 @@ export function AdminDashboardPage() {
     { label: 'Bronchoscopy', value: sumFieldTotalsForRange('procedure', ['bronchoscopy']), fill: grayscalePalette.steel },
     { label: 'Ligation', value: sumFieldTotalsForRange('procedure', ['variceal_ligation']), fill: grayscalePalette.cloud },
   ]
+  const trendComparisonLabel = trendScale === 'monthly' ? 'month' : 'week'
+  const reportingTrendDeltas = [
+    { label: 'Delivered', delta: getTrendDelta(reportingTrendSeries, 'delivered') },
+    { label: 'Open', delta: getTrendDelta(reportingTrendSeries, 'open') },
+    { label: 'Overdue', delta: getTrendDelta(reportingTrendSeries, 'overdue') },
+  ] as const
+  const inpatientFlowDeltas = [
+    { label: 'Admissions', delta: getTrendDelta(inpatientFlowSeries, 'admissions') },
+    { label: 'Discharges', delta: getTrendDelta(inpatientFlowSeries, 'discharges') },
+  ] as const
+  const inpatientSafetyDeltas = [
+    { label: 'Deaths', delta: getTrendDelta(inpatientSafetySeries, 'deaths') },
+    { label: 'Ulcers', delta: getTrendDelta(inpatientSafetySeries, 'ulcers') },
+    { label: 'HAI', delta: getTrendDelta(inpatientSafetySeries, 'hai') },
+  ] as const
+  const inpatientOccupancyDeltas = [
+    {
+      label: 'BOR',
+      delta: getTrendDelta(inpatientOccupancySeries, 'bor'),
+      variant: 'percent' as const,
+    },
+    {
+      label: 'BTR',
+      delta: getTrendDelta(inpatientOccupancySeries, 'btr'),
+      variant: 'decimal' as const,
+    },
+    {
+      label: 'ALOS',
+      delta: getTrendDelta(inpatientOccupancySeries, 'alos'),
+      variant: 'decimal' as const,
+    },
+  ] as const
+  const outpatientSeenDeltas = [
+    { label: 'Seen', delta: getTrendDelta(outpatientSeenSeries, 'seen') },
+    {
+      label: 'Not seen',
+      delta: getTrendDelta(outpatientSeenSeries, 'notSeenSameDay'),
+    },
+  ] as const
+  const outpatientWaitDeltas = [
+    {
+      label: 'Wait',
+      delta: getTrendDelta(outpatientFollowUpWaitSeries, 'wait'),
+      variant: 'decimal' as const,
+    },
+  ] as const
+  const outpatientStartDeltas = [
+    {
+      label: 'Start',
+      delta: getTrendDelta(outpatientClinicStartSeries, 'startMinutes'),
+      variant: 'time' as const,
+    },
+  ] as const
   const hasReportingTrendSignal = reportingTrendSeries.some(
     (point) => point.delivered > 0 || point.open > 0 || point.overdue > 0,
   )
@@ -768,7 +903,13 @@ export function AdminDashboardPage() {
                       key={option.value}
                       type="button"
                       aria-pressed={trendScale === option.value}
-                      onClick={() => setTrendScale(option.value)}
+                      onClick={() => {
+                        setTrendScale(option.value)
+
+                        if (timeRange === 'current') {
+                          setTimeRange('last8')
+                        }
+                      }}
                       className={cn(
                         'h-9 min-w-[96px] rounded-[0.2rem] px-4 text-sm font-semibold transition-colors',
                         trendScale === option.value
@@ -907,6 +1048,10 @@ export function AdminDashboardPage() {
                 className="font-display text-[2rem] leading-none text-[#000a1e]"
               />
             </div>
+            <TrendDeltaChips
+              items={reportingTrendDeltas}
+              comparisonLabel={trendComparisonLabel}
+            />
             <div className="h-[300px]">
               {hasReportingTrendSignal ? (
                 <ResponsiveContainer width="100%" height="100%">
@@ -1025,6 +1170,10 @@ export function AdminDashboardPage() {
                 <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
                   Admissions vs discharges
                 </h3>
+                <TrendDeltaChips
+                  items={inpatientFlowDeltas}
+                  comparisonLabel={trendComparisonLabel}
+                />
                 <div className="h-[320px]">
                   {hasInpatientFlowSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
@@ -1064,6 +1213,10 @@ export function AdminDashboardPage() {
                 <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
                   Deaths, pressure ulcers, HAI
                 </h3>
+                <TrendDeltaChips
+                  items={inpatientSafetyDeltas}
+                  comparisonLabel={trendComparisonLabel}
+                />
                 <div className="h-[320px]">
                   {hasInpatientSafetySignal ? (
                     <ResponsiveContainer width="100%" height="100%">
@@ -1105,6 +1258,10 @@ export function AdminDashboardPage() {
                 <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
                   BOR / BTR / ALOS
                 </h3>
+                <TrendDeltaChips
+                  items={inpatientOccupancyDeltas}
+                  comparisonLabel={trendComparisonLabel}
+                />
                 <div className="h-[320px]">
                   {hasInpatientOccupancySignal ? (
                     <ResponsiveContainer width="100%" height="100%">
@@ -1176,6 +1333,10 @@ export function AdminDashboardPage() {
                 <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
                   Seen vs not seen same day
                 </h3>
+                <TrendDeltaChips
+                  items={outpatientSeenDeltas}
+                  comparisonLabel={trendComparisonLabel}
+                />
                 <div className="h-[300px]">
                   {hasOutpatientSeenSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
@@ -1239,6 +1400,10 @@ export function AdminDashboardPage() {
                 <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
                   Follow-up wait time trend
                 </h3>
+                <TrendDeltaChips
+                  items={outpatientWaitDeltas}
+                  comparisonLabel={trendComparisonLabel}
+                />
                 <div className="h-[260px]">
                   {hasFollowUpWaitSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
@@ -1270,6 +1435,10 @@ export function AdminDashboardPage() {
                 <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
                   Clinic start time trend
                 </h3>
+                <TrendDeltaChips
+                  items={outpatientStartDeltas}
+                  comparisonLabel={trendComparisonLabel}
+                />
                 <div className="h-[260px]">
                   {hasClinicStartSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
