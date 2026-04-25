@@ -155,16 +155,40 @@ function buildPersistedValues(
 function renderComputedValue(
   field: ReportTemplateField,
   values: Partial<Record<Weekday, string>>,
+  template: ReportTemplateConfig,
+  allValues: ReportFormValues['values'],
 ) {
-  const computedValue = computeWeeklyValue(
-    field,
-    Object.fromEntries(
-      Object.entries(values).map(([day, value]) => [
-        day,
-        coerceFieldValue(field, value ?? ''),
-      ]),
-    ) as ReportFieldValue['dailyValues'],
-  )
+  const getComputedValueForField = (
+    targetField: ReportTemplateField,
+    targetValues: Partial<Record<Weekday, string>>,
+  ) =>
+    computeWeeklyValue(
+      targetField,
+      Object.fromEntries(
+        Object.entries(targetValues).map(([day, value]) => [
+          day,
+          coerceFieldValue(targetField, value ?? ''),
+        ]),
+      ) as ReportFieldValue['dailyValues'],
+    )
+
+  let computedValue = getComputedValueForField(field, values)
+
+  if (field.id === 'total_admitted_patients') {
+    const newlyAdmittedField = template.fields.find(
+      (candidate) => candidate.id === 'new_admitted_patients',
+    )
+    const newlyAdmittedValue = newlyAdmittedField
+      ? getComputedValueForField(
+          newlyAdmittedField,
+          allValues[newlyAdmittedField.id] ?? {},
+        )
+      : null
+
+    computedValue =
+      (typeof computedValue === 'number' ? computedValue : 0) +
+      (typeof newlyAdmittedValue === 'number' ? newlyAdmittedValue : 0)
+  }
 
   if (computedValue === null || computedValue === undefined || computedValue === '') {
     return '-'
@@ -914,7 +938,12 @@ function ResolvedReportForm({
                                 />
                               ))}
                               <div className="rounded-[0.25rem] bg-[#f8fafc] px-3 py-3 text-center text-sm font-semibold text-[#1d3047] outline outline-1 outline-[#d9e0e7]/75">
-                                {renderComputedValue(field, fieldValues)}
+                                {renderComputedValue(
+                                  field,
+                                  fieldValues,
+                                  template,
+                                  watchedValues ?? {},
+                                )}
                               </div>
                             </div>
                           )
@@ -981,7 +1010,12 @@ function ResolvedReportForm({
                             ))}
                           </div>
                           <div className="rounded-[0.25rem] bg-[#f8fafc] px-4 py-3 text-sm font-semibold text-[#1d3047] outline outline-1 outline-[#d9e0e7]/75">
-                            Weekly total: {renderComputedValue(field, fieldValues)}
+                            Weekly total: {renderComputedValue(
+                              field,
+                              fieldValues,
+                              template,
+                              watchedValues ?? {},
+                            )}
                           </div>
                         </div>
                       </div>
