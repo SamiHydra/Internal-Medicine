@@ -426,8 +426,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         ) as Record<string, AppState['reports'][number]>
         const mergedReports = result.state.reports.map((report) => {
           const existingReport = existingReportsById[report.id]
+          const canReuseLoadedDetails =
+            existingReport &&
+            previouslyLoadedReportDetailIds.has(report.id) &&
+            existingReport.updatedAt === report.updatedAt
 
-          if (!existingReport || !previouslyLoadedReportDetailIds.has(report.id)) {
+          if (!canReuseLoadedDetails) {
             return report
           }
 
@@ -441,10 +445,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         loadedReportDetailIdsRef.current = new Set(
           mergedReports
             .filter(
-              (report) =>
-                previouslyLoadedReportDetailIds.has(report.id) ||
-                Object.keys(report.values).length ||
-                Object.keys(report.calculatedMetrics).length,
+              (report) => {
+                const existingReport = existingReportsById[report.id]
+                const preservedLoadedDetails =
+                  existingReport &&
+                  previouslyLoadedReportDetailIds.has(report.id) &&
+                  existingReport.updatedAt === report.updatedAt
+
+                return (
+                  preservedLoadedDetails ||
+                  Object.keys(report.values).length ||
+                  Object.keys(report.calculatedMetrics).length
+                )
+              },
             )
             .map((report) => report.id),
         )
