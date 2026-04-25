@@ -10,9 +10,12 @@ import type {
   ReportFamily,
   ReportRecord,
   ReportStatus,
+  ReportingPeriod,
 } from '@/types/domain'
 
 const liveReportingStartDate = parseISO('2026-03-02T00:00:00.000Z')
+
+export type ReportingTimeRange = 'current' | 'last4' | 'last8' | 'all'
 
 export function getSortedReportingPeriods(state: AppState) {
   return [...state.reportingPeriods]
@@ -97,6 +100,31 @@ export function getReportingPeriodsBackwards(
   return reportingPeriods.slice(-periodCount).reverse()
 }
 
+export function getReportingPeriodsForRange(
+  state: AppState,
+  range: ReportingTimeRange,
+  anchorPeriodId = getCurrentPeriod(state)?.id,
+) {
+  const reportingPeriods = getVisibleReportingPeriods(state)
+
+  if (!reportingPeriods.length) {
+    return []
+  }
+
+  const anchorIndex = anchorPeriodId
+    ? reportingPeriods.findIndex((period) => period.id === anchorPeriodId)
+    : -1
+  const boundedAnchorIndex = anchorIndex >= 0 ? anchorIndex : reportingPeriods.length - 1
+  const periodsThroughAnchor = reportingPeriods.slice(0, boundedAnchorIndex + 1)
+
+  if (range === 'all') {
+    return periodsThroughAnchor
+  }
+
+  const periodCount = range === 'last8' ? 8 : range === 'last4' ? 4 : 1
+  return periodsThroughAnchor.slice(-periodCount)
+}
+
 export function getProfileById(state: AppState, userId: string) {
   return state.profiles.find((profile) => profile.id === userId) ?? null
 }
@@ -149,6 +177,97 @@ function deriveReportStatusForPeriod(
 
 function isMissingSummaryStatus(status: ReportStatus) {
   return status === 'not_started' || status === 'overdue'
+}
+
+const emptyStatusCounts: Record<ReportStatus, number> = {
+  not_started: 0,
+  draft: 0,
+  submitted: 0,
+  edited_after_submission: 0,
+  locked: 0,
+  overdue: 0,
+}
+
+function getScopedAssignments(state: AppState, family?: ReportFamily) {
+  const scopedDepartments = departments.filter((department) =>
+    family ? department.family === family : true,
+  )
+  const scopedDepartmentIds = new Set(scopedDepartments.map((department) => department.id))
+
+  return state.assignments.filter(
+    (assignment) => assignment.active && scopedDepartmentIds.has(assignment.departmentId),
+  )
+}
+
+function createReportLookup(reports: ReportRecord[]) {
+  const reportsByAssignmentPeriod = new Map<string, ReportRecord>()
+
+  reports.forEach((report) => {
+    reportsByAssignmentPeriod.set(`${report.assignmentId}:${report.reportingPeriodId}`, report)
+  })
+
+  return reportsByAssignmentPeriod
+}
+
+function getRangeStatusEntries(
+  state: AppState,
+  periods: ReportingPeriod[],
+  family?: ReportFamily,
+) {
+  const scopedAssignments = getScopedAssignments(state, family)
+  const reportsByAssignmentPeriod = createReportLookup(state.reports)
+
+  return scopedAssignments.flatMap((assignment) =>
+    periods.map((period) => {
+      const report = reportsByAssignmentPeriod.get(`${assignment.id}:${period.id}`) ?? null
+
+      return {
+        assignment,
+        period,
+        report,
+        status: deriveReportStatusForPeriod(period, state, report),
+      }
+    }),
+  )
+}
+
+export function getReportingRangeSummary(
+  state: AppState,
+  range: ReportingTimeRange,
+  anchorPeriodId = getCurrentPeriod(state)?.id,
+  family?: ReportFamily,
+) {
+  const periods = getReportingPeriodsForRange(state, range, anchorPeriodId)
+
+  if (!periods.length) {
+    return null
+  }
+
+  const statusEntries = getRangeStatusEntries(state, periods, family)
+  const statusCounts = statusEntries.reduce<Record<ReportStatus, number>>(
+    (counts, entry) => ({
+      ...counts,
+      [entry.status]: counts[entry.status] + 1,
+    }),
+    { ...emptyStatusCounts },
+  )
+
+  return {
+    periods,
+    entries: statusEntries,
+    statusCounts,
+    metrics: {
+      totalExpected: statusEntries.length,
+      submitted: statusCounts.submitted,
+      missing: statusCounts.not_started + statusCounts.overdue,
+      editedAfterSubmission: statusCounts.edited_after_submission,
+      locked: statusCounts.locked,
+      unlocked: statusEntries.filter((entry) => entry.report && entry.status !== 'locked').length,
+      draft: statusCounts.draft,
+      notStarted: statusCounts.not_started,
+      overdue: statusCounts.overdue,
+    },
+  }
 }
 
 export function deriveReportStatus(
@@ -621,10 +740,29 @@ export function getWhatChangedThisWeek(
   return insights.slice(0, 8)
 }
 
-export function getDepartmentDetail(state: AppState, departmentId: string) {
+export function getDepartmentDetail(
+  state: AppState,
+  departmentId: string,
+  options?: {
+    range?: ReportingTimeRange
+    anchorPeriodId?: string
+  },
+) {
   const department = departmentMap[departmentId]
-  const period = getCurrentPeriod(state)
-  const previousPeriod = getPreviousPeriod(state)
+  const reportingPeriods = getVisibleReportingPeriods(state)
+  const fallbackPeriod = getCurrentPeriod(state)
+  const period =
+    reportingPeriods.find((candidate) => candidate.id === options?.anchorPeriodId) ??
+    fallbackPeriod
+  const periodIndex = period
+    ? reportingPeriods.findIndex((candidate) => candidate.id === period.id)
+    : -1
+  const previousPeriod = periodIndex > 0 ? reportingPeriods[periodIndex - 1] : null
+  const rangePeriods = getReportingPeriodsForRange(
+    state,
+    options?.range ?? 'last8',
+    period?.id,
+  )
   const assignment = state.assignments.find(
     (candidate) => candidate.departmentId === departmentId,
   )
@@ -637,26 +775,36 @@ export function getDepartmentDetail(state: AppState, departmentId: string) {
   const previousReport = previousPeriod
     ? getReportForAssignmentPeriod(state, assignment.id, previousPeriod.id)
     : null
+  const rangeReports = rangePeriods
+    .map((rangePeriod) => getReportForAssignmentPeriod(state, assignment.id, rangePeriod.id))
+    .filter((report): report is ReportRecord => Boolean(report))
+  const activitySourceId =
+    department.family === 'inpatient'
+      ? 'total_admitted_patients'
+      : department.family === 'outpatient'
+        ? 'total_patients_seen'
+        : templateMap[department.templateId].summaryCards[0]?.sourceId ?? ''
 
   return {
     department,
     template: templateMap[department.templateId],
     assignment,
+    period,
+    rangePeriods,
+    rangeReports,
     currentReport,
     previousReport,
     currentStatus: deriveReportStatus(state, period.id, currentReport),
     trends: {
-      activity:
-        department.family === 'inpatient'
-          ? getTrendSeries(state, 'total_admitted_patients', department.family, department.id)
-          : department.family === 'outpatient'
-            ? getTrendSeries(state, 'total_patients_seen', department.family, department.id)
-            : getTrendSeries(
-                state,
-                templateMap[department.templateId].summaryCards[0]?.sourceId ?? '',
-                department.family,
-                department.id,
-              ),
+      activity: rangePeriods.map((rangePeriod) => {
+        const report = getReportForAssignmentPeriod(state, assignment.id, rangePeriod.id)
+
+        return {
+          label: rangePeriod.label,
+          shortLabel: `${parseISO(rangePeriod.weekStart).getMonth() + 1}/${parseISO(rangePeriod.weekStart).getDate()}`,
+          value: report ? sumField(report, activitySourceId) : 0,
+        }
+      }),
     },
     insights: getWhatChangedThisWeek(state, department.family, department.id),
     auditHighlights: state.auditLogs.filter((log) => log.departmentId === departmentId).slice(0, 6),

@@ -26,13 +26,16 @@ import {
   getDashboardSummary,
   getReportForAssignmentPeriod,
   getLockDeadlineNote,
+  getReportingPeriodsForRange,
+  getReportingRangeSummary,
   getVisibleReportingPeriods,
+  type ReportingTimeRange,
 } from '@/data/selectors'
 import { useAppData } from '@/context/app-data-context'
 import { departments, departmentMap, templateMap } from '@/config/templates'
 import { computeWeeklyValue } from '@/lib/metrics'
 import { cn, formatCompactNumber } from '@/lib/utils'
-import type { ReportFamily, ReportRecord } from '@/types/domain'
+import type { ReportFamily, ReportRecord, ReportingPeriod } from '@/types/domain'
 
 type FamilyFilter = 'all' | 'inpatient' | 'outpatient' | 'procedure'
 type StatusFilter =
@@ -43,6 +46,14 @@ type StatusFilter =
   | 'locked'
   | 'not_started'
   | 'overdue'
+type TrendScale = 'weekly' | 'monthly'
+
+type TrendBucket = {
+  key: string
+  label: string
+  periods: ReportingPeriod[]
+  periodIds: Set<string>
+}
 
 function ChartEmptyState({
   message,
@@ -188,6 +199,8 @@ export function AdminDashboardPage() {
   const currentPeriod = getCurrentPeriod(state)
   const currentPeriodId = currentPeriod?.id ?? ''
   const [periodId, setPeriodId] = useState(currentPeriodId)
+  const [timeRange, setTimeRange] = useState<ReportingTimeRange>('current')
+  const [trendScale, setTrendScale] = useState<TrendScale>('weekly')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const availablePeriods = getVisibleReportingPeriods(state)
   const visibleReportingPeriods = [...availablePeriods].reverse()
@@ -199,11 +212,35 @@ export function AdminDashboardPage() {
     ? periodId
     : currentPeriodId
   const scopeFamily = familyFilter === 'all' ? undefined : familyFilter
-  const effectivePeriodIndex = availablePeriods.findIndex((period) => period.id === effectivePeriodId)
-  const trendPeriods =
-    effectivePeriodIndex >= 0
-      ? availablePeriods.slice(0, effectivePeriodIndex + 1).slice(-8)
-      : availablePeriods.slice(-8)
+  const trendPeriods = getReportingPeriodsForRange(state, timeRange, effectivePeriodId)
+  const trendBuckets: TrendBucket[] =
+    trendScale === 'monthly'
+      ? trendPeriods.reduce<TrendBucket[]>((buckets, period) => {
+          const key = format(new Date(period.weekStart), 'yyyy-MM')
+          const existingBucket = buckets.find((bucket) => bucket.key === key)
+
+          if (existingBucket) {
+            existingBucket.periods.push(period)
+            existingBucket.periodIds.add(period.id)
+            return buckets
+          }
+
+          return [
+            ...buckets,
+            {
+              key,
+              label: format(new Date(period.weekStart), 'MMM yyyy'),
+              periods: [period],
+              periodIds: new Set([period.id]),
+            },
+          ]
+        }, [])
+      : trendPeriods.map((period) => ({
+          key: period.id,
+          label: format(new Date(period.weekStart), 'MMM d'),
+          periods: [period],
+          periodIds: new Set([period.id]),
+        }))
   const detailReportingPeriodIds = new Set(trendPeriods.map((period) => period.id))
   const detailReportIds = state.reports
     .filter((report) => detailReportingPeriodIds.has(report.reportingPeriodId))
@@ -213,9 +250,14 @@ export function AdminDashboardPage() {
     void ensureReportDetails(detailReportIds)
   }, [detailReportIds, ensureReportDetails])
 
-  const summary = getDashboardSummary(state, effectivePeriodId, scopeFamily)
+  const rangeSummary = getReportingRangeSummary(
+    state,
+    timeRange,
+    effectivePeriodId,
+    scopeFamily,
+  )
 
-  if (!summary) {
+  if (!rangeSummary) {
     return (
       <section className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-10 md:px-6">
         <div className="space-y-3">
@@ -234,6 +276,26 @@ export function AdminDashboardPage() {
   }
 
   const deadlineNote = getLockDeadlineNote(state, effectivePeriodId)
+  const timeRangeLabels = {
+    current: 'Current week',
+    last4: 'Last 4 weeks',
+    last8: 'Last 8 weeks',
+    all: 'All available data',
+  } as const
+  const timeRangeOptions = [
+    { value: 'current' as const, label: 'Current week' },
+    { value: 'last4' as const, label: 'Last 4 weeks' },
+    { value: 'last8' as const, label: 'Last 8 weeks' },
+    { value: 'all' as const, label: 'All available data' },
+  ] as const
+  const trendScaleLabels = {
+    weekly: 'Weekly trends',
+    monthly: 'Monthly trends',
+  } as const
+  const trendScaleOptions = [
+    { value: 'weekly' as const, label: 'Weekly' },
+    { value: 'monthly' as const, label: 'Monthly' },
+  ] as const
   const familyLabels = {
     all: 'All services',
     inpatient: 'Inpatient',
@@ -276,27 +338,56 @@ export function AdminDashboardPage() {
   } as const
   const tooltipLineCursor = { stroke: 'rgba(0,93,182,0.22)', strokeWidth: 1.2 } as const
   const tooltipFillCursor = { fill: 'rgba(0,33,71,0.045)' } as const
-  const totalExpected = summary.current.totalExpected
+  const totalExpected = rangeSummary.metrics.totalExpected
   const deliveredStatuses = new Set<Exclude<StatusFilter, 'all'>>([
     'submitted',
     'edited_after_submission',
     'locked',
   ])
-  const selectedPeriodLabel =
-    availablePeriods.find((period) => period.id === effectivePeriodId)?.label ??
-    currentPeriod?.label ??
-    'Current reporting period'
+  const selectedPeriod =
+    availablePeriods.find((period) => period.id === effectivePeriodId) ??
+    currentPeriod ??
+    null
+  const rangeStart = trendPeriods[0] ?? selectedPeriod
+  const rangeEnd = trendPeriods.at(-1) ?? selectedPeriod
+  const trendBucketLabel =
+    trendScale === 'monthly'
+      ? `${trendBuckets.length} ${trendBuckets.length === 1 ? 'month' : 'months'}`
+      : `${trendPeriods.length} reporting ${trendPeriods.length === 1 ? 'week' : 'weeks'}`
+  const selectedRangeTitle =
+    timeRange === 'current'
+      ? selectedPeriod?.label ?? 'Current reporting period'
+      : `${timeRangeLabels[timeRange]} through ${
+          rangeEnd ? format(new Date(rangeEnd.weekEnd), 'MMM d, yyyy') : 'selected period'
+        }`
+  const selectedRangeNote =
+    timeRange === 'current'
+      ? deadlineNote
+        ? `Deadline ${format(deadlineNote, 'EEE, MMM d')} at ${format(deadlineNote, 'HH:mm')}`
+        : 'No deadline set'
+      : rangeStart && rangeEnd
+        ? `${format(new Date(rangeStart.weekStart), 'MMM d')} - ${format(
+          new Date(rangeEnd.weekEnd),
+          'MMM d, yyyy',
+          )} / ${trendBucketLabel}`
+        : 'No reporting periods in range'
   const scopedAssignments = state.assignments.filter((assignment) =>
-    familyFilter === 'all' ? true : departmentMap[assignment.departmentId].family === familyFilter,
+    assignment.active &&
+    (familyFilter === 'all' ? true : departmentMap[assignment.departmentId].family === familyFilter),
   )
-  const getPeriodReports = (periodId: string, family: ReportFamily) =>
+  const selectedPeriodIds = new Set(trendPeriods.map((period) => period.id))
+  const getReportsForPeriodIds = (periodIds: Set<string>, family: ReportFamily) =>
     state.reports.filter(
       (report) =>
-        report.reportingPeriodId === periodId &&
+        periodIds.has(report.reportingPeriodId) &&
         departmentMap[report.departmentId].family === family,
     )
-  const sumFieldTotals = (periodId: string, family: ReportFamily, fieldIds: string[]) =>
-    getPeriodReports(periodId, family).reduce((total, report) => {
+  const getBucketReports = (bucket: TrendBucket, family: ReportFamily) =>
+    getReportsForPeriodIds(bucket.periodIds, family)
+  const getRangeReports = (family: ReportFamily) =>
+    getReportsForPeriodIds(selectedPeriodIds, family)
+  const sumReportFieldTotals = (reports: ReportRecord[], fieldIds: string[]) =>
+    reports.reduce((total, report) => {
       const reportTotal = fieldIds.reduce((fieldTotal, fieldId) => {
         const value = getReportWeeklyFieldValue(report, fieldId)
         return fieldTotal + (typeof value === 'number' ? value : 0)
@@ -304,8 +395,19 @@ export function AdminDashboardPage() {
 
       return total + reportTotal
     }, 0)
-  const averageFieldValue = (periodId: string, family: ReportFamily, fieldId: string) => {
-    const values = getPeriodReports(periodId, family)
+  const sumFieldTotalsForBucket = (
+    bucket: TrendBucket,
+    family: ReportFamily,
+    fieldIds: string[],
+  ) => sumReportFieldTotals(getBucketReports(bucket, family), fieldIds)
+  const sumFieldTotalsForRange = (family: ReportFamily, fieldIds: string[]) =>
+    sumReportFieldTotals(getRangeReports(family), fieldIds)
+  const averageFieldValueForBucket = (
+    bucket: TrendBucket,
+    family: ReportFamily,
+    fieldId: string,
+  ) => {
+    const values = getBucketReports(bucket, family)
       .map((report) => getReportWeeklyFieldValue(report, fieldId))
       .filter((value): value is number => typeof value === 'number' && !Number.isNaN(value))
 
@@ -315,8 +417,12 @@ export function AdminDashboardPage() {
 
     return values.reduce((sum, value) => sum + value, 0) / values.length
   }
-  const averageTimeValue = (periodId: string, family: ReportFamily, fieldId: string) => {
-    const values = getPeriodReports(periodId, family)
+  const averageTimeValueForBucket = (
+    bucket: TrendBucket,
+    family: ReportFamily,
+    fieldId: string,
+  ) => {
+    const values = getBucketReports(bucket, family)
       .map((report) => parseTimeToMinutes(getReportWeeklyFieldValue(report, fieldId) as string | null))
       .filter((value): value is number => value !== null)
 
@@ -326,15 +432,8 @@ export function AdminDashboardPage() {
 
     return values.reduce((sum, value) => sum + value, 0) / values.length
   }
-  const scopedStatuses = scopedAssignments.map((assignment) =>
-      deriveReportStatus(
-        state,
-        effectivePeriodId,
-        getReportForAssignmentPeriod(state, assignment.id, effectivePeriodId),
-      ),
-    )
   const countStatus = (status: Exclude<StatusFilter, 'all'>) =>
-    scopedStatuses.filter((value) => value === status).length
+    rangeSummary.statusCounts[status]
   const statusDistribution = [
     { key: 'submitted' as const, label: 'Submitted', count: countStatus('submitted'), fill: grayscalePalette.ink },
     {
@@ -364,15 +463,21 @@ export function AdminDashboardPage() {
       : statusDistribution.find((item) => item.key === statusFilter)?.count ?? 0
   const statusFocusRate = formatShare(statusFocusValue, totalExpected)
   const statusCenterLabel = statusFilter === 'all' ? 'Delivered' : statusLabels[statusFilter]
-  const reportingTrendSeries = trendPeriods.map((period) => {
-    const statuses = scopedAssignments.map((assignment) =>
-      deriveReportStatus(state, period.id, getReportForAssignmentPeriod(state, assignment.id, period.id)),
+  const reportingTrendSeries = trendBuckets.map((bucket) => {
+    const statuses = bucket.periods.flatMap((period) =>
+      scopedAssignments.map((assignment) =>
+        deriveReportStatus(
+          state,
+          period.id,
+          getReportForAssignmentPeriod(state, assignment.id, period.id),
+        ),
+      ),
     )
     const delivered = statuses.filter((value) => deliveredStatuses.has(value)).length
     const overdue = statuses.filter((value) => value === 'overdue').length
 
     return {
-      label: format(new Date(period.weekStart), 'MMM d'),
+      label: bucket.label,
       delivered,
       open: Math.max(statuses.length - delivered, 0),
       overdue,
@@ -381,45 +486,75 @@ export function AdminDashboardPage() {
   const showInpatientSection = familyFilter === 'all' || familyFilter === 'inpatient'
   const showOutpatientSection = familyFilter === 'all' || familyFilter === 'outpatient'
   const showProcedureSection = familyFilter === 'all' || familyFilter === 'procedure'
-  const inpatientFlowSeries = trendPeriods.map((period) => ({
-    label: format(new Date(period.weekStart), 'MMM d'),
-    admissions: sumFieldTotals(period.id, 'inpatient', ['total_admitted_patients']),
-    discharges: sumFieldTotals(period.id, 'inpatient', ['discharged_home', 'discharged_ama']),
+  const inpatientFlowSeries = trendBuckets.map((bucket) => ({
+    label: bucket.label,
+    admissions: sumFieldTotalsForBucket(bucket, 'inpatient', ['total_admitted_patients']),
+    discharges: sumFieldTotalsForBucket(bucket, 'inpatient', [
+      'discharged_home',
+      'discharged_ama',
+    ]),
   }))
-  const inpatientSafetySeries = trendPeriods.map((period) => ({
-    label: format(new Date(period.weekStart), 'MMM d'),
-    deaths: sumFieldTotals(period.id, 'inpatient', ['new_deaths']),
-    ulcers: sumFieldTotals(period.id, 'inpatient', ['new_pressure_ulcer']),
-    hai: sumFieldTotals(period.id, 'inpatient', ['total_hai']),
+  const inpatientAdmissionsTotal = inpatientFlowSeries.reduce(
+    (sum, point) => sum + point.admissions,
+    0,
+  )
+  const inpatientSafetySeries = trendBuckets.map((bucket) => ({
+    label: bucket.label,
+    deaths: sumFieldTotalsForBucket(bucket, 'inpatient', ['new_deaths']),
+    ulcers: sumFieldTotalsForBucket(bucket, 'inpatient', ['new_pressure_ulcer']),
+    hai: sumFieldTotalsForBucket(bucket, 'inpatient', ['total_hai']),
   }))
-  const inpatientOccupancySeries = trendPeriods.map((period) => {
-    const periodSummary = getDashboardSummary(state, period.id, 'inpatient')
+  const inpatientOccupancySeries = trendBuckets.map((bucket) => {
+    const period = bucket.periods[0]
+
+    if (trendScale === 'weekly' && period) {
+      const periodSummary = getDashboardSummary(state, period.id, 'inpatient')
+
+      return {
+        label: bucket.label,
+        bor: periodSummary?.current.borPercent ?? null,
+        btr: periodSummary?.current.btr ?? null,
+        alos: periodSummary?.current.alos ?? null,
+      }
+    }
+
+    const reports = getBucketReports(bucket, 'inpatient')
+    const totalPatientDays = sumReportFieldTotals(reports, ['total_patient_days'])
+    const totalDischarges = sumReportFieldTotals(reports, [
+      'discharged_home',
+      'discharged_ama',
+    ])
+    const totalBeds = departments
+      .filter((department) => department.family === 'inpatient')
+      .reduce((sum, department) => sum + (department.bedCount ?? 0), 0)
+    const coveredDays = Math.max(bucket.periods.length * 7, 1)
 
     return {
-      label: format(new Date(period.weekStart), 'MMM d'),
-      bor: periodSummary?.current.borPercent ?? null,
-      btr: periodSummary?.current.btr ?? null,
-      alos: periodSummary?.current.alos ?? null,
+      label: bucket.label,
+      bor: totalBeds ? (totalPatientDays / (totalBeds * coveredDays)) * 100 : null,
+      btr: totalBeds ? totalDischarges / totalBeds : null,
+      alos: totalDischarges ? totalPatientDays / totalDischarges : null,
     }
   })
-  const outpatientSeenSeries = trendPeriods.map((period) => ({
-    label: format(new Date(period.weekStart), 'MMM d'),
-    seen: sumFieldTotals(period.id, 'outpatient', ['total_patients_seen']),
-    notSeenSameDay: sumFieldTotals(period.id, 'outpatient', ['not_seen_same_day']),
+  const outpatientSeenSeries = trendBuckets.map((bucket) => ({
+    label: bucket.label,
+    seen: sumFieldTotalsForBucket(bucket, 'outpatient', ['total_patients_seen']),
+    notSeenSameDay: sumFieldTotalsForBucket(bucket, 'outpatient', ['not_seen_same_day']),
   }))
-  const outpatientFollowUpWaitSeries = trendPeriods.map((period) => ({
-    label: format(new Date(period.weekStart), 'MMM d'),
-    wait: averageFieldValue(period.id, 'outpatient', 'wait_time_followup_months'),
+  const outpatientSeenTotal = outpatientSeenSeries.reduce((sum, point) => sum + point.seen, 0)
+  const outpatientFollowUpWaitSeries = trendBuckets.map((bucket) => ({
+    label: bucket.label,
+    wait: averageFieldValueForBucket(bucket, 'outpatient', 'wait_time_followup_months'),
   }))
-  const outpatientClinicStartSeries = trendPeriods.map((period) => ({
-    label: format(new Date(period.weekStart), 'MMM d'),
-    startMinutes: averageTimeValue(period.id, 'outpatient', 'clinic_start_time'),
+  const outpatientClinicStartSeries = trendBuckets.map((bucket) => ({
+    label: bucket.label,
+    startMinutes: averageTimeValueForBucket(bucket, 'outpatient', 'clinic_start_time'),
   }))
-  const currentOutpatientReports = getPeriodReports(effectivePeriodId, 'outpatient')
+  const rangeOutpatientReports = getRangeReports('outpatient')
   const availabilityOptions = ['Full day', 'Partial day', 'Unavailable'] as const
   const outpatientAvailability = availabilityOptions.map((label) => ({
     label,
-    value: currentOutpatientReports.filter(
+    value: rangeOutpatientReports.filter(
       (report) => getReportWeeklyFieldValue(report, 'senior_physician_availability') === label,
     ).length,
     fill:
@@ -432,19 +567,25 @@ export function AdminDashboardPage() {
   const outpatientVolumeMix = departments
     .filter((department) => department.family === 'outpatient')
     .map((department) => {
-      const report = state.reports.find(
+      const departmentReports = state.reports.filter(
         (item) =>
-          item.reportingPeriodId === effectivePeriodId && item.departmentId === department.id,
+          selectedPeriodIds.has(item.reportingPeriodId) && item.departmentId === department.id,
       )
-      const totalSeen = report
-        ? (getReportWeeklyFieldValue(report, 'total_patients_seen') as number | null) ?? 0
-        : 0
-      const newPatients = report
-        ? (getReportWeeklyFieldValue(report, 'new_patients_seen') as number | null) ?? 0
-        : 0
-      const followUp = report
-        ? (getReportWeeklyFieldValue(report, 'follow_up_patients') as number | null) ?? 0
-        : 0
+      const totalSeen = departmentReports.reduce(
+        (sum, report) =>
+          sum + ((getReportWeeklyFieldValue(report, 'total_patients_seen') as number | null) ?? 0),
+        0,
+      )
+      const newPatients = departmentReports.reduce(
+        (sum, report) =>
+          sum + ((getReportWeeklyFieldValue(report, 'new_patients_seen') as number | null) ?? 0),
+        0,
+      )
+      const followUp = departmentReports.reduce(
+        (sum, report) =>
+          sum + ((getReportWeeklyFieldValue(report, 'follow_up_patients') as number | null) ?? 0),
+        0,
+      )
 
       return {
         id: department.id,
@@ -459,12 +600,12 @@ export function AdminDashboardPage() {
     .sort((left, right) => right.totalSeen - left.totalSeen)
     .slice(0, 8)
   const procedureTotals = [
-    { label: 'Echo', value: sumFieldTotals(effectivePeriodId, 'procedure', ['echo_done']), fill: grayscalePalette.ink },
-    { label: 'ECG', value: sumFieldTotals(effectivePeriodId, 'procedure', ['ecg_done']), fill: grayscalePalette.carbon },
-    { label: 'EEG', value: sumFieldTotals(effectivePeriodId, 'procedure', ['eeg_done']), fill: grayscalePalette.steel },
+    { label: 'Echo', value: sumFieldTotalsForRange('procedure', ['echo_done']), fill: grayscalePalette.ink },
+    { label: 'ECG', value: sumFieldTotalsForRange('procedure', ['ecg_done']), fill: grayscalePalette.carbon },
+    { label: 'EEG', value: sumFieldTotalsForRange('procedure', ['eeg_done']), fill: grayscalePalette.steel },
     {
       label: 'Endoscopy',
-      value: sumFieldTotals(effectivePeriodId, 'procedure', [
+      value: sumFieldTotalsForRange('procedure', [
         'upper_gi_elective',
         'upper_gi_emergency',
         'ercp',
@@ -479,12 +620,12 @@ export function AdminDashboardPage() {
   const endoscopyMix = [
     {
       label: 'UGI',
-      value: sumFieldTotals(effectivePeriodId, 'procedure', ['upper_gi_elective', 'upper_gi_emergency']),
+      value: sumFieldTotalsForRange('procedure', ['upper_gi_elective', 'upper_gi_emergency']),
       fill: grayscalePalette.ink,
     },
-    { label: 'Colonoscopy', value: sumFieldTotals(effectivePeriodId, 'procedure', ['colonoscopy']), fill: grayscalePalette.slate },
-    { label: 'Bronchoscopy', value: sumFieldTotals(effectivePeriodId, 'procedure', ['bronchoscopy']), fill: grayscalePalette.steel },
-    { label: 'Ligation', value: sumFieldTotals(effectivePeriodId, 'procedure', ['variceal_ligation']), fill: grayscalePalette.cloud },
+    { label: 'Colonoscopy', value: sumFieldTotalsForRange('procedure', ['colonoscopy']), fill: grayscalePalette.slate },
+    { label: 'Bronchoscopy', value: sumFieldTotalsForRange('procedure', ['bronchoscopy']), fill: grayscalePalette.steel },
+    { label: 'Ligation', value: sumFieldTotalsForRange('procedure', ['variceal_ligation']), fill: grayscalePalette.cloud },
   ]
   const hasReportingTrendSignal = reportingTrendSeries.some(
     (point) => point.delivered > 0 || point.open > 0 || point.overdue > 0,
@@ -538,18 +679,16 @@ export function AdminDashboardPage() {
               </div>
               <div className="space-y-2.5">
                 <h1 className="max-w-4xl font-display text-[2.2rem] leading-[0.95] tracking-[-0.03em] text-[#000a1e] md:text-[2.7rem] xl:text-[3.05rem]">
-                  {selectedPeriodLabel}
+                  {selectedRangeTitle}
                 </h1>
                 <div className="flex flex-wrap items-center gap-3 text-sm text-[#44474e] md:text-[15px]">
+                  <span>{trendScaleLabels[trendScale]}</span>
+                  <span className="text-[#f0b429]">/</span>
                   <span>{familyLabels[familyFilter]}</span>
                   <span className="text-[#f0b429]">/</span>
                   <span>{statusLabels[statusFilter]}</span>
                   <span className="text-[#f0b429]">/</span>
-                  <span>
-                    {deadlineNote
-                      ? `Deadline ${format(deadlineNote, 'EEE, MMM d')} at ${format(deadlineNote, 'HH:mm')}`
-                      : 'No deadline set'}
-                  </span>
+                  <span>{selectedRangeNote}</span>
                 </div>
               </div>
             </div>
@@ -569,35 +708,81 @@ export function AdminDashboardPage() {
             </div>
           </div>
 
-          <ReportingScopePanel
-            className="self-start w-full max-w-[760px] xl:justify-self-end"
-            fields={[
-              {
-                label: 'Reporting period',
-                options: reportingPeriodOptions,
-                placeholder: 'Reporting period',
-                value: effectivePeriodId,
-                onValueChange: setPeriodId,
-                triggerClassName: 'text-[0.95rem]',
-              },
-              {
-                label: 'Service line',
-                options: serviceLineOptions,
-                placeholder: 'Service line',
-                value: familyFilter,
-                onValueChange: (value) => setFamilyFilter(value as FamilyFilter),
-                triggerClassName: 'text-[0.95rem]',
-              },
-              {
-                label: 'Status',
-                options: statusOptions,
-                placeholder: 'Status',
-                value: statusFilter,
-                onValueChange: (value) => setStatusFilter(value as StatusFilter),
-                triggerClassName: 'text-[0.95rem]',
-              },
-            ]}
-          />
+          <div className="self-start w-full max-w-[760px] space-y-3 xl:justify-self-end">
+            <ReportingScopePanel
+              fields={[
+                {
+                  label: 'Time range',
+                  options: timeRangeOptions,
+                  placeholder: 'Time range',
+                  value: timeRange,
+                  onValueChange: (value) => setTimeRange(value as ReportingTimeRange),
+                  triggerClassName: 'text-[0.95rem]',
+                },
+                {
+                  label: 'Ending period',
+                  options: reportingPeriodOptions,
+                  placeholder: 'Ending period',
+                  value: effectivePeriodId,
+                  onValueChange: setPeriodId,
+                  triggerClassName: 'text-[0.95rem]',
+                },
+                {
+                  label: 'Service line',
+                  options: serviceLineOptions,
+                  placeholder: 'Service line',
+                  value: familyFilter,
+                  onValueChange: (value) => setFamilyFilter(value as FamilyFilter),
+                  triggerClassName: 'text-[0.95rem]',
+                },
+                {
+                  label: 'Status',
+                  options: statusOptions,
+                  placeholder: 'Status',
+                  value: statusFilter,
+                  onValueChange: (value) => setStatusFilter(value as StatusFilter),
+                  triggerClassName: 'text-[0.95rem]',
+                },
+              ]}
+            />
+
+            <div className="rounded-[0.35rem] bg-[#f8fafc] p-4 outline outline-1 outline-[#d9e0e7]/75">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#74777f]">
+                    Trend view
+                  </p>
+                  <p className="text-sm text-[#44474e]">
+                    {trendScale === 'monthly'
+                      ? 'Calendar-month rollup for the selected reporting window.'
+                      : 'Reporting-week points for the selected reporting window.'}
+                  </p>
+                </div>
+                <div
+                  className="inline-flex rounded-[0.25rem] bg-[#edf1f5] p-1 outline outline-1 outline-[#d4dde8]/75"
+                  role="group"
+                  aria-label="Trend view"
+                >
+                  {trendScaleOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={trendScale === option.value}
+                      onClick={() => setTrendScale(option.value)}
+                      className={cn(
+                        'h-9 min-w-[96px] rounded-[0.2rem] px-4 text-sm font-semibold transition-colors',
+                        trendScale === option.value
+                          ? 'bg-[#000a1e] text-white'
+                          : 'text-[#44474e] hover:bg-white hover:text-[#000a1e]',
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </motion.section>
 
@@ -710,7 +895,7 @@ export function AdminDashboardPage() {
             <div className="flex items-end justify-between gap-4">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#74777f]">
-                  Weekly curve
+                  {trendScale === 'monthly' ? 'Monthly trend' : 'Weekly trend'}
                 </p>
                 <h3 className="mt-2 text-2xl font-semibold text-[#000a1e] md:text-3xl">
                   Delivered, open, overdue
@@ -725,61 +910,82 @@ export function AdminDashboardPage() {
             <div className="h-[300px]">
               {hasReportingTrendSignal ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={reportingTrendSeries}
-                    margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
-                  >
-                    <defs>
-                      <linearGradient id="reportingDeliveredFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#005db6" stopOpacity={0.2} />
-                        <stop offset="100%" stopColor="#005db6" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      tick={chartTick}
-                      axisLine={false}
-                      tickLine={false}
-                      tickMargin={12}
-                    />
-                    <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                    <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                    <Area
-                      type="monotone"
-                      dataKey="delivered"
-                      name="Delivered"
-                      stroke={grayscalePalette.ink}
-                      fill="url(#reportingDeliveredFill)"
-                      strokeWidth={3}
-                      isAnimationActive
-                      animationDuration={1100}
-                      animationEasing="ease-out"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="open"
-                      name="Open"
-                      stroke={grayscalePalette.steel}
-                      strokeWidth={2.5}
-                      dot={false}
-                      isAnimationActive
-                      animationDuration={1300}
-                      animationEasing="ease-out"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="overdue"
-                      name="Overdue"
-                      stroke={grayscalePalette.mist}
-                      strokeWidth={2.4}
-                      strokeDasharray="5 6"
-                      dot={false}
-                      isAnimationActive
-                      animationDuration={1500}
-                      animationEasing="ease-out"
-                    />
-                  </AreaChart>
+                  {trendScale === 'monthly' ? (
+                    <BarChart
+                      data={reportingTrendSeries}
+                      margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                    >
+                      <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                      <XAxis
+                        dataKey="label"
+                        tick={chartTick}
+                        axisLine={false}
+                        tickLine={false}
+                        tickMargin={12}
+                      />
+                      <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                      <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
+                      <Bar dataKey="delivered" name="Delivered" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
+                      <Bar dataKey="open" name="Open" fill={grayscalePalette.steel} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                      <Bar dataKey="overdue" name="Overdue" fill={grayscalePalette.mist} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                    </BarChart>
+                  ) : (
+                    <AreaChart
+                      data={reportingTrendSeries}
+                      margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                    >
+                      <defs>
+                        <linearGradient id="reportingDeliveredFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#005db6" stopOpacity={0.2} />
+                          <stop offset="100%" stopColor="#005db6" stopOpacity={0.02} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                      <XAxis
+                        dataKey="label"
+                        tick={chartTick}
+                        axisLine={false}
+                        tickLine={false}
+                        tickMargin={12}
+                      />
+                      <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                      <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
+                      <Area
+                        type="monotone"
+                        dataKey="delivered"
+                        name="Delivered"
+                        stroke={grayscalePalette.ink}
+                        fill="url(#reportingDeliveredFill)"
+                        strokeWidth={3}
+                        isAnimationActive
+                        animationDuration={1100}
+                        animationEasing="ease-out"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="open"
+                        name="Open"
+                        stroke={grayscalePalette.steel}
+                        strokeWidth={2.5}
+                        dot={false}
+                        isAnimationActive
+                        animationDuration={1300}
+                        animationEasing="ease-out"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="overdue"
+                        name="Overdue"
+                        stroke={grayscalePalette.mist}
+                        strokeWidth={2.4}
+                        strokeDasharray="5 6"
+                        dot={false}
+                        isAnimationActive
+                        animationDuration={1500}
+                        animationEasing="ease-out"
+                      />
+                    </AreaChart>
+                  )}
                 </ResponsiveContainer>
               ) : (
                 <ChartEmptyState message="No reporting activity has been recorded yet." />
@@ -808,7 +1014,7 @@ export function AdminDashboardPage() {
                 </h2>
               </div>
               <AnimatedMetric
-                value={inpatientFlowSeries.at(-1)?.admissions ?? 0}
+                value={inpatientAdmissionsTotal}
                 variant="compact"
                 className="font-display text-[2rem] leading-none text-slate-950"
               />
@@ -822,17 +1028,31 @@ export function AdminDashboardPage() {
                 <div className="h-[320px]">
                   {hasInpatientFlowSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={inpatientFlowSeries}
-                        margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
-                      >
-                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                        <Line type="monotone" dataKey="admissions" name="Admissions" stroke={grayscalePalette.ink} strokeWidth={3.4} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
-                        <Line type="monotone" dataKey="discharges" name="Discharges" stroke={grayscalePalette.steel} strokeWidth={2.8} dot={false} activeDot={{ r: 5, fill: grayscalePalette.steel, strokeWidth: 0 }} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
-                      </LineChart>
+                      {trendScale === 'monthly' ? (
+                        <BarChart
+                          data={inpatientFlowSeries}
+                          margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                        >
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
+                          <Bar dataKey="admissions" name="Admissions" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Bar dataKey="discharges" name="Discharges" fill={grayscalePalette.steel} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                        </BarChart>
+                      ) : (
+                        <LineChart
+                          data={inpatientFlowSeries}
+                          margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                        >
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
+                          <Line type="monotone" dataKey="admissions" name="Admissions" stroke={grayscalePalette.ink} strokeWidth={3.4} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="discharges" name="Discharges" stroke={grayscalePalette.steel} strokeWidth={2.8} dot={false} activeDot={{ r: 5, fill: grayscalePalette.steel, strokeWidth: 0 }} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                        </LineChart>
+                      )}
                     </ResponsiveContainer>
                   ) : (
                     <ChartEmptyState message="No inpatient admissions or discharges in this view." />
@@ -847,18 +1067,33 @@ export function AdminDashboardPage() {
                 <div className="h-[320px]">
                   {hasInpatientSafetySignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={inpatientSafetySeries}
-                        margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
-                      >
-                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                        <Line type="monotone" dataKey="deaths" name="Deaths" stroke={grayscalePalette.slate} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.slate, strokeWidth: 0 }} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
-                        <Line type="monotone" dataKey="ulcers" name="New pressure ulcers" stroke={grayscalePalette.ink} strokeWidth={2.7} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
-                        <Line type="monotone" dataKey="hai" name="Total HAI" stroke={grayscalePalette.carbon} strokeWidth={2.7} dot={false} activeDot={{ r: 5, fill: grayscalePalette.carbon, strokeWidth: 0 }} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
-                      </LineChart>
+                      {trendScale === 'monthly' ? (
+                        <BarChart
+                          data={inpatientSafetySeries}
+                          margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                        >
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
+                          <Bar dataKey="deaths" name="Deaths" fill={grayscalePalette.slate} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
+                          <Bar dataKey="ulcers" name="New pressure ulcers" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                          <Bar dataKey="hai" name="Total HAI" fill={grayscalePalette.carbon} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                        </BarChart>
+                      ) : (
+                        <LineChart
+                          data={inpatientSafetySeries}
+                          margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                        >
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
+                          <Line type="monotone" dataKey="deaths" name="Deaths" stroke={grayscalePalette.slate} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.slate, strokeWidth: 0 }} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="ulcers" name="New pressure ulcers" stroke={grayscalePalette.ink} strokeWidth={2.7} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="hai" name="Total HAI" stroke={grayscalePalette.carbon} strokeWidth={2.7} dot={false} activeDot={{ r: 5, fill: grayscalePalette.carbon, strokeWidth: 0 }} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                        </LineChart>
+                      )}
                     </ResponsiveContainer>
                   ) : (
                     <ChartEmptyState message="No inpatient safety events in this view." />
@@ -873,18 +1108,33 @@ export function AdminDashboardPage() {
                 <div className="h-[320px]">
                   {hasInpatientOccupancySignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={inpatientOccupancySeries}
-                        margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
-                      >
-                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={38} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                        <Line type="monotone" dataKey="bor" name="BOR %" stroke={grayscalePalette.ink} strokeWidth={3.2} dot={false} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
-                        <Line type="monotone" dataKey="btr" name="BTR" stroke={grayscalePalette.slate} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1300} animationEasing="ease-out" />
-                        <Line type="monotone" dataKey="alos" name="ALOS" stroke={grayscalePalette.cloud} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1500} animationEasing="ease-out" />
-                      </LineChart>
+                      {trendScale === 'monthly' ? (
+                        <BarChart
+                          data={inpatientOccupancySeries}
+                          margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                        >
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={38} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
+                          <Bar dataKey="bor" name="BOR %" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Bar dataKey="btr" name="BTR" fill={grayscalePalette.slate} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1300} animationEasing="ease-out" />
+                          <Bar dataKey="alos" name="ALOS" fill={grayscalePalette.cloud} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1500} animationEasing="ease-out" />
+                        </BarChart>
+                      ) : (
+                        <LineChart
+                          data={inpatientOccupancySeries}
+                          margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                        >
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={38} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
+                          <Line type="monotone" dataKey="bor" name="BOR %" stroke={grayscalePalette.ink} strokeWidth={3.2} dot={false} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="btr" name="BTR" stroke={grayscalePalette.slate} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1300} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="alos" name="ALOS" stroke={grayscalePalette.cloud} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1500} animationEasing="ease-out" />
+                        </LineChart>
+                      )}
                     </ResponsiveContainer>
                   ) : (
                     <ChartEmptyState message="No BOR, BTR, or ALOS data in this view." />
@@ -915,7 +1165,7 @@ export function AdminDashboardPage() {
                 </h2>
               </div>
               <AnimatedMetric
-                value={outpatientSeenSeries.at(-1)?.seen ?? 0}
+                value={outpatientSeenTotal}
                 variant="compact"
                 className="font-display text-[2rem] leading-none text-slate-950"
               />
@@ -929,20 +1179,31 @@ export function AdminDashboardPage() {
                 <div className="h-[300px]">
                   {hasOutpatientSeenSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={outpatientSeenSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
-                        <defs>
-                          <linearGradient id="outpatientSeenFill" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#005db6" stopOpacity={0.18} />
-                            <stop offset="100%" stopColor="#005db6" stopOpacity={0.02} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                        <Area type="monotone" dataKey="seen" name="Seen" stroke={grayscalePalette.ink} fill="url(#outpatientSeenFill)" strokeWidth={3} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
-                        <Line type="monotone" dataKey="notSeenSameDay" name="Not seen same day" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
-                      </AreaChart>
+                      {trendScale === 'monthly' ? (
+                        <BarChart data={outpatientSeenSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
+                          <Bar dataKey="seen" name="Seen" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Bar dataKey="notSeenSameDay" name="Not seen same day" fill={grayscalePalette.steel} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                        </BarChart>
+                      ) : (
+                        <AreaChart data={outpatientSeenSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                          <defs>
+                            <linearGradient id="outpatientSeenFill" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#005db6" stopOpacity={0.18} />
+                              <stop offset="100%" stopColor="#005db6" stopOpacity={0.02} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
+                          <Area type="monotone" dataKey="seen" name="Seen" stroke={grayscalePalette.ink} fill="url(#outpatientSeenFill)" strokeWidth={3} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="notSeenSameDay" name="Not seen same day" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                        </AreaChart>
+                      )}
                     </ResponsiveContainer>
                   ) : (
                     <ChartEmptyState message="No outpatient same-day data in this view." />
@@ -981,13 +1242,23 @@ export function AdminDashboardPage() {
                 <div className="h-[260px]">
                   {hasFollowUpWaitSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={outpatientFollowUpWaitSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
-                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                        <Line type="monotone" dataKey="wait" name="Follow-up wait (months)" stroke={grayscalePalette.ink} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
-                      </LineChart>
+                      {trendScale === 'monthly' ? (
+                        <BarChart data={outpatientFollowUpWaitSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
+                          <Bar dataKey="wait" name="Follow-up wait (months)" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                        </BarChart>
+                      ) : (
+                        <LineChart data={outpatientFollowUpWaitSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
+                          <Line type="monotone" dataKey="wait" name="Follow-up wait (months)" stroke={grayscalePalette.ink} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                        </LineChart>
+                      )}
                     </ResponsiveContainer>
                   ) : (
                     <ChartEmptyState message="No follow-up wait data in this view." />
@@ -1002,13 +1273,23 @@ export function AdminDashboardPage() {
                 <div className="h-[260px]">
                   {hasClinicStartSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={outpatientClinicStartSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
-                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                        <YAxis tickFormatter={formatMinutesAsTime} tick={chartTick} axisLine={false} tickLine={false} width={44} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} formatter={(value) => [formatMinutesAsTime(Number(value)), 'Start time']} />
-                        <Line type="monotone" dataKey="startMinutes" name="Clinic start" stroke={grayscalePalette.steel} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.steel, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
-                      </LineChart>
+                      {trendScale === 'monthly' ? (
+                        <BarChart data={outpatientClinicStartSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tickFormatter={formatMinutesAsTime} tick={chartTick} axisLine={false} tickLine={false} width={44} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} formatter={(value) => [formatMinutesAsTime(Number(value)), 'Start time']} />
+                          <Bar dataKey="startMinutes" name="Clinic start" fill={grayscalePalette.steel} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                        </BarChart>
+                      ) : (
+                        <LineChart data={outpatientClinicStartSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tickFormatter={formatMinutesAsTime} tick={chartTick} axisLine={false} tickLine={false} width={44} />
+                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} formatter={(value) => [formatMinutesAsTime(Number(value)), 'Start time']} />
+                          <Line type="monotone" dataKey="startMinutes" name="Clinic start" stroke={grayscalePalette.steel} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.steel, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                        </LineChart>
+                      )}
                     </ResponsiveContainer>
                   ) : (
                     <ChartEmptyState message="No clinic start time data in this view." />
