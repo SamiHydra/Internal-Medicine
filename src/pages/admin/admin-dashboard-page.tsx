@@ -57,6 +57,8 @@ type TrendBucket = {
 
 type TrendDeltaVariant = 'compact' | 'decimal' | 'percent' | 'time'
 
+const dialysisFieldIds = ['hd_acute', 'hd_chronic'] as const
+
 function ChartEmptyState({
   message,
   tone = 'light',
@@ -323,6 +325,26 @@ export function AdminDashboardPage() {
           periods: [period],
           periodIds: new Set([period.id]),
         }))
+  const monthlyTrendBuckets = trendPeriods.reduce<TrendBucket[]>((buckets, period) => {
+    const key = format(new Date(period.weekStart), 'yyyy-MM')
+    const existingBucket = buckets.find((bucket) => bucket.key === key)
+
+    if (existingBucket) {
+      existingBucket.periods.push(period)
+      existingBucket.periodIds.add(period.id)
+      return buckets
+    }
+
+    return [
+      ...buckets,
+      {
+        key,
+        label: format(new Date(period.weekStart), 'MMM yyyy'),
+        periods: [period],
+        periodIds: new Set([period.id]),
+      },
+    ]
+  }, [])
   const detailReportingPeriodIds = new Set(trendPeriods.map((period) => period.id))
   const detailReportIds = state.reports
     .filter((report) => detailReportingPeriodIds.has(report.reportingPeriodId))
@@ -417,6 +439,8 @@ export function AdminDashboardPage() {
     steel: '#67778a',
     mist: '#f0b429',
     cloud: '#9bb2ca',
+    dialysis: '#0f766e',
+    dialysisLight: '#5bb8a4',
   } as const
   const tooltipLineCursor = { stroke: 'rgba(0,93,182,0.22)', strokeWidth: 1.2 } as const
   const tooltipFillCursor = { fill: 'rgba(0,33,71,0.045)' } as const
@@ -468,7 +492,7 @@ export function AdminDashboardPage() {
     getReportsForPeriodIds(bucket.periodIds, family)
   const getRangeReports = (family: ReportFamily) =>
     getReportsForPeriodIds(selectedPeriodIds, family)
-  const sumReportFieldTotals = (reports: ReportRecord[], fieldIds: string[]) =>
+  const sumReportFieldTotals = (reports: ReportRecord[], fieldIds: readonly string[]) =>
     reports.reduce((total, report) => {
       const reportTotal = fieldIds.reduce((fieldTotal, fieldId) => {
         const value = getReportWeeklyFieldValue(report, fieldId)
@@ -480,9 +504,9 @@ export function AdminDashboardPage() {
   const sumFieldTotalsForBucket = (
     bucket: TrendBucket,
     family: ReportFamily,
-    fieldIds: string[],
+    fieldIds: readonly string[],
   ) => sumReportFieldTotals(getBucketReports(bucket, family), fieldIds)
-  const sumFieldTotalsForRange = (family: ReportFamily, fieldIds: string[]) =>
+  const sumFieldTotalsForRange = (family: ReportFamily, fieldIds: readonly string[]) =>
     sumReportFieldTotals(getRangeReports(family), fieldIds)
   const averageFieldValueForBucket = (
     bucket: TrendBucket,
@@ -690,6 +714,11 @@ export function AdminDashboardPage() {
     { label: 'ECG', value: sumFieldTotalsForRange('procedure', ['ecg_done']), fill: grayscalePalette.carbon },
     { label: 'EEG', value: sumFieldTotalsForRange('procedure', ['eeg_done']), fill: grayscalePalette.steel },
     {
+      label: 'Dialysis',
+      value: sumFieldTotalsForRange('procedure', dialysisFieldIds),
+      fill: grayscalePalette.dialysis,
+    },
+    {
       label: 'Endoscopy',
       value: sumFieldTotalsForRange('procedure', [
         'upper_gi_elective',
@@ -712,6 +741,31 @@ export function AdminDashboardPage() {
     { label: 'Colonoscopy', value: sumFieldTotalsForRange('procedure', ['colonoscopy']), fill: grayscalePalette.slate },
     { label: 'Bronchoscopy', value: sumFieldTotalsForRange('procedure', ['bronchoscopy']), fill: grayscalePalette.steel },
     { label: 'Ligation', value: sumFieldTotalsForRange('procedure', ['variceal_ligation']), fill: grayscalePalette.cloud },
+  ]
+  const dialysisMonthlyTotals = monthlyTrendBuckets.map((bucket, index) => ({
+    label: bucket.label,
+    value: sumFieldTotalsForBucket(bucket, 'procedure', dialysisFieldIds),
+    fill: [
+      grayscalePalette.dialysis,
+      grayscalePalette.ink,
+      grayscalePalette.mist,
+      grayscalePalette.carbon,
+      grayscalePalette.dialysisLight,
+      grayscalePalette.steel,
+    ][index % 6],
+  }))
+  const dialysisTotal = dialysisMonthlyTotals.reduce((sum, item) => sum + item.value, 0)
+  const dialysisMix = [
+    {
+      label: 'Acute HD',
+      value: sumFieldTotalsForRange('procedure', ['hd_acute']),
+      fill: grayscalePalette.dialysis,
+    },
+    {
+      label: 'Chronic HD',
+      value: sumFieldTotalsForRange('procedure', ['hd_chronic']),
+      fill: grayscalePalette.ink,
+    },
   ]
   const trendComparisonLabel = trendScale === 'monthly' ? 'month' : 'week'
   const reportingTrendDeltas = [
@@ -793,6 +847,8 @@ export function AdminDashboardPage() {
   const hasOutpatientMixSignal = outpatientVolumeMix.some((item) => item.totalSeen > 0)
   const hasProcedureSignal = procedureTotals.some((item) => item.value > 0)
   const hasEndoscopyMixSignal = endoscopyMix.some((item) => item.value > 0)
+  const hasDialysisMonthlySignal = dialysisMonthlyTotals.some((item) => item.value > 0)
+  const hasDialysisMixSignal = dialysisMix.some((item) => item.value > 0)
   const lightTooltipStyle = {
     borderRadius: '8px',
     border: '1px solid rgba(212, 221, 232, 0.95)',
@@ -1527,10 +1583,10 @@ export function AdminDashboardPage() {
               />
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)]">
               <div className={cn('space-y-4', chartPanelClass)}>
                 <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Echo, ECG, EEG, endoscopy
+                  Echo, ECG, EEG, dialysis, endoscopy
                 </h3>
                 <div className="h-[300px]">
                   {hasProcedureSignal ? (
@@ -1549,6 +1605,90 @@ export function AdminDashboardPage() {
                     </ResponsiveContainer>
                   ) : (
                     <ChartEmptyState message="No procedure totals in this view." />
+                  )}
+                </div>
+              </div>
+
+              <div className={cn('space-y-4', chartPanelClass)}>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+                      Monthly dialysis
+                    </h3>
+                    <p className="mt-2 text-sm text-[#6c7078]">
+                      Acute and chronic haemodialysis grouped by month.
+                    </p>
+                  </div>
+                  <AnimatedMetric
+                    value={dialysisTotal}
+                    variant="compact"
+                    className="font-display text-[2rem] leading-none text-slate-950"
+                  />
+                </div>
+                <div className="h-[300px]">
+                  {hasDialysisMonthlySignal ? (
+                    <div className="grid h-full gap-4 md:grid-cols-[minmax(0,1fr)_180px] md:items-center">
+                      <div className="relative h-full min-h-[220px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={dialysisMonthlyTotals}
+                              dataKey="value"
+                              innerRadius={58}
+                              outerRadius={96}
+                              paddingAngle={2}
+                              stroke="rgba(255,255,255,0.96)"
+                              strokeWidth={4}
+                              isAnimationActive
+                              animationDuration={1200}
+                              animationEasing="ease-out"
+                            >
+                              {dialysisMonthlyTotals.map((item) => (
+                                <Cell key={item.label} fill={item.fill} />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              contentStyle={lightTooltipStyle}
+                              formatter={(value) => [formatCompactNumber(Number(value)), 'Dialysis']}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#74777f]">
+                            Total
+                          </p>
+                          <AnimatedMetric
+                            value={dialysisTotal}
+                            variant="compact"
+                            className="mt-1 block font-display text-[2.2rem] leading-none text-[#000a1e]"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        {dialysisMonthlyTotals
+                          .filter((item) => item.value > 0)
+                          .map((item) => (
+                            <div key={item.label} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
+                              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.fill }} />
+                              <span className="truncate text-sm font-medium text-[#44474e]">{item.label}</span>
+                              <span className="text-sm font-semibold text-[#000a1e]">{formatCompactNumber(item.value)}</span>
+                            </div>
+                          ))}
+                        {hasDialysisMixSignal ? (
+                          <div className="border-t border-[#d4dde8] pt-3">
+                            {dialysisMix.map((item) => (
+                              <div key={item.label} className="mt-2 first:mt-0 flex items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-[#74777f]">
+                                <span>{item.label}</span>
+                                <span className="font-semibold text-[#000a1e]">{formatCompactNumber(item.value)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <ChartEmptyState message="No dialysis data in this selected range." />
                   )}
                 </div>
               </div>
