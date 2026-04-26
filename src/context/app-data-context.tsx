@@ -153,16 +153,11 @@ function getLoadedReportDetailIds(state: AppState) {
 }
 
 function hasReportDetailData(report: AppState['reports'][number]) {
-  const hasCellValue = Object.values(report.values).some((fieldValue) =>
+  return Object.values(report.values).some((fieldValue) =>
     Object.values(fieldValue.dailyValues).some(
       (value) => value !== null && value !== undefined && value !== '',
     ),
   )
-  const hasMetricValue = Object.values(report.calculatedMetrics).some(
-    (value) => value !== null && value !== undefined,
-  )
-
-  return hasCellValue || hasMetricValue
 }
 
 function readWorkspaceCache(userId: string) {

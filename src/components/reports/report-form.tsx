@@ -256,21 +256,16 @@ const statusToneStyles: Record<
   },
 }
 
-function reportHasPersistedValues(report: ReturnType<typeof getReportForAssignmentPeriod>) {
+function reportHasSavedCellValues(report: ReturnType<typeof getReportForAssignmentPeriod>) {
   if (!report) {
     return false
   }
 
-  const hasCellValue = Object.values(report.values).some((fieldValue) =>
+  return Object.values(report.values).some((fieldValue) =>
     Object.values(fieldValue.dailyValues).some(
       (value) => value !== null && value !== undefined && value !== '',
     ),
   )
-  const hasMetricValue = Object.values(report.calculatedMetrics).some(
-    (value) => value !== null && value !== undefined,
-  )
-
-  return hasCellValue || hasMetricValue
 }
 
 function ReportStatePanel({
@@ -445,12 +440,12 @@ function ResolvedReportForm({
   })
   const watchedValuesSignature = JSON.stringify(watchedValues ?? {})
   const isLiveReportLookupPending = !report && (isDataRefreshing || isSyncing)
-  const hasPersistedValues = reportHasPersistedValues(report)
+  const hasSavedCellValues = reportHasSavedCellValues(report)
   const shouldVerifyEmptySubmittedReport =
     Boolean(report?.id) &&
     reportDetailsLoaded &&
     reportDetailLoadState.status === 'loaded' &&
-    !hasPersistedValues &&
+    !hasSavedCellValues &&
     (reportStatus === 'submitted' ||
       reportStatus === 'edited_after_submission' ||
       reportStatus === 'locked')
