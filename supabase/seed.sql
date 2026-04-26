@@ -73,6 +73,14 @@ values
     'Weekly renal diagnostic and intervention throughput reporting.',
     array['monday','tuesday','wednesday','thursday','friday','saturday','sunday'],
     jsonb_build_object('ui_family', 'procedure')
+  ),
+  (
+    'dialysis_weekly',
+    'procedure',
+    'Dialysis',
+    'Weekly haemodialysis throughput reporting.',
+    array['monday','tuesday','wednesday','thursday','friday','saturday','sunday'],
+    jsonb_build_object('ui_family', 'procedure')
   )
 on conflict (slug) do update
 set family = excluded.family,
@@ -117,7 +125,8 @@ from (
     ('endoscopy_lab', 'procedure', 'endoscopy_weekly', 'Endoscopy Lab', 'Endoscopy service report.', '#155e75', null),
     ('hematology_procedures', 'procedure', 'hematology_procedures_weekly', 'Hematology Procedures', 'Hematology procedure service report.', '#1d4ed8', null),
     ('bronchoscopy_lab', 'procedure', 'bronchoscopy_weekly', 'Bronchoscopy Lab', 'Bronchoscopy service report.', '#0284c7', null),
-    ('renal_procedures', 'procedure', 'renal_procedures_weekly', 'Renal Procedures', 'Renal procedure service report.', '#0f766e', null)
+    ('renal_procedures', 'procedure', 'renal_procedures_weekly', 'Renal Procedures', 'Renal procedure service report.', '#0f766e', null),
+    ('dialysis_unit', 'procedure', 'dialysis_weekly', 'Dialysis', 'Dialysis procedure service report.', '#0f766e', null)
 ) as seed(slug, family, template_slug, name, description, accent_color, bed_count)
 join public.report_templates template on template.slug = seed.template_slug
 on conflict (slug) do update
@@ -283,9 +292,10 @@ from (
     ('renal_procedures_weekly','throughput','elective_renal_biopsy','Total Number of Patients Who have Elective Renal Biopsy','integer','sum',10),
     ('renal_procedures_weekly','throughput','central_venous_catheter_insertion','Total Number of patients with Central Venous Catheter insertion','integer','sum',20),
     ('renal_procedures_weekly','turnaround','elective_renal_biopsy_wait','Average Waiting Time for Elective Renal Biopsy','decimal','average',30),
-    ('renal_procedures_weekly','throughput','hd_acute','Total Number of Patients Who have Haemodialysis for Acute Renal Failure','integer','sum',40),
-    ('renal_procedures_weekly','throughput','hd_chronic','Total Number of Patients Who have Haemodialysis for Chronic Renal Failure','integer','sum',50),
-    ('renal_procedures_weekly','staffing','reporting_staff','Name of Reporting Nurse or Nurse-in-Charge (NI)','text','latest',60)
+    ('renal_procedures_weekly','staffing','reporting_staff','Name of Reporting Nurse or Nurse-in-Charge (NI)','text','latest',40),
+    ('dialysis_weekly','throughput','dialysis_acute','Total Number of Patients Who have Haemodialysis for Acute Renal Failure','integer','sum',10),
+    ('dialysis_weekly','throughput','dialysis_chronic','Total Number of Patients Who have Haemodialysis for Chronic Renal Failure','integer','sum',20),
+    ('dialysis_weekly','staffing','reporting_staff','Name of Reporting Nurse or Nurse-in-Charge (NI)','text','latest',30)
 ) as seed(template_slug, section_key, field_key, label, field_kind, aggregate_type, display_order)
 join public.report_templates template on template.slug = seed.template_slug
 on conflict (template_id, field_key) do update

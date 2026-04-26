@@ -57,7 +57,8 @@ type TrendBucket = {
 
 type TrendDeltaVariant = 'compact' | 'decimal' | 'percent' | 'time'
 
-const dialysisFieldIds = ['hd_acute', 'hd_chronic'] as const
+const dialysisDepartmentIds = ['dialysis_unit'] as const
+const dialysisFieldIds = ['dialysis_acute', 'dialysis_chronic'] as const
 
 function ChartEmptyState({
   message,
@@ -482,16 +483,27 @@ export function AdminDashboardPage() {
     (familyFilter === 'all' ? true : departmentMap[assignment.departmentId].family === familyFilter),
   )
   const selectedPeriodIds = new Set(trendPeriods.map((period) => period.id))
+  const dialysisDepartmentIdSet = new Set<string>(dialysisDepartmentIds)
   const getReportsForPeriodIds = (periodIds: Set<string>, family: ReportFamily) =>
     state.reports.filter(
       (report) =>
         periodIds.has(report.reportingPeriodId) &&
         departmentMap[report.departmentId].family === family,
     )
+  const getDialysisReportsForPeriodIds = (periodIds: Set<string>) =>
+    state.reports.filter(
+      (report) =>
+        periodIds.has(report.reportingPeriodId) &&
+        dialysisDepartmentIdSet.has(report.departmentId),
+    )
   const getBucketReports = (bucket: TrendBucket, family: ReportFamily) =>
     getReportsForPeriodIds(bucket.periodIds, family)
   const getRangeReports = (family: ReportFamily) =>
     getReportsForPeriodIds(selectedPeriodIds, family)
+  const getDialysisBucketReports = (bucket: TrendBucket) =>
+    getDialysisReportsForPeriodIds(bucket.periodIds)
+  const getDialysisRangeReports = () =>
+    getDialysisReportsForPeriodIds(selectedPeriodIds)
   const sumReportFieldTotals = (reports: ReportRecord[], fieldIds: readonly string[]) =>
     reports.reduce((total, report) => {
       const reportTotal = fieldIds.reduce((fieldTotal, fieldId) => {
@@ -508,6 +520,10 @@ export function AdminDashboardPage() {
   ) => sumReportFieldTotals(getBucketReports(bucket, family), fieldIds)
   const sumFieldTotalsForRange = (family: ReportFamily, fieldIds: readonly string[]) =>
     sumReportFieldTotals(getRangeReports(family), fieldIds)
+  const sumDialysisFieldTotalsForBucket = (bucket: TrendBucket, fieldIds: readonly string[]) =>
+    sumReportFieldTotals(getDialysisBucketReports(bucket), fieldIds)
+  const sumDialysisFieldTotalsForRange = (fieldIds: readonly string[]) =>
+    sumReportFieldTotals(getDialysisRangeReports(), fieldIds)
   const averageFieldValueForBucket = (
     bucket: TrendBucket,
     family: ReportFamily,
@@ -715,7 +731,7 @@ export function AdminDashboardPage() {
     { label: 'EEG', value: sumFieldTotalsForRange('procedure', ['eeg_done']), fill: grayscalePalette.steel },
     {
       label: 'Dialysis',
-      value: sumFieldTotalsForRange('procedure', dialysisFieldIds),
+      value: sumDialysisFieldTotalsForRange(dialysisFieldIds),
       fill: grayscalePalette.dialysis,
     },
     {
@@ -744,7 +760,7 @@ export function AdminDashboardPage() {
   ]
   const dialysisMonthlyTotals = monthlyTrendBuckets.map((bucket, index) => ({
     label: bucket.label,
-    value: sumFieldTotalsForBucket(bucket, 'procedure', dialysisFieldIds),
+    value: sumDialysisFieldTotalsForBucket(bucket, dialysisFieldIds),
     fill: [
       grayscalePalette.dialysis,
       grayscalePalette.ink,
@@ -758,12 +774,12 @@ export function AdminDashboardPage() {
   const dialysisMix = [
     {
       label: 'Acute HD',
-      value: sumFieldTotalsForRange('procedure', ['hd_acute']),
+      value: sumDialysisFieldTotalsForRange(['dialysis_acute']),
       fill: grayscalePalette.dialysis,
     },
     {
       label: 'Chronic HD',
-      value: sumFieldTotalsForRange('procedure', ['hd_chronic']),
+      value: sumDialysisFieldTotalsForRange(['dialysis_chronic']),
       fill: grayscalePalette.ink,
     },
   ]
@@ -1616,7 +1632,7 @@ export function AdminDashboardPage() {
                       Monthly dialysis
                     </h3>
                     <p className="mt-2 text-sm text-[#6c7078]">
-                      Acute and chronic haemodialysis grouped by month.
+                      Separate Dialysis procedure reports grouped by month.
                     </p>
                   </div>
                   <AnimatedMetric

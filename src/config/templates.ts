@@ -585,8 +585,6 @@ export const reportTemplates: ReportTemplateConfig[] = [
         'throughput',
       ),
       decimalAverageField('elective_renal_biopsy_wait', 'Average Waiting Time for Elective Renal Biopsy', 'turnaround', 'days'),
-      numericField('hd_acute', 'Total Number of Patients Who have Haemodialysis for Acute Renal Failure', 'throughput'),
-      numericField('hd_chronic', 'Total Number of Patients Who have Haemodialysis for Chronic Renal Failure', 'throughput'),
       textField('reporting_staff', 'Name of Reporting Nurse or Nurse-in-Charge (NI)', 'staffing'),
     ],
     summaryCards: [
@@ -598,7 +596,6 @@ export const reportTemplates: ReportTemplateConfig[] = [
         sourceId: 'central_venous_catheter_insertion',
         format: 'integer',
       },
-      { id: 'hd_chronic', label: 'HD Chronic', sourceType: 'field', sourceId: 'hd_chronic', format: 'integer' },
       { id: 'elective_renal_biopsy_wait', label: 'Wait Time', sourceType: 'field', sourceId: 'elective_renal_biopsy_wait', format: 'days' },
     ],
     chartMappings: [
@@ -614,14 +611,41 @@ export const reportTemplates: ReportTemplateConfig[] = [
             label: 'CVC',
             color: '#446b95',
           },
-          { sourceType: 'field', sourceId: 'hd_acute', label: 'HD Acute', color: '#1a5f7a' },
-          { sourceType: 'field', sourceId: 'hd_chronic', label: 'HD Chronic', color: '#0f766e' },
+        ],
+      },
+    ],
+    changeRules: [],
+  },
+  {
+    id: 'dialysis_weekly',
+    family: 'procedure',
+    name: 'Dialysis',
+    description: 'Weekly haemodialysis throughput reporting.',
+    activeDays: weekdaysAll,
+    sections: procedureSections,
+    fields: [
+      numericField('dialysis_acute', 'Total Number of Patients Who have Haemodialysis for Acute Renal Failure', 'throughput'),
+      numericField('dialysis_chronic', 'Total Number of Patients Who have Haemodialysis for Chronic Renal Failure', 'throughput'),
+      textField('reporting_staff', 'Name of Reporting Nurse or Nurse-in-Charge (NI)', 'staffing'),
+    ],
+    summaryCards: [
+      { id: 'dialysis_acute', label: 'Acute HD', sourceType: 'field', sourceId: 'dialysis_acute', format: 'integer' },
+      { id: 'dialysis_chronic', label: 'Chronic HD', sourceType: 'field', sourceId: 'dialysis_chronic', format: 'integer' },
+    ],
+    chartMappings: [
+      {
+        id: 'dialysis_mix',
+        title: 'Dialysis Mix',
+        chartType: 'stacked-bar',
+        series: [
+          { sourceType: 'field', sourceId: 'dialysis_acute', label: 'Acute HD', color: '#0f766e' },
+          { sourceType: 'field', sourceId: 'dialysis_chronic', label: 'Chronic HD', color: '#005db6' },
         ],
       },
     ],
     changeRules: [
       {
-        fieldId: 'hd_chronic',
+        fieldId: 'dialysis_chronic',
         percentThreshold: 8,
         messageTemplate: '{department} chronic haemodialysis throughput changed by {deltaPercent}% versus last week.',
       },
@@ -659,6 +683,7 @@ export const departments: Department[] = [
   { id: 'hematology_procedures', name: 'Hematology Procedures', family: 'procedure', templateId: 'hematology_procedures_weekly', description: 'Hematology procedure service report.', accent: '#1d4ed8' },
   { id: 'bronchoscopy_lab', name: 'Bronchoscopy Lab', family: 'procedure', templateId: 'bronchoscopy_weekly', description: 'Bronchoscopy service report.', accent: '#0284c7' },
   { id: 'renal_procedures', name: 'Renal Procedures', family: 'procedure', templateId: 'renal_procedures_weekly', description: 'Renal procedure service report.', accent: '#0f766e' },
+  { id: 'dialysis_unit', name: 'Dialysis', family: 'procedure', templateId: 'dialysis_weekly', description: 'Dialysis procedure service report.', accent: '#0f766e' },
 ]
 
 export const departmentMap = Object.fromEntries(
