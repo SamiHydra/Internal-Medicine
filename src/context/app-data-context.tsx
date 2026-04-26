@@ -16,6 +16,7 @@ import type {
   ClaimSuperadminPayload,
   CreateAdminAccountPayload,
   LiveAppStateLoadOptions,
+  ReportDetailRecord,
   SaveReportPayload,
   SupabaseReferenceState,
 } from '@/lib/supabase/api'
@@ -69,6 +70,7 @@ type AppDataContextValue = {
   currentUser: UserProfile | null
   isBootstrapping: boolean
   isSyncing: boolean
+  isDataRefreshing: boolean
   isConfigured: boolean
   missingEnvVars: string[]
   error: string | null
@@ -86,6 +88,7 @@ type AppDataContextValue = {
   lockReport: (reportId: string, actorId: string) => Promise<void>
   unlockReport: (reportId: string, actorId: string) => Promise<void>
   isReportDetailLoaded: (reportId: string) => boolean
+  getReportDetailLoadState: (reportId: string) => ReportDetailLoadState
   updateSettings: (settings: Partial<AppSettings>) => Promise<void>
   toggleUserActive: (userId: string) => Promise<void>
   toggleAssignmentActive: (assignmentId: string) => Promise<void>
@@ -97,12 +100,29 @@ type AppDataContextValue = {
   ensureProfileDirectoryData: () => Promise<void>
   ensureAccessRequestData: () => Promise<void>
   ensureHistoryData: () => Promise<void>
-  ensureReportDetails: (reportIds: string[]) => Promise<void>
+  ensureReportDetails: (
+    reportIds: string[],
+    options?: EnsureReportDetailsOptions,
+  ) => Promise<Record<string, ReportDetailRecord>>
   refreshData: (options?: LiveAppStateLoadOptions) => Promise<void>
 }
 
 const AppDataContext = createContext<AppDataContextValue | null>(null)
 const workspaceCacheStorageKey = 'mesay:workspace-state:v3'
+
+type ReportDetailLoadState = {
+  status: 'idle' | 'loading' | 'loaded' | 'error'
+  error: string | null
+}
+
+type EnsureReportDetailsOptions = {
+  force?: boolean
+}
+
+const idleReportDetailLoadState: ReportDetailLoadState = {
+  status: 'idle',
+  error: null,
+}
 
 type WorkspaceCacheRecord = {
   version: 3
@@ -127,13 +147,22 @@ function getMessage(error: unknown, fallback: string) {
 function getLoadedReportDetailIds(state: AppState) {
   return new Set(
     state.reports
-      .filter(
-        (report) =>
-          Object.keys(report.values).length > 0 ||
-          Object.keys(report.calculatedMetrics).length > 0,
-      )
+      .filter((report) => hasReportDetailData(report))
       .map((report) => report.id),
   )
+}
+
+function hasReportDetailData(report: AppState['reports'][number]) {
+  const hasCellValue = Object.values(report.values).some((fieldValue) =>
+    Object.values(fieldValue.dailyValues).some(
+      (value) => value !== null && value !== undefined && value !== '',
+    ),
+  )
+  const hasMetricValue = Object.values(report.calculatedMetrics).some(
+    (value) => value !== null && value !== undefined,
+  )
+
+  return hasCellValue || hasMetricValue
 }
 
 function readWorkspaceCache(userId: string) {
@@ -206,7 +235,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [state, setState] = useState<AppState>(() => createEmptyAppState())
   const [isBootstrapping, setIsBootstrapping] = useState(isSupabaseConfigured)
   const [isSyncing, setIsSyncing] = useState(false)
+  const [isDataRefreshing, setIsDataRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [reportDetailLoadStates, setReportDetailLoadStates] = useState<
+    Record<string, ReportDetailLoadState>
+  >({})
   const referencesRef = useRef<SupabaseReferenceState>(createEmptyReferenceState())
   const loadVersionRef = useRef(0)
   const currentUserIdRef = useRef<string | null>(null)
@@ -232,6 +265,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const beginBackgroundSync = useCallback(() => {
     syncPendingCountRef.current += 1
+    setIsDataRefreshing(true)
 
     if (syncPendingCountRef.current === 1 && syncIndicatorTimeoutRef.current === null) {
       syncIndicatorTimeoutRef.current = window.setTimeout(() => {
@@ -248,6 +282,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     syncPendingCountRef.current = Math.max(0, syncPendingCountRef.current - 1)
 
     if (syncPendingCountRef.current === 0) {
+      setIsDataRefreshing(false)
+
       if (syncIndicatorTimeoutRef.current !== null) {
         window.clearTimeout(syncIndicatorTimeoutRef.current)
         syncIndicatorTimeoutRef.current = null
@@ -305,7 +341,35 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     historyDataLoadedRef.current = false
     loadedReportDetailIdsRef.current = new Set()
     pendingReportDetailIdsRef.current = new Set()
+    setReportDetailLoadStates({})
   }, [])
+
+  const syncReportDetailLoadStates = useCallback(
+    (reportIds: string[]) => {
+      setReportDetailLoadStates((currentStates) => {
+        const nextStates = { ...currentStates }
+
+        reportIds.forEach((reportId) => {
+          if (pendingReportDetailIdsRef.current.has(reportId)) {
+            nextStates[reportId] = { status: 'loading', error: null }
+            return
+          }
+
+          if (loadedReportDetailIdsRef.current.has(reportId)) {
+            nextStates[reportId] = { status: 'loaded', error: null }
+            return
+          }
+
+          if (nextStates[reportId]?.status !== 'error') {
+            delete nextStates[reportId]
+          }
+        })
+
+        return nextStates
+      })
+    },
+    [],
+  )
 
   const persistWorkspaceCache = useCallback(
     (
@@ -344,6 +408,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       historyDataLoadedRef.current = cacheRecord.historyDataLoaded
       loadedReportDetailIdsRef.current = getLoadedReportDetailIds(cacheRecord.state)
       pendingReportDetailIdsRef.current = new Set()
+      setReportDetailLoadStates(
+        Object.fromEntries(
+          [...loadedReportDetailIdsRef.current].map((reportId) => [
+            reportId,
+            { status: 'loaded', error: null } satisfies ReportDetailLoadState,
+          ]),
+        ),
+      )
       setState(cacheRecord.state)
       currentUserIdRef.current = cacheRecord.state.currentUserId
       currentStateRef.current = cacheRecord.state
@@ -359,12 +431,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     referencesRef.current = createEmptyReferenceState()
     currentUserIdRef.current = null
     currentStateRef.current = createEmptyAppState()
+    syncPendingCountRef.current = 0
     setState(createEmptyAppState())
     resetDeferredDataState()
     clearWorkspaceCache()
     setError(null)
     setIsBootstrapping(false)
     setIsSyncing(false)
+    setIsDataRefreshing(false)
   }, [resetDeferredDataState])
 
   const applyAuthenticatedProfile = useCallback(
@@ -462,13 +536,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
                 return (
                   preservedLoadedDetails ||
-                  Object.keys(report.values).length ||
-                  Object.keys(report.calculatedMetrics).length
+                  hasReportDetailData(report)
                 )
               },
             )
             .map((report) => report.id),
         )
+        syncReportDetailLoadStates(result.state.reports.map((report) => report.id))
         const mergedProfiles = includeProfiles
           ? result.state.profiles
           : [
@@ -539,6 +613,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       persistWorkspaceCache,
       resetDeferredDataState,
       scheduleOverdueSync,
+      syncReportDetailLoadStates,
     ],
   )
 
@@ -547,23 +622,36 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }
 
   const ensureReportDetails = useCallback(
-    async (reportIds: string[]) => {
+    async (reportIds: string[], options?: EnsureReportDetailsOptions) => {
       if (!client || !currentUserIdRef.current) {
-        return
+        return {} as Record<string, ReportDetailRecord>
       }
 
+      const force = options?.force ?? false
       const uniqueMissingReportIds = [...new Set(reportIds.filter(Boolean))].filter(
         (reportId) =>
-          !loadedReportDetailIdsRef.current.has(reportId) &&
+          (force || !loadedReportDetailIdsRef.current.has(reportId)) &&
           !pendingReportDetailIdsRef.current.has(reportId),
       )
 
       if (!uniqueMissingReportIds.length) {
-        return
+        return {} as Record<string, ReportDetailRecord>
       }
 
       uniqueMissingReportIds.forEach((reportId) => {
+        if (force) {
+          loadedReportDetailIdsRef.current.delete(reportId)
+        }
         pendingReportDetailIdsRef.current.add(reportId)
+      })
+      setReportDetailLoadStates((currentStates) => {
+        const nextStates = { ...currentStates }
+
+        uniqueMissingReportIds.forEach((reportId) => {
+          nextStates[reportId] = { status: 'loading', error: null }
+        })
+
+        return nextStates
       })
       beginBackgroundSync()
 
@@ -596,8 +684,35 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           persistWorkspaceCache(nextState)
           return nextState
         })
+
+        setReportDetailLoadStates((currentStates) => {
+          const nextStates = { ...currentStates }
+
+          uniqueMissingReportIds.forEach((reportId) => {
+            nextStates[reportId] = { status: 'loaded', error: null }
+          })
+
+          return nextStates
+        })
+
+        return reportDetailsById
       } catch (detailError) {
-        toast.error(getMessage(detailError, 'Unable to load report details.'))
+        const message = getMessage(detailError, 'Unable to load report details.')
+
+        uniqueMissingReportIds.forEach((reportId) => {
+          loadedReportDetailIdsRef.current.delete(reportId)
+        })
+        setReportDetailLoadStates((currentStates) => {
+          const nextStates = { ...currentStates }
+
+          uniqueMissingReportIds.forEach((reportId) => {
+            nextStates[reportId] = { status: 'error', error: message }
+          })
+
+          return nextStates
+        })
+        toast.error(message)
+        return {} as Record<string, ReportDetailRecord>
       } finally {
         uniqueMissingReportIds.forEach((reportId) => {
           pendingReportDetailIdsRef.current.delete(reportId)
@@ -612,6 +727,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     if (!client) {
       setIsBootstrapping(false)
       setIsSyncing(false)
+      setIsDataRefreshing(false)
       setState(createEmptyAppState())
       resetDeferredDataState()
       setError(null)
@@ -800,6 +916,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       clearWorkspaceCache()
       setError(null)
       setIsBootstrapping(false)
+      setIsDataRefreshing(false)
       return
     }
 
@@ -908,6 +1025,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     return loadedReportDetailIdsRef.current.has(reportId)
   }, [])
 
+  const getReportDetailLoadState = useCallback(
+    (reportId: string) => {
+      return reportDetailLoadStates[reportId] ?? idleReportDetailLoadState
+    },
+    [reportDetailLoadStates],
+  )
+
   const applySavedReportDetails = useCallback(
     (
       reportId: string,
@@ -959,6 +1083,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     currentUser,
     isBootstrapping,
     isSyncing,
+    isDataRefreshing,
     isConfigured: isSupabaseConfigured,
     missingEnvVars: missingSupabaseEnvKeys,
     error,
@@ -1361,6 +1486,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     },
     ensureReportDetails,
     isReportDetailLoaded,
+    getReportDetailLoadState,
     refreshData: refreshDataWithOptions,
   }
 

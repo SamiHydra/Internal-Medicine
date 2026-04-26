@@ -1,4 +1,5 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { format } from 'date-fns'
 import { useParams } from 'react-router-dom'
 import {
   CartesianGrid,
@@ -10,6 +11,7 @@ import {
   YAxis,
 } from 'recharts'
 
+import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { InsightPanel } from '@/components/dashboard/insight-panel'
 import { StatusBadge } from '@/components/dashboard/status-badge'
 import { PageHeader } from '@/components/layout/page-header'
@@ -21,13 +23,26 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { useAppData } from '@/context/app-data-context'
-import { getDepartmentDetail } from '@/data/selectors'
-import { getNumericTotal } from '@/lib/metrics'
+import {
+  getCurrentPeriod,
+  getDepartmentDetail,
+  getVisibleReportingPeriods,
+  type ReportingTimeRange,
+} from '@/data/selectors'
+import { computeWeeklyValue } from '@/lib/metrics'
 import { formatTimestamp } from '@/lib/dates'
 
 export function DepartmentDetailPage() {
   const { departmentId = '' } = useParams()
   const { state, ensureHistoryData, ensureReportDetails } = useAppData()
+  const [timeRange, setTimeRange] = useState<ReportingTimeRange>('last8')
+  const [selectedPeriodId, setSelectedPeriodId] = useState('')
+  const currentPeriod = getCurrentPeriod(state)
+  const availablePeriods = [...getVisibleReportingPeriods(state)].reverse()
+  const fallbackPeriodId = currentPeriod?.id ?? availablePeriods[0]?.id ?? ''
+  const effectivePeriodId = availablePeriods.some((period) => period.id === selectedPeriodId)
+    ? selectedPeriodId
+    : fallbackPeriodId
   const departmentReportIds = state.reports
     .filter((report) => report.departmentId === departmentId)
     .map((report) => report.id)
@@ -40,25 +55,73 @@ export function DepartmentDetailPage() {
     void ensureReportDetails(departmentReportIds)
   }, [departmentId, departmentReportIds, ensureReportDetails])
 
-  const detail = getDepartmentDetail(state, departmentId)
+  const detail = getDepartmentDetail(state, departmentId, {
+    anchorPeriodId: effectivePeriodId,
+    range: timeRange,
+  })
 
   if (!detail) {
     return null
   }
 
+  const timeRangeOptions = [
+    { value: 'current' as const, label: 'Current week' },
+    { value: 'last4' as const, label: 'Last 4 weeks' },
+    { value: 'last8' as const, label: 'Last 8 weeks' },
+    { value: 'all' as const, label: 'All available data' },
+  ] as const
+  const reportingPeriodOptions = availablePeriods.map((period) => ({
+    label: period.label,
+    value: period.id,
+  }))
+  const rangeStart = detail.rangePeriods[0]
+  const rangeEnd = detail.rangePeriods.at(-1)
+  const rangeNote =
+    rangeStart && rangeEnd
+      ? `${format(new Date(rangeStart.weekStart), 'MMM d')} - ${format(
+          new Date(rangeEnd.weekEnd),
+          'MMM d, yyyy',
+        )}`
+      : 'No reporting periods'
   const summaryCards = detail.template.summaryCards.map((card) => {
-    const currentValue =
-      card.sourceType === 'metric'
-        ? detail.currentReport?.calculatedMetrics[
-            card.sourceId as keyof typeof detail.currentReport.calculatedMetrics
+    const field = detail.template.fields.find((candidate) => candidate.id === card.sourceId)
+    const values = detail.rangeReports
+      .map((report) => {
+        if (card.sourceType === 'metric') {
+          return report.calculatedMetrics[
+            card.sourceId as keyof typeof report.calculatedMetrics
           ] ?? null
-        : detail.currentReport
-          ? getNumericTotal(detail.currentReport.values[card.sourceId]?.dailyValues ?? {})
+        }
+
+        return field
+          ? computeWeeklyValue(field, report.values[card.sourceId]?.dailyValues ?? {})
           : null
+      })
+      .filter((value): value is number => typeof value === 'number' && !Number.isNaN(value))
+    const shouldAverage =
+      card.sourceType === 'metric' ||
+      field?.aggregate === 'average' ||
+      card.format === 'percent' ||
+      card.format === 'days' ||
+      card.format === 'months' ||
+      card.format === 'decimal'
+    const currentValue = values.length
+      ? shouldAverage
+        ? values.reduce((sum, value) => sum + value, 0) / values.length
+        : values.reduce((sum, value) => sum + value, 0)
+      : null
+    const formattedValue =
+      currentValue === null
+        ? '-'
+        : card.format === 'percent'
+          ? `${currentValue.toFixed(1)}%`
+          : card.format === 'decimal' || card.format === 'days' || card.format === 'months'
+            ? currentValue.toFixed(1)
+            : new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(currentValue)
 
     return {
       label: card.label,
-      value: currentValue,
+      value: formattedValue,
     }
   })
 
@@ -70,6 +133,36 @@ export function DepartmentDetailPage() {
         description={detail.department.description}
       />
 
+      <ReportingScopePanel
+        className="max-w-[760px]"
+        fields={[
+          {
+            label: 'Time range',
+            options: timeRangeOptions,
+            placeholder: 'Time range',
+            value: timeRange,
+            onValueChange: (value) => setTimeRange(value as ReportingTimeRange),
+          },
+          {
+            label: 'Ending period',
+            options: reportingPeriodOptions,
+            placeholder: 'Ending period',
+            value: effectivePeriodId,
+            onValueChange: setSelectedPeriodId,
+          },
+        ]}
+        metrics={[
+          {
+            label: 'Range',
+            value: `${detail.rangePeriods.length} ${
+              detail.rangePeriods.length === 1 ? 'week' : 'weeks'
+            }`,
+            note: rangeNote,
+            tone: 'navy',
+          },
+        ]}
+      />
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {summaryCards.map((card) => (
           <Card key={card.label}>
@@ -78,7 +171,7 @@ export function DepartmentDetailPage() {
                 {card.label}
               </p>
               <p className="font-display text-4xl text-[#000a1e]">
-                {card.value ?? '-'}
+                {card.value}
               </p>
             </CardContent>
           </Card>

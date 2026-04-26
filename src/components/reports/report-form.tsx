@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { format } from 'date-fns'
 import { motion } from 'framer-motion'
 import { CheckCircle2, Loader2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useForm, useWatch, type FieldErrors } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
@@ -256,6 +256,52 @@ const statusToneStyles: Record<
   },
 }
 
+function reportHasPersistedValues(report: ReturnType<typeof getReportForAssignmentPeriod>) {
+  if (!report) {
+    return false
+  }
+
+  const hasCellValue = Object.values(report.values).some((fieldValue) =>
+    Object.values(fieldValue.dailyValues).some(
+      (value) => value !== null && value !== undefined && value !== '',
+    ),
+  )
+  const hasMetricValue = Object.values(report.calculatedMetrics).some(
+    (value) => value !== null && value !== undefined,
+  )
+
+  return hasCellValue || hasMetricValue
+}
+
+function ReportStatePanel({
+  eyebrow = 'Structured reporting',
+  title,
+  description,
+  detail,
+}: {
+  eyebrow?: string
+  title: string
+  description: string
+  detail?: string | null
+}) {
+  return (
+    <section className="rounded-[0.35rem] bg-[#eef2f6] px-6 py-8">
+      <div className="space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#005db6]">
+          {eyebrow}
+        </p>
+        <h1 className="font-display text-[2rem] text-[#000a1e]">{title}</h1>
+        <p className="max-w-xl text-sm leading-6 text-[#44474e]">{description}</p>
+        {detail ? (
+          <p className="max-w-xl rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] px-4 py-3 text-sm leading-6 text-[#44474e]">
+            {detail}
+          </p>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
 function FieldInput({
   field,
   value,
@@ -346,7 +392,9 @@ type ResolvedReportFormProps = Pick<
   | 'lockReport'
   | 'unlockReport'
   | 'ensureReportDetails'
+  | 'getReportDetailLoadState'
   | 'isReportDetailLoaded'
+  | 'isDataRefreshing'
   | 'isSyncing'
 > & {
   currentUser: NonNullable<ReturnType<typeof useAppData>['currentUser']>
@@ -361,7 +409,9 @@ function ResolvedReportForm({
   lockReport,
   unlockReport,
   ensureReportDetails,
+  getReportDetailLoadState,
   isReportDetailLoaded,
+  isDataRefreshing,
   isSyncing,
   assignment,
   period,
@@ -374,12 +424,15 @@ function ResolvedReportForm({
   const template = templateMap[assignment.templateId]
   const department = departmentMap[assignment.departmentId]
   const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
+  const reportDetailLoadState = report?.id
+    ? getReportDetailLoadState(report.id)
+    : { status: 'idle' as const, error: null }
   const reportDetailsLoaded = !report?.id || isReportDetailLoaded(report.id)
   const reportStatus = deriveReportStatus(state, period.id, report)
   const formSchema = createTemplateSchema(template)
-  const canEdit =
-    reportStatus !== 'locked' &&
-    (currentUser.role !== 'nurse' || currentUser.id === assignment.nurseId)
+  const canView =
+    currentUser.role !== 'nurse' || currentUser.id === assignment.nurseId
+  const canEdit = reportStatus !== 'locked' && canView
 
   const form = useForm<ReportFormValues>({
     resolver: zodResolver(formSchema),
@@ -391,15 +444,71 @@ function ResolvedReportForm({
     name: 'values',
   })
   const watchedValuesSignature = JSON.stringify(watchedValues ?? {})
-  const isLiveReportLookupPending = !report && isSyncing
+  const isLiveReportLookupPending = !report && (isDataRefreshing || isSyncing)
+  const hasPersistedValues = reportHasPersistedValues(report)
+  const shouldVerifyEmptySubmittedReport =
+    Boolean(report?.id) &&
+    reportDetailsLoaded &&
+    reportDetailLoadState.status === 'loaded' &&
+    !hasPersistedValues &&
+    (reportStatus === 'submitted' ||
+      reportStatus === 'edited_after_submission' ||
+      reportStatus === 'locked')
+  const emptyReportVerificationKey = report
+    ? `${report.id}:${report.updatedAt}`
+    : null
+  const pendingEmptyReportVerificationRef = useRef<string | null>(null)
+  const forcedEmptyReportVerificationRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!report?.id || reportDetailsLoaded) {
+    if (
+      !report?.id ||
+      !canView ||
+      reportDetailsLoaded ||
+      reportDetailLoadState.status === 'loading' ||
+      reportDetailLoadState.status === 'error'
+    ) {
       return
     }
 
     void ensureReportDetails([report.id])
-  }, [ensureReportDetails, report?.id, reportDetailsLoaded])
+  }, [canView, ensureReportDetails, report?.id, reportDetailsLoaded, reportDetailLoadState.status])
+
+  useEffect(() => {
+    if (
+      !report?.id ||
+      !canView ||
+      !emptyReportVerificationKey ||
+      !shouldVerifyEmptySubmittedReport ||
+      pendingEmptyReportVerificationRef.current === emptyReportVerificationKey ||
+      forcedEmptyReportVerificationRef.current === emptyReportVerificationKey
+    ) {
+      return
+    }
+
+    pendingEmptyReportVerificationRef.current = emptyReportVerificationKey
+    const timer = window.setTimeout(() => {
+      void ensureReportDetails([report.id], { force: true }).finally(() => {
+        forcedEmptyReportVerificationRef.current = emptyReportVerificationKey
+        if (pendingEmptyReportVerificationRef.current === emptyReportVerificationKey) {
+          pendingEmptyReportVerificationRef.current = null
+        }
+      })
+    }, 200)
+
+    return () => {
+      window.clearTimeout(timer)
+      if (pendingEmptyReportVerificationRef.current === emptyReportVerificationKey) {
+        pendingEmptyReportVerificationRef.current = null
+      }
+    }
+  }, [
+    canView,
+    emptyReportVerificationKey,
+    ensureReportDetails,
+    report?.id,
+    shouldVerifyEmptySubmittedReport,
+  ])
 
   const getFirstFormError = (errors: FieldErrors<ReportFormValues>) => {
     const valueErrors = errors.values as
@@ -589,22 +698,68 @@ function ResolvedReportForm({
     !isAutosaving &&
     !isSavingDraft &&
     !isSubmittingReport
+  const hasVerifiedEmptySubmittedReport =
+    shouldVerifyEmptySubmittedReport &&
+    forcedEmptyReportVerificationRef.current === emptyReportVerificationKey
+  const isVerifyingEmptySubmittedReport =
+    shouldVerifyEmptySubmittedReport && !hasVerifiedEmptySubmittedReport
 
-  if (isWaitingForReportDetails || isWaitingForLiveReportLookup) {
+  if (!canView) {
     return (
-      <section className="rounded-[0.35rem] bg-[#eef2f6] px-6 py-8">
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#005db6]">
-            Structured reporting
-          </p>
-          <h1 className="font-display text-[2rem] text-[#000a1e]">
-            {isWaitingForLiveReportLookup ? 'Checking saved report' : 'Loading saved cells'}
-          </h1>
-          <p className="max-w-xl text-sm leading-6 text-[#44474e]">
-            Restoring {department.name} for {period.label}.
-          </p>
-        </div>
-      </section>
+      <ReportStatePanel
+        title="Report access restricted"
+        description="This account is not assigned to view this weekly report."
+        detail="Open one of your assigned reports, or ask an administrator to update your department access."
+      />
+    )
+  }
+
+  if (reportDetailLoadState.status === 'error' && !form.formState.isDirty) {
+    return (
+      <ReportStatePanel
+        title="Unable to load saved cells"
+        description={`The report metadata loaded, but the saved weekly values for ${department.name} could not be fetched.`}
+        detail={reportDetailLoadState.error}
+      />
+    )
+  }
+
+  if (
+    isWaitingForReportDetails ||
+    isWaitingForLiveReportLookup ||
+    isVerifyingEmptySubmittedReport
+  ) {
+    return (
+      <ReportStatePanel
+        title={
+          isWaitingForLiveReportLookup
+            ? 'Checking saved report'
+            : isVerifyingEmptySubmittedReport
+              ? 'Verifying saved cells'
+              : 'Loading saved cells'
+        }
+        description={`Restoring ${department.name} for ${period.label}.`}
+      />
+    )
+  }
+
+  if (!report && currentUser.role !== 'nurse') {
+    return (
+      <ReportStatePanel
+        title="No report exists"
+        description={`No saved report was found for ${department.name} during ${period.label}.`}
+        detail="The submission board can show an expected report before any data has been entered."
+      />
+    )
+  }
+
+  if (hasVerifiedEmptySubmittedReport && !form.formState.isDirty) {
+    return (
+      <ReportStatePanel
+        title="No saved values found"
+        description={`${department.name} is marked ${statusLabels[reportStatus].toLowerCase()}, but no saved cell values were returned for ${period.label}.`}
+        detail="This usually means the submission contains no entered values, or the database did not return any cell rows for this report."
+      />
     )
   }
 
@@ -1070,40 +1225,74 @@ export function ReportForm({
   const appData = useAppData()
   const assignment = appData.state.assignments.find((entry) => entry.id === assignmentId)
   const period = appData.state.reportingPeriods.find((entry) => entry.id === periodId)
+  const isRouteDataLoading =
+    appData.isBootstrapping || appData.isDataRefreshing || appData.isSyncing
 
-  if (
-    appData.currentUser &&
-    (!appData.state.assignments.length || !appData.state.reportingPeriods.length) &&
-    appData.isSyncing
-  ) {
+  if (!assignmentId || !periodId) {
     return (
-      <section className="rounded-[0.35rem] bg-[#eef2f6] px-6 py-8">
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#005db6]">
-            Structured reporting
-          </p>
-          <h1 className="font-display text-[2rem] text-[#000a1e]">Loading report</h1>
-          <p className="max-w-xl text-sm leading-6 text-[#44474e]">
-            Restoring the selected assignment and reporting period.
-          </p>
-        </div>
-      </section>
+      <ReportStatePanel
+        title="Missing report parameters"
+        description="This report page needs both an assignment ID and a reporting period ID before it can load data."
+        detail="Open the report again from the submission board or notification link."
+      />
     )
   }
 
-  if (!assignment || !period || !appData.currentUser) {
+  if (!appData.currentUser && isRouteDataLoading) {
     return (
-      <section className="rounded-[0.35rem] bg-[#eef2f6] px-6 py-8">
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#005db6]">
-            Structured reporting
-          </p>
-          <h1 className="font-display text-[2rem] text-[#000a1e]">Report not available</h1>
-          <p className="max-w-xl text-sm leading-6 text-[#44474e]">
-            This report assignment could not be found for the selected reporting period.
-          </p>
-        </div>
-      </section>
+      <ReportStatePanel
+        title="Loading session"
+        description="Restoring your account before loading the selected weekly report."
+      />
+    )
+  }
+
+  if (!appData.currentUser) {
+    return (
+      <ReportStatePanel
+        title="Session unavailable"
+        description="The report cannot load because no signed-in user session is available."
+        detail={appData.error}
+      />
+    )
+  }
+
+  if (
+    (!assignment ||
+      !period ||
+      !appData.state.assignments.length ||
+      !appData.state.reportingPeriods.length) &&
+    isRouteDataLoading
+  ) {
+    return (
+      <ReportStatePanel
+        title="Loading report"
+        description="Restoring the selected assignment and reporting period."
+      />
+    )
+  }
+
+  if (appData.error && (!assignment || !period)) {
+    return (
+      <ReportStatePanel
+        title="Unable to load report"
+        description="The report lookup failed while loading assignment or period data."
+        detail={appData.error}
+      />
+    )
+  }
+
+  if (!assignment || !period) {
+    return (
+      <ReportStatePanel
+        title="Report not available"
+        description="This report assignment could not be found for the selected reporting period."
+        detail={
+          appData.currentUser.role === 'nurse'
+            ? 'The report may belong to another nurse or an assignment that is no longer active.'
+            : 'The assignment or reporting period may have been removed, or the link may be stale.'
+        }
+      />
     )
   }
 

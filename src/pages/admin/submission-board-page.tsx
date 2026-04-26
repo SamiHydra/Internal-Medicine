@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
-import { AlertTriangle, CheckCircle2, Lock, Rows3 } from 'lucide-react'
+import { AlertTriangle, CalendarDays, CheckCircle2, Lock, Rows3 } from 'lucide-react'
 
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { SubmissionBoardGrid } from '@/components/dashboard/submission-board-grid'
 import {
   getCurrentPeriod,
-  getDashboardSummary,
   getLockDeadlineNote,
+  getReportingRangeSummary,
   getVisibleReportingPeriods,
   getSubmissionBoard,
+  type ReportingTimeRange,
 } from '@/data/selectors'
 import { useAppData } from '@/context/app-data-context'
 import { formatCompactNumber } from '@/lib/utils'
@@ -40,6 +41,7 @@ export function SubmissionBoardPage() {
   const currentPeriod = getCurrentPeriod(state)
   const currentPeriodId = currentPeriod?.id ?? ''
   const [periodId, setPeriodId] = useState(currentPeriodId)
+  const [timeRange, setTimeRange] = useState<ReportingTimeRange>('current')
   const [serviceLineFilter, setServiceLineFilter] =
     useState<ServiceLineFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
@@ -56,20 +58,21 @@ export function SubmissionBoardPage() {
   const effectivePeriodId = visibleReportingPeriods.some((period) => period.id === periodId)
     ? periodId
     : currentPeriodId
-  const summary = getDashboardSummary(
+  const rangeSummary = getReportingRangeSummary(
     state,
+    timeRange,
     effectivePeriodId,
     serviceLineFilter === 'all' ? undefined : serviceLineFilter,
   )
   const deadlineNote = getLockDeadlineNote(state, effectivePeriodId)
 
-  if (!summary) {
+  if (!rangeSummary) {
     return null
   }
 
   const scopedBoardRows = getSubmissionBoard(
     state,
-    visibleReportingPeriods.length,
+    rangeSummary.periods.length,
     effectivePeriodId,
   ).filter(
     (row) =>
@@ -79,7 +82,9 @@ export function SubmissionBoardPage() {
   )
 
   const filteredBoardRows = scopedBoardRows.filter((row) =>
-    statusFilter === 'all' ? true : row.statuses[0]?.status === statusFilter,
+    statusFilter === 'all'
+      ? true
+      : row.statuses.some((status) => status.status === statusFilter),
   )
 
   const rows = filteredBoardRows.map((row) => ({
@@ -102,11 +107,31 @@ export function SubmissionBoardPage() {
   const statusLabel =
     statusOptions.find((option) => option.value === statusFilter)?.label ??
     'All statuses'
+  const timeRangeOptions = [
+    { value: 'current' as const, label: 'Current week' },
+    { value: 'last4' as const, label: 'Last 4 weeks' },
+    { value: 'last8' as const, label: 'Last 8 weeks' },
+    { value: 'all' as const, label: 'All available data' },
+  ] as const
+  const timeRangeLabel =
+    timeRangeOptions.find((option) => option.value === timeRange)?.label ??
+    'Current week'
+  const rangeStart = rangeSummary.periods[0]
+  const rangeEnd = rangeSummary.periods.at(-1)
+  const rangeNote =
+    timeRange === 'current'
+      ? rangeEnd?.label ?? 'Selected week'
+      : rangeStart && rangeEnd
+        ? `${format(new Date(rangeStart.weekStart), 'MMM d')} - ${format(
+            new Date(rangeEnd.weekEnd),
+            'MMM d, yyyy',
+          )}`
+        : 'No reporting periods'
   const deliveredCount =
-    summary.current.submitted +
-    summary.current.locked +
-    summary.current.editedAfterSubmission
-  const overdueCount = scopedBoardRows.filter((row) => row.statuses[0]?.status === 'overdue').length
+    rangeSummary.metrics.submitted +
+    rangeSummary.metrics.locked +
+    rangeSummary.metrics.editedAfterSubmission
+  const overdueCount = rangeSummary.metrics.overdue
   const summaryItems = [
     {
       label: 'Rows in view',
@@ -118,7 +143,7 @@ export function SubmissionBoardPage() {
     {
       label: 'Delivered',
       value: formatCompactNumber(deliveredCount),
-      note: `${summary.current.totalExpected ? Math.round((deliveredCount / summary.current.totalExpected) * 100) : 0}% of expected`,
+      note: `${rangeSummary.metrics.totalExpected ? Math.round((deliveredCount / rangeSummary.metrics.totalExpected) * 100) : 0}% of expected`,
       icon: CheckCircle2,
       tone: 'text-[#00468c] bg-[#edf4fb] outline-[#cfe0f4]/75',
     },
@@ -129,13 +154,23 @@ export function SubmissionBoardPage() {
       icon: AlertTriangle,
       tone: 'text-[#8a5a00] bg-[#fcf5e8] outline-[#edd9b0]/75',
     },
-    {
-      label: 'Lock deadline',
-      value: deadlineNote ? format(deadlineNote, 'EEE, MMM d') : 'Not set',
-      note: deadlineNote ? format(deadlineNote, 'HH:mm') : 'No lock scheduled',
-      icon: Lock,
-      tone: 'text-[#1d3047] bg-[#edf1f5] outline-[#d4dde8]/75',
-    },
+    timeRange === 'current'
+      ? {
+          label: 'Lock deadline',
+          value: deadlineNote ? format(deadlineNote, 'EEE, MMM d') : 'Not set',
+          note: deadlineNote ? format(deadlineNote, 'HH:mm') : 'No lock scheduled',
+          icon: Lock,
+          tone: 'text-[#1d3047] bg-[#edf1f5] outline-[#d4dde8]/75',
+        }
+      : {
+          label: 'Range',
+          value: `${formatCompactNumber(rangeSummary.periods.length)} ${
+            rangeSummary.periods.length === 1 ? 'week' : 'weeks'
+          }`,
+          note: rangeNote,
+          icon: CalendarDays,
+          tone: 'text-[#1d3047] bg-[#edf1f5] outline-[#d4dde8]/75',
+        },
   ] as const
 
   return (
@@ -145,9 +180,17 @@ export function SubmissionBoardPage() {
           className="w-full max-w-[760px]"
           fields={[
             {
-              label: 'Reporting period',
+              label: 'Time range',
+              options: timeRangeOptions,
+              placeholder: 'Time range',
+              value: timeRange,
+              onValueChange: (value) => setTimeRange(value as ReportingTimeRange),
+              triggerClassName: 'text-[0.95rem]',
+            },
+            {
+              label: 'Ending period',
               options: reportingPeriodOptions,
-              placeholder: 'Reporting period',
+              placeholder: 'Ending period',
               value: effectivePeriodId,
               onValueChange: setPeriodId,
               triggerClassName: 'text-[0.95rem]',
@@ -196,8 +239,8 @@ export function SubmissionBoardPage() {
       </section>
 
       <SubmissionBoardGrid
-        title="Current reporting board"
-        description={`${scopeLabel} / ${statusLabel} / ${formatCompactNumber(summary.current.totalExpected)} expected`}
+        title={timeRange === 'current' ? 'Current reporting board' : 'Reporting board'}
+        description={`${scopeLabel} / ${statusLabel} / ${timeRangeLabel} / ${formatCompactNumber(rangeSummary.metrics.totalExpected)} expected`}
         rows={rows}
       />
     </div>
