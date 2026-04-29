@@ -14,10 +14,13 @@ import type {
   AccessRequest,
   AppSettings,
   AppState,
+  Department,
   NotificationItem,
   ReportAssignment,
   ReportFieldValue,
   ReportRecord,
+  ReportTemplateConfig,
+  ReportTemplateField,
   UserProfile,
   UserRole,
   Weekday,
@@ -232,6 +235,34 @@ export function createEmptyReferenceState(): SupabaseReferenceState {
 
 export function isAdminRole(role: UserRole) {
   return role === 'superadmin' || role === 'admin' || role === 'doctor_admin'
+}
+
+export function resolveAssignmentReference(
+  references: SupabaseReferenceState,
+  departmentSlug: string,
+  templateSlug: string,
+) {
+  const departmentId = references.departmentDbIdBySlug[departmentSlug]
+  const templateId =
+    references.templateDbIdBySlug[templateSlug] ??
+    references.templateDbIdByDepartmentSlug[departmentSlug]
+
+  if (!departmentId || !templateId) {
+    return null
+  }
+
+  return { departmentId, templateId }
+}
+
+function getFieldMetadata(field: ReportTemplateField) {
+  if (!field.options?.length && !field.unit) {
+    return {}
+  }
+
+  return {
+    ...(field.options?.length ? { options: field.options } : {}),
+    ...(field.unit ? { unit: field.unit } : {}),
+  }
 }
 
 function hasMissingUsernameColumnError(error: unknown) {
@@ -1327,6 +1358,86 @@ export async function updateAssignmentActiveState(
   }
 }
 
+export async function ensureDepartmentReferenceData(
+  client: SupabaseClient,
+  department: Department,
+  template: ReportTemplateConfig,
+) {
+  const { data: templateRow, error: templateError } = await client
+    .from('report_templates')
+    .upsert(
+      {
+        slug: template.id,
+        family: template.family,
+        name: template.name,
+        description: template.description,
+        active_days: template.activeDays,
+        metadata: { ui_family: template.family },
+      },
+      { onConflict: 'slug' },
+    )
+    .select('id')
+    .single()
+
+  if (templateError || !templateRow) {
+    throw new Error(
+      getErrorMessage(templateError, 'Unable to ensure the selected report template exists.'),
+    )
+  }
+
+  const { data: departmentRow, error: departmentError } = await client
+    .from('departments')
+    .upsert(
+      {
+        slug: department.id,
+        family: department.family,
+        template_id: templateRow.id,
+        name: department.name,
+        description: department.description,
+        accent_color: department.accent,
+        bed_count: department.bedCount ?? null,
+        active: true,
+      },
+      { onConflict: 'slug' },
+    )
+    .select('id')
+    .single()
+
+  if (departmentError || !departmentRow) {
+    throw new Error(
+      getErrorMessage(departmentError, 'Unable to ensure the selected department exists.'),
+    )
+  }
+
+  const fieldRows = template.fields.map((field, index) => ({
+    template_id: templateRow.id,
+    section_key: field.sectionId,
+    field_key: field.id,
+    label: field.label,
+    field_kind: field.kind,
+    aggregate_type: field.aggregate,
+    display_order: (index + 1) * 10,
+    metadata: getFieldMetadata(field),
+  }))
+
+  if (fieldRows.length) {
+    const { error: fieldError } = await client
+      .from('report_field_definitions')
+      .upsert(fieldRows, { onConflict: 'template_id,field_key' })
+
+    if (fieldError) {
+      throw new Error(
+        getErrorMessage(fieldError, 'Unable to ensure report fields exist for this template.'),
+      )
+    }
+  }
+
+  return {
+    departmentId: departmentRow.id as string,
+    templateId: templateRow.id as string,
+  }
+}
+
 export async function assignUserToDepartment(
   client: SupabaseClient,
   references: SupabaseReferenceState,
@@ -1335,20 +1446,17 @@ export async function assignUserToDepartment(
   templateSlug: string,
   approverId: string,
 ) {
-  const departmentId = references.departmentDbIdBySlug[departmentSlug]
-  const templateId =
-    references.templateDbIdBySlug[templateSlug] ??
-    references.templateDbIdByDepartmentSlug[departmentSlug]
+  const resolvedReference = resolveAssignmentReference(references, departmentSlug, templateSlug)
 
-  if (!departmentId || !templateId) {
+  if (!resolvedReference) {
     throw new Error('The selected department or template is not available in Supabase.')
   }
 
   const { error } = await client.from('report_assignments').upsert(
     {
       nurse_id: userId,
-      department_id: departmentId,
-      template_id: templateId,
+      department_id: resolvedReference.departmentId,
+      template_id: resolvedReference.templateId,
       active: true,
       approved_at: new Date().toISOString(),
       approved_by: approverId,

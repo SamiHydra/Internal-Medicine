@@ -108,6 +108,7 @@ from (
     ('hematology_inpatient', 'inpatient', 'inpatient_weekly', 'Hematology', 'Hematology inpatient ward.', '#0f5f74', 16),
     ('oncology_inpatient', 'inpatient', 'inpatient_weekly', 'Oncology', 'Oncology inpatient ward.', '#0f4c81', 24),
     ('hdu_inpatient', 'inpatient', 'inpatient_weekly', 'HDU', 'High dependency unit reporting.', '#164e63', 12),
+    ('transition_inpatient', 'inpatient', 'inpatient_weekly', 'Transition', 'Inpatient transition service reporting.', '#0e7490', null),
     ('outpatient_main', 'outpatient', 'outpatient_weekly', 'ART', 'Outpatient ART clinic reporting.', '#0f8ea8', null),
     ('gi_outpatient', 'outpatient', 'outpatient_weekly', 'GI', 'GI outpatient clinic.', '#0d9488', null),
     ('neuro_outpatient', 'outpatient', 'outpatient_weekly', 'Neuro', 'Neurology outpatient clinic.', '#2563eb', null),

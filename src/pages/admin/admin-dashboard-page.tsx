@@ -21,14 +21,41 @@ import {
 
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  ALL_INPATIENT_AVERAGE,
+  ALL_INPATIENT_POOLED,
+  ALL_OUTPATIENT_AVERAGE,
+  ALL_PROCEDURE_SERVICES_TOTAL,
   deriveReportStatus,
   getCurrentPeriod,
-  getDashboardSummary,
+  getInpatientMonthlyOccupancySeries,
+  getInpatientMonthlyWardComparisonData,
+  getInpatientWeeklyCountTrendSeries,
+  getOutpatientMonthlyAvailabilityDepartmentComparisonData,
+  getOutpatientMonthlyDepartmentComparisonData,
+  getOutpatientWeeklyAvailabilitySeries,
+  getOutpatientWeeklyTrendSeries,
+  getProcedureDialysisSplitData,
+  getProcedureEndoscopyMixData,
+  getProcedureMonthlyServiceComparisonData,
+  getProcedureTotalThroughput,
+  getProcedureWeeklyTrendSeries,
   getReportForAssignmentPeriod,
   getLockDeadlineNote,
   getReportingPeriodsForRange,
   getReportingRangeSummary,
   getVisibleReportingPeriods,
+  OUTPATIENT_AVAILABILITY_STATUSES,
+  PROCEDURE_SERVICE_DEFINITIONS,
+  resolveDashboardTrendBucket,
+  shouldShowInpatientOccupancyAnalytics,
+  type DashboardTrendScale,
   type ReportingTimeRange,
 } from '@/data/selectors'
 import { useAppData } from '@/context/app-data-context'
@@ -46,7 +73,7 @@ type StatusFilter =
   | 'locked'
   | 'not_started'
   | 'overdue'
-type TrendScale = 'weekly' | 'monthly'
+type TrendScale = DashboardTrendScale
 
 type TrendBucket = {
   key: string
@@ -54,11 +81,6 @@ type TrendBucket = {
   periods: ReportingPeriod[]
   periodIds: Set<string>
 }
-
-type TrendDeltaVariant = 'compact' | 'decimal' | 'percent' | 'time'
-
-const dialysisDepartmentIds = ['dialysis_unit'] as const
-const dialysisFieldIds = ['dialysis_acute', 'dialysis_chronic'] as const
 
 function ChartEmptyState({
   message,
@@ -70,14 +92,39 @@ function ChartEmptyState({
   return (
     <div
       className={cn(
-        'flex h-full flex-col items-center justify-center gap-3 rounded-[0.5rem] border border-dashed px-6 text-center',
+        'flex h-full flex-col items-center justify-center gap-3 rounded-[0.5rem] border border-dashed px-6 text-center shadow-inner',
         tone === 'dark'
           ? 'border-white/12 bg-white/6 text-[#c6d3e4]'
-          : 'border-[#d9e0e7] bg-[#f8fafc] text-[#6c7078]',
+          : 'border-[#d4dde8]/80 bg-[linear-gradient(180deg,#ffffff_0%,#f4f7fb_100%)] text-[#64748b]',
       )}
     >
       <Sparkles className={cn('h-5 w-5', tone === 'dark' ? 'text-[#f0b429]' : 'text-[#005db6]')} />
       <p className="max-w-xs text-sm leading-6">{message}</p>
+    </div>
+  )
+}
+
+function ChartLegend({
+  items,
+  className,
+}: {
+  items: readonly { label: string; color: string; dash?: boolean }[]
+  className?: string
+}) {
+  return (
+    <div className={cn('flex flex-wrap items-center gap-x-4 gap-y-2', className)}>
+      {items.map((item) => (
+        <div key={item.label} className="inline-flex items-center gap-2 text-xs font-medium text-[#475569]">
+          <span
+            className={cn('h-2 rounded-full', item.dash ? 'w-5' : 'w-2.5')}
+            style={{
+              backgroundColor: item.dash ? 'transparent' : item.color,
+              borderTop: item.dash ? `2px dashed ${item.color}` : undefined,
+            }}
+          />
+          <span>{item.label}</span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -90,26 +137,6 @@ function formatShare(count: number, total: number) {
   return Math.round((count / total) * 100)
 }
 
-function parseTimeToMinutes(value: string | null | undefined) {
-  if (!value) {
-    return null
-  }
-
-  const match = value.match(/^(\d{1,2}):(\d{2})/)
-  if (!match) {
-    return null
-  }
-
-  const hours = Number(match[1])
-  const minutes = Number(match[2])
-
-  if (Number.isNaN(hours) || Number.isNaN(minutes)) {
-    return null
-  }
-
-  return hours * 60 + minutes
-}
-
 function formatMinutesAsTime(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return '-'
@@ -120,86 +147,6 @@ function formatMinutesAsTime(value: number | null | undefined) {
   const minutes = rounded % 60
 
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-}
-
-function getTrendDelta<T extends Record<string, unknown>>(series: T[], key: keyof T) {
-  const currentValue = series.at(-1)?.[key]
-  const previousValue = series.at(-2)?.[key]
-
-  if (
-    typeof currentValue !== 'number' ||
-    typeof previousValue !== 'number' ||
-    Number.isNaN(currentValue) ||
-    Number.isNaN(previousValue)
-  ) {
-    return null
-  }
-
-  return currentValue - previousValue
-}
-
-function formatTrendDeltaValue(delta: number, variant: TrendDeltaVariant) {
-  const magnitude = Math.abs(delta)
-
-  if (variant === 'percent') {
-    return `${magnitude.toFixed(1)} pp`
-  }
-
-  if (variant === 'decimal') {
-    return magnitude.toFixed(1)
-  }
-
-  if (variant === 'time') {
-    return `${Math.round(magnitude)} min`
-  }
-
-  return formatCompactNumber(magnitude)
-}
-
-function TrendDeltaChips({
-  items,
-  comparisonLabel,
-}: {
-  items: readonly {
-    label: string
-    delta: number | null
-    variant?: TrendDeltaVariant
-  }[]
-  comparisonLabel: string
-}) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {items.map((item) => {
-        const delta = item.delta
-        const variant = item.variant ?? 'compact'
-        const label =
-          delta === null
-            ? `No prior ${comparisonLabel}`
-            : delta === 0
-              ? `No change vs previous ${comparisonLabel}`
-              : `${delta > 0 ? '+' : '-'}${formatTrendDeltaValue(
-                  delta,
-                  variant,
-                )} vs previous ${comparisonLabel}`
-
-        return (
-          <span
-            key={item.label}
-            className={cn(
-              'rounded-[0.25rem] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] outline outline-1',
-              delta === null || delta === 0
-                ? 'bg-[#edf1f5] text-[#1d3047] outline-[#d4dde8]/75'
-                : delta > 0
-                  ? 'bg-[#edf4fb] text-[#00468c] outline-[#cfe0f4]/75'
-                  : 'bg-[#fcf5e8] text-[#8a5a00] outline-[#edd9b0]/75',
-            )}
-          >
-            {item.label}: {label}
-          </span>
-        )
-      })}
-    </div>
-  )
 }
 
 function getReportWeeklyFieldValue(report: ReportRecord, fieldId: string) {
@@ -278,6 +225,95 @@ function SectionAmbient() {
   return null
 }
 
+function getChartPointNumber(
+  point: Record<string, string | number | null>,
+  key: string,
+) {
+  const value = point[key]
+
+  return typeof value === 'number' ? value : 0
+}
+
+function getMonthlyComparisonChartMinWidth(pointCount: number, barCount: number) {
+  return Math.max(760, pointCount * (barCount >= 3 ? 96 : 84))
+}
+
+function getOutpatientMonthlyComparisonChartMinWidth(pointCount: number, barCount: number) {
+  const pointWidth = barCount >= 3 ? 96 : barCount === 2 ? 88 : 78
+
+  return pointCount * pointWidth
+}
+
+function formatMonthlyComparisonTick(value: string | number) {
+  const label = String(value)
+  const wardLabel = label.includes(' / ') ? label.split(' / ').at(-1) ?? label : label
+
+  return wardLabel.length > 12 ? `${wardLabel.slice(0, 11)}...` : wardLabel
+}
+
+function formatOutpatientMonthlyComparisonTick(value: string | number) {
+  const label = String(value)
+  const departmentLabel = label.includes(' / ') ? label.split(' / ').at(-1) ?? label : label
+
+  return departmentLabel.length > 16 ? `${departmentLabel.slice(0, 15)}...` : departmentLabel
+}
+
+function formatProcedureServiceTick(value: string | number) {
+  const label = String(value)
+
+  return label.length > 18 ? `${label.slice(0, 17)}...` : label
+}
+
+function getTooltipPoint(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || !('payload' in payload)) {
+    return null
+  }
+
+  const point = payload.payload
+
+  return point && typeof point === 'object'
+    ? point as Record<string, string | number | null>
+    : null
+}
+
+function formatMonthlyComparisonTooltipLabel(label: unknown, payload?: readonly unknown[]) {
+  const point = getTooltipPoint(payload?.[0])
+  const monthLabel = typeof point?.monthLabel === 'string' ? point.monthLabel : ''
+  const departmentName =
+    typeof point?.departmentName === 'string' ? point.departmentName : String(label ?? '')
+
+  return monthLabel ? `${monthLabel} / ${departmentName}` : departmentName
+}
+
+function formatProcedureServiceTooltipLabel(label: unknown, payload?: readonly unknown[]) {
+  const point = getTooltipPoint(payload?.[0])
+  const monthLabel = typeof point?.monthLabel === 'string' ? point.monthLabel : ''
+  const serviceName =
+    typeof point?.serviceName === 'string' ? point.serviceName : String(label ?? '')
+
+  return monthLabel ? `${monthLabel} / ${serviceName}` : serviceName
+}
+
+function formatProcedureMixTooltipLabel(label: unknown, payload?: readonly unknown[]) {
+  const point = getTooltipPoint(payload?.[0])
+  const monthLabel = typeof point?.monthLabel === 'string' ? point.monthLabel : ''
+
+  return monthLabel ? `${monthLabel} / ${String(label ?? '')}` : String(label ?? '')
+}
+
+function formatAvailabilityTooltipValue(value: unknown, name: unknown, payload?: unknown) {
+  const count = Number(value)
+  const point = getTooltipPoint(payload)
+  const total = typeof point?.total === 'number' ? point.total : 0
+  const percent = total ? Math.round((count / total) * 100) : 0
+
+  return [`${count} (${percent}%)`, String(name ?? '')]
+}
+
+function formatChartTooltipLabel(label: unknown) {
+  return String(label ?? '')
+}
+
 export function AdminDashboardPage() {
   const { state, ensureReportDetails, isSyncing } = useAppData()
   const [familyFilter, setFamilyFilter] = useState<FamilyFilter>('all')
@@ -286,6 +322,14 @@ export function AdminDashboardPage() {
   const [periodId, setPeriodId] = useState(currentPeriodId)
   const [timeRange, setTimeRange] = useState<ReportingTimeRange>('last8')
   const [trendScale, setTrendScale] = useState<TrendScale>('weekly')
+  const [inpatientTrendScope, setInpatientTrendScope] = useState(ALL_INPATIENT_AVERAGE)
+  const [inpatientOccupancyScope, setInpatientOccupancyScope] =
+    useState(ALL_INPATIENT_POOLED)
+  const [inpatientComparisonMonthKey, setInpatientComparisonMonthKey] = useState('')
+  const [outpatientTrendScope, setOutpatientTrendScope] = useState(ALL_OUTPATIENT_AVERAGE)
+  const [outpatientComparisonMonthKey, setOutpatientComparisonMonthKey] = useState('')
+  const [procedureTrendScope, setProcedureTrendScope] = useState(ALL_PROCEDURE_SERVICES_TOTAL)
+  const [procedureComparisonMonthKey, setProcedureComparisonMonthKey] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const availablePeriods = getVisibleReportingPeriods(state)
   const visibleReportingPeriods = [...availablePeriods].reverse()
@@ -422,6 +466,49 @@ export function AdminDashboardPage() {
     { value: 'outpatient' as const, label: 'Outpatient' },
     { value: 'procedure' as const, label: 'Procedures' },
   ] as const
+  const inpatientWardOptions = departments
+    .filter((department) => department.family === 'inpatient')
+    .map((department) => ({
+      value: department.id,
+      label: department.name,
+    }))
+  const outpatientDepartmentOptions = departments
+    .filter((department) => department.family === 'outpatient')
+    .map((department) => ({
+      value: department.id,
+      label: department.name,
+    }))
+  const inpatientTrendScopeOptions = [
+    { value: ALL_INPATIENT_AVERAGE, label: 'All inpatient average' },
+    ...inpatientWardOptions,
+  ]
+  const outpatientTrendScopeOptions = [
+    { value: ALL_OUTPATIENT_AVERAGE, label: 'All outpatient average' },
+    ...outpatientDepartmentOptions,
+  ]
+  const procedureTrendScopeOptions = [
+    { value: ALL_PROCEDURE_SERVICES_TOTAL, label: 'All procedure services total' },
+    ...PROCEDURE_SERVICE_DEFINITIONS.map((service) => ({
+      value: service.id,
+      label: service.label,
+    })),
+  ]
+  const inpatientOccupancyScopeOptions = [
+    { value: ALL_INPATIENT_POOLED, label: 'All inpatient pooled' },
+    ...inpatientWardOptions,
+  ]
+  const inpatientComparisonMonthOptions = monthlyTrendBuckets.map((bucket) => ({
+    value: bucket.key,
+    label: bucket.label,
+  }))
+  const outpatientComparisonMonthOptions = monthlyTrendBuckets.map((bucket) => ({
+    value: bucket.key,
+    label: bucket.label,
+  }))
+  const procedureComparisonMonthOptions = monthlyTrendBuckets.map((bucket) => ({
+    value: bucket.key,
+    label: bucket.label,
+  }))
   const statusOptions = [
     { value: 'all' as const, label: 'All statuses' },
     { value: 'not_started' as const, label: 'Not started' },
@@ -431,20 +518,20 @@ export function AdminDashboardPage() {
     { value: 'locked' as const, label: 'Locked' },
     { value: 'overdue' as const, label: 'Overdue' },
   ] as const
-  const chartGridStroke = '#d4dde8'
-  const chartTick = { fill: '#6c7078', fontSize: 12 }
+  const chartGridStroke = 'rgba(148, 163, 184, 0.28)'
+  const chartTick = { fill: '#64748b', fontSize: 12, fontWeight: 500 }
   const grayscalePalette = {
     ink: '#005db6',
-    carbon: '#446b95',
+    carbon: '#315f8c',
     slate: '#002147',
-    steel: '#67778a',
+    steel: '#6c7f95',
     mist: '#f0b429',
-    cloud: '#9bb2ca',
+    cloud: '#95abc4',
     dialysis: '#0f766e',
     dialysisLight: '#5bb8a4',
   } as const
-  const tooltipLineCursor = { stroke: 'rgba(0,93,182,0.22)', strokeWidth: 1.2 } as const
-  const tooltipFillCursor = { fill: 'rgba(0,33,71,0.045)' } as const
+  const tooltipLineCursor = { stroke: 'rgba(0,93,182,0.22)', strokeWidth: 1.4, strokeDasharray: '4 5' } as const
+  const tooltipFillCursor = { fill: 'rgba(0,93,182,0.06)' } as const
   const totalExpected = rangeSummary.metrics.totalExpected
   const deliveredStatuses = new Set<Exclude<StatusFilter, 'all'>>([
     'submitted',
@@ -483,27 +570,14 @@ export function AdminDashboardPage() {
     (familyFilter === 'all' ? true : departmentMap[assignment.departmentId].family === familyFilter),
   )
   const selectedPeriodIds = new Set(trendPeriods.map((period) => period.id))
-  const dialysisDepartmentIdSet = new Set<string>(dialysisDepartmentIds)
   const getReportsForPeriodIds = (periodIds: Set<string>, family: ReportFamily) =>
     state.reports.filter(
       (report) =>
         periodIds.has(report.reportingPeriodId) &&
         departmentMap[report.departmentId].family === family,
     )
-  const getDialysisReportsForPeriodIds = (periodIds: Set<string>) =>
-    state.reports.filter(
-      (report) =>
-        periodIds.has(report.reportingPeriodId) &&
-        dialysisDepartmentIdSet.has(report.departmentId),
-    )
-  const getBucketReports = (bucket: TrendBucket, family: ReportFamily) =>
-    getReportsForPeriodIds(bucket.periodIds, family)
   const getRangeReports = (family: ReportFamily) =>
     getReportsForPeriodIds(selectedPeriodIds, family)
-  const getDialysisBucketReports = (bucket: TrendBucket) =>
-    getDialysisReportsForPeriodIds(bucket.periodIds)
-  const getDialysisRangeReports = () =>
-    getDialysisReportsForPeriodIds(selectedPeriodIds)
   const sumReportFieldTotals = (reports: ReportRecord[], fieldIds: readonly string[]) =>
     reports.reduce((total, report) => {
       const reportTotal = fieldIds.reduce((fieldTotal, fieldId) => {
@@ -513,47 +587,8 @@ export function AdminDashboardPage() {
 
       return total + reportTotal
     }, 0)
-  const sumFieldTotalsForBucket = (
-    bucket: TrendBucket,
-    family: ReportFamily,
-    fieldIds: readonly string[],
-  ) => sumReportFieldTotals(getBucketReports(bucket, family), fieldIds)
   const sumFieldTotalsForRange = (family: ReportFamily, fieldIds: readonly string[]) =>
     sumReportFieldTotals(getRangeReports(family), fieldIds)
-  const sumDialysisFieldTotalsForBucket = (bucket: TrendBucket, fieldIds: readonly string[]) =>
-    sumReportFieldTotals(getDialysisBucketReports(bucket), fieldIds)
-  const sumDialysisFieldTotalsForRange = (fieldIds: readonly string[]) =>
-    sumReportFieldTotals(getDialysisRangeReports(), fieldIds)
-  const averageFieldValueForBucket = (
-    bucket: TrendBucket,
-    family: ReportFamily,
-    fieldId: string,
-  ) => {
-    const values = getBucketReports(bucket, family)
-      .map((report) => getReportWeeklyFieldValue(report, fieldId))
-      .filter((value): value is number => typeof value === 'number' && !Number.isNaN(value))
-
-    if (!values.length) {
-      return null
-    }
-
-    return values.reduce((sum, value) => sum + value, 0) / values.length
-  }
-  const averageTimeValueForBucket = (
-    bucket: TrendBucket,
-    family: ReportFamily,
-    fieldId: string,
-  ) => {
-    const values = getBucketReports(bucket, family)
-      .map((report) => parseTimeToMinutes(getReportWeeklyFieldValue(report, fieldId) as string | null))
-      .filter((value): value is number => value !== null)
-
-    if (!values.length) {
-      return null
-    }
-
-    return values.reduce((sum, value) => sum + value, 0) / values.length
-  }
   const countStatus = (status: Exclude<StatusFilter, 'all'>) =>
     rangeSummary.statusCounts[status]
   const statusDistribution = [
@@ -608,273 +643,288 @@ export function AdminDashboardPage() {
   const showInpatientSection = familyFilter === 'all' || familyFilter === 'inpatient'
   const showOutpatientSection = familyFilter === 'all' || familyFilter === 'outpatient'
   const showProcedureSection = familyFilter === 'all' || familyFilter === 'procedure'
-  const inpatientFlowSeries = trendBuckets.map((bucket) => ({
-    label: bucket.label,
-    totalAdmissions: sumFieldTotalsForBucket(bucket, 'inpatient', [
-      'total_admitted_patients',
-      'new_admitted_patients',
-    ]),
-    newAdmissions: sumFieldTotalsForBucket(bucket, 'inpatient', ['new_admitted_patients']),
-    discharges: sumFieldTotalsForBucket(bucket, 'inpatient', [
-      'discharged_home',
-      'discharged_ama',
-    ]),
-  }))
-  const inpatientAdmissionsTotal = inpatientFlowSeries.reduce(
-    (sum, point) => sum + point.totalAdmissions,
-    0,
+  const showInpatientOccupancyAnalytics = shouldShowInpatientOccupancyAnalytics(trendScale)
+  const selectedInpatientComparisonMonth = resolveDashboardTrendBucket(
+    monthlyTrendBuckets,
+    inpatientComparisonMonthKey,
   )
-  const inpatientSafetySeries = trendBuckets.map((bucket) => ({
-    label: bucket.label,
-    deaths: sumFieldTotalsForBucket(bucket, 'inpatient', ['new_deaths']),
-    ulcers: sumFieldTotalsForBucket(bucket, 'inpatient', ['new_pressure_ulcer']),
-    hai: sumFieldTotalsForBucket(bucket, 'inpatient', ['total_hai']),
-  }))
-  const inpatientOccupancySeries = trendBuckets.map((bucket) => {
-    const period = bucket.periods[0]
-
-    if (trendScale === 'weekly' && period) {
-      const periodSummary = getDashboardSummary(state, period.id, 'inpatient')
-
-      return {
-        label: bucket.label,
-        bor: periodSummary?.current.borPercent ?? null,
-        btr: periodSummary?.current.btr ?? null,
-        alos: periodSummary?.current.alos ?? null,
-      }
-    }
-
-    const reports = getBucketReports(bucket, 'inpatient')
-    const totalPatientDays = sumReportFieldTotals(reports, ['total_patient_days'])
-    const totalDischarges = sumReportFieldTotals(reports, [
-      'discharged_home',
-      'discharged_ama',
-    ])
-    const totalBeds = departments
-      .filter((department) => department.family === 'inpatient')
-      .reduce((sum, department) => sum + (department.bedCount ?? 0), 0)
-    const coveredDays = Math.max(bucket.periods.length * 7, 1)
-
-    return {
-      label: bucket.label,
-      bor: totalBeds ? (totalPatientDays / (totalBeds * coveredDays)) * 100 : null,
-      btr: totalBeds ? totalDischarges / totalBeds : null,
-      alos: totalDischarges ? totalPatientDays / totalDischarges : null,
-    }
-  })
-  const outpatientSeenSeries = trendBuckets.map((bucket) => ({
-    label: bucket.label,
-    seen: sumFieldTotalsForBucket(bucket, 'outpatient', ['total_patients_seen']),
-    notSeenSameDay: sumFieldTotalsForBucket(bucket, 'outpatient', ['not_seen_same_day']),
-  }))
-  const outpatientSeenTotal = outpatientSeenSeries.reduce((sum, point) => sum + point.seen, 0)
-  const outpatientFollowUpWaitSeries = trendBuckets.map((bucket) => ({
-    label: bucket.label,
-    wait: averageFieldValueForBucket(bucket, 'outpatient', 'wait_time_followup_months'),
-  }))
-  const outpatientClinicStartSeries = trendBuckets.map((bucket) => ({
-    label: bucket.label,
-    startMinutes: averageTimeValueForBucket(bucket, 'outpatient', 'clinic_start_time'),
-  }))
-  const rangeOutpatientReports = getRangeReports('outpatient')
-  const availabilityOptions = ['Full day', 'Partial day', 'Unavailable'] as const
-  const outpatientAvailability = availabilityOptions.map((label) => ({
-    label,
-    value: rangeOutpatientReports.filter(
-      (report) => getReportWeeklyFieldValue(report, 'senior_physician_availability') === label,
-    ).length,
-    fill:
-      label === 'Full day'
-        ? grayscalePalette.ink
-        : label === 'Partial day'
-          ? grayscalePalette.steel
-          : grayscalePalette.cloud,
-  }))
-  const outpatientVolumeMix = departments
-    .filter((department) => department.family === 'outpatient')
-    .map((department) => {
-      const departmentReports = state.reports.filter(
-        (item) =>
-          selectedPeriodIds.has(item.reportingPeriodId) && item.departmentId === department.id,
-      )
-      const totalSeen = departmentReports.reduce(
-        (sum, report) =>
-          sum + ((getReportWeeklyFieldValue(report, 'total_patients_seen') as number | null) ?? 0),
-        0,
-      )
-      const newPatients = departmentReports.reduce(
-        (sum, report) =>
-          sum + ((getReportWeeklyFieldValue(report, 'new_patients_seen') as number | null) ?? 0),
-        0,
-      )
-      const followUp = departmentReports.reduce(
-        (sum, report) =>
-          sum + ((getReportWeeklyFieldValue(report, 'follow_up_patients') as number | null) ?? 0),
-        0,
-      )
-
-      return {
-        id: department.id,
-        name: department.name,
-        totalSeen,
-        newPatients,
-        followUp,
-        accent: department.accent,
-      }
-    })
-    .filter((department) => department.totalSeen > 0)
-    .sort((left, right) => right.totalSeen - left.totalSeen)
-    .slice(0, 8)
-  const procedureTotals = [
-    { label: 'Echo', value: sumFieldTotalsForRange('procedure', ['echo_done']), fill: grayscalePalette.ink },
-    { label: 'ECG', value: sumFieldTotalsForRange('procedure', ['ecg_done']), fill: grayscalePalette.carbon },
-    { label: 'EEG', value: sumFieldTotalsForRange('procedure', ['eeg_done']), fill: grayscalePalette.steel },
-    {
-      label: 'Dialysis',
-      value: sumDialysisFieldTotalsForRange(dialysisFieldIds),
-      fill: grayscalePalette.dialysis,
-    },
-    {
-      label: 'Endoscopy',
-      value: sumFieldTotalsForRange('procedure', [
-        'upper_gi_elective',
-        'upper_gi_emergency',
-        'ercp',
-        'therapeutic_upper_gi',
-        'esophageal_dilation',
-        'variceal_ligation',
-        'stenting',
-      ]),
-      fill: grayscalePalette.mist,
-    },
-  ]
-  const endoscopyMix = [
-    {
-      label: 'UGI',
-      value: sumFieldTotalsForRange('procedure', ['upper_gi_elective', 'upper_gi_emergency']),
-      fill: grayscalePalette.ink,
-    },
-    { label: 'Colonoscopy', value: sumFieldTotalsForRange('procedure', ['colonoscopy']), fill: grayscalePalette.slate },
-    { label: 'Bronchoscopy', value: sumFieldTotalsForRange('procedure', ['bronchoscopy']), fill: grayscalePalette.steel },
-    { label: 'Ligation', value: sumFieldTotalsForRange('procedure', ['variceal_ligation']), fill: grayscalePalette.cloud },
-  ]
-  const dialysisMonthlyTotals = monthlyTrendBuckets.map((bucket, index) => ({
-    label: bucket.label,
-    value: sumDialysisFieldTotalsForBucket(bucket, dialysisFieldIds),
-    fill: [
-      grayscalePalette.dialysis,
-      grayscalePalette.ink,
-      grayscalePalette.mist,
-      grayscalePalette.carbon,
-      grayscalePalette.dialysisLight,
-      grayscalePalette.steel,
-    ][index % 6],
-  }))
-  const dialysisTotal = dialysisMonthlyTotals.reduce((sum, item) => sum + item.value, 0)
-  const dialysisMix = [
-    {
-      label: 'Acute HD',
-      value: sumDialysisFieldTotalsForRange(['dialysis_acute']),
-      fill: grayscalePalette.dialysis,
-    },
-    {
-      label: 'Chronic HD',
-      value: sumDialysisFieldTotalsForRange(['dialysis_chronic']),
-      fill: grayscalePalette.ink,
-    },
-  ]
-  const trendComparisonLabel = trendScale === 'monthly' ? 'month' : 'week'
-  const reportingTrendDeltas = [
-    { label: 'Delivered', delta: getTrendDelta(reportingTrendSeries, 'delivered') },
-    { label: 'Open', delta: getTrendDelta(reportingTrendSeries, 'open') },
-    { label: 'Overdue', delta: getTrendDelta(reportingTrendSeries, 'overdue') },
+  const effectiveInpatientComparisonMonthKey =
+    selectedInpatientComparisonMonth?.key ?? ''
+  const selectedOutpatientComparisonMonth = resolveDashboardTrendBucket(
+    monthlyTrendBuckets,
+    outpatientComparisonMonthKey,
+  )
+  const effectiveOutpatientComparisonMonthKey =
+    selectedOutpatientComparisonMonth?.key ?? ''
+  const selectedProcedureComparisonMonth = resolveDashboardTrendBucket(
+    monthlyTrendBuckets,
+    procedureComparisonMonthKey,
+  )
+  const effectiveProcedureComparisonMonthKey =
+    selectedProcedureComparisonMonth?.key ?? ''
+  const inpatientFlowMetrics = [
+    { key: 'newAdmissions', fieldIds: ['new_admitted_patients'] },
+    { key: 'discharges', fieldIds: ['discharged_home', 'discharged_ama'] },
   ] as const
-  const inpatientFlowDeltas = [
-    {
-      label: 'Newly admitted',
-      delta: getTrendDelta(inpatientFlowSeries, 'newAdmissions'),
-    },
-    { label: 'Discharges', delta: getTrendDelta(inpatientFlowSeries, 'discharges') },
+  const inpatientSafetyMetrics = [
+    { key: 'deaths', fieldIds: ['new_deaths'] },
+    { key: 'ulcers', fieldIds: ['new_pressure_ulcer'] },
+    { key: 'hai', fieldIds: ['total_hai'] },
   ] as const
-  const inpatientSafetyDeltas = [
-    { label: 'Deaths', delta: getTrendDelta(inpatientSafetySeries, 'deaths') },
-    { label: 'Ulcers', delta: getTrendDelta(inpatientSafetySeries, 'ulcers') },
-    { label: 'HAI', delta: getTrendDelta(inpatientSafetySeries, 'hai') },
+  const inpatientFlowSeries =
+    trendScale === 'monthly'
+      ? getInpatientMonthlyWardComparisonData(
+          state,
+          monthlyTrendBuckets,
+          inpatientFlowMetrics,
+          effectiveInpatientComparisonMonthKey,
+        )
+      : getInpatientWeeklyCountTrendSeries(
+          state,
+          trendBuckets,
+          inpatientFlowMetrics,
+          inpatientTrendScope,
+        )
+  const inpatientAdmissionsTotal = sumFieldTotalsForRange('inpatient', [
+    'total_admitted_patients',
+    'new_admitted_patients',
+  ])
+  const inpatientSafetySeries =
+    trendScale === 'monthly'
+      ? getInpatientMonthlyWardComparisonData(
+          state,
+          monthlyTrendBuckets,
+          inpatientSafetyMetrics,
+          effectiveInpatientComparisonMonthKey,
+        )
+      : getInpatientWeeklyCountTrendSeries(
+          state,
+          trendBuckets,
+          inpatientSafetyMetrics,
+          inpatientTrendScope,
+        )
+  const inpatientOccupancySeries = showInpatientOccupancyAnalytics
+    ? getInpatientMonthlyOccupancySeries(state, trendBuckets, inpatientOccupancyScope)
+    : []
+  const outpatientSeenMetrics = [
+    { key: 'seen', fieldId: 'total_patients_seen', valueType: 'sum' },
+    { key: 'notSeenSameDay', fieldId: 'not_seen_same_day', valueType: 'sum' },
   ] as const
-  const inpatientOccupancyDeltas = [
-    {
-      label: 'BOR',
-      delta: getTrendDelta(inpatientOccupancySeries, 'bor'),
-      variant: 'percent' as const,
-    },
-    {
-      label: 'BTR',
-      delta: getTrendDelta(inpatientOccupancySeries, 'btr'),
-      variant: 'decimal' as const,
-    },
-    {
-      label: 'ALOS',
-      delta: getTrendDelta(inpatientOccupancySeries, 'alos'),
-      variant: 'decimal' as const,
-    },
+  const outpatientVolumeMetrics = [
+    { key: 'totalSeen', fieldId: 'total_patients_seen', valueType: 'sum' },
+    { key: 'newPatients', fieldId: 'new_patients_seen', valueType: 'sum' },
+    { key: 'followUp', fieldId: 'follow_up_patients', valueType: 'sum' },
   ] as const
-  const outpatientSeenDeltas = [
-    { label: 'Seen', delta: getTrendDelta(outpatientSeenSeries, 'seen') },
-    {
-      label: 'Not seen',
-      delta: getTrendDelta(outpatientSeenSeries, 'notSeenSameDay'),
-    },
+  const outpatientFollowUpWaitMetrics = [
+    { key: 'wait', fieldId: 'wait_time_followup_months', valueType: 'average' },
   ] as const
-  const outpatientWaitDeltas = [
-    {
-      label: 'Wait',
-      delta: getTrendDelta(outpatientFollowUpWaitSeries, 'wait'),
-      variant: 'decimal' as const,
-    },
+  const outpatientClinicStartMetrics = [
+    { key: 'startMinutes', fieldId: 'clinic_start_time', valueType: 'timeAverage' },
   ] as const
-  const outpatientStartDeltas = [
-    {
-      label: 'Start',
-      delta: getTrendDelta(outpatientClinicStartSeries, 'startMinutes'),
-      variant: 'time' as const,
-    },
-  ] as const
+  const outpatientSeenSeries =
+    trendScale === 'monthly'
+      ? getOutpatientMonthlyDepartmentComparisonData(
+          state,
+          monthlyTrendBuckets,
+          outpatientSeenMetrics,
+          effectiveOutpatientComparisonMonthKey,
+        )
+      : getOutpatientWeeklyTrendSeries(
+          state,
+          trendBuckets,
+          outpatientSeenMetrics,
+          outpatientTrendScope,
+        )
+  const outpatientSeenTotal = sumFieldTotalsForRange('outpatient', ['total_patients_seen'])
+  const outpatientVolumeMix =
+    trendScale === 'monthly'
+      ? getOutpatientMonthlyDepartmentComparisonData(
+          state,
+          monthlyTrendBuckets,
+          outpatientVolumeMetrics,
+          effectiveOutpatientComparisonMonthKey,
+        )
+      : getOutpatientWeeklyTrendSeries(
+          state,
+          trendBuckets,
+          outpatientVolumeMetrics,
+          outpatientTrendScope,
+        )
+  const outpatientFollowUpWaitSeries =
+    trendScale === 'monthly'
+      ? getOutpatientMonthlyDepartmentComparisonData(
+          state,
+          monthlyTrendBuckets,
+          outpatientFollowUpWaitMetrics,
+          effectiveOutpatientComparisonMonthKey,
+        )
+      : getOutpatientWeeklyTrendSeries(
+          state,
+          trendBuckets,
+          outpatientFollowUpWaitMetrics,
+          outpatientTrendScope,
+        )
+  const outpatientClinicStartSeries =
+    trendScale === 'monthly'
+      ? getOutpatientMonthlyDepartmentComparisonData(
+          state,
+          monthlyTrendBuckets,
+          outpatientClinicStartMetrics,
+          effectiveOutpatientComparisonMonthKey,
+        )
+      : getOutpatientWeeklyTrendSeries(
+          state,
+          trendBuckets,
+          outpatientClinicStartMetrics,
+          outpatientTrendScope,
+        )
+  const outpatientAvailabilitySeries =
+    trendScale === 'monthly'
+      ? getOutpatientMonthlyAvailabilityDepartmentComparisonData(
+          state,
+          monthlyTrendBuckets,
+          effectiveOutpatientComparisonMonthKey,
+        )
+      : getOutpatientWeeklyAvailabilitySeries(
+          state,
+          trendBuckets,
+          outpatientTrendScope,
+        )
+  const procedureTrendSeries = getProcedureWeeklyTrendSeries(
+    state,
+    trendBuckets,
+    procedureTrendScope,
+  )
+  const procedureComparisonSeries = getProcedureMonthlyServiceComparisonData(
+    state,
+    monthlyTrendBuckets,
+    effectiveProcedureComparisonMonthKey,
+  )
+  const procedureMainSeries =
+    trendScale === 'monthly' ? procedureComparisonSeries : procedureTrendSeries
+  const procedureHeaderTotal = getProcedureTotalThroughput(state, trendBuckets)
+  const procedureDetailMonthKey =
+    trendScale === 'monthly' ? effectiveProcedureComparisonMonthKey : undefined
+  const showDialysisDetail =
+    trendScale === 'monthly' || procedureTrendScope === 'dialysis_unit'
+  const showEndoscopyDetail =
+    trendScale === 'monthly' || procedureTrendScope === 'endoscopy_lab'
+  const dialysisMix = getProcedureDialysisSplitData(
+    state,
+    trendScale === 'monthly' ? monthlyTrendBuckets : trendBuckets,
+    procedureDetailMonthKey,
+  )
+  const dialysisTotal = dialysisMix.reduce((sum, item) => sum + item.value, 0)
+  const endoscopyMix = getProcedureEndoscopyMixData(
+    state,
+    trendScale === 'monthly' ? monthlyTrendBuckets : trendBuckets,
+    procedureDetailMonthKey,
+  )
   const hasReportingTrendSignal = reportingTrendSeries.some(
     (point) => point.delivered > 0 || point.open > 0 || point.overdue > 0,
   )
   const hasInpatientFlowSignal = inpatientFlowSeries.some(
-    (point) => point.newAdmissions > 0 || point.discharges > 0,
+    (point) =>
+      getChartPointNumber(point, 'newAdmissions') > 0 ||
+      getChartPointNumber(point, 'discharges') > 0,
   )
   const hasInpatientSafetySignal = inpatientSafetySeries.some(
-    (point) => point.deaths > 0 || point.ulcers > 0 || point.hai > 0,
+    (point) =>
+      getChartPointNumber(point, 'deaths') > 0 ||
+      getChartPointNumber(point, 'ulcers') > 0 ||
+      getChartPointNumber(point, 'hai') > 0,
   )
   const hasInpatientOccupancySignal = inpatientOccupancySeries.some(
     (point) =>
-      point.bor !== null ||
-      point.btr !== null ||
-      point.alos !== null,
+      point.bor != null ||
+      point.btr != null ||
+      point.alos != null,
   )
   const hasOutpatientSeenSignal = outpatientSeenSeries.some(
-    (point) => point.seen > 0 || point.notSeenSameDay > 0,
+    (point) =>
+      getChartPointNumber(point, 'seen') > 0 ||
+      getChartPointNumber(point, 'notSeenSameDay') > 0,
   )
   const hasFollowUpWaitSignal = outpatientFollowUpWaitSeries.some((point) => point.wait !== null)
   const hasClinicStartSignal = outpatientClinicStartSeries.some((point) => point.startMinutes !== null)
-  const hasAvailabilitySignal = outpatientAvailability.some((item) => item.value > 0)
-  const hasOutpatientMixSignal = outpatientVolumeMix.some((item) => item.totalSeen > 0)
-  const hasProcedureSignal = procedureTotals.some((item) => item.value > 0)
+  const hasAvailabilitySignal = outpatientAvailabilitySeries.some((point) => point.total > 0)
+  const hasOutpatientMixSignal = outpatientVolumeMix.some(
+    (item) => getChartPointNumber(item, 'totalSeen') > 0,
+  )
+  const hasProcedureSignal = procedureMainSeries.some((item) => item.total > 0)
   const hasEndoscopyMixSignal = endoscopyMix.some((item) => item.value > 0)
-  const hasDialysisMonthlySignal = dialysisMonthlyTotals.some((item) => item.value > 0)
   const hasDialysisMixSignal = dialysisMix.some((item) => item.value > 0)
+  const occupancyScopeDepartment =
+    inpatientOccupancyScope === ALL_INPATIENT_POOLED
+      ? null
+      : departmentMap[inpatientOccupancyScope]
+  const occupancyEmptyMessage =
+    occupancyScopeDepartment && !occupancyScopeDepartment.bedCount
+      ? `${occupancyScopeDepartment.name} needs a bed count before BOR, BTR, or ALOS can be calculated.`
+      : 'No BOR, BTR, or ALOS data in this monthly view.'
   const lightTooltipStyle = {
     borderRadius: '8px',
-    border: '1px solid rgba(212, 221, 232, 0.95)',
+    border: '1px solid rgba(190, 203, 219, 0.95)',
     backgroundColor: 'rgba(255,255,255,0.98)',
-    boxShadow: '0 20px 40px rgba(0,33,71,0.08)',
+    boxShadow: '0 22px 45px -18px rgba(0,33,71,0.28)',
+    color: '#000a1e',
+    padding: '10px 12px',
   }
+  const lightTooltipLabelStyle = {
+    color: '#002147',
+    fontSize: 12,
+    fontWeight: 700,
+    marginBottom: 6,
+  }
+  const lightTooltipItemStyle = {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: 600,
+    paddingTop: 3,
+    paddingBottom: 3,
+  }
+  const lineActiveDot = { r: 5.5, stroke: '#ffffff', strokeWidth: 2.5 }
   const sectionClass =
     'rounded-[0.35rem] bg-[#f1f4f7] px-5 py-6 md:px-6 md:py-7'
   const chartPanelClass =
-    'rounded-[0.35rem] bg-[#f8fafc] p-5 outline outline-1 outline-[#d9e0e7]/75 md:p-5'
+    'rounded-[0.5rem] bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] p-5 shadow-[0_24px_60px_-42px_rgba(0,33,71,0.45)] outline outline-1 outline-[#d4dde8]/80 transition-shadow duration-300 hover:shadow-[0_28px_70px_-44px_rgba(0,33,71,0.55)] md:p-6'
+  const chartTitleClass =
+    'text-sm font-semibold uppercase tracking-[0.22em] text-[#334155]'
+  const outpatientMonthlyScrollClass =
+    'overflow-x-auto overscroll-x-contain pb-2 [scrollbar-width:thin]'
+  const outpatientAvailabilityPalette = {
+    fullDay: grayscalePalette.ink,
+    partialDay: grayscalePalette.steel,
+    unavailable: grayscalePalette.cloud,
+  } as const
+  const outpatientAvailabilityLegend = OUTPATIENT_AVAILABILITY_STATUSES.map((status) => ({
+    label: status.label,
+    color: outpatientAvailabilityPalette[status.key],
+  }))
+  const procedureServicePalette = [
+    grayscalePalette.ink,
+    grayscalePalette.carbon,
+    grayscalePalette.mist,
+    grayscalePalette.slate,
+    grayscalePalette.steel,
+    grayscalePalette.cloud,
+    grayscalePalette.dialysis,
+  ]
+  const procedureServiceColorMap = Object.fromEntries(
+    PROCEDURE_SERVICE_DEFINITIONS.map((service, index) => [
+      service.id,
+      procedureServicePalette[index % procedureServicePalette.length],
+    ]),
+  )
+  const procedureMixColorMap = {
+    acuteHd: grayscalePalette.dialysis,
+    chronicHd: grayscalePalette.ink,
+    ugi: grayscalePalette.ink,
+    ercp: grayscalePalette.carbon,
+    colonoscopy: grayscalePalette.slate,
+    bronchoscopy: grayscalePalette.steel,
+    ligation: grayscalePalette.cloud,
+  } as const
 
   return (
     <div className="space-y-8 px-4 py-6 text-[#000a1e] md:px-6 md:py-8">
@@ -930,7 +980,12 @@ export function AdminDashboardPage() {
                   options: timeRangeOptions,
                   placeholder: 'Time range',
                   value: timeRange,
-                  onValueChange: (value) => setTimeRange(value as ReportingTimeRange),
+                  onValueChange: (value) => {
+                    setTimeRange(value as ReportingTimeRange)
+                    setInpatientComparisonMonthKey('')
+                    setOutpatientComparisonMonthKey('')
+                    setProcedureComparisonMonthKey('')
+                  },
                   triggerClassName: 'text-[0.95rem]',
                 },
                 {
@@ -938,7 +993,12 @@ export function AdminDashboardPage() {
                   options: reportingPeriodOptions,
                   placeholder: 'Ending period',
                   value: effectivePeriodId,
-                  onValueChange: setPeriodId,
+                  onValueChange: (value) => {
+                    setPeriodId(value)
+                    setInpatientComparisonMonthKey('')
+                    setOutpatientComparisonMonthKey('')
+                    setProcedureComparisonMonthKey('')
+                  },
                   triggerClassName: 'text-[0.95rem]',
                 },
                 {
@@ -961,21 +1021,11 @@ export function AdminDashboardPage() {
             />
 
             <div className="rounded-[0.35rem] bg-[#f8fafc] p-4 outline outline-1 outline-[#d9e0e7]/75">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-1">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#74777f]">
-                    Trend view
-                  </p>
-                  <p className="text-sm text-[#44474e]">
-                    {trendScale === 'monthly'
-                      ? 'Calendar-month rollup for the selected reporting window.'
-                      : 'Reporting-week points for the selected reporting window.'}
-                  </p>
-                </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                 <div
                   className="inline-flex rounded-[0.25rem] bg-[#edf1f5] p-1 outline outline-1 outline-[#d4dde8]/75"
                   role="group"
-                  aria-label="Trend view"
+                  aria-label="Trend grouping"
                 >
                   {trendScaleOptions.map((option) => (
                     <button
@@ -985,8 +1035,17 @@ export function AdminDashboardPage() {
                       onClick={() => {
                         setTrendScale(option.value)
 
+                        if (option.value === 'monthly') {
+                          setInpatientComparisonMonthKey('')
+                          setOutpatientComparisonMonthKey('')
+                          setProcedureComparisonMonthKey('')
+                        }
+
                         if (timeRange === 'current') {
                           setTimeRange('last8')
+                          setInpatientComparisonMonthKey('')
+                          setOutpatientComparisonMonthKey('')
+                          setProcedureComparisonMonthKey('')
                         }
                       }}
                       className={cn(
@@ -1043,6 +1102,7 @@ export function AdminDashboardPage() {
                         innerRadius={74}
                         outerRadius={108}
                         paddingAngle={2}
+                        cornerRadius={4}
                         stroke="rgba(255,255,255,0.96)"
                         strokeWidth={5}
                         isAnimationActive
@@ -1061,17 +1121,17 @@ export function AdminDashboardPage() {
                   </ResponsiveContainer>
 
                   <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#74777f]">
-                      {statusCenterLabel}
-                    </p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#64748b]">
+                  {statusCenterLabel}
+                </p>
                     <AnimatedMetric
                       value={statusFocusValue}
                       variant="compact"
                       className="mt-2 block font-display text-[2.6rem] leading-none text-[#000a1e]"
                     />
-                    <p className="mt-2 text-xs uppercase tracking-[0.22em] text-[#74777f]">
-                      {statusFocusRate}% of scope
-                    </p>
+                <p className="mt-2 text-xs uppercase tracking-[0.22em] text-[#64748b]">
+                  {statusFocusRate}% of scope
+                </p>
                   </div>
                 </>
               ) : (
@@ -1111,7 +1171,7 @@ export function AdminDashboardPage() {
             })}
           </div>
 
-          <div className={cn('space-y-4', chartPanelClass)}>
+          <div className={cn('space-y-5', chartPanelClass)}>
             <div className="flex items-end justify-between gap-4">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#74777f]">
@@ -1127,9 +1187,12 @@ export function AdminDashboardPage() {
                 className="font-display text-[2rem] leading-none text-[#000a1e]"
               />
             </div>
-            <TrendDeltaChips
-              items={reportingTrendDeltas}
-              comparisonLabel={trendComparisonLabel}
+            <ChartLegend
+              items={[
+                { label: 'Delivered', color: grayscalePalette.ink },
+                { label: 'Open', color: grayscalePalette.steel },
+                { label: 'Overdue', color: grayscalePalette.mist, dash: trendScale !== 'monthly' },
+              ]}
             />
             <div className="h-[300px]">
               {hasReportingTrendSignal ? (
@@ -1139,7 +1202,7 @@ export function AdminDashboardPage() {
                       data={reportingTrendSeries}
                       margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
                     >
-                      <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                      <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                       <XAxis
                         dataKey="label"
                         tick={chartTick}
@@ -1148,10 +1211,10 @@ export function AdminDashboardPage() {
                         tickMargin={12}
                       />
                       <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                      <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
-                      <Bar dataKey="delivered" name="Delivered" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
-                      <Bar dataKey="open" name="Open" fill={grayscalePalette.steel} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
-                      <Bar dataKey="overdue" name="Overdue" fill={grayscalePalette.mist} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                      <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipFillCursor} />
+                      <Bar dataKey="delivered" name="Delivered" fill={grayscalePalette.ink} radius={[7, 7, 0, 0]} maxBarSize={34} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
+                      <Bar dataKey="open" name="Open" fill={grayscalePalette.steel} radius={[7, 7, 0, 0]} maxBarSize={34} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                      <Bar dataKey="overdue" name="Overdue" fill={grayscalePalette.mist} radius={[7, 7, 0, 0]} maxBarSize={34} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                     </BarChart>
                   ) : (
                     <AreaChart
@@ -1164,7 +1227,7 @@ export function AdminDashboardPage() {
                           <stop offset="100%" stopColor="#005db6" stopOpacity={0.02} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                      <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                       <XAxis
                         dataKey="label"
                         tick={chartTick}
@@ -1173,7 +1236,7 @@ export function AdminDashboardPage() {
                         tickMargin={12}
                       />
                       <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                      <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
+                      <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
                       <Area
                         type="monotone"
                         dataKey="delivered"
@@ -1181,6 +1244,9 @@ export function AdminDashboardPage() {
                         stroke={grayscalePalette.ink}
                         fill="url(#reportingDeliveredFill)"
                         strokeWidth={3}
+                        activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                         isAnimationActive
                         animationDuration={1100}
                         animationEasing="ease-out"
@@ -1192,6 +1258,9 @@ export function AdminDashboardPage() {
                         stroke={grayscalePalette.steel}
                         strokeWidth={2.5}
                         dot={false}
+                        activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                         isAnimationActive
                         animationDuration={1300}
                         animationEasing="ease-out"
@@ -1204,6 +1273,9 @@ export function AdminDashboardPage() {
                         strokeWidth={2.4}
                         strokeDasharray="5 6"
                         dot={false}
+                        activeDot={{ ...lineActiveDot, fill: grayscalePalette.mist }}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                         isAnimationActive
                         animationDuration={1500}
                         animationEasing="ease-out"
@@ -1244,140 +1316,281 @@ export function AdminDashboardPage() {
               />
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-3">
-              <div className={cn('space-y-4', chartPanelClass)}>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+            {showInpatientOccupancyAnalytics ? (
+              <ReportingScopePanel
+                className="max-w-[360px]"
+                fields={[
+                  {
+                    label: 'Month',
+                    options: inpatientComparisonMonthOptions,
+                    placeholder: 'Month',
+                    value: effectiveInpatientComparisonMonthKey,
+                    onValueChange: setInpatientComparisonMonthKey,
+                  },
+                ]}
+              />
+            ) : (
+              <ReportingScopePanel
+                className="max-w-[760px]"
+                fields={[
+                  {
+                    label: 'Ward trend',
+                    options: inpatientTrendScopeOptions,
+                    placeholder: 'Ward trend',
+                    value: inpatientTrendScope,
+                    onValueChange: setInpatientTrendScope,
+                  },
+                ]}
+              />
+            )}
+
+            <div
+              className={cn(
+                'grid gap-6',
+                showInpatientOccupancyAnalytics ? 'grid-cols-1' : 'xl:grid-cols-2',
+              )}
+            >
+              <div className={cn('space-y-5', chartPanelClass)}>
+                <h3 className={chartTitleClass}>
                   Newly admitted vs discharges
                 </h3>
-                <TrendDeltaChips
-                  items={inpatientFlowDeltas}
-                  comparisonLabel={trendComparisonLabel}
+                <ChartLegend
+                  items={[
+                    { label: 'Newly admitted', color: grayscalePalette.ink },
+                    { label: 'Discharges', color: grayscalePalette.steel },
+                  ]}
                 />
-                <div className="h-[320px]">
-                  {hasInpatientFlowSignal ? (
-                    <ResponsiveContainer width="100%" height="100%">
+                <div className={trendScale === 'monthly' ? 'overflow-x-auto pb-2' : ''}>
+                  <div
+                    className={trendScale === 'monthly' ? 'h-[430px]' : 'h-[320px]'}
+                    style={
+                      trendScale === 'monthly'
+                        ? {
+                            minWidth: getMonthlyComparisonChartMinWidth(
+                              inpatientFlowSeries.length,
+                              2,
+                            ),
+                          }
+                        : undefined
+                    }
+                  >
+                    {hasInpatientFlowSignal ? (
+                      <ResponsiveContainer width="100%" height="100%">
                       {trendScale === 'monthly' ? (
                         <BarChart
                           data={inpatientFlowSeries}
-                          margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                          margin={{ top: 22, right: 24, left: 0, bottom: 18 }}
+                          barGap={5}
+                          barCategoryGap="30%"
                         >
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
-                          <Bar dataKey="newAdmissions" name="Newly admitted" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
-                          <Bar dataKey="discharges" name="Discharges" fill={grayscalePalette.steel} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                          <XAxis
+                            dataKey="label"
+                            tick={chartTick}
+                            axisLine={false}
+                            tickLine={false}
+                            tickMargin={16}
+                            interval={0}
+                            angle={-34}
+                            textAnchor="end"
+                            height={104}
+                            tickFormatter={formatMonthlyComparisonTick}
+                          />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} />
+                          <Tooltip
+                            contentStyle={lightTooltipStyle}
+                            labelStyle={lightTooltipLabelStyle}
+                            itemStyle={lightTooltipItemStyle}
+                            cursor={tooltipFillCursor}
+                            labelFormatter={formatMonthlyComparisonTooltipLabel}
+                          />
+                          <Bar dataKey="newAdmissions" name="Newly admitted" fill={grayscalePalette.ink} radius={[7, 7, 0, 0]} maxBarSize={36} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Bar dataKey="discharges" name="Discharges" fill={grayscalePalette.steel} radius={[7, 7, 0, 0]} maxBarSize={36} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                         </BarChart>
                       ) : (
                         <LineChart
                           data={inpatientFlowSeries}
                           margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
                         >
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                          <XAxis
+                            dataKey="label"
+                            tick={chartTick}
+                            axisLine={false}
+                            tickLine={false}
+                            tickMargin={12}
+                            interval={0}
+                            angle={-24}
+                            textAnchor="end"
+                            height={72}
+                          />
                           <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                          <Line type="monotone" dataKey="newAdmissions" name="Newly admitted" stroke={grayscalePalette.ink} strokeWidth={3.4} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
-                          <Line type="monotone" dataKey="discharges" name="Discharges" stroke={grayscalePalette.steel} strokeWidth={2.8} dot={false} activeDot={{ r: 5, fill: grayscalePalette.steel, strokeWidth: 0 }} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
+                          <Line type="monotone" dataKey="newAdmissions" name="Newly admitted" stroke={grayscalePalette.ink} strokeWidth={3.4} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="discharges" name="Discharges" stroke={grayscalePalette.steel} strokeWidth={2.8} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                         </LineChart>
                       )}
-                    </ResponsiveContainer>
-                  ) : (
-                    <ChartEmptyState message="No inpatient admissions or discharges in this view." />
-                  )}
+                      </ResponsiveContainer>
+                    ) : (
+                      <ChartEmptyState message="No inpatient admissions or discharges in this view." />
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div className={cn('space-y-4', chartPanelClass)}>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+              <div className={cn('space-y-5', chartPanelClass)}>
+                <h3 className={chartTitleClass}>
                   Deaths, pressure ulcers, HAI
                 </h3>
-                <TrendDeltaChips
-                  items={inpatientSafetyDeltas}
-                  comparisonLabel={trendComparisonLabel}
+                <ChartLegend
+                  items={[
+                    { label: 'Deaths', color: grayscalePalette.slate },
+                    { label: 'Pressure ulcers', color: grayscalePalette.ink },
+                    { label: 'HAI', color: grayscalePalette.carbon },
+                  ]}
                 />
-                <div className="h-[320px]">
-                  {hasInpatientSafetySignal ? (
-                    <ResponsiveContainer width="100%" height="100%">
+                <div className={trendScale === 'monthly' ? 'overflow-x-auto pb-2' : ''}>
+                  <div
+                    className={trendScale === 'monthly' ? 'h-[430px]' : 'h-[320px]'}
+                    style={
+                      trendScale === 'monthly'
+                        ? {
+                            minWidth: getMonthlyComparisonChartMinWidth(
+                              inpatientSafetySeries.length,
+                              3,
+                            ),
+                          }
+                        : undefined
+                    }
+                  >
+                    {hasInpatientSafetySignal ? (
+                      <ResponsiveContainer width="100%" height="100%">
                       {trendScale === 'monthly' ? (
                         <BarChart
                           data={inpatientSafetySeries}
-                          margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
+                          margin={{ top: 22, right: 24, left: 0, bottom: 18 }}
+                          barGap={5}
+                          barCategoryGap="28%"
                         >
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
-                          <Bar dataKey="deaths" name="Deaths" fill={grayscalePalette.slate} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
-                          <Bar dataKey="ulcers" name="New pressure ulcers" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
-                          <Bar dataKey="hai" name="Total HAI" fill={grayscalePalette.carbon} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                          <XAxis
+                            dataKey="label"
+                            tick={chartTick}
+                            axisLine={false}
+                            tickLine={false}
+                            tickMargin={16}
+                            interval={0}
+                            angle={-34}
+                            textAnchor="end"
+                            height={104}
+                            tickFormatter={formatMonthlyComparisonTick}
+                          />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} />
+                          <Tooltip
+                            contentStyle={lightTooltipStyle}
+                            labelStyle={lightTooltipLabelStyle}
+                            itemStyle={lightTooltipItemStyle}
+                            cursor={tooltipFillCursor}
+                            labelFormatter={formatMonthlyComparisonTooltipLabel}
+                          />
+                          <Bar dataKey="deaths" name="Deaths" fill={grayscalePalette.slate} radius={[7, 7, 0, 0]} maxBarSize={32} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
+                          <Bar dataKey="ulcers" name="New pressure ulcers" fill={grayscalePalette.ink} radius={[7, 7, 0, 0]} maxBarSize={32} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                          <Bar dataKey="hai" name="Total HAI" fill={grayscalePalette.carbon} radius={[7, 7, 0, 0]} maxBarSize={32} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                         </BarChart>
                       ) : (
                         <LineChart
                           data={inpatientSafetySeries}
                           margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
                         >
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                           <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                           <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                          <Line type="monotone" dataKey="deaths" name="Deaths" stroke={grayscalePalette.slate} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.slate, strokeWidth: 0 }} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
-                          <Line type="monotone" dataKey="ulcers" name="New pressure ulcers" stroke={grayscalePalette.ink} strokeWidth={2.7} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
-                          <Line type="monotone" dataKey="hai" name="Total HAI" stroke={grayscalePalette.carbon} strokeWidth={2.7} dot={false} activeDot={{ r: 5, fill: grayscalePalette.carbon, strokeWidth: 0 }} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
+                          <Line type="monotone" dataKey="deaths" name="Deaths" stroke={grayscalePalette.slate} strokeWidth={3} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.slate }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1000} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="ulcers" name="New pressure ulcers" stroke={grayscalePalette.ink} strokeWidth={2.7} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="hai" name="Total HAI" stroke={grayscalePalette.carbon} strokeWidth={2.7} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.carbon }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                         </LineChart>
                       )}
-                    </ResponsiveContainer>
-                  ) : (
-                    <ChartEmptyState message="No inpatient safety events in this view." />
-                  )}
-                </div>
-              </div>
-
-              <div className={cn('space-y-4', chartPanelClass)}>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  BOR / BTR / ALOS
-                </h3>
-                <TrendDeltaChips
-                  items={inpatientOccupancyDeltas}
-                  comparisonLabel={trendComparisonLabel}
-                />
-                <div className="h-[320px]">
-                  {hasInpatientOccupancySignal ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      {trendScale === 'monthly' ? (
-                        <BarChart
-                          data={inpatientOccupancySeries}
-                          margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
-                        >
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={38} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
-                          <Bar dataKey="bor" name="BOR %" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
-                          <Bar dataKey="btr" name="BTR" fill={grayscalePalette.slate} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1300} animationEasing="ease-out" />
-                          <Bar dataKey="alos" name="ALOS" fill={grayscalePalette.cloud} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1500} animationEasing="ease-out" />
-                        </BarChart>
-                      ) : (
-                        <LineChart
-                          data={inpatientOccupancySeries}
-                          margin={{ top: 12, right: 8, left: -12, bottom: 4 }}
-                        >
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={38} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                          <Line type="monotone" dataKey="bor" name="BOR %" stroke={grayscalePalette.ink} strokeWidth={3.2} dot={false} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
-                          <Line type="monotone" dataKey="btr" name="BTR" stroke={grayscalePalette.slate} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1300} animationEasing="ease-out" />
-                          <Line type="monotone" dataKey="alos" name="ALOS" stroke={grayscalePalette.cloud} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1500} animationEasing="ease-out" />
-                        </LineChart>
-                      )}
-                    </ResponsiveContainer>
-                  ) : (
-                    <ChartEmptyState message="No BOR, BTR, or ALOS data in this view." />
-                  )}
+                      </ResponsiveContainer>
+                    ) : (
+                      <ChartEmptyState message="No inpatient safety events in this view." />
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
+
+            {showInpatientOccupancyAnalytics ? (
+                <div className={cn('space-y-5', chartPanelClass)}>
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <h3 className={chartTitleClass}>
+                      BOR / BTR / ALOS
+                    </h3>
+                    <div className="w-full min-w-0 sm:max-w-[280px]">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#74777f]">
+                        BOR/BTR/ALOS scope
+                      </p>
+                      <Select
+                        value={inpatientOccupancyScope}
+                        onValueChange={setInpatientOccupancyScope}
+                      >
+                        <SelectTrigger className="mt-2 h-10 min-w-0 rounded-[0.25rem] border-[#d9e0e7] bg-[#ffffff] px-3.5 text-left text-[#000a1e] shadow-none focus:ring-0 hover:border-[#c9d4e2]">
+                          <SelectValue
+                            placeholder="BOR/BTR/ALOS scope"
+                            className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+                          />
+                        </SelectTrigger>
+                        <SelectContent side="bottom" align="end" sideOffset={10}>
+                          {inpatientOccupancyScopeOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <ChartLegend
+                    items={[
+                      { label: 'BOR %', color: grayscalePalette.ink },
+                      { label: 'BTR', color: grayscalePalette.slate },
+                      { label: 'ALOS', color: grayscalePalette.cloud },
+                    ]}
+                  />
+                  <div className="h-[360px]">
+                    {hasInpatientOccupancySignal ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart
+                          data={inpatientOccupancySeries}
+                          margin={{ top: 18, right: 24, left: 0, bottom: 12 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                          <XAxis
+                            dataKey="label"
+                            tick={chartTick}
+                            axisLine={false}
+                            tickLine={false}
+                            tickMargin={12}
+                          />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} />
+                          <Tooltip
+                            contentStyle={lightTooltipStyle}
+                            labelStyle={lightTooltipLabelStyle}
+                            itemStyle={lightTooltipItemStyle}
+                            cursor={tooltipLineCursor}
+                            labelFormatter={formatChartTooltipLabel}
+                          />
+                          <Line type="monotone" dataKey="bor" name="BOR %" stroke={grayscalePalette.ink} strokeWidth={3.2} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="btr" name="BTR" stroke={grayscalePalette.slate} strokeWidth={2.6} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.slate }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1300} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="alos" name="ALOS" stroke={grayscalePalette.cloud} strokeWidth={2.6} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.cloud }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1500} animationEasing="ease-out" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <ChartEmptyState message={occupancyEmptyMessage} />
+                    )}
+                  </div>
+                </div>
+            ) : null}
           </div>
         </motion.section>
       ) : null}
@@ -1407,26 +1620,97 @@ export function AdminDashboardPage() {
               />
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-2">
-              <div className={cn('space-y-4', chartPanelClass)}>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+            <div className="space-y-6">
+              {trendScale === 'monthly' ? (
+                <ReportingScopePanel
+                  className="max-w-[360px]"
+                  fields={[
+                    {
+                      label: 'Month',
+                      options: outpatientComparisonMonthOptions,
+                      placeholder: 'Month',
+                      value: effectiveOutpatientComparisonMonthKey,
+                      onValueChange: setOutpatientComparisonMonthKey,
+                    },
+                  ]}
+                />
+              ) : (
+                <ReportingScopePanel
+                  className="max-w-[420px]"
+                  fields={[
+                    {
+                      label: 'Outpatient trend',
+                      options: outpatientTrendScopeOptions,
+                      placeholder: 'Outpatient trend',
+                      value: outpatientTrendScope,
+                      onValueChange: setOutpatientTrendScope,
+                    },
+                  ]}
+                />
+              )}
+
+              <div
+                className={cn(
+                  'grid gap-6',
+                  trendScale === 'monthly' ? 'grid-cols-1' : 'xl:grid-cols-2',
+                )}
+              >
+              <div className={cn('space-y-5', chartPanelClass)}>
+                <h3 className={chartTitleClass}>
                   Seen vs not seen same day
                 </h3>
-                <TrendDeltaChips
-                  items={outpatientSeenDeltas}
-                  comparisonLabel={trendComparisonLabel}
+                <ChartLegend
+                  items={[
+                    { label: 'Seen', color: grayscalePalette.ink },
+                    { label: 'Not seen same day', color: grayscalePalette.steel },
+                  ]}
                 />
-                <div className="h-[300px]">
-                  {hasOutpatientSeenSignal ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      {trendScale === 'monthly' ? (
-                        <BarChart data={outpatientSeenSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
-                          <Bar dataKey="seen" name="Seen" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
-                          <Bar dataKey="notSeenSameDay" name="Not seen same day" fill={grayscalePalette.steel} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                <div className={trendScale === 'monthly' ? outpatientMonthlyScrollClass : ''}>
+                  <div
+                    className={trendScale === 'monthly' ? 'h-[460px]' : 'h-[300px]'}
+                    style={
+                      trendScale === 'monthly'
+                        ? {
+                            minWidth: getOutpatientMonthlyComparisonChartMinWidth(
+                              outpatientSeenSeries.length,
+                              2,
+                            ),
+                          }
+                        : undefined
+                    }
+                  >
+                    {hasOutpatientSeenSignal ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        {trendScale === 'monthly' ? (
+                          <BarChart
+                            data={outpatientSeenSeries}
+                            margin={{ top: 24, right: 28, left: 0, bottom: 26 }}
+                            barGap={5}
+                            barCategoryGap="30%"
+                          >
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                          <XAxis
+                            dataKey="label"
+                            tick={chartTick}
+                            axisLine={false}
+                            tickLine={false}
+                            tickMargin={16}
+                            interval={0}
+                            angle={-28}
+                            textAnchor="end"
+                            height={116}
+                            tickFormatter={formatOutpatientMonthlyComparisonTick}
+                          />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} />
+                          <Tooltip
+                            contentStyle={lightTooltipStyle}
+                            labelStyle={lightTooltipLabelStyle}
+                            itemStyle={lightTooltipItemStyle}
+                            cursor={tooltipFillCursor}
+                            labelFormatter={formatMonthlyComparisonTooltipLabel}
+                          />
+                          <Bar dataKey="seen" name="Seen" fill={grayscalePalette.ink} radius={[7, 7, 0, 0]} maxBarSize={36} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Bar dataKey="notSeenSameDay" name="Not seen same day" fill={grayscalePalette.steel} radius={[7, 7, 0, 0]} maxBarSize={36} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                         </BarChart>
                       ) : (
                         <AreaChart data={outpatientSeenSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
@@ -1436,132 +1720,331 @@ export function AdminDashboardPage() {
                               <stop offset="100%" stopColor="#005db6" stopOpacity={0.02} />
                             </linearGradient>
                           </defs>
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                           <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                           <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                          <Area type="monotone" dataKey="seen" name="Seen" stroke={grayscalePalette.ink} fill="url(#outpatientSeenFill)" strokeWidth={3} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
-                          <Line type="monotone" dataKey="notSeenSameDay" name="Not seen same day" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={false} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
+                          <Area type="monotone" dataKey="seen" name="Seen" stroke={grayscalePalette.ink} fill="url(#outpatientSeenFill)" strokeWidth={3} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1100} animationEasing="ease-out" />
+                          <Line type="monotone" dataKey="notSeenSameDay" name="Not seen same day" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1400} animationEasing="ease-out" />
                         </AreaChart>
                       )}
-                    </ResponsiveContainer>
-                  ) : (
-                    <ChartEmptyState message="No outpatient same-day data in this view." />
-                  )}
+                      </ResponsiveContainer>
+                    ) : (
+                      <ChartEmptyState message="No outpatient same-day data in this view." />
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div className={cn('space-y-4', chartPanelClass)}>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
+              <div className={cn('space-y-5', chartPanelClass)}>
+                <h3 className={chartTitleClass}>
                   Total seen, new vs follow-up
                 </h3>
-                <div className="h-[300px]">
-                  {hasOutpatientMixSignal ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart layout="vertical" data={outpatientVolumeMix} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} horizontal={false} />
-                        <XAxis type="number" tick={chartTick} axisLine={false} tickLine={false} />
-                        <YAxis dataKey="name" type="category" width={110} tick={{ fill: '#475569', fontSize: 12 }} axisLine={false} tickLine={false} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
-                        <Bar dataKey="newPatients" name="New" stackId="outpatientMix" fill={grayscalePalette.ink} radius={[0, 0, 0, 0]} isAnimationActive animationDuration={1100} animationEasing="ease-out" />
-                        <Bar dataKey="followUp" name="Follow-up" stackId="outpatientMix" fill={grayscalePalette.cloud} radius={[0, 10, 10, 0]} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <ChartEmptyState message="No outpatient clinic volume in this view." />
-                  )}
+                <ChartLegend
+                  items={[
+                    { label: 'Total seen', color: grayscalePalette.carbon },
+                    { label: 'New', color: grayscalePalette.ink },
+                    { label: 'Follow-up', color: grayscalePalette.cloud },
+                  ]}
+                />
+                <div className={trendScale === 'monthly' ? outpatientMonthlyScrollClass : ''}>
+                  <div
+                    className={trendScale === 'monthly' ? 'h-[460px]' : 'h-[300px]'}
+                    style={
+                      trendScale === 'monthly'
+                        ? {
+                            minWidth: getOutpatientMonthlyComparisonChartMinWidth(
+                              outpatientVolumeMix.length,
+                              3,
+                            ),
+                          }
+                        : undefined
+                    }
+                  >
+                    {hasOutpatientMixSignal ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        {trendScale === 'monthly' ? (
+                          <BarChart
+                            data={outpatientVolumeMix}
+                            margin={{ top: 24, right: 28, left: 0, bottom: 26 }}
+                            barGap={5}
+                            barCategoryGap="28%"
+                          >
+                            <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                            <XAxis
+                              dataKey="label"
+                              tick={chartTick}
+                              axisLine={false}
+                              tickLine={false}
+                              tickMargin={16}
+                              interval={0}
+                              angle={-28}
+                              textAnchor="end"
+                              height={116}
+                              tickFormatter={formatOutpatientMonthlyComparisonTick}
+                            />
+                            <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} />
+                            <Tooltip
+                              contentStyle={lightTooltipStyle}
+                              labelStyle={lightTooltipLabelStyle}
+                              itemStyle={lightTooltipItemStyle}
+                              cursor={tooltipFillCursor}
+                              labelFormatter={formatMonthlyComparisonTooltipLabel}
+                            />
+                            <Bar dataKey="totalSeen" name="Total seen" fill={grayscalePalette.carbon} radius={[7, 7, 0, 0]} maxBarSize={32} isAnimationActive animationDuration={1000} animationEasing="ease-out" />
+                            <Bar dataKey="newPatients" name="New" fill={grayscalePalette.ink} radius={[7, 7, 0, 0]} maxBarSize={32} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                            <Bar dataKey="followUp" name="Follow-up" fill={grayscalePalette.cloud} radius={[7, 7, 0, 0]} maxBarSize={32} isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                          </BarChart>
+                        ) : (
+                          <AreaChart data={outpatientVolumeMix} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
+                            <defs>
+                              <linearGradient id="outpatientVolumeFill" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#315f8c" stopOpacity={0.16} />
+                                <stop offset="100%" stopColor="#315f8c" stopOpacity={0.02} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                            <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                            <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
+                            <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
+                            <Area type="monotone" dataKey="totalSeen" name="Total seen" stroke={grayscalePalette.carbon} fill="url(#outpatientVolumeFill)" strokeWidth={3} activeDot={{ ...lineActiveDot, fill: grayscalePalette.carbon }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1000} animationEasing="ease-out" />
+                            <Line type="monotone" dataKey="newPatients" name="New" stroke={grayscalePalette.ink} strokeWidth={2.6} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                            <Line type="monotone" dataKey="followUp" name="Follow-up" stroke={grayscalePalette.cloud} strokeWidth={2.6} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.cloud }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1400} animationEasing="ease-out" />
+                          </AreaChart>
+                        )}
+                      </ResponsiveContainer>
+                    ) : (
+                      <ChartEmptyState message="No outpatient clinic volume in this view." />
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="grid gap-6 border-t border-white/60 pt-8 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_280px]">
-              <div className={cn('space-y-4', chartPanelClass)}>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Follow-up wait time trend
+              <div
+                className={cn(
+                  'grid gap-6 border-t border-white/60 pt-8',
+                  trendScale === 'monthly' ? 'grid-cols-1' : 'xl:grid-cols-2',
+                )}
+              >
+              <div className={cn('space-y-5', chartPanelClass)}>
+                <h3 className={chartTitleClass}>
+                  {trendScale === 'monthly' ? 'Follow-up wait time by department' : 'Follow-up wait time trend'}
                 </h3>
-                <TrendDeltaChips
-                  items={outpatientWaitDeltas}
-                  comparisonLabel={trendComparisonLabel}
-                />
-                <div className="h-[260px]">
-                  {hasFollowUpWaitSignal ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      {trendScale === 'monthly' ? (
-                        <BarChart data={outpatientFollowUpWaitSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
-                          <Bar dataKey="wait" name="Follow-up wait (months)" fill={grayscalePalette.ink} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                <div className={trendScale === 'monthly' ? outpatientMonthlyScrollClass : ''}>
+                  <div
+                    className={trendScale === 'monthly' ? 'h-[430px]' : 'h-[260px]'}
+                    style={
+                      trendScale === 'monthly'
+                        ? {
+                            minWidth: getOutpatientMonthlyComparisonChartMinWidth(
+                              outpatientFollowUpWaitSeries.length,
+                              1,
+                            ),
+                          }
+                        : undefined
+                    }
+                  >
+                    {hasFollowUpWaitSignal ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        {trendScale === 'monthly' ? (
+                          <BarChart
+                            data={outpatientFollowUpWaitSeries}
+                            margin={{ top: 24, right: 28, left: 0, bottom: 26 }}
+                            barCategoryGap="34%"
+                          >
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                          <XAxis
+                            dataKey="label"
+                            tick={chartTick}
+                            axisLine={false}
+                            tickLine={false}
+                            tickMargin={16}
+                            interval={0}
+                            angle={-28}
+                            textAnchor="end"
+                            height={116}
+                            tickFormatter={formatOutpatientMonthlyComparisonTick}
+                          />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} />
+                          <Tooltip
+                            contentStyle={lightTooltipStyle}
+                            labelStyle={lightTooltipLabelStyle}
+                            itemStyle={lightTooltipItemStyle}
+                            cursor={tooltipFillCursor}
+                            labelFormatter={formatMonthlyComparisonTooltipLabel}
+                          />
+                          <Bar dataKey="wait" name="Follow-up wait (months)" fill={grayscalePalette.ink} radius={[7, 7, 0, 0]} maxBarSize={38} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
                         </BarChart>
                       ) : (
                         <LineChart data={outpatientFollowUpWaitSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                           <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                           <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} />
-                          <Line type="monotone" dataKey="wait" name="Follow-up wait (months)" stroke={grayscalePalette.ink} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.ink, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
+                          <Line type="monotone" dataKey="wait" name="Follow-up wait (months)" stroke={grayscalePalette.ink} strokeWidth={3} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1200} animationEasing="ease-out" />
                         </LineChart>
                       )}
-                    </ResponsiveContainer>
-                  ) : (
-                    <ChartEmptyState message="No follow-up wait data in this view." />
-                  )}
+                      </ResponsiveContainer>
+                    ) : (
+                      <ChartEmptyState message="No follow-up wait data in this view." />
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div className={cn('space-y-4', chartPanelClass)}>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Clinic start time trend
+              <div className={cn('space-y-5', chartPanelClass)}>
+                <h3 className={chartTitleClass}>
+                  {trendScale === 'monthly' ? 'Clinic start time by department' : 'Clinic start time trend'}
                 </h3>
-                <TrendDeltaChips
-                  items={outpatientStartDeltas}
-                  comparisonLabel={trendComparisonLabel}
-                />
-                <div className="h-[260px]">
-                  {hasClinicStartSignal ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      {trendScale === 'monthly' ? (
-                        <BarChart data={outpatientClinicStartSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                <div className={trendScale === 'monthly' ? outpatientMonthlyScrollClass : ''}>
+                  <div
+                    className={trendScale === 'monthly' ? 'h-[430px]' : 'h-[260px]'}
+                    style={
+                      trendScale === 'monthly'
+                        ? {
+                            minWidth: getOutpatientMonthlyComparisonChartMinWidth(
+                              outpatientClinicStartSeries.length,
+                              1,
+                            ),
+                          }
+                        : undefined
+                    }
+                  >
+                    {hasClinicStartSignal ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        {trendScale === 'monthly' ? (
+                          <BarChart
+                            data={outpatientClinicStartSeries}
+                            margin={{ top: 24, right: 28, left: 0, bottom: 26 }}
+                            barCategoryGap="34%"
+                          >
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                          <XAxis
+                            dataKey="label"
+                            tick={chartTick}
+                            axisLine={false}
+                            tickLine={false}
+                            tickMargin={16}
+                            interval={0}
+                            angle={-28}
+                            textAnchor="end"
+                            height={116}
+                            tickFormatter={formatOutpatientMonthlyComparisonTick}
+                          />
                           <YAxis tickFormatter={formatMinutesAsTime} tick={chartTick} axisLine={false} tickLine={false} width={44} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} formatter={(value) => [formatMinutesAsTime(Number(value)), 'Start time']} />
-                          <Bar dataKey="startMinutes" name="Clinic start" fill={grayscalePalette.steel} radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                          <Tooltip
+                            contentStyle={lightTooltipStyle}
+                            labelStyle={lightTooltipLabelStyle}
+                            itemStyle={lightTooltipItemStyle}
+                            cursor={tooltipFillCursor}
+                            formatter={(value) => [formatMinutesAsTime(Number(value)), 'Start time']}
+                            labelFormatter={formatMonthlyComparisonTooltipLabel}
+                          />
+                          <Bar dataKey="startMinutes" name="Clinic start" fill={grayscalePalette.steel} radius={[7, 7, 0, 0]} maxBarSize={38} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
                         </BarChart>
                       ) : (
                         <LineChart data={outpatientClinicStartSeries} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
-                          <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                           <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                           <YAxis tickFormatter={formatMinutesAsTime} tick={chartTick} axisLine={false} tickLine={false} width={44} />
-                          <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipLineCursor} formatter={(value) => [formatMinutesAsTime(Number(value)), 'Start time']} />
-                          <Line type="monotone" dataKey="startMinutes" name="Clinic start" stroke={grayscalePalette.steel} strokeWidth={3} dot={false} activeDot={{ r: 5, fill: grayscalePalette.steel, strokeWidth: 0 }} isAnimationActive animationDuration={1200} animationEasing="ease-out" />
+                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={(value) => [formatMinutesAsTime(Number(value)), 'Start time']} />
+                          <Line type="monotone" dataKey="startMinutes" name="Clinic start" stroke={grayscalePalette.steel} strokeWidth={3} dot={false} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive animationDuration={1200} animationEasing="ease-out" />
                         </LineChart>
                       )}
-                    </ResponsiveContainer>
-                  ) : (
-                    <ChartEmptyState message="No clinic start time data in this view." />
-                  )}
+                      </ResponsiveContainer>
+                    ) : (
+                      <ChartEmptyState message="No clinic start time data in this view." />
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div className={cn('space-y-4', chartPanelClass)}>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Senior physician availability
-                </h3>
-                <div className="h-[260px]">
+              </div>
+            </div>
+
+            <div className={cn('space-y-5', chartPanelClass)}>
+              <h3 className={chartTitleClass}>
+                {trendScale === 'monthly'
+                  ? 'Senior physician availability by department'
+                  : 'Senior physician availability trend'}
+              </h3>
+              <ChartLegend items={outpatientAvailabilityLegend} />
+              <div className={trendScale === 'monthly' ? outpatientMonthlyScrollClass : ''}>
+                <div
+                  className={trendScale === 'monthly' ? 'h-[430px]' : 'h-[300px]'}
+                  style={
+                    trendScale === 'monthly'
+                      ? {
+                          minWidth: getOutpatientMonthlyComparisonChartMinWidth(
+                            outpatientAvailabilitySeries.length,
+                            3,
+                          ),
+                        }
+                      : undefined
+                  }
+                >
                   {hasAvailabilitySignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={outpatientAvailability} margin={{ top: 8, right: 8, left: -12, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} interval={0} tickMargin={12} />
-                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={28} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
-                        <Bar dataKey="value" radius={[10, 10, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
-                          {outpatientAvailability.map((item) => (
-                            <Cell key={item.label} fill={item.fill} />
-                          ))}
-                        </Bar>
+                      <BarChart
+                        data={outpatientAvailabilitySeries}
+                        margin={
+                          trendScale === 'monthly'
+                            ? { top: 24, right: 28, left: 0, bottom: 26 }
+                            : { top: 14, right: 24, left: 0, bottom: 8 }
+                        }
+                        barGap={5}
+                        barCategoryGap={trendScale === 'monthly' ? '28%' : '24%'}
+                      >
+                        <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                        <XAxis
+                          dataKey="label"
+                          tick={chartTick}
+                          axisLine={false}
+                          tickLine={false}
+                          tickMargin={trendScale === 'monthly' ? 16 : 12}
+                          interval={0}
+                          angle={trendScale === 'monthly' ? -28 : 0}
+                          textAnchor={trendScale === 'monthly' ? 'end' : 'middle'}
+                          height={trendScale === 'monthly' ? 116 : 42}
+                          tickFormatter={
+                            trendScale === 'monthly'
+                              ? formatOutpatientMonthlyComparisonTick
+                              : undefined
+                          }
+                        />
+                        <YAxis
+                          tick={chartTick}
+                          axisLine={false}
+                          tickLine={false}
+                          width={44}
+                          allowDecimals={false}
+                        />
+                        <Tooltip
+                          contentStyle={lightTooltipStyle}
+                          labelStyle={lightTooltipLabelStyle}
+                          itemStyle={lightTooltipItemStyle}
+                          cursor={tooltipFillCursor}
+                          formatter={formatAvailabilityTooltipValue}
+                          labelFormatter={
+                            trendScale === 'monthly'
+                              ? formatMonthlyComparisonTooltipLabel
+                              : formatChartTooltipLabel
+                          }
+                        />
+                        {OUTPATIENT_AVAILABILITY_STATUSES.map((status, index) => (
+                          <Bar
+                            key={status.key}
+                            dataKey={status.key}
+                            name={status.label}
+                            fill={outpatientAvailabilityPalette[status.key]}
+                            radius={[7, 7, 0, 0]}
+                            maxBarSize={34}
+                            isAnimationActive
+                            animationDuration={1000 + index * 180}
+                            animationEasing="ease-out"
+                          />
+                        ))}
                       </BarChart>
                     </ResponsiveContainer>
                   ) : (
@@ -1593,137 +2076,221 @@ export function AdminDashboardPage() {
                 </h2>
               </div>
               <AnimatedMetric
-                value={procedureTotals.reduce((sum, item) => sum + item.value, 0)}
+                value={procedureHeaderTotal}
                 variant="compact"
                 className="font-display text-[2rem] leading-none text-slate-950"
               />
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)]">
-              <div className={cn('space-y-4', chartPanelClass)}>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Echo, ECG, EEG, dialysis, endoscopy
-                </h3>
-                <div className="h-[300px]">
+            {trendScale === 'monthly' ? (
+              <ReportingScopePanel
+                className="max-w-[360px]"
+                fields={[
+                  {
+                    label: 'Month',
+                    options: procedureComparisonMonthOptions,
+                    placeholder: 'Month',
+                    value: effectiveProcedureComparisonMonthKey,
+                    onValueChange: setProcedureComparisonMonthKey,
+                  },
+                ]}
+              />
+            ) : (
+              <ReportingScopePanel
+                className="max-w-[460px]"
+                fields={[
+                  {
+                    label: 'Procedure trend',
+                    options: procedureTrendScopeOptions,
+                    placeholder: 'Procedure trend',
+                    value: procedureTrendScope,
+                    onValueChange: setProcedureTrendScope,
+                  },
+                ]}
+              />
+            )}
+
+            <div className={cn('space-y-5', chartPanelClass)}>
+              <h3 className={chartTitleClass}>
+                {trendScale === 'monthly'
+                  ? 'Procedure throughput by service'
+                  : 'Procedure throughput trend'}
+              </h3>
+              {trendScale === 'monthly' ? (
+                <ChartLegend
+                  items={PROCEDURE_SERVICE_DEFINITIONS.map((service) => ({
+                    label: service.label,
+                    color: procedureServiceColorMap[service.id],
+                  }))}
+                />
+              ) : null}
+              <div className={trendScale === 'monthly' ? outpatientMonthlyScrollClass : ''}>
+                <div
+                  className={trendScale === 'monthly' ? 'h-[460px]' : 'h-[320px]'}
+                  style={
+                    trendScale === 'monthly'
+                      ? {
+                          minWidth: getOutpatientMonthlyComparisonChartMinWidth(
+                            procedureMainSeries.length,
+                            1,
+                          ),
+                        }
+                      : undefined
+                  }
+                >
                   {hasProcedureSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={procedureTotals} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
-                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
-                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
-                        <Bar dataKey="value" radius={[10, 10, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
-                          {procedureTotals.map((item) => (
-                            <Cell key={item.label} fill={item.fill} />
-                          ))}
-                        </Bar>
-                      </BarChart>
+                      {trendScale === 'monthly' ? (
+                        <BarChart
+                          data={procedureMainSeries}
+                          margin={{ top: 24, right: 28, left: 0, bottom: 26 }}
+                          barCategoryGap="34%"
+                        >
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                          <XAxis
+                            dataKey="label"
+                            tick={chartTick}
+                            axisLine={false}
+                            tickLine={false}
+                            tickMargin={16}
+                            interval={0}
+                            angle={-28}
+                            textAnchor="end"
+                            height={116}
+                            tickFormatter={formatProcedureServiceTick}
+                          />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} />
+                          <Tooltip
+                            contentStyle={lightTooltipStyle}
+                            labelStyle={lightTooltipLabelStyle}
+                            itemStyle={lightTooltipItemStyle}
+                            cursor={tooltipFillCursor}
+                            labelFormatter={formatProcedureServiceTooltipLabel}
+                          />
+                          <Bar dataKey="total" name="Total throughput" radius={[7, 7, 0, 0]} maxBarSize={42} isAnimationActive animationDuration={1200} animationEasing="ease-out">
+                            {procedureMainSeries.map((item) => (
+                              <Cell key={item.serviceId} fill={procedureServiceColorMap[item.serviceId]} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      ) : (
+                        <AreaChart data={procedureMainSeries} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
+                          <defs>
+                            <linearGradient id="procedureThroughputFill" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#005db6" stopOpacity={0.18} />
+                              <stop offset="100%" stopColor="#005db6" stopOpacity={0.02} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                          <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                          <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} />
+                          <Tooltip
+                            contentStyle={lightTooltipStyle}
+                            labelStyle={lightTooltipLabelStyle}
+                            itemStyle={lightTooltipItemStyle}
+                            cursor={tooltipLineCursor}
+                            labelFormatter={formatChartTooltipLabel}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="total"
+                            name="Total throughput"
+                            stroke={grayscalePalette.ink}
+                            fill="url(#procedureThroughputFill)"
+                            strokeWidth={3}
+                            activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            isAnimationActive
+                            animationDuration={1100}
+                            animationEasing="ease-out"
+                          />
+                        </AreaChart>
+                      )}
                     </ResponsiveContainer>
                   ) : (
-                    <ChartEmptyState message="No procedure totals in this view." />
+                    <ChartEmptyState message="No procedure throughput in this view." />
                   )}
                 </div>
               </div>
+            </div>
 
-              <div className={cn('space-y-4', chartPanelClass)}>
+            {showDialysisDetail || showEndoscopyDetail ? (
+              <div className="grid gap-6 border-t border-white/60 pt-8 xl:grid-cols-2">
+                {showDialysisDetail ? (
+              <div className={cn('space-y-5', chartPanelClass)}>
                 <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
-                      Monthly dialysis
-                    </h3>
-                    <p className="mt-2 text-sm text-[#6c7078]">
-                      Separate Dialysis procedure reports grouped by month.
-                    </p>
-                  </div>
+                  <h3 className={chartTitleClass}>
+                    Dialysis acute/chronic split
+                  </h3>
                   <AnimatedMetric
                     value={dialysisTotal}
                     variant="compact"
                     className="font-display text-[2rem] leading-none text-slate-950"
                   />
                 </div>
+                <ChartLegend
+                  items={dialysisMix.map((item) => ({
+                    label: item.label,
+                    color: procedureMixColorMap[item.key as keyof typeof procedureMixColorMap],
+                  }))}
+                />
                 <div className="h-[300px]">
-                  {hasDialysisMonthlySignal ? (
-                    <div className="grid h-full gap-4 md:grid-cols-[minmax(0,1fr)_180px] md:items-center">
-                      <div className="relative h-full min-h-[220px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={dialysisMonthlyTotals}
-                              dataKey="value"
-                              innerRadius={58}
-                              outerRadius={96}
-                              paddingAngle={2}
-                              stroke="rgba(255,255,255,0.96)"
-                              strokeWidth={4}
-                              isAnimationActive
-                              animationDuration={1200}
-                              animationEasing="ease-out"
-                            >
-                              {dialysisMonthlyTotals.map((item) => (
-                                <Cell key={item.label} fill={item.fill} />
-                              ))}
-                            </Pie>
-                            <Tooltip
-                              contentStyle={lightTooltipStyle}
-                              formatter={(value) => [formatCompactNumber(Number(value)), 'Dialysis']}
-                            />
-                          </PieChart>
-                        </ResponsiveContainer>
-                        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#74777f]">
-                            Total
-                          </p>
-                          <AnimatedMetric
-                            value={dialysisTotal}
-                            variant="compact"
-                            className="mt-1 block font-display text-[2.2rem] leading-none text-[#000a1e]"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-3">
-                        {dialysisMonthlyTotals
-                          .filter((item) => item.value > 0)
-                          .map((item) => (
-                            <div key={item.label} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
-                              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.fill }} />
-                              <span className="truncate text-sm font-medium text-[#44474e]">{item.label}</span>
-                              <span className="text-sm font-semibold text-[#000a1e]">{formatCompactNumber(item.value)}</span>
-                            </div>
+                  {hasDialysisMixSignal ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={dialysisMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
+                        <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
+                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} allowDecimals={false} />
+                        <Tooltip
+                          contentStyle={lightTooltipStyle}
+                          labelStyle={lightTooltipLabelStyle}
+                          itemStyle={lightTooltipItemStyle}
+                          cursor={tooltipFillCursor}
+                          labelFormatter={formatProcedureMixTooltipLabel}
+                        />
+                        <Bar dataKey="value" name="Dialysis" radius={[7, 7, 0, 0]} maxBarSize={42} isAnimationActive animationDuration={1200} animationEasing="ease-out">
+                          {dialysisMix.map((item) => (
+                            <Cell key={item.key} fill={procedureMixColorMap[item.key as keyof typeof procedureMixColorMap]} />
                           ))}
-                        {hasDialysisMixSignal ? (
-                          <div className="border-t border-[#d4dde8] pt-3">
-                            {dialysisMix.map((item) => (
-                              <div key={item.label} className="mt-2 first:mt-0 flex items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-[#74777f]">
-                                <span>{item.label}</span>
-                                <span className="font-semibold text-[#000a1e]">{formatCompactNumber(item.value)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
                   ) : (
                     <ChartEmptyState message="No dialysis data in this selected range." />
                   )}
                 </div>
               </div>
+                ) : null}
 
-              <div className={cn('space-y-4', chartPanelClass)}>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  UGI, colonoscopy, bronchoscopy, ligation
+                {showEndoscopyDetail ? (
+              <div className={cn('space-y-5', chartPanelClass)}>
+                <h3 className={chartTitleClass}>
+                  Endoscopy procedure mix
                 </h3>
+                <ChartLegend
+                  items={endoscopyMix.map((item) => ({
+                    label: item.label,
+                    color: procedureMixColorMap[item.key as keyof typeof procedureMixColorMap],
+                  }))}
+                />
                 <div className="h-[300px]">
                   {hasEndoscopyMixSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={endoscopyMix} margin={{ top: 12, right: 8, left: -12, bottom: 4 }}>
-                        <CartesianGrid strokeDasharray="4 10" stroke={chartGridStroke} vertical={false} />
+                      <BarChart data={endoscopyMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
-                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={34} />
-                        <Tooltip contentStyle={lightTooltipStyle} cursor={tooltipFillCursor} />
-                        <Bar dataKey="value" radius={[10, 10, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
+                        <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} allowDecimals={false} />
+                        <Tooltip
+                          contentStyle={lightTooltipStyle}
+                          labelStyle={lightTooltipLabelStyle}
+                          itemStyle={lightTooltipItemStyle}
+                          cursor={tooltipFillCursor}
+                          labelFormatter={formatProcedureMixTooltipLabel}
+                        />
+                        <Bar dataKey="value" name="Endoscopy" radius={[7, 7, 0, 0]} maxBarSize={42} isAnimationActive animationDuration={1200} animationEasing="ease-out">
                           {endoscopyMix.map((item) => (
-                            <Cell key={item.label} fill={item.fill} />
+                            <Cell key={item.key} fill={procedureMixColorMap[item.key as keyof typeof procedureMixColorMap]} />
                           ))}
                         </Bar>
                       </BarChart>
@@ -1733,7 +2300,9 @@ export function AdminDashboardPage() {
                   )}
                 </div>
               </div>
-            </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </motion.section>
       ) : null}

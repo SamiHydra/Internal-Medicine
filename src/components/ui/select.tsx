@@ -45,7 +45,7 @@ export function SelectContent({
       <SelectPrimitive.Content
         position={position}
         className={cn(
-          'z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[0.5rem] border border-[#d4dde8] bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fa_100%)] p-1.5 shadow-[0_20px_40px_rgba(0,33,71,0.08)]',
+          'z-[100] max-h-[min(var(--radix-select-content-available-height,20rem),20rem)] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[0.5rem] border border-[#d4dde8] bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fa_100%)] p-1.5 shadow-[0_20px_40px_rgba(0,33,71,0.08)]',
           className,
         )}
         {...props}
@@ -53,7 +53,7 @@ export function SelectContent({
         <SelectPrimitive.ScrollUpButton className="flex h-8 items-center justify-center text-slate-500">
           <ChevronUp className="h-4 w-4" />
         </SelectPrimitive.ScrollUpButton>
-        <SelectPrimitive.Viewport className="p-1">
+        <SelectPrimitive.Viewport className="min-h-0 overscroll-contain p-1">
           {children}
         </SelectPrimitive.Viewport>
         <SelectPrimitive.ScrollDownButton className="flex h-8 items-center justify-center text-slate-500">

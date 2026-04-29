@@ -11,6 +11,7 @@ import {
 import { toast } from 'sonner'
 
 import { createEmptyAppState } from '@/lib/app-state'
+import { departmentMap, templateMap } from '@/config/templates'
 import type {
   AccessRequestPayload,
   ClaimSuperadminPayload,
@@ -25,6 +26,7 @@ import {
   claimSuperadmin as claimSuperadminMutation,
   createAdminAccount as createAdminAccountMutation,
   createEmptyReferenceState,
+  ensureDepartmentReferenceData,
   fetchCurrentUserProfile,
   fetchReportDetails,
   fetchLiveAppState,
@@ -32,6 +34,7 @@ import {
   loginWithPassword,
   reviewAccessRequest as reviewAccessRequestMutation,
   restoreNotifications as restoreNotificationsMutation,
+  resolveAssignmentReference,
   saveReport as saveReportMutation,
   sessionUserId,
   setReportLockState,
@@ -158,6 +161,14 @@ function hasReportDetailData(report: AppState['reports'][number]) {
       (value) => value !== null && value !== undefined && value !== '',
     ),
   )
+}
+
+function hasAssignmentReference(
+  references: SupabaseReferenceState,
+  departmentId: string,
+  templateId: string,
+) {
+  return Boolean(resolveAssignmentReference(references, departmentId, templateId))
 }
 
 function readWorkspaceCache(userId: string) {
@@ -1419,9 +1430,56 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       try {
+        let assignmentReferences = referencesRef.current
+
+        if (!hasAssignmentReference(referencesRef.current, departmentId, templateId)) {
+          const result = await loadUserState(
+            currentUser.id,
+            'Unable to refresh department references before creating the assignment.',
+            {
+              showBootstrapping: false,
+              includeProfiles: profileDirectoryLoadedRef.current,
+              includeAccessRequests: accessRequestDataLoadedRef.current,
+              includeHistory: historyDataLoadedRef.current,
+            },
+          )
+
+          assignmentReferences = result?.references ?? referencesRef.current
+        }
+
+        if (!hasAssignmentReference(assignmentReferences, departmentId, templateId)) {
+          const department = departmentMap[departmentId]
+          const template = templateMap[templateId]
+
+          if (!department || !template) {
+            throw new Error('The selected department or template is not available in Supabase.')
+          }
+
+          const ensuredReference = await ensureDepartmentReferenceData(
+            client,
+            department,
+            template,
+          )
+          assignmentReferences = {
+            departmentDbIdBySlug: {
+              ...assignmentReferences.departmentDbIdBySlug,
+              [departmentId]: ensuredReference.departmentId,
+            },
+            templateDbIdBySlug: {
+              ...assignmentReferences.templateDbIdBySlug,
+              [templateId]: ensuredReference.templateId,
+            },
+            templateDbIdByDepartmentSlug: {
+              ...assignmentReferences.templateDbIdByDepartmentSlug,
+              [departmentId]: ensuredReference.templateId,
+            },
+          }
+          referencesRef.current = assignmentReferences
+        }
+
         await assignUserToDepartmentMutation(
           client,
-          referencesRef.current,
+          assignmentReferences,
           userId,
           departmentId,
           templateId,
