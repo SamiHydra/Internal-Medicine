@@ -1229,6 +1229,19 @@ describe('outpatient dashboard analytics', () => {
 })
 
 describe('procedure dashboard analytics', () => {
+  it('uses explicit procedure service fields that exist on the configured templates', () => {
+    PROCEDURE_SERVICE_DEFINITIONS.forEach((service) => {
+      const department = departments.find((item) => item.id === service.departmentId)
+      const template = department ? templateMap[department.templateId] : null
+      const templateFieldIds = new Set(template?.fields.map((field) => field.id) ?? [])
+
+      expect(department?.family).toBe('procedure')
+      expect(template?.family).toBe('procedure')
+      expect(service.fieldIds.length).toBeGreaterThan(0)
+      expect(service.fieldIds.every((fieldId) => templateFieldIds.has(fieldId))).toBe(true)
+    })
+  })
+
   it('builds a weekly trend for a selected procedure service only', () => {
     const periods = [
       createPeriod({
@@ -1405,6 +1418,8 @@ describe('procedure dashboard analytics', () => {
     expect(data.find((point) => point.serviceId === 'dialysis_unit')).toEqual(
       expect.objectContaining({ total: 3 }),
     )
+    expect(data.map((point) => point.label)).not.toContain('Acute HD')
+    expect(data.map((point) => point.label)).not.toContain('Chronic HD')
   })
 
   it('defaults monthly procedure comparison to the latest available month in range', () => {
@@ -1484,6 +1499,64 @@ describe('procedure dashboard analytics', () => {
       expect.objectContaining({ label: 'Acute HD', value: 2 }),
       expect.objectContaining({ label: 'Chronic HD', value: 3 }),
     ])
+  })
+
+  it('filters Dialysis and Endoscopy detail charts to the selected procedure month', () => {
+    const periods = [
+      createPeriod({
+        id: 'period_procedure_detail_mar',
+        weekStart: '2026-03-02T00:00:00.000Z',
+        weekEnd: '2026-03-08T00:00:00.000Z',
+        deadlineAt: '2026-03-09T10:00:00.000Z',
+        label: 'Mar 2 - Mar 8, 2026',
+      }),
+      createPeriod({
+        id: 'period_procedure_detail_apr',
+        weekStart: '2026-04-06T00:00:00.000Z',
+        weekEnd: '2026-04-12T00:00:00.000Z',
+        deadlineAt: '2026-04-13T10:00:00.000Z',
+        label: 'Apr 6 - Apr 12, 2026',
+      }),
+    ]
+    const buckets = [
+      createBucket('2026-03', 'Mar 2026', [periods[0]]),
+      createBucket('2026-04', 'Apr 2026', [periods[1]]),
+    ]
+    const state = createState({
+      reportingPeriods: periods,
+      reports: [
+        createDepartmentReport('dialysis_detail_mar', 'dialysis_unit', periods[0].id, {
+          dialysis_acute: 20,
+          dialysis_chronic: 30,
+        }, 'dialysis_weekly'),
+        createDepartmentReport('dialysis_detail_apr', 'dialysis_unit', periods[1].id, {
+          dialysis_acute: 2,
+          dialysis_chronic: 3,
+        }, 'dialysis_weekly'),
+        createDepartmentReport('endoscopy_detail_mar', 'endoscopy_lab', periods[0].id, {
+          upper_gi_elective: 40,
+          colonoscopy: 50,
+        }, 'endoscopy_weekly'),
+        createDepartmentReport('endoscopy_detail_apr', 'endoscopy_lab', periods[1].id, {
+          upper_gi_elective: 4,
+          colonoscopy: 5,
+        }, 'endoscopy_weekly'),
+      ],
+    })
+
+    const dialysisMix = getProcedureDialysisSplitData(state, buckets, '2026-04')
+    const endoscopyMix = getProcedureEndoscopyMixData(state, buckets, '2026-04')
+
+    expect(dialysisMix).toEqual([
+      expect.objectContaining({ label: 'Acute HD', monthLabel: 'Apr 2026', value: 2 }),
+      expect.objectContaining({ label: 'Chronic HD', monthLabel: 'Apr 2026', value: 3 }),
+    ])
+    expect(endoscopyMix.find((point) => point.label === 'UGI')).toEqual(
+      expect.objectContaining({ monthLabel: 'Apr 2026', value: 4 }),
+    )
+    expect(endoscopyMix.find((point) => point.label === 'Colonoscopy')).toEqual(
+      expect.objectContaining({ monthLabel: 'Apr 2026', value: 5 }),
+    )
   })
 
   it('keeps Endoscopy mix Endoscopy-specific and does not double count Bronchoscopy Lab', () => {

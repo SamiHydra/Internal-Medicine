@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { animate, motion } from 'framer-motion'
 import { Filter, Sparkles } from 'lucide-react'
@@ -276,6 +276,79 @@ function getTooltipPoint(payload: unknown) {
     : null
 }
 
+type DashboardTooltipProps = {
+  active?: boolean
+  label?: unknown
+  payload?: readonly unknown[]
+}
+
+function formatTooltipNumber(value: unknown) {
+  return typeof value === 'number' && !Number.isNaN(value)
+    ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value)
+    : '-'
+}
+
+function TooltipFrame({ children }: { children: ReactNode }) {
+  return (
+    <div className="min-w-[190px] rounded-[0.5rem] border border-[rgba(190,203,219,0.95)] bg-white/95 px-3 py-2.5 text-xs text-[#334155] shadow-[0_22px_45px_-18px_rgba(0,33,71,0.28)]">
+      {children}
+    </div>
+  )
+}
+
+function TooltipMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="mt-1 flex items-start justify-between gap-4">
+      <span className="text-[#64748b]">{label}</span>
+      <span className="max-w-[220px] text-right font-semibold text-[#334155]">{value}</span>
+    </div>
+  )
+}
+
+function ProcedureServiceTooltip({ active, payload }: DashboardTooltipProps) {
+  const point = getTooltipPoint(payload?.[0])
+
+  if (!active || !point) {
+    return null
+  }
+
+  const serviceName = typeof point.serviceName === 'string' ? point.serviceName : String(point.label ?? '')
+  const monthLabel = typeof point.monthLabel === 'string' ? point.monthLabel : ''
+  const metricLabel = typeof point.metricLabel === 'string' ? point.metricLabel : 'Total throughput'
+  const fieldIds = typeof point.fieldIds === 'string' ? point.fieldIds : ''
+
+  return (
+    <TooltipFrame>
+      <p className="font-bold text-[#002147]">{serviceName}</p>
+      {monthLabel ? <TooltipMeta label="Month" value={monthLabel} /> : null}
+      <TooltipMeta label="Total" value={formatTooltipNumber(point.total)} />
+      <TooltipMeta label="Metric" value={metricLabel} />
+      {fieldIds ? <TooltipMeta label="Fields" value={fieldIds} /> : null}
+    </TooltipFrame>
+  )
+}
+
+function ProcedureMixTooltip({ active, label, payload }: DashboardTooltipProps) {
+  const point = getTooltipPoint(payload?.[0])
+
+  if (!active || !point) {
+    return null
+  }
+
+  const mixLabel = typeof point.label === 'string' ? point.label : String(label ?? '')
+  const monthLabel = typeof point.monthLabel === 'string' ? point.monthLabel : ''
+  const fieldIds = typeof point.fieldIds === 'string' ? point.fieldIds : ''
+
+  return (
+    <TooltipFrame>
+      <p className="font-bold text-[#002147]">{mixLabel}</p>
+      {monthLabel ? <TooltipMeta label="Month" value={monthLabel} /> : null}
+      <TooltipMeta label="Total" value={formatTooltipNumber(point.value)} />
+      {fieldIds ? <TooltipMeta label="Fields" value={fieldIds} /> : null}
+    </TooltipFrame>
+  )
+}
+
 function formatMonthlyComparisonTooltipLabel(label: unknown, payload?: readonly unknown[]) {
   const point = getTooltipPoint(payload?.[0])
   const monthLabel = typeof point?.monthLabel === 'string' ? point.monthLabel : ''
@@ -283,22 +356,6 @@ function formatMonthlyComparisonTooltipLabel(label: unknown, payload?: readonly 
     typeof point?.departmentName === 'string' ? point.departmentName : String(label ?? '')
 
   return monthLabel ? `${monthLabel} / ${departmentName}` : departmentName
-}
-
-function formatProcedureServiceTooltipLabel(label: unknown, payload?: readonly unknown[]) {
-  const point = getTooltipPoint(payload?.[0])
-  const monthLabel = typeof point?.monthLabel === 'string' ? point.monthLabel : ''
-  const serviceName =
-    typeof point?.serviceName === 'string' ? point.serviceName : String(label ?? '')
-
-  return monthLabel ? `${monthLabel} / ${serviceName}` : serviceName
-}
-
-function formatProcedureMixTooltipLabel(label: unknown, payload?: readonly unknown[]) {
-  const point = getTooltipPoint(payload?.[0])
-  const monthLabel = typeof point?.monthLabel === 'string' ? point.monthLabel : ''
-
-  return monthLabel ? `${monthLabel} / ${String(label ?? '')}` : String(label ?? '')
 }
 
 function formatAvailabilityTooltipValue(value: unknown, name: unknown, payload?: unknown) {
@@ -391,13 +448,16 @@ export function AdminDashboardPage() {
     ]
   }, [])
   const detailReportingPeriodIds = new Set(trendPeriods.map((period) => period.id))
-  const detailReportIds = state.reports
+  const detailReportIdsKey = state.reports
     .filter((report) => detailReportingPeriodIds.has(report.reportingPeriodId))
     .map((report) => report.id)
+    .join('|')
 
   useEffect(() => {
+    const detailReportIds = detailReportIdsKey ? detailReportIdsKey.split('|') : []
+
     void ensureReportDetails(detailReportIds)
-  }, [detailReportIds, ensureReportDetails])
+  }, [detailReportIdsKey, ensureReportDetails])
 
   const rangeSummary = getReportingRangeSummary(
     state,
@@ -950,8 +1010,6 @@ export function AdminDashboardPage() {
                   <span className="text-[#f0b429]">/</span>
                   <span>{familyLabels[familyFilter]}</span>
                   <span className="text-[#f0b429]">/</span>
-                  <span>{statusLabels[statusFilter]}</span>
-                  <span className="text-[#f0b429]">/</span>
                   <span>{selectedRangeNote}</span>
                 </div>
               </div>
@@ -1007,14 +1065,6 @@ export function AdminDashboardPage() {
                   placeholder: 'Service line',
                   value: familyFilter,
                   onValueChange: (value) => setFamilyFilter(value as FamilyFilter),
-                  triggerClassName: 'text-[0.95rem]',
-                },
-                {
-                  label: 'Status',
-                  options: statusOptions,
-                  placeholder: 'Status',
-                  value: statusFilter,
-                  onValueChange: (value) => setStatusFilter(value as StatusFilter),
                   triggerClassName: 'text-[0.95rem]',
                 },
               ]}
@@ -1081,9 +1131,18 @@ export function AdminDashboardPage() {
               Submission pulse
             </h2>
           </div>
-          <p className="text-sm uppercase tracking-[0.24em] text-[#74777f]">
-            {familyLabels[familyFilter]} / {statusLabels[statusFilter]}
-          </p>
+          <ReportingScopePanel
+            className="w-full max-w-[300px]"
+            fields={[
+              {
+                label: 'Submission status',
+                options: statusOptions,
+                placeholder: 'Submission status',
+                value: statusFilter,
+                onValueChange: (value) => setStatusFilter(value as StatusFilter),
+              },
+            ]}
+          />
         </div>
 
         <div className="relative mt-8 grid gap-6 xl:grid-cols-[280px_280px_minmax(0,1fr)]">
@@ -1316,20 +1375,7 @@ export function AdminDashboardPage() {
               />
             </div>
 
-            {showInpatientOccupancyAnalytics ? (
-              <ReportingScopePanel
-                className="max-w-[360px]"
-                fields={[
-                  {
-                    label: 'Month',
-                    options: inpatientComparisonMonthOptions,
-                    placeholder: 'Month',
-                    value: effectiveInpatientComparisonMonthKey,
-                    onValueChange: setInpatientComparisonMonthKey,
-                  },
-                ]}
-              />
-            ) : (
+            {showInpatientOccupancyAnalytics ? null : (
               <ReportingScopePanel
                 className="max-w-[760px]"
                 fields={[
@@ -1343,6 +1389,22 @@ export function AdminDashboardPage() {
                 ]}
               />
             )}
+
+            <div className="space-y-5">
+              {showInpatientOccupancyAnalytics ? (
+                <ReportingScopePanel
+                  className="max-w-[360px]"
+                  fields={[
+                    {
+                      label: 'Ward comparison month',
+                      options: inpatientComparisonMonthOptions,
+                      placeholder: 'Ward comparison month',
+                      value: effectiveInpatientComparisonMonthKey,
+                      onValueChange: setInpatientComparisonMonthKey,
+                    },
+                  ]}
+                />
+              ) : null}
 
             <div
               className={cn(
@@ -1519,8 +1581,10 @@ export function AdminDashboardPage() {
                 </div>
               </div>
             </div>
+            </div>
 
             {showInpatientOccupancyAnalytics ? (
+              <div className="border-t border-white/60 pt-8">
                 <div className={cn('space-y-5', chartPanelClass)}>
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <h3 className={chartTitleClass}>
@@ -1590,6 +1654,7 @@ export function AdminDashboardPage() {
                     )}
                   </div>
                 </div>
+              </div>
             ) : null}
           </div>
         </motion.section>
@@ -2072,7 +2137,7 @@ export function AdminDashboardPage() {
                   Procedure
                 </p>
                 <h2 className="mt-2 font-display text-[2rem] text-slate-950 md:text-[2.35rem]">
-                  Lab and endoscopy totals
+                  Procedure service totals
                 </h2>
               </div>
               <AnimatedMetric
@@ -2161,11 +2226,8 @@ export function AdminDashboardPage() {
                           />
                           <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} />
                           <Tooltip
-                            contentStyle={lightTooltipStyle}
-                            labelStyle={lightTooltipLabelStyle}
-                            itemStyle={lightTooltipItemStyle}
                             cursor={tooltipFillCursor}
-                            labelFormatter={formatProcedureServiceTooltipLabel}
+                            content={<ProcedureServiceTooltip />}
                           />
                           <Bar dataKey="total" name="Total throughput" radius={[7, 7, 0, 0]} maxBarSize={42} isAnimationActive animationDuration={1200} animationEasing="ease-out">
                             {procedureMainSeries.map((item) => (
@@ -2243,11 +2305,8 @@ export function AdminDashboardPage() {
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                         <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} allowDecimals={false} />
                         <Tooltip
-                          contentStyle={lightTooltipStyle}
-                          labelStyle={lightTooltipLabelStyle}
-                          itemStyle={lightTooltipItemStyle}
                           cursor={tooltipFillCursor}
-                          labelFormatter={formatProcedureMixTooltipLabel}
+                          content={<ProcedureMixTooltip />}
                         />
                         <Bar dataKey="value" name="Dialysis" radius={[7, 7, 0, 0]} maxBarSize={42} isAnimationActive animationDuration={1200} animationEasing="ease-out">
                           {dialysisMix.map((item) => (
@@ -2282,11 +2341,8 @@ export function AdminDashboardPage() {
                         <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                         <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} allowDecimals={false} />
                         <Tooltip
-                          contentStyle={lightTooltipStyle}
-                          labelStyle={lightTooltipLabelStyle}
-                          itemStyle={lightTooltipItemStyle}
                           cursor={tooltipFillCursor}
-                          labelFormatter={formatProcedureMixTooltipLabel}
+                          content={<ProcedureMixTooltip />}
                         />
                         <Bar dataKey="value" name="Endoscopy" radius={[7, 7, 0, 0]} maxBarSize={42} isAnimationActive animationDuration={1200} animationEasing="ease-out">
                           {endoscopyMix.map((item) => (
