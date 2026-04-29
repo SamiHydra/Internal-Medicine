@@ -1,5 +1,5 @@
 import { Bell, LogOut, Menu } from 'lucide-react'
-import type { PropsWithChildren } from 'react'
+import { useEffect, useState, type PropsWithChildren } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
@@ -104,6 +104,59 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   )
 }
 
+function getViewportLayout(width: number) {
+  if (width < 640) {
+    return 'phone'
+  }
+
+  if (width < 1024) {
+    return 'tablet'
+  }
+
+  return 'desktop'
+}
+
+function ViewportDebugReadoutContent() {
+  const [viewport, setViewport] = useState(() => ({
+    width: typeof window === 'undefined' ? 0 : window.innerWidth,
+    dpr: typeof window === 'undefined' ? 1 : window.devicePixelRatio,
+  }))
+
+  useEffect(() => {
+    const updateViewport = () => {
+      setViewport({
+        width: window.innerWidth,
+        dpr: window.devicePixelRatio,
+      })
+    }
+
+    updateViewport()
+    window.addEventListener('resize', updateViewport)
+
+    return () => window.removeEventListener('resize', updateViewport)
+  }, [])
+
+  const layoutMode = getViewportLayout(viewport.width)
+  const shellMode = viewport.width < 640 ? 'mobile nav' : 'desktop nav'
+
+  return (
+    <div className="fixed bottom-3 right-3 z-[80] rounded-[0.35rem] border border-[#163153]/25 bg-[#000a1e]/90 px-3 py-2 font-mono text-[11px] leading-5 text-white shadow-[0_18px_40px_-18px_rgba(0,10,30,0.6)]">
+      <div>innerWidth: {viewport.width}</div>
+      <div>dpr: {viewport.dpr}</div>
+      <div>layout: {layoutMode}</div>
+      <div>shell: {shellMode}</div>
+    </div>
+  )
+}
+
+function ViewportDebugReadout() {
+  if (!import.meta.env.DEV) {
+    return null
+  }
+
+  return <ViewportDebugReadoutContent />
+}
+
 export function AppShell({ children }: PropsWithChildren) {
   const navigate = useNavigate()
   const { currentUser, isSyncing, logout, state } = useAppData()
@@ -118,7 +171,9 @@ export function AppShell({ children }: PropsWithChildren) {
 
   return (
     <div className="min-h-screen bg-[#f8f9fa]">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[292px] border-r border-[#163153] bg-[linear-gradient(150deg,#000a1e_0%,#07162f_52%,#002147_100%)] lg:block">
+      <ViewportDebugReadout />
+
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[292px] border-r border-[#163153] bg-[linear-gradient(150deg,#000a1e_0%,#07162f_52%,#002147_100%)] sm:block">
         <div className="flex h-full flex-col px-7 py-8">
           <BrandLockup inverted />
           <Separator className="my-6 bg-white/10" />
@@ -137,12 +192,12 @@ export function AppShell({ children }: PropsWithChildren) {
         </div>
       </aside>
 
-      <div className="min-h-screen lg:pl-[292px]">
+      <div className="min-h-screen sm:pl-[292px]">
         <div className="flex min-h-screen min-w-0 flex-col">
           <header className="sticky top-0 z-30 border-b border-[#d9e0e7] bg-[#f8f9fa]/96 backdrop-blur-sm">
             <div className="flex items-center justify-between gap-4 px-4 py-3 md:px-6 lg:px-8">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="lg:hidden">
+                <div className="sm:hidden">
                   <Sheet>
                     <SheetTrigger asChild>
                       <Button
