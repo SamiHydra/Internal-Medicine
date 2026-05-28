@@ -1,0 +1,107 @@
+<?php
+
+use App\Http\Controllers\Api\AccessRequestSubmissionController;
+use App\Http\Controllers\Api\Admin\AccessRequestController;
+use App\Http\Controllers\Api\Admin\AuditLogController;
+use App\Http\Controllers\Api\Admin\ClaimSuperadminController;
+use App\Http\Controllers\Api\Admin\ReferenceDataController;
+use App\Http\Controllers\Api\Admin\ReportAssignmentController;
+use App\Http\Controllers\Api\Admin\SettingsController;
+use App\Http\Controllers\Api\Admin\UserController;
+use App\Http\Controllers\Api\AnalyticsController;
+use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\PasswordResetController;
+use App\Http\Controllers\Api\ReportWorkflowController;
+use App\Http\Controllers\Api\WorkspaceController;
+use Illuminate\Support\Facades\Route;
+
+Route::prefix('auth')->group(function (): void {
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+    Route::post('/forgot-password', [PasswordResetController::class, 'forgot'])->middleware('throttle:5,1');
+    Route::post('/reset-password', [PasswordResetController::class, 'reset'])->middleware('throttle:5,1');
+
+    Route::middleware('auth:sanctum')->group(function (): void {
+        Route::get('/me', [AuthController::class, 'me'])->middleware('active');
+        Route::post('/logout', [AuthController::class, 'logout']);
+    });
+});
+
+Route::post('/access-requests', [AccessRequestSubmissionController::class, 'store'])->middleware('throttle:10,1');
+
+Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
+    Route::get('/workspace', [WorkspaceController::class, 'show']);
+
+    Route::get('/reports', [ReportWorkflowController::class, 'index']);
+    Route::post('/reports', [ReportWorkflowController::class, 'store']);
+    Route::get('/reports/{report}', [ReportWorkflowController::class, 'show']);
+    Route::put('/reports/{report}', [ReportWorkflowController::class, 'update']);
+    Route::post('/reports/{report}/submit', [ReportWorkflowController::class, 'submit']);
+    Route::post('/reports/{report}/lock', [ReportWorkflowController::class, 'lock']);
+    Route::post('/reports/{report}/unlock', [ReportWorkflowController::class, 'unlock']);
+
+    Route::get('/notifications', [NotificationController::class, 'index'])->middleware('permission:notifications.view');
+    Route::patch('/notifications/read', [NotificationController::class, 'markRead'])->middleware('permission:notifications.view');
+    Route::patch('/notifications/read-all', [NotificationController::class, 'markAllRead'])->middleware('permission:notifications.view');
+    Route::delete('/notifications', [NotificationController::class, 'destroy'])->middleware('permission:notifications.view');
+    Route::post('/notifications/restore', [NotificationController::class, 'restore'])->middleware('permission:notifications.view');
+
+    Route::prefix('analytics')
+        ->middleware('permission:analytics.view')
+        ->group(function (): void {
+            Route::get('/overview', [AnalyticsController::class, 'overview']);
+            Route::get('/inpatient', [AnalyticsController::class, 'inpatient']);
+            Route::get('/outpatient', [AnalyticsController::class, 'outpatient']);
+            Route::get('/procedures', [AnalyticsController::class, 'procedures']);
+            Route::get('/weekly', [AnalyticsController::class, 'weekly']);
+            Route::get('/monthly', [AnalyticsController::class, 'monthly']);
+            Route::get('/departments', [AnalyticsController::class, 'departments']);
+            Route::get('/wards', [AnalyticsController::class, 'wards']);
+            Route::get('/export', [AnalyticsController::class, 'export']);
+        });
+
+    Route::prefix('admin')->group(function (): void {
+        Route::post('/claim-superadmin', [ClaimSuperadminController::class, 'store'])->middleware('permission:users.manage');
+
+        Route::get('/users', [UserController::class, 'index'])->middleware('permission:users.view');
+        Route::post('/users', [UserController::class, 'store'])->middleware('permission:users.manage');
+        Route::get('/users/{user}', [UserController::class, 'show'])->middleware('permission:users.view');
+        Route::patch('/users/{user}', [UserController::class, 'update'])->middleware('permission:users.manage');
+        Route::patch('/users/{user}/active', [UserController::class, 'setActive'])->middleware('permission:users.manage');
+        Route::post('/users/{user}/reset-password', [UserController::class, 'resetPassword'])->middleware('permission:users.manage');
+        Route::delete('/users/{user}', [UserController::class, 'destroy'])->middleware('permission:users.manage');
+
+        Route::get('/assignments', [ReportAssignmentController::class, 'index'])->middleware('permission:assignments.manage');
+        Route::post('/assignments', [ReportAssignmentController::class, 'store'])->middleware('permission:assignments.manage');
+        Route::patch('/assignments/{assignment}', [ReportAssignmentController::class, 'update'])->middleware('permission:assignments.manage');
+        Route::delete('/assignments/{assignment}', [ReportAssignmentController::class, 'destroy'])->middleware('permission:assignments.manage');
+
+        Route::get('/templates', [ReferenceDataController::class, 'templates'])->middleware('permission:templates.manage');
+        Route::post('/templates', [ReferenceDataController::class, 'storeTemplate'])->middleware('permission:templates.manage');
+        Route::get('/templates/{template}', [ReferenceDataController::class, 'showTemplate'])->middleware('permission:templates.manage');
+        Route::patch('/templates/{template}', [ReferenceDataController::class, 'updateTemplate'])->middleware('permission:templates.manage');
+        Route::patch('/templates/{template}/active', [ReferenceDataController::class, 'setTemplateActive'])->middleware('permission:templates.manage');
+        Route::delete('/templates/{template}', [ReferenceDataController::class, 'destroyTemplate'])->middleware('permission:templates.manage');
+
+        Route::get('/departments', [ReferenceDataController::class, 'departments'])->middleware('permission:departments.manage');
+        Route::post('/departments', [ReferenceDataController::class, 'storeDepartment'])->middleware('permission:departments.manage');
+        Route::get('/departments/{department}', [ReferenceDataController::class, 'showDepartment'])->middleware('permission:departments.manage');
+        Route::patch('/departments/{department}', [ReferenceDataController::class, 'updateDepartment'])->middleware('permission:departments.manage');
+        Route::patch('/departments/{department}/active', [ReferenceDataController::class, 'setDepartmentActive'])->middleware('permission:departments.manage');
+        Route::delete('/departments/{department}', [ReferenceDataController::class, 'destroyDepartment'])->middleware('permission:departments.manage');
+        Route::get('/wards', [ReferenceDataController::class, 'wards'])->middleware('permission:departments.manage');
+
+        Route::get('/settings', [SettingsController::class, 'show'])->middleware('permission:settings.manage');
+        Route::put('/settings', [SettingsController::class, 'update'])->middleware('permission:settings.manage');
+        Route::patch('/settings', [SettingsController::class, 'update'])->middleware('permission:settings.manage');
+
+        Route::get('/access-requests', [AccessRequestController::class, 'index'])->middleware('permission:accessRequests.review');
+        Route::get('/access-requests/{accessRequest}', [AccessRequestController::class, 'show'])->middleware('permission:accessRequests.review');
+        Route::patch('/access-requests/{accessRequest}/review', [AccessRequestController::class, 'review'])->middleware('permission:accessRequests.review');
+        Route::post('/access-requests/{accessRequest}/approve', [AccessRequestController::class, 'approve'])->middleware('permission:accessRequests.review');
+        Route::post('/access-requests/{accessRequest}/reject', [AccessRequestController::class, 'reject'])->middleware('permission:accessRequests.review');
+
+        Route::get('/audit-logs', [AuditLogController::class, 'cellEdits'])->middleware('permission:audit.view');
+        Route::get('/admin-audit-logs', [AuditLogController::class, 'adminActions'])->middleware('permission:audit.view');
+    });
+});

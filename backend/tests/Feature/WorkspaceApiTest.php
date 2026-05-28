@@ -1,0 +1,220 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\AuditLog;
+use App\Models\Department;
+use App\Models\Report;
+use App\Models\ReportAssignment;
+use App\Models\ReportFieldDefinition;
+use App\Models\ReportingPeriod;
+use App\Models\ReportStatusHistory;
+use App\Models\User;
+use Database\Seeders\AppSettingSeeder;
+use Database\Seeders\DepartmentSeeder;
+use Database\Seeders\ReportFieldDefinitionSeeder;
+use Database\Seeders\ReportingPeriodSeeder;
+use Database\Seeders\ReportTemplateSeeder;
+use Database\Seeders\RoleSeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Password;
+use Tests\TestCase;
+
+class WorkspaceApiTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private User $admin;
+
+    private User $nurse;
+
+    private User $otherNurse;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        foreach ([RoleSeeder::class, ReportTemplateSeeder::class, DepartmentSeeder::class, ReportFieldDefinitionSeeder::class, AppSettingSeeder::class, ReportingPeriodSeeder::class] as $seeder) {
+            $this->seed($seeder);
+        }
+
+        $this->admin = User::factory()->role('admin', 'Administrator')->create([
+            'full_name' => 'Admin User',
+        ]);
+        $this->nurse = User::factory()->create([
+            'full_name' => 'Hana Nurse',
+            'email' => 'hana.nurse@example.test',
+        ]);
+        $this->otherNurse = User::factory()->create([
+            'full_name' => 'Other Nurse',
+        ]);
+    }
+
+    public function test_workspace_hydrates_frontend_state_and_scopes_nurses(): void
+    {
+        $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
+        $otherDepartment = Department::query()->where('slug', 'cardiac_inpatient')->firstOrFail();
+        $period = ReportingPeriod::query()
+            ->whereDate('week_start', '>=', '2026-03-02')
+            ->orderBy('week_start')
+            ->firstOrFail();
+        $assignment = $this->assignment($this->nurse, $department);
+        $otherAssignment = $this->assignment($this->otherNurse, $otherDepartment);
+        $report = $this->report($assignment, $period);
+        $otherReport = $this->report($otherAssignment, $period);
+        $field = ReportFieldDefinition::query()
+            ->where('template_id', $department->template_id)
+            ->where('field_key', 'total_patient_days')
+            ->firstOrFail();
+
+        ReportStatusHistory::query()->create([
+            'report_id' => $report->id,
+            'status' => 'submitted',
+            'changed_by' => $this->nurse->id,
+            'changed_by_name' => $this->nurse->full_name,
+            'changed_at' => now(),
+        ]);
+        AuditLog::query()->create([
+            'report_id' => $report->id,
+            'field_definition_id' => $field->id,
+            'field_key' => 'total_patient_days',
+            'day_name' => 'monday',
+            'old_value' => '10',
+            'new_value' => '11',
+            'changed_by' => $this->admin->id,
+            'changed_by_name' => $this->admin->full_name,
+            'changed_at' => now(),
+            'department_id' => $department->id,
+            'template_id' => $department->template_id,
+        ]);
+
+        $this->actingAs($this->nurse)
+            ->getJson('/api/workspace?includeHistory=1&includeProfiles=1')
+            ->assertOk()
+            ->assertJsonPath('currentUser.id', $this->nurse->id)
+            ->assertJsonCount(1, 'state.profiles')
+            ->assertJsonCount(1, 'state.assignments')
+            ->assertJsonPath('state.assignments.0.departmentId', 'gi_neuro_inpatient')
+            ->assertJsonCount(1, 'state.reports')
+            ->assertJsonPath('state.reports.0.id', $report->id)
+            ->assertJsonCount(1, 'state.statusHistory')
+            ->assertJsonCount(0, 'state.auditLogs');
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/workspace?includeHistory=1&includeProfiles=1')
+            ->assertOk()
+            ->assertJsonPath('references.departmentDbIdBySlug.gi_neuro_inpatient', $department->id)
+            ->assertJsonCount(3, 'state.profiles')
+            ->assertJsonCount(2, 'state.assignments')
+            ->assertJsonFragment(['id' => $otherReport->id])
+            ->assertJsonCount(1, 'state.auditLogs');
+    }
+
+    public function test_public_access_request_creates_applicant_and_notifies_admins(): void
+    {
+        $this->postJson('/api/access-requests', [
+            'fullName' => 'New Applicant',
+            'email' => 'new.applicant@example.test',
+            'password' => 'Password123!',
+            'requestedAssignments' => [
+                [
+                    'departmentId' => 'gi_neuro_inpatient',
+                    'templateId' => 'inpatient_weekly',
+                ],
+            ],
+            'notes' => 'Please approve.',
+        ])
+            ->assertCreated()
+            ->assertJsonPath('signedIn', false)
+            ->assertJsonPath('data.email', 'new.applicant@example.test')
+            ->assertJsonPath('data.requestedAssignments.0.departmentSlug', 'gi_neuro_inpatient');
+
+        $applicant = User::query()->where('email', 'new.applicant@example.test')->firstOrFail();
+
+        $this->assertSame('nurse', $applicant->role_key);
+        $this->assertDatabaseHas('access_requests', [
+            'user_id' => $applicant->id,
+            'status' => 'pending',
+        ]);
+        $this->assertDatabaseHas('notifications', [
+            'recipient_id' => $this->admin->id,
+            'type' => 'nurse_access_request',
+        ]);
+    }
+
+    public function test_claim_superadmin_promotes_only_when_no_other_superadmin_exists(): void
+    {
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/claim-superadmin', [
+                'fullName' => 'Root Admin',
+                'username' => 'root.admin',
+                'email' => 'root.admin@example.test',
+                'password' => 'Password123!',
+            ])
+            ->assertOk()
+            ->assertJsonPath('pendingEmail', null)
+            ->assertJsonPath('user.role', 'superadmin');
+
+        $this->assertSame('superadmin', $this->admin->refresh()->role_key);
+
+        $this->actingAs($this->otherNurse)
+            ->postJson('/api/admin/claim-superadmin', [
+                'fullName' => 'Other Root',
+                'username' => 'other.root',
+                'email' => 'other.root@example.test',
+                'password' => 'Password123!',
+            ])
+            ->assertForbidden();
+    }
+
+    public function test_password_reset_endpoints_create_and_accept_tokens(): void
+    {
+        Mail::fake();
+
+        $this->postJson('/api/auth/forgot-password', [
+            'email' => $this->nurse->email,
+        ])->assertAccepted();
+
+        $this->assertDatabaseHas('password_reset_tokens', [
+            'email' => $this->nurse->email,
+        ]);
+
+        $token = Password::broker()->createToken($this->nurse);
+
+        $this->postJson('/api/auth/reset-password', [
+            'email' => $this->nurse->email,
+            'token' => $token,
+            'password' => 'NewPassword123!',
+            'password_confirmation' => 'NewPassword123!',
+        ])->assertOk();
+
+        $this->assertTrue(password_verify('NewPassword123!', $this->nurse->refresh()->password));
+    }
+
+    private function assignment(User $nurse, Department $department): ReportAssignment
+    {
+        return ReportAssignment::query()->create([
+            'nurse_id' => $nurse->id,
+            'department_id' => $department->id,
+            'template_id' => $department->template_id,
+            'active' => true,
+            'approved_at' => now(),
+            'approved_by' => $this->admin->id,
+        ]);
+    }
+
+    private function report(ReportAssignment $assignment, ReportingPeriod $period): Report
+    {
+        return Report::query()->create([
+            'assignment_id' => $assignment->id,
+            'department_id' => $assignment->department_id,
+            'template_id' => $assignment->template_id,
+            'reporting_period_id' => $period->id,
+            'status' => 'submitted',
+            'submitted_at' => now(),
+            'created_by' => $assignment->nurse_id,
+            'updated_by' => $assignment->nurse_id,
+        ]);
+    }
+}

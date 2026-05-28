@@ -1,0 +1,278 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\AccessRequest;
+use App\Models\AuditLog;
+use App\Models\Department;
+use App\Models\Report;
+use App\Models\ReportAssignment;
+use App\Models\ReportingPeriod;
+use App\Models\ReportStatusHistory;
+use App\Models\ReportTemplate;
+use App\Models\User;
+use App\Services\Admin\AppSettingsService;
+use App\Support\Authorization\Permissions;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+
+class WorkspaceController extends Controller
+{
+    private const LIVE_REPORTING_START = '2026-03-02';
+
+    public function show(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'include_profiles' => ['sometimes', 'boolean'],
+            'includeProfiles' => ['sometimes', 'boolean'],
+            'include_access_requests' => ['sometimes', 'boolean'],
+            'includeAccessRequests' => ['sometimes', 'boolean'],
+            'include_history' => ['sometimes', 'boolean'],
+            'includeHistory' => ['sometimes', 'boolean'],
+        ]);
+
+        $user = $request->user();
+        $isAdmin = Permissions::isAdminRole($user->role_key);
+        $includeProfiles = $this->booleanOption($validated, 'include_profiles', 'includeProfiles');
+        $includeAccessRequests = $this->booleanOption($validated, 'include_access_requests', 'includeAccessRequests');
+        $includeHistory = $this->booleanOption($validated, 'include_history', 'includeHistory');
+
+        $templates = ReportTemplate::query()->orderBy('name')->get();
+        $departments = Department::query()->orderBy('name')->get();
+        $periods = ReportingPeriod::query()->orderBy('week_start')->get();
+        $visiblePeriodIds = $this->visibleReportingPeriodIds($periods);
+
+        $profiles = $includeProfiles && $isAdmin
+            ? User::query()->orderBy('full_name')->get()
+            : collect([$user]);
+
+        $assignments = ReportAssignment::query()
+            ->with(['department', 'template'])
+            ->when(! $isAdmin, fn (Builder $query) => $query
+                ->where('nurse_id', $user->id)
+                ->where('active', true))
+            ->latest('approved_at')
+            ->get();
+
+        $reports = Report::query()
+            ->with(['department', 'template', 'calculatedMetric'])
+            ->when(! empty($visiblePeriodIds), fn (Builder $query) => $query->whereIn('reporting_period_id', $visiblePeriodIds))
+            ->when(empty($visiblePeriodIds), fn (Builder $query) => $query->whereRaw('1 = 0'))
+            ->when(! $isAdmin, fn (Builder $query) => $query->whereHas('assignment', fn (Builder $assignmentQuery) => $assignmentQuery
+                ->where('nurse_id', $user->id)
+                ->where('active', true)))
+            ->latest('updated_at')
+            ->get();
+
+        $reportIds = $reports->pluck('id')->all();
+
+        $accessRequests = $includeAccessRequests
+            ? AccessRequest::query()
+                ->with(['user', 'reviewer', 'items.department', 'items.template'])
+                ->when(! $isAdmin, fn (Builder $query) => $query->where('user_id', $user->id))
+                ->latest('requested_at')
+                ->get()
+            : collect();
+
+        $statusHistory = $includeHistory && ! empty($reportIds)
+            ? ReportStatusHistory::query()
+                ->with('changedBy')
+                ->whereIn('report_id', $reportIds)
+                ->latest('changed_at')
+                ->get()
+            : collect();
+
+        $auditLogs = $includeHistory && $isAdmin && ! empty($reportIds)
+            ? AuditLog::query()
+                ->with(['fieldDefinition', 'changedBy', 'department', 'template'])
+                ->whereIn('report_id', $reportIds)
+                ->latest('changed_at')
+                ->get()
+            : collect();
+
+        $notifications = $user->notifications()
+            ->latest('created_at')
+            ->limit(100)
+            ->get();
+
+        $templateSlugById = $templates->pluck('slug', 'id')->all();
+        $departmentSlugById = $departments->pluck('slug', 'id')->all();
+
+        $state = [
+            'currentUserId' => $user->id,
+            'profiles' => $profiles->map(fn (User $profile) => $this->profile($profile))->values(),
+            'assignments' => $assignments->map(fn (ReportAssignment $assignment) => [
+                'id' => $assignment->id,
+                'nurseId' => $assignment->nurse_id,
+                'departmentId' => $assignment->department?->slug ?? $assignment->department_id,
+                'templateId' => $assignment->template?->slug ?? $assignment->template_id,
+                'approvedAt' => $assignment->approved_at?->toJSON(),
+                'active' => (bool) $assignment->active,
+            ])->values(),
+            'accessRequests' => $accessRequests->map(fn (AccessRequest $accessRequest) => [
+                'id' => $accessRequest->id,
+                'userId' => $accessRequest->user_id,
+                'userName' => $accessRequest->user?->full_name ?? $accessRequest->email,
+                'email' => $accessRequest->email,
+                'requestedAssignments' => $accessRequest->items->map(fn ($item) => [
+                    'departmentId' => $item->department?->slug ?? $item->department_id,
+                    'templateId' => $item->template?->slug ?? $item->template_id,
+                ])->values(),
+                'status' => $accessRequest->status,
+                'requestedAt' => $accessRequest->requested_at?->toJSON(),
+                'reviewedAt' => $accessRequest->reviewed_at?->toJSON(),
+                'notes' => $accessRequest->notes,
+            ])->values(),
+            'reportingPeriods' => $periods->map(fn (ReportingPeriod $period) => [
+                'id' => $period->id,
+                'weekStart' => $period->week_start?->startOfDay()->toJSON(),
+                'weekEnd' => $period->week_end?->startOfDay()->toJSON(),
+                'deadlineAt' => $period->deadline_at?->toJSON(),
+                'label' => $this->periodLabel($period),
+            ])->values(),
+            'reports' => $reports->map(fn (Report $report) => [
+                'id' => $report->id,
+                'assignmentId' => $report->assignment_id,
+                'departmentId' => $report->department?->slug ?? $report->department_id,
+                'templateId' => $report->template?->slug ?? $report->template_id,
+                'reportingPeriodId' => $report->reporting_period_id,
+                'createdById' => $report->created_by,
+                'updatedById' => $report->updated_by,
+                'createdAt' => $report->created_at?->toJSON(),
+                'updatedAt' => $report->updated_at?->toJSON(),
+                'submittedAt' => $report->submitted_at?->toJSON(),
+                'lockedAt' => $report->locked_at?->toJSON(),
+                'status' => $report->status,
+                'values' => (object) [],
+                'calculatedMetrics' => [
+                    'borPercent' => $this->nullableFloat($report->calculatedMetric?->bor_percent),
+                    'btr' => $this->nullableFloat($report->calculatedMetric?->btr),
+                    'alos' => $this->nullableFloat($report->calculatedMetric?->alos),
+                ],
+            ])->values(),
+            'statusHistory' => $statusHistory->map(fn (ReportStatusHistory $history) => [
+                'id' => $history->id,
+                'reportId' => $history->report_id,
+                'status' => $history->status,
+                'changedById' => $history->changed_by,
+                'changedByName' => $history->changed_by_name ?? $history->changedBy?->full_name ?? 'Unknown user',
+                'changedAt' => $history->changed_at?->toJSON(),
+                'note' => $history->note,
+            ])->values(),
+            'auditLogs' => $auditLogs->map(fn (AuditLog $auditLog) => [
+                'id' => $auditLog->id,
+                'reportId' => $auditLog->report_id,
+                'fieldId' => $auditLog->day_name ? "{$auditLog->field_key}.{$auditLog->day_name}" : $auditLog->field_key,
+                'fieldLabel' => ($auditLog->fieldDefinition?->label ?? $auditLog->field_key).($auditLog->day_name ? " ({$auditLog->day_name})" : ''),
+                'oldValue' => $auditLog->old_value,
+                'newValue' => $auditLog->new_value,
+                'changedById' => $auditLog->changed_by,
+                'changedByName' => $auditLog->changed_by_name ?? $auditLog->changedBy?->full_name ?? 'Unknown user',
+                'changedAt' => $auditLog->changed_at?->toJSON(),
+                'departmentId' => $auditLog->department?->slug ?? $auditLog->department_id,
+                'templateId' => $auditLog->template?->slug ?? $auditLog->template_id,
+            ])->values(),
+            'notifications' => $notifications->map(fn ($notification) => [
+                'id' => $notification->id,
+                'userId' => $notification->recipient_id,
+                'type' => $notification->type,
+                'title' => $notification->title,
+                'message' => $notification->message,
+                'createdAt' => $notification->created_at?->toJSON(),
+                'readAt' => $notification->read_at?->toJSON(),
+                'relatedRoute' => $notification->related_route ?? '/',
+                'relatedReportId' => $notification->related_id,
+            ])->values(),
+            'settings' => app(AppSettingsService::class)->structured(),
+            'pendingDrafts' => $reports
+                ->where('status', 'draft')
+                ->map(fn (Report $report) => [
+                    'reportId' => $report->id,
+                    'assignmentId' => $report->assignment_id,
+                    'reportingPeriodId' => $report->reporting_period_id,
+                    'lastSavedAt' => $report->updated_at?->toJSON(),
+                ])
+                ->sortByDesc('lastSavedAt')
+                ->values(),
+        ];
+
+        return response()->json([
+            'currentUser' => $this->profile($user),
+            'references' => [
+                'departmentDbIdBySlug' => $departments->pluck('id', 'slug'),
+                'templateDbIdBySlug' => $templates->pluck('id', 'slug'),
+                'templateDbIdByDepartmentSlug' => $departments->mapWithKeys(fn (Department $department) => [
+                    $department->slug => $department->template_id,
+                ]),
+                'departmentSlugById' => $departmentSlugById,
+                'templateSlugById' => $templateSlugById,
+            ],
+            'state' => $state,
+        ]);
+    }
+
+    private function booleanOption(array $validated, string $snakeKey, string $camelKey): bool
+    {
+        return (bool) ($validated[$snakeKey] ?? $validated[$camelKey] ?? false);
+    }
+
+    private function profile(User $user): array
+    {
+        return [
+            'id' => $user->id,
+            'fullName' => $user->full_name,
+            'email' => $user->email,
+            'username' => $user->username,
+            'role' => $user->role_key,
+            'title' => $user->title ?? $this->defaultTitle($user->role_key),
+            'active' => (bool) $user->active,
+            'phone' => $user->phone,
+        ];
+    }
+
+    private function defaultTitle(string $roleKey): string
+    {
+        return match ($roleKey) {
+            'superadmin' => 'Super Administrator',
+            'admin' => 'Administrator',
+            'doctor_admin' => 'Clinical Director',
+            default => 'Nurse',
+        };
+    }
+
+    private function periodLabel(ReportingPeriod $period): string
+    {
+        return sprintf(
+            '%s - %s',
+            $period->week_start?->format('M j'),
+            $period->week_end?->format('M j, Y'),
+        );
+    }
+
+    private function visibleReportingPeriodIds($periods): array
+    {
+        if ($periods->isEmpty()) {
+            return [];
+        }
+
+        $today = Carbon::today();
+        $currentPeriod = $periods
+            ->filter(fn (ReportingPeriod $period) => $period->week_start?->lte($today))
+            ->last() ?? $periods->first();
+        $currentStart = $currentPeriod->week_start;
+        $liveStart = Carbon::parse(self::LIVE_REPORTING_START);
+
+        return $periods
+            ->filter(fn (ReportingPeriod $period) => $period->week_start?->betweenIncluded($liveStart, $currentStart))
+            ->pluck('id')
+            ->all();
+    }
+
+    private function nullableFloat(mixed $value): ?float
+    {
+        return $value === null ? null : (float) $value;
+    }
+}
