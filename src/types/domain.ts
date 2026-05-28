@@ -26,6 +26,7 @@ export type NotificationType =
   | 'overdue_report'
   | 'nurse_access_request'
   | 'access_request_reviewed'
+  | 'critical_value_alert'
 
 export type Weekday =
   | 'monday'

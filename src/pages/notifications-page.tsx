@@ -9,6 +9,7 @@ import {
   PencilLine,
   RotateCcw,
   ShieldAlert,
+  Siren,
   Trash2,
   TriangleAlert,
   UserRoundPlus,
@@ -118,6 +119,12 @@ const notificationMeta: Record<
     icon: CheckCheck,
     iconTone: 'bg-[#edf7f0] text-[#1f6b3b]',
     chipTone: 'border-[#cfe7d9] bg-[#edf7f0] text-[#1f6b3b]',
+  },
+  critical_value_alert: {
+    label: 'Critical',
+    icon: Siren,
+    iconTone: 'bg-[#fde7e7] text-[#b42318]',
+    chipTone: 'border-[#f3bdba] bg-[#fde7e7] text-[#b42318]',
   },
 }
 

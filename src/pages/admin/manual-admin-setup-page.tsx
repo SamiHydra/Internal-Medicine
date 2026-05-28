@@ -27,7 +27,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useAppData } from '@/context/app-data-context'
-import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import type { UserProfile } from '@/types/domain'
 
@@ -77,7 +76,6 @@ function adminSortValue(profile: UserProfile) {
 }
 
 export function ManualAdminSetupPage() {
-  const client = getSupabaseBrowserClient()
   const {
     state,
     currentUser,
@@ -98,54 +96,6 @@ export function ManualAdminSetupPage() {
 
     void ensureProfileDirectoryData()
   }, [currentUser, ensureProfileDirectoryData])
-
-  useEffect(() => {
-    if (!client || !currentUser) {
-      return
-    }
-
-    let ignore = false
-    const currentAuthUserId = currentUser.id
-
-    void client.auth
-      .getUser()
-      .then(({ data, error }) => {
-        if (ignore) {
-          return
-        }
-
-        if (error || !data.user || data.user.id !== currentUser.id) {
-          setPendingAuthState({
-            pendingEmail: null,
-            userId: currentAuthUserId,
-          })
-          return
-        }
-
-        const nextPendingEmail = data.user.new_email?.trim().toLowerCase() ?? null
-        const currentConfirmedEmail = data.user.email?.trim().toLowerCase() ?? currentUser.email
-
-        setPendingAuthState({
-          pendingEmail:
-            nextPendingEmail && nextPendingEmail !== currentConfirmedEmail
-              ? nextPendingEmail
-              : null,
-          userId: currentAuthUserId,
-        })
-      })
-      .catch(() => {
-        if (!ignore) {
-          setPendingAuthState({
-            pendingEmail: null,
-            userId: currentAuthUserId,
-          })
-        }
-      })
-
-    return () => {
-      ignore = true
-    }
-  }, [client, currentUser])
 
   const bootstrapForm = useForm<BootstrapValues>({
     resolver: zodResolver(bootstrapSchema),
@@ -222,30 +172,12 @@ export function ManualAdminSetupPage() {
       password: '',
     })
 
-    const normalizedEmail = values.email.trim().toLowerCase()
-    const client = getSupabaseBrowserClient()
-
-    if (!client) {
-      return
-    }
-
-    const { data } = await client.auth.getUser()
-    const currentConfirmedEmail = data.user?.email?.trim().toLowerCase() ?? normalizedEmail
-    const nextPendingEmail = data.user?.new_email?.trim().toLowerCase() ?? null
-
     setPendingAuthState({
-      pendingEmail:
-        nextPendingEmail && nextPendingEmail !== currentConfirmedEmail
-          ? nextPendingEmail
-          : null,
+      pendingEmail: null,
       userId: currentUser.id,
     })
 
-    if (nextPendingEmail && nextPendingEmail !== currentConfirmedEmail) {
-      toast.message(
-        `The new email ${nextPendingEmail} still needs confirmation. Supabase keeps the old confirmed email active until that is finished.`,
-      )
-    }
+    toast.message('Superadmin credentials updated.')
   })
 
   const onCreateAdmin = adminForm.handleSubmit(async (values) => {

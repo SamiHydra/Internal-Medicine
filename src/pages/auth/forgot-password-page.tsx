@@ -3,8 +3,9 @@ import { useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
-import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { isSupabaseConfigured, supabaseEnvSetupHint } from '@/lib/supabase/env'
+import { getApiBrowserClient, isApiConfigured } from '@/lib/api/client'
+import { apiEnvSetupHint } from '@/lib/api/env'
+import { requestPasswordReset } from '@/lib/api/passwords'
 
 export function ForgotPasswordPage() {
   const [searchParams] = useSearchParams()
@@ -24,28 +25,23 @@ export function ForgotPasswordPage() {
       return
     }
 
-    const client = getSupabaseBrowserClient()
-    if (!client || !isSupabaseConfigured) {
-      setError(`Supabase is not configured. ${supabaseEnvSetupHint}`)
+    const client = getApiBrowserClient()
+    if (!client || !isApiConfigured) {
+      setError(`Laravel API is not configured. ${apiEnvSetupHint}`)
       return
     }
 
     setIsSubmitting(true)
 
     try {
-      const { error: resetError } = await client.auth.resetPasswordForEmail(
-        normalizedEmail,
-        {
-          redirectTo: `${window.location.origin}/reset-password`,
-        },
-      )
-
-      if (resetError) {
-        setError(resetError.message)
-        return
-      }
-
+      await requestPasswordReset(client, normalizedEmail)
       setSuccess(`Password reset instructions were sent to ${normalizedEmail}.`)
+    } catch (resetError) {
+      setError(
+        resetError instanceof Error
+          ? resetError.message
+          : 'Unable to send password reset instructions.',
+      )
     } finally {
       setIsSubmitting(false)
     }

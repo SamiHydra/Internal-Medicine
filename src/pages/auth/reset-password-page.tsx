@@ -3,8 +3,9 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
-import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { isSupabaseConfigured, supabaseEnvSetupHint } from '@/lib/supabase/env'
+import { getApiBrowserClient, isApiConfigured } from '@/lib/api/client'
+import { apiEnvSetupHint } from '@/lib/api/env'
+import { resetPassword as resetPasswordMutation } from '@/lib/api/passwords'
 
 export function ResetPasswordPage() {
   const navigate = useNavigate()
@@ -17,103 +18,25 @@ export function ResetPasswordPage() {
   const [recoveryLinkDetected, setRecoveryLinkDetected] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+  const [resetToken, setResetToken] = useState<string | null>(null)
+  const [resetEmail, setResetEmail] = useState<string | null>(null)
 
   useEffect(() => {
-    const client = getSupabaseBrowserClient()
-
-    if (!client || !isSupabaseConfigured) {
-      setIsCheckingSession(false)
-      setCanResetPassword(false)
-      return
-    }
-
-    let active = true
     const url = new URL(window.location.href)
     const hashParams = new URLSearchParams(
       window.location.hash.startsWith('#')
         ? window.location.hash.slice(1)
         : window.location.hash,
     )
-    const authCode = url.searchParams.get('code')
-    const hasRecoveryTokens =
-      hashParams.get('type') === 'recovery' ||
-      hashParams.has('access_token') ||
-      hashParams.has('refresh_token')
-    const hasRecoveryParams = Boolean(authCode || hasRecoveryTokens)
-    const timeoutIds: number[] = []
+    const token = url.searchParams.get('token') ?? hashParams.get('token')
+    const email = url.searchParams.get('email') ?? hashParams.get('email')
+    const hasResetParams = Boolean(token && email)
 
-    setRecoveryLinkDetected(hasRecoveryParams)
-
-    const syncRecoverySession = async () => {
-      const { data, error: sessionError } = await client.auth.getSession()
-
-      if (!active) {
-        return
-      }
-
-      if (sessionError) {
-        setError(sessionError.message)
-      }
-
-      const hasSession = Boolean(data.session)
-      setCanResetPassword(hasSession)
-
-      if (hasSession || !hasRecoveryParams) {
-        setIsCheckingSession(false)
-      }
-    }
-
-    const {
-      data: { subscription },
-    } = client.auth.onAuthStateChange((event, session) => {
-      if (!active) {
-        return
-      }
-
-      if (
-        event === 'PASSWORD_RECOVERY' ||
-        event === 'SIGNED_IN' ||
-        event === 'INITIAL_SESSION'
-      ) {
-        setCanResetPassword(Boolean(session))
-        setIsCheckingSession(false)
-      }
-    })
-
-    void (async () => {
-      if (authCode) {
-        const { error: exchangeError } = await client.auth.exchangeCodeForSession(authCode)
-
-        if (!active) {
-          return
-        }
-
-        if (exchangeError) {
-          setError(exchangeError.message)
-        }
-      }
-
-      await syncRecoverySession()
-
-      if (hasRecoveryParams) {
-        timeoutIds.push(
-          window.setTimeout(() => {
-            void syncRecoverySession()
-          }, 250),
-        )
-        timeoutIds.push(
-          window.setTimeout(() => {
-            void syncRecoverySession()
-          }, 900),
-        )
-      }
-    })()
-
-    return () => {
-      active = false
-      subscription.unsubscribe()
-      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId))
-    }
+    setResetToken(token)
+    setResetEmail(email)
+    setRecoveryLinkDetected(hasResetParams)
+    setCanResetPassword(hasResetParams)
+    setIsCheckingSession(false)
   }, [])
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -135,27 +58,31 @@ export function ResetPasswordPage() {
       return
     }
 
-    const client = getSupabaseBrowserClient()
-    if (!client || !isSupabaseConfigured) {
-      setError(`Supabase is not configured. ${supabaseEnvSetupHint}`)
+    const client = getApiBrowserClient()
+    if (!client || !isApiConfigured) {
+      setError(`Laravel API is not configured. ${apiEnvSetupHint}`)
       return
     }
 
     setIsSubmitting(true)
 
     try {
-      const { error: updateError } = await client.auth.updateUser({ password })
-
-      if (updateError) {
-        setError(updateError.message)
-        return
-      }
-
-      await client.auth.signOut()
+      await resetPasswordMutation(client, {
+        email: resetEmail ?? '',
+        token: resetToken ?? '',
+        password,
+        passwordConfirmation: confirmPassword,
+      })
       navigate('/login', {
         replace: true,
         state: { passwordReset: true },
       })
+    } catch (updateError) {
+      setError(
+        updateError instanceof Error
+          ? updateError.message
+          : 'Unable to update the password.',
+      )
     } finally {
       setIsSubmitting(false)
     }
@@ -166,7 +93,7 @@ export function ResetPasswordPage() {
     : canResetPassword
       ? 'Enter your new password below.'
       : recoveryLinkDetected
-        ? 'The recovery link has not finished connecting yet. If this stays blocked, open the latest reset link again in this same browser.'
+        ? 'The reset link is missing required information. Open the latest reset link again in this same browser.'
         : 'Open the password reset link from your email to continue.'
 
   return (

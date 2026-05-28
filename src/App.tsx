@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import { AppStateScreen } from '@/components/layout/app-state-screen'
 import { useAppData } from '@/context/app-data-context'
-import { supabaseEnvSetupHint } from '@/lib/supabase/env'
+import { apiEnvSetupHint } from '@/lib/api/env'
 import { LoginPage } from '@/pages/auth/login-page'
 import { ProtectedRoute, ProtectedShell } from '@/routes/route-guards'
 
@@ -142,9 +142,9 @@ function HomeRedirect() {
   if (!isConfigured) {
     return (
       <AppStateScreen
-        title="Supabase Configuration Required"
-        description="The live product needs its Supabase project values before it can start."
-        detail={`Missing ${missingEnvVars.join(', ')}. ${supabaseEnvSetupHint}`}
+        title="Laravel API Configuration Required"
+        description="The live product needs its Laravel API URL before it can start."
+        detail={`Missing ${missingEnvVars.join(', ')}. ${apiEnvSetupHint}`}
       />
     )
   }

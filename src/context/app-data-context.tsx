@@ -20,7 +20,7 @@ import type {
   ReportDetailRecord,
   SaveReportPayload,
   SupabaseReferenceState,
-} from '@/lib/supabase/api'
+} from '@/lib/api'
 import {
   assignUserToDepartment as assignUserToDepartmentMutation,
   claimSuperadmin as claimSuperadminMutation,
@@ -46,15 +46,15 @@ import {
   clearNotifications as clearNotificationsMutation,
   updateNotificationReadState,
   updateUserActiveState,
-} from '@/lib/supabase/api'
+} from '@/lib/api'
 import {
-  getSupabaseBrowserClient,
-  isSupabaseConfigured,
-} from '@/lib/supabase/client'
+  getApiBrowserClient,
+  isApiConfigured,
+} from '@/lib/api/client'
 import {
-  missingSupabaseEnvKeys,
-  supabaseEnvSetupHint,
-} from '@/lib/supabase/env'
+  apiEnvSetupHint,
+  missingApiEnvKeys,
+} from '@/lib/api/env'
 import {
   getCurrentPeriod,
   getCurrentUser,
@@ -237,9 +237,9 @@ function getAdminDashboardWarmReportIds(state: AppState) {
 }
 
 export function AppDataProvider({ children }: PropsWithChildren) {
-  const client = getSupabaseBrowserClient()
+  const client = getApiBrowserClient()
   const [state, setState] = useState<AppState>(() => createEmptyAppState())
-  const [isBootstrapping, setIsBootstrapping] = useState(isSupabaseConfigured)
+  const [isBootstrapping, setIsBootstrapping] = useState(isApiConfigured)
   const [isSyncing, setIsSyncing] = useState(false)
   const [isDataRefreshing, setIsDataRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1090,12 +1090,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     isBootstrapping,
     isSyncing,
     isDataRefreshing,
-    isConfigured: isSupabaseConfigured,
-    missingEnvVars: missingSupabaseEnvKeys,
+    isConfigured: isApiConfigured,
+    missingEnvVars: missingApiEnvKeys,
     error,
     login: async (email, password) => {
       if (!client) {
-        const message = `Supabase is not configured. ${supabaseEnvSetupHint}`
+        const message = `Laravel API is not configured. ${apiEnvSetupHint}`
         setError(message)
         toast.error(message)
         return null
@@ -1188,7 +1188,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     },
     submitAccessRequest: async (payload) => {
       if (!client) {
-        toast.error(`Supabase is not configured. ${supabaseEnvSetupHint}`)
+        toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
         return false
       }
 
@@ -1207,7 +1207,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     },
     claimSuperadmin: async (payload) => {
       if (!client) {
-        toast.error(`Supabase is not configured. ${supabaseEnvSetupHint}`)
+        toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
         return false
       }
 
@@ -1233,7 +1233,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     },
     createAdminAccount: async (payload) => {
       if (!client) {
-        toast.error(`Supabase is not configured. ${supabaseEnvSetupHint}`)
+        toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
         return false
       }
 
@@ -1452,7 +1452,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           const template = templateMap[templateId]
 
           if (!department || !template) {
-            throw new Error('The selected department or template is not available in Supabase.')
+            throw new Error('The selected department or template is not available in the Laravel API.')
           }
 
           const ensuredReference = await ensureDepartmentReferenceData(

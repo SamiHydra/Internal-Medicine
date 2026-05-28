@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { animate, motion } from 'framer-motion'
-import { Filter, Sparkles } from 'lucide-react'
+import { Download, Filter, Sparkles } from 'lucide-react'
 import {
   Area,
   AreaChart,
@@ -20,6 +20,7 @@ import {
 } from 'recharts'
 
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
+import { apiEnv } from '@/lib/api/env'
 import {
   Select,
   SelectContent,
@@ -1027,6 +1028,13 @@ export function AdminDashboardPage() {
                 <span className="h-2.5 w-2.5 rounded-[999px] bg-[#002147]" />
                 <span className="font-medium">{deliveryRate}% delivery rate</span>
               </div>
+              <a
+                href={apiEnv.baseUrl ? `${apiEnv.baseUrl}/api/analytics/export${effectivePeriodId ? `?period=${effectivePeriodId}` : ''}` : undefined}
+                className="inline-flex items-center gap-2 bg-[#002147] px-3.5 py-1.5 text-sm font-medium text-white outline outline-1 outline-[#002147] transition hover:bg-[#00306a]"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export CSV
+              </a>
             </div>
           </div>
 

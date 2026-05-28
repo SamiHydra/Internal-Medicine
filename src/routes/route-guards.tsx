@@ -3,7 +3,7 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { AppStateScreen } from '@/components/layout/app-state-screen'
 import { AppShell } from '@/components/layout/app-shell'
 import { useAppData } from '@/context/app-data-context'
-import { supabaseEnvSetupHint } from '@/lib/supabase/env'
+import { apiEnvSetupHint } from '@/lib/api/env'
 import type { UserRole } from '@/types/domain'
 
 export function ProtectedRoute({ roles }: { roles?: UserRole[] }) {
@@ -19,9 +19,9 @@ export function ProtectedRoute({ roles }: { roles?: UserRole[] }) {
   if (!isConfigured) {
     return (
       <AppStateScreen
-        title="Supabase Configuration Required"
-        description="This app now runs only against the live Supabase backend."
-        detail={`Missing ${missingEnvVars.join(', ')}. ${supabaseEnvSetupHint}`}
+        title="Laravel API Configuration Required"
+        description="This app now runs against the Laravel reporting API."
+        detail={`Missing ${missingEnvVars.join(', ')}. ${apiEnvSetupHint}`}
       />
     )
   }
