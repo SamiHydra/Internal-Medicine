@@ -1,9 +1,11 @@
 import type { LaravelApiClient } from '@/lib/api/client'
 import { resolveAssignmentReference } from '@/lib/api/helpers'
 import type {
+  AdminAccessRequest,
   ApiReferenceState,
   CreateAdminAccountPayload,
   DepartmentReferencePayload,
+  SubmitAdminAccessRequestPayload,
 } from '@/lib/api/types'
 import type { Department, ReportTemplateConfig } from '@/types/domain'
 
@@ -51,6 +53,37 @@ export async function reviewAccessRequest(
   decision: 'approved' | 'rejected',
 ) {
   await client.post(`/api/admin/access-requests/${requestId}/${decision === 'approved' ? 'approve' : 'reject'}`)
+}
+
+/** Public self-signup for an admin account. Creates a pending request only. */
+export async function submitAdminAccessRequest(
+  client: LaravelApiClient,
+  payload: SubmitAdminAccessRequestPayload,
+) {
+  await client.post('/api/admin-access-requests', {
+    fullName: payload.fullName,
+    email: payload.email,
+    password: payload.password,
+    notes: payload.notes,
+  })
+}
+
+export async function fetchAdminAccessRequests(
+  client: LaravelApiClient,
+  status?: AdminAccessRequest['status'],
+): Promise<AdminAccessRequest[]> {
+  const query = status ? `?status=${status}` : ''
+  const response = await client.get<{ data: AdminAccessRequest[] }>(`/api/admin/admin-access-requests${query}`)
+
+  return response.data
+}
+
+export async function reviewAdminAccessRequest(
+  client: LaravelApiClient,
+  requestId: string,
+  decision: 'approved' | 'rejected',
+) {
+  await client.post(`/api/admin/admin-access-requests/${requestId}/${decision === 'approved' ? 'approve' : 'reject'}`)
 }
 
 export async function ensureDepartmentReferenceData(

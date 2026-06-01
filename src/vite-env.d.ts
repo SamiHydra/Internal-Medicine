@@ -6,8 +6,6 @@ interface ImportMetaEnv {
   readonly VITE_REVERB_HOST?: string
   readonly VITE_REVERB_PORT?: string
   readonly VITE_REVERB_SCHEME?: 'http' | 'https'
-  readonly VITE_SUPABASE_URL?: string
-  readonly VITE_SUPABASE_ANON_KEY?: string
 }
 
 interface ImportMeta {

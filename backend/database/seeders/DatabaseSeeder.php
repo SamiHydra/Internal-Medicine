@@ -21,6 +21,8 @@ class DatabaseSeeder extends Seeder
             ReportFieldDefinitionSeeder::class,
             AppSettingSeeder::class,
             ReportingPeriodSeeder::class,
+            // Local-dev login accounts. Self-guards against production/testing.
+            DevUserSeeder::class,
         ]);
     }
 }

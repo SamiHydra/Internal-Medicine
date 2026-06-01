@@ -106,37 +106,9 @@ export function LoginPage() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f8f9fa] px-3 py-3 sm:px-4 sm:py-4 md:px-5 md:py-5 xl:px-6 xl:py-6">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute right-[-12%] top-[-12%] h-[34rem] w-[34rem] rounded-full bg-[#005db6]/[0.07] blur-3xl" />
-        <div className="absolute bottom-[-18%] left-[-12%] h-[38rem] w-[38rem] rounded-full bg-[#000a1e]/[0.05] blur-3xl" />
-        <div className="absolute right-[10%] top-[18%] h-[8px] w-24 bg-[#f0b429]" />
-        <div
-          className="absolute inset-0 opacity-[0.035]"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle, rgba(0, 33, 71, 0.8) 1px, transparent 1px)',
-            backgroundSize: '32px 32px',
-          }}
-        />
-      </div>
-
       <main className="relative mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[1460px] items-center md:h-[calc(100vh-2.5rem)] md:min-h-0 xl:h-[calc(100vh-3rem)]">
-        <div className="grid w-full overflow-hidden rounded-[0.35rem] bg-[linear-gradient(180deg,#ffffff_0%,#eef3f8_100%)] shadow-[0_28px_60px_rgba(0,33,71,0.12)] outline outline-1 outline-[#c8d5e6]/30 md:h-full md:grid-cols-[minmax(0,1fr)_minmax(480px,545px)] xl:grid-cols-[minmax(0,1.04fr)_minmax(520px,590px)]">
-          <section className="relative hidden overflow-hidden bg-[linear-gradient(150deg,#000a1e_0%,#07162f_52%,#002147_100%)] text-white md:flex md:h-full md:flex-col md:justify-between md:p-12 lg:p-14 xl:p-16">
-            <div
-              className="absolute inset-0 opacity-70"
-              style={{
-                backgroundImage:
-                  'linear-gradient(90deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.035) 9%, transparent 9%, transparent 14%, rgba(255,255,255,0.02) 14%, rgba(255,255,255,0.02) 24%, transparent 24%, transparent 31%, rgba(255,255,255,0.04) 31%, rgba(255,255,255,0.04) 42%, transparent 42%, transparent 49%, rgba(255,255,255,0.025) 49%, rgba(255,255,255,0.025) 58%, transparent 58%, transparent 67%, rgba(255,255,255,0.035) 67%, rgba(255,255,255,0.035) 77%, transparent 77%, transparent 100%)',
-              }}
-            />
-            <div
-              className="absolute inset-0 opacity-60"
-              style={{
-                backgroundImage:
-                  'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.08) 18%, transparent 18%, transparent 36%, rgba(0,0,0,0.12) 36%, rgba(0,0,0,0.12) 54%, transparent 54%, transparent 100%)',
-              }}
-            />
+        <div className="grid w-full overflow-hidden rounded-[0.35rem] bg-white shadow-[0_28px_60px_rgba(0,33,71,0.12)] outline outline-1 outline-[#c8d5e6]/30 md:h-full md:grid-cols-[minmax(0,1fr)_minmax(480px,545px)] xl:grid-cols-[minmax(0,1.04fr)_minmax(520px,590px)]">
+          <section className="relative hidden overflow-hidden bg-[#04162f] text-white md:flex md:h-full md:flex-col md:justify-between md:p-12 lg:p-14 xl:p-16">
             <div className="absolute inset-y-0 left-0 w-px bg-white/10" />
             <div className="absolute inset-y-0 right-0 w-px bg-white/8" />
 
@@ -145,7 +117,7 @@ export function LoginPage() {
                 <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
                   <img
                     src={stPaulosLogo}
-                    alt="St Paulos logo"
+                    alt="St Paul logo"
                     className="h-full w-full object-cover"
                   />
                 </div>
@@ -154,7 +126,7 @@ export function LoginPage() {
                     className="text-[1.55rem] font-extrabold leading-none tracking-[-0.03em] text-white"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
-                    St Paulos
+                    St Paul
                   </p>
                   <p className="mt-1 text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
                     Internal Medicine
@@ -168,22 +140,22 @@ export function LoginPage() {
                 className="text-[3.95rem] font-extrabold leading-[0.92] tracking-[-0.055em] text-white lg:text-[4.3rem] xl:text-[4.7rem]"
                 style={{ fontFamily: 'Manrope, sans-serif' }}
               >
-                Weekly Reporting
+                Clinical Operations
                 <br />
-                <span className="text-[#63a1ff]">&amp; Review Dashboard</span>
+                <span className="text-[#63a1ff]">&amp; Academic Review</span>
               </h1>
               <div className="mt-6 h-px w-28 bg-[linear-gradient(90deg,#63a1ff_0%,#f0b429_100%)]" />
             </div>
           </section>
 
-          <section className="relative flex items-center bg-[linear-gradient(180deg,#ffffff_0%,#f1f5fa_100%)] px-6 py-10 sm:px-10 md:h-full md:px-12 md:py-8 lg:px-16 xl:px-20">
+          <section className="relative flex items-center bg-white px-6 py-10 sm:px-10 md:h-full md:px-12 md:py-8 lg:px-16 xl:px-20">
             <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_72%,#f0b429_100%)]" />
             <div className="mx-auto w-full max-w-[20rem] lg:max-w-[21rem]" style={{ fontFamily: 'Inter, sans-serif' }}>
               <div className="mb-10 flex items-center gap-3 md:hidden">
                 <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_12px_24px_rgba(0,33,71,0.14)] ring-1 ring-[#d7dbe0]">
                   <img
                     src={stPaulosLogo}
-                    alt="St Paulos logo"
+                    alt="St Paul logo"
                     className="h-full w-full object-cover"
                   />
                 </div>
@@ -192,7 +164,7 @@ export function LoginPage() {
                     className="text-base font-extrabold leading-none tracking-[-0.03em] text-[#000a1e]"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
-                    St Paulos
+                    St Paul
                   </p>
                   <p className="mt-1 text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
                     Internal Medicine
@@ -211,7 +183,7 @@ export function LoginPage() {
                   Reporting Sign In
                 </h2>
                 <p className="text-sm font-medium text-[#5b6169]">
-                  Access the internal medicine weekly reporting dashboard
+                  Access the internal medicine operations and academic platform
                 </p>
                 <div className="mt-4 h-px w-24 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_68%,#f0b429_100%)]" />
               </header>
@@ -228,7 +200,7 @@ export function LoginPage() {
                     <input
                       id="identifier"
                       type="text"
-                      placeholder="resident.id@stpaulos.edu"
+                      placeholder="resident.id@stpaul.edu"
                       autoComplete="username"
                       aria-invalid={identifierError ? 'true' : 'false'}
                       className="h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 pr-11 text-[0.95rem] font-medium text-[#191c1d] outline-none transition placeholder:text-[#8c929b] focus:border-[#005db6] focus:bg-[#fbfdff]"
@@ -316,7 +288,7 @@ export function LoginPage() {
                 ) : null}
 
                 <button
-                  className="auth-primary-button flex h-12 w-full items-center justify-center gap-2 rounded-[3px] px-4 text-[0.82rem] font-bold uppercase tracking-[0.16em]"
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-[3px] bg-[#002147] px-4 text-[0.82rem] font-bold uppercase tracking-[0.16em] text-white shadow-[0_16px_32px_rgba(0,33,71,0.32)] transition-[background-color,transform] duration-150 ease-out hover:bg-[#06305f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#005db6] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-[#778197] disabled:shadow-none"
                   type="submit"
                   disabled={!isConfigured || isBootstrapping || isSigningIn}
                   style={{ fontFamily: 'Manrope, sans-serif' }}
@@ -326,7 +298,7 @@ export function LoginPage() {
 
                 <div className="border-t border-[#edeeef] pt-7">
                   <div className="flex flex-col items-center gap-4 text-center">
-                    <p className="text-xs text-[#5b6169]">Need access to weekly reporting?</p>
+                    <p className="text-xs text-[#5b6169]">Need access to the platform?</p>
                     <Link
                       className="auth-accent-button inline-flex min-w-[13rem] items-center justify-center gap-2 rounded-[4px] px-6 py-2.5 text-[0.72rem] font-bold uppercase tracking-[0.06em]"
                       to="/register"
@@ -345,9 +317,12 @@ export function LoginPage() {
                   <p className="mt-2 text-sm text-[#44474e]">
                     Developed and supported by {technicalSupport.name}
                   </p>
-                  <p className="mt-1 text-sm font-medium text-[#000a1e]">
+                  <a
+                    className="mt-1 inline-block text-sm font-medium text-[#000a1e] transition-colors hover:text-[#005db6]"
+                    href={`tel:${technicalSupport.phone.replace(/\s+/g, '')}`}
+                  >
                     {technicalSupport.phone}
-                  </p>
+                  </a>
                 </div>
               </form>
             </div>

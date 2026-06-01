@@ -143,8 +143,10 @@ class WorkspaceApiTest extends TestCase
         ]);
     }
 
-    public function test_claim_superadmin_promotes_only_when_no_other_superadmin_exists(): void
+    public function test_superadmin_cannot_be_claimed_through_the_api(): void
     {
+        // The self-promotion endpoint has been removed: superadmin ("Maintenance")
+        // can only be created manually via the console command / DB.
         $this->actingAs($this->admin)
             ->postJson('/api/admin/claim-superadmin', [
                 'fullName' => 'Root Admin',
@@ -152,20 +154,21 @@ class WorkspaceApiTest extends TestCase
                 'email' => 'root.admin@example.test',
                 'password' => 'Password123!',
             ])
-            ->assertOk()
-            ->assertJsonPath('pendingEmail', null)
-            ->assertJsonPath('user.role', 'superadmin');
+            ->assertNotFound();
 
-        $this->assertSame('superadmin', $this->admin->refresh()->role_key);
+        $this->assertSame('admin', $this->admin->refresh()->role_key);
 
-        $this->actingAs($this->otherNurse)
-            ->postJson('/api/admin/claim-superadmin', [
-                'fullName' => 'Other Root',
-                'username' => 'other.root',
-                'email' => 'other.root@example.test',
+        // No admin-creation path may assign the superadmin role either.
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/users', [
+                'fullName' => 'Sneaky Root',
+                'email' => 'sneaky.root@example.test',
                 'password' => 'Password123!',
+                'role' => 'superadmin',
             ])
-            ->assertForbidden();
+            ->assertStatus(422);
+
+        $this->assertDatabaseMissing('users', ['email' => 'sneaky.root@example.test']);
     }
 
     public function test_password_reset_endpoints_create_and_accept_tokens(): void

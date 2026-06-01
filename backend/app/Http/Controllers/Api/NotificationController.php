@@ -113,13 +113,27 @@ class NotificationController extends Controller
             'notifications.*.relatedReportId' => ['nullable', 'uuid'],
         ]);
         $user = $request->user();
+        $isAdmin = Permissions::isAdminRole($user->role_key);
         $restored = collect($validated['notifications'])
-            ->filter(fn (array $notification) => Permissions::isAdminRole($user->role_key) || $notification['userId'] === $user->id)
-            ->map(function (array $notification): Notification {
+            ->filter(fn (array $notification) => $isAdmin || $notification['userId'] === $user->id)
+            ->map(function (array $notification) use ($user, $isAdmin): ?Notification {
+                // Non-admins can only ever restore notifications onto their own
+                // account; admins may target the supplied recipient.
+                $recipientId = $isAdmin ? $notification['userId'] : $user->id;
+
+                // Guard against IDOR: updateOrCreate keyed only on `id` would let a
+                // caller overwrite (hijack/clobber) another user's existing
+                // notification by guessing its UUID. Refuse when the row already
+                // exists under a different recipient.
+                $existing = Notification::query()->find($notification['id']);
+                if ($existing && $existing->recipient_id !== $recipientId) {
+                    return null;
+                }
+
                 return Notification::query()->updateOrCreate(
                     ['id' => $notification['id']],
                     [
-                        'recipient_id' => $notification['userId'],
+                        'recipient_id' => $recipientId,
                         'type' => $notification['type'],
                         'title' => $notification['title'],
                         'message' => $notification['message'],
@@ -130,6 +144,7 @@ class NotificationController extends Controller
                     ],
                 );
             })
+            ->filter()
             ->values();
 
         return response()->json([

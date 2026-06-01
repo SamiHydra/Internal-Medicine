@@ -1,7 +1,9 @@
 import {
   Activity,
+  ClipboardCheck,
   ClipboardList,
   FilePenLine,
+  GraduationCap,
   LayoutDashboard,
   LockKeyhole,
   Settings,
@@ -24,6 +26,7 @@ export const navigationByRole: Record<UserRole, NavigationItem[]> = {
     { label: 'Users & Access', href: '/admin/users', icon: Users },
     { label: 'Templates', href: '/admin/templates', icon: FilePenLine },
     { label: 'Audit Log', href: '/admin/audit', icon: ShieldCheck },
+    { label: 'Academic', href: '/admin/academic', icon: GraduationCap },
     { label: 'Settings', href: '/admin/settings', icon: Settings },
   ],
   admin: [
@@ -32,14 +35,7 @@ export const navigationByRole: Record<UserRole, NavigationItem[]> = {
     { label: 'Users & Access', href: '/admin/users', icon: Users },
     { label: 'Templates', href: '/admin/templates', icon: FilePenLine },
     { label: 'Audit Log', href: '/admin/audit', icon: ShieldCheck },
-    { label: 'Settings', href: '/admin/settings', icon: Settings },
-  ],
-  doctor_admin: [
-    { label: 'Dashboard', href: '/admin', icon: LayoutDashboard },
-    { label: 'Submissions', href: '/admin/submissions', icon: ClipboardList },
-    { label: 'Users & Access', href: '/admin/users', icon: Users },
-    { label: 'Templates', href: '/admin/templates', icon: FilePenLine },
-    { label: 'Audit Log', href: '/admin/audit', icon: ShieldCheck },
+    { label: 'Academic', href: '/admin/academic', icon: GraduationCap },
     { label: 'Settings', href: '/admin/settings', icon: Settings },
   ],
   nurse: [
@@ -47,5 +43,15 @@ export const navigationByRole: Record<UserRole, NavigationItem[]> = {
     { label: 'My Reports', href: '/nurse/reports', icon: ClipboardList },
     { label: 'Access Request', href: '/register', icon: LockKeyhole },
     { label: 'Activity', href: '/nurse/activity', icon: Activity },
+  ],
+  resident: [
+    { label: 'Home', href: '/academic', icon: LayoutDashboard },
+    { label: 'Submit evaluation', href: '/academic/submit', icon: ClipboardCheck },
+    { label: 'History', href: '/academic/history', icon: Activity },
+  ],
+  consultant: [
+    { label: 'Home', href: '/academic', icon: LayoutDashboard },
+    { label: 'Submit evaluation', href: '/academic/submit', icon: ClipboardCheck },
+    { label: 'History', href: '/academic/history', icon: Activity },
   ],
 }

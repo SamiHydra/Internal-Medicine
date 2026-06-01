@@ -85,6 +85,8 @@ class ReportWorkflowController extends Controller
 
     public function update(Request $request, Report $report): JsonResponse
     {
+        Gate::authorize('update', $report);
+
         $validated = $request->validate([
             'values' => ['required', 'array'],
             'submit' => ['sometimes', 'boolean'],
@@ -104,6 +106,8 @@ class ReportWorkflowController extends Controller
 
     public function submit(Request $request, Report $report): JsonResponse
     {
+        Gate::authorize('submit', $report);
+
         $validated = $request->validate([
             'values' => ['sometimes', 'array'],
         ]);
@@ -122,6 +126,8 @@ class ReportWorkflowController extends Controller
 
     public function lock(Request $request, Report $report): JsonResponse
     {
+        Gate::authorize('lock', $report);
+
         $lockedReport = $this->lockingService->setLockState($request->user(), $report, true);
 
         return response()->json($this->serializeReport($this->loadReport($lockedReport)));
@@ -129,6 +135,8 @@ class ReportWorkflowController extends Controller
 
     public function unlock(Request $request, Report $report): JsonResponse
     {
+        Gate::authorize('unlock', $report);
+
         $unlockedReport = $this->lockingService->setLockState($request->user(), $report, false);
 
         return response()->json($this->serializeReport($this->loadReport($unlockedReport)));

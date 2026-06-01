@@ -29,23 +29,23 @@ class AuthApiTest extends TestCase
     public function test_login_accepts_username_and_returns_sanitized_session_payload(): void
     {
         $user = User::factory()->role('admin', 'Administrator')->create([
-            'full_name' => 'Mesay Gemechu',
-            'email' => 'mesay@example.test',
-            'username' => 'Mesay.Admin',
-            'password' => Hash::make('Mesay2026!'),
+            'full_name' => 'Abel Gemechu',
+            'email' => 'abel@example.test',
+            'username' => 'Abel.Admin',
+            'password' => Hash::make('StPaul2026!'),
         ]);
 
         $response = $this->postJson('/api/auth/login', [
-            'identifier' => ' Mesay.Admin ',
-            'password' => 'Mesay2026!',
+            'identifier' => ' Abel.Admin ',
+            'password' => 'StPaul2026!',
         ]);
 
         $response
             ->assertOk()
             ->assertJsonPath('user.id', $user->id)
-            ->assertJsonPath('user.fullName', 'Mesay Gemechu')
-            ->assertJsonPath('user.email', 'mesay@example.test')
-            ->assertJsonPath('user.username', 'mesay.admin')
+            ->assertJsonPath('user.fullName', 'Abel Gemechu')
+            ->assertJsonPath('user.email', 'abel@example.test')
+            ->assertJsonPath('user.username', 'abel.admin')
             ->assertJsonPath('user.role', 'admin')
             ->assertJsonPath('user.active', true)
             ->assertJsonMissingPath('user.password')
@@ -61,12 +61,12 @@ class AuthApiTest extends TestCase
         $user = User::factory()->create([
             'email' => 'hana.abera@example.test',
             'username' => 'hana.abera',
-            'password' => Hash::make('Mesay2026!'),
+            'password' => Hash::make('StPaul2026!'),
         ]);
 
         $response = $this->postJson('/api/auth/login', [
             'identifier' => 'HANA.ABERA@EXAMPLE.TEST',
-            'password' => 'Mesay2026!',
+            'password' => 'StPaul2026!',
         ]);
 
         $response
@@ -82,12 +82,12 @@ class AuthApiTest extends TestCase
         $user = User::factory()->inactive()->create([
             'email' => 'inactive@example.test',
             'username' => 'inactive.nurse',
-            'password' => Hash::make('Mesay2026!'),
+            'password' => Hash::make('StPaul2026!'),
         ]);
 
         $response = $this->postJson('/api/auth/login', [
             'identifier' => $user->username,
-            'password' => 'Mesay2026!',
+            'password' => 'StPaul2026!',
         ]);
 
         $response
@@ -103,7 +103,7 @@ class AuthApiTest extends TestCase
             'full_name' => 'Hana Abera',
             'email' => 'hana@example.test',
             'username' => 'hana.abera',
-            'password' => Hash::make('Mesay2026!'),
+            'password' => Hash::make('StPaul2026!'),
         ]);
         $template = ReportTemplate::query()->where('slug', 'inpatient_weekly')->firstOrFail();
         $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
@@ -152,12 +152,12 @@ class AuthApiTest extends TestCase
         User::factory()->create([
             'email' => 'logout@example.test',
             'username' => 'logout.user',
-            'password' => Hash::make('Mesay2026!'),
+            'password' => Hash::make('StPaul2026!'),
         ]);
 
         $this->withHeader('Origin', 'http://localhost:5173')->postJson('/api/auth/login', [
             'identifier' => 'logout.user',
-            'password' => 'Mesay2026!',
+            'password' => 'StPaul2026!',
         ])->assertOk();
 
         $this->withHeader('Origin', 'http://localhost:5173')->postJson('/api/auth/logout')

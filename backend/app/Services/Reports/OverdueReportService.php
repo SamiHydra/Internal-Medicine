@@ -52,7 +52,7 @@ class OverdueReportService
             }
 
             $adminRecipients = User::query()
-                ->whereIn('role_key', ['superadmin', 'admin', 'doctor_admin'])
+                ->whereIn('role_key', ['superadmin', 'admin'])
                 ->where('active', true)
                 ->get();
             $activePairs = [];

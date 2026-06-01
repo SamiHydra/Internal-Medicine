@@ -77,7 +77,7 @@ class AnalyticsExportTest extends TestCase
         $response->assertHeader('Content-Type', 'text/csv; charset=UTF-8');
         $this->assertStringContainsString('attachment', $response->headers->get('Content-Disposition'));
 
-        $csv = $response->getContent();
+        $csv = $response->streamedContent();
         $this->assertStringContainsString('Week start', $csv);   // header row
         $this->assertStringContainsString('2026-05-25', $csv);   // the week
         $this->assertStringContainsString('inpatient', $csv);    // family column

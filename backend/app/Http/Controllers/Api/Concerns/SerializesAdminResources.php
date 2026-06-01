@@ -3,15 +3,19 @@
 namespace App\Http\Controllers\Api\Concerns;
 
 use App\Models\AccessRequest;
+use App\Models\AdminAccessRequest;
 use App\Models\AdminAuditLog;
 use App\Models\AppSetting;
 use App\Models\AuditLog;
+use App\Models\ConsultantEvaluation;
 use App\Models\Department;
 use App\Models\ReportAssignment;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportingPeriod;
 use App\Models\ReportTemplate;
+use App\Models\ResidentEvaluation;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Model;
 
 trait SerializesAdminResources
 {
@@ -139,6 +143,28 @@ trait SerializesAdminResources
     /**
      * @return array<string, mixed>
      */
+    protected function serializeAdminAccessRequest(AdminAccessRequest $adminRequest): array
+    {
+        $adminRequest->loadMissing(['reviewer', 'createdUser']);
+
+        return [
+            'id' => $adminRequest->id,
+            'fullName' => $adminRequest->full_name,
+            'email' => $adminRequest->email,
+            'requestedRole' => $adminRequest->requested_role,
+            'status' => $adminRequest->status,
+            'notes' => $adminRequest->notes,
+            'requestedAt' => $adminRequest->requested_at?->toJSON(),
+            'reviewedAt' => $adminRequest->reviewed_at?->toJSON(),
+            'reviewedBy' => $adminRequest->reviewed_by,
+            'reviewedByName' => $adminRequest->reviewer?->full_name,
+            'createdUserId' => $adminRequest->created_user_id,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
     protected function serializeAccessRequest(AccessRequest $accessRequest): array
     {
         $accessRequest->loadMissing(['user', 'reviewer', 'items.department', 'items.template']);
@@ -163,6 +189,113 @@ trait SerializesAdminResources
                 'templateName' => $item->template?->name,
             ])->values(),
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function serializeConsultantEvaluation(ConsultantEvaluation $evaluation): array
+    {
+        $evaluation->loadMissing(['author', 'subject', 'ward']);
+
+        return [
+            'id' => $evaluation->id,
+            'authorId' => $evaluation->author_id,
+            'authorName' => $evaluation->author?->full_name,
+            'subjectId' => $evaluation->subject_id,
+            'subjectName' => $evaluation->subject?->full_name,
+            'wardId' => $evaluation->ward_id,
+            'wardName' => $evaluation->ward?->name,
+            'evaluationDate' => $evaluation->evaluation_date?->toJSON(),
+            'seniorPresent' => (bool) $evaluation->senior_present,
+            'seniorJoinedAt' => $this->formatClockTime($evaluation->senior_joined_at),
+            'presenceMinutes' => $evaluation->presence_minutes,
+            'allPatientsReviewed' => (bool) $evaluation->all_patients_reviewed,
+            'mgmtPlanDocumented' => (bool) $evaluation->mgmt_plan_documented,
+            'vteAssessed' => (bool) $evaluation->vte_assessed,
+            'dischargeDiscussed' => (bool) $evaluation->discharge_discussed,
+            'medReviewDone' => (bool) $evaluation->med_review_done,
+            'criticalLabsReviewed' => (bool) $evaluation->critical_labs_reviewed,
+            'pctPatientsSeen' => $evaluation->pct_patients_seen,
+            'roundDelayed' => (bool) $evaluation->round_delayed,
+            'mdtParticipants' => $evaluation->mdt_participants ?? [],
+            'systemIssues' => $evaluation->system_issues ?? [],
+            'comment' => $evaluation->comment,
+            'qualityScore' => $this->evaluationScore($evaluation, ConsultantEvaluation::SCORE_ITEMS),
+            'createdAt' => $evaluation->created_at?->toJSON(),
+            'updatedAt' => $evaluation->updated_at?->toJSON(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function serializeResidentEvaluation(ResidentEvaluation $evaluation): array
+    {
+        $evaluation->loadMissing(['author', 'subject', 'ward']);
+
+        return [
+            'id' => $evaluation->id,
+            'authorId' => $evaluation->author_id,
+            'authorName' => $evaluation->author?->full_name,
+            'subjectId' => $evaluation->subject_id,
+            'subjectName' => $evaluation->subject?->full_name,
+            'wardId' => $evaluation->ward_id,
+            'wardName' => $evaluation->ward?->name,
+            'evaluationDate' => $evaluation->evaluation_date?->toJSON(),
+            'onTime' => (bool) $evaluation->on_time,
+            'prepared' => (bool) $evaluation->prepared,
+            'presentationClear' => (bool) $evaluation->presentation_clear,
+            'clinicalReasoning' => (bool) $evaluation->clinical_reasoning,
+            'managementPlan' => (bool) $evaluation->management_plan,
+            'documentationTimely' => (bool) $evaluation->documentation_timely,
+            'communication' => (bool) $evaluation->communication,
+            'professional' => (bool) $evaluation->professional,
+            'responsiveFeedback' => (bool) $evaluation->responsive_feedback,
+            'followThrough' => (bool) $evaluation->follow_through,
+            'overallRating' => $evaluation->overall_rating,
+            'concerns' => $evaluation->concerns ?? [],
+            'comment' => $evaluation->comment,
+            'performanceScore' => $this->evaluationScore($evaluation, ResidentEvaluation::SCORE_ITEMS),
+            'createdAt' => $evaluation->created_at?->toJSON(),
+            'updatedAt' => $evaluation->updated_at?->toJSON(),
+        ];
+    }
+
+    /**
+     * The score is the % of the row's yes/no items marked true. Computed on read,
+     * never persisted.
+     *
+     * @param  list<string>  $items
+     */
+    protected function evaluationScore(Model $evaluation, array $items): float
+    {
+        $total = count($items);
+
+        if ($total === 0) {
+            return 0.0;
+        }
+
+        $yes = 0;
+        foreach ($items as $item) {
+            if ((bool) $evaluation->{$item}) {
+                $yes++;
+            }
+        }
+
+        return round($yes / $total * 100, 1);
+    }
+
+    /**
+     * Normalize a time column to HH:MM (the DB may return "08:15" or "08:15:00").
+     */
+    protected function formatClockTime(?string $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return substr($value, 0, 5);
     }
 
     /**

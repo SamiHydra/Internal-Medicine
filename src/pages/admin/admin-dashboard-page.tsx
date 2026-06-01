@@ -19,6 +19,7 @@ import {
   YAxis,
 } from 'recharts'
 
+import { AcademicSnapshotCard } from '@/components/admin/academic-snapshot-card'
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { apiEnv } from '@/lib/api/env'
 import {
@@ -59,7 +60,7 @@ import {
   type DashboardTrendScale,
   type ReportingTimeRange,
 } from '@/data/selectors'
-import { useAppData } from '@/context/app-data-context'
+import { useAppData, useAppSync } from '@/context/app-data-context'
 import { departments, departmentMap, templateMap } from '@/config/templates'
 import { computeWeeklyValue } from '@/lib/metrics'
 import { cn, formatCompactNumber } from '@/lib/utils'
@@ -373,7 +374,8 @@ function formatChartTooltipLabel(label: unknown) {
 }
 
 export function AdminDashboardPage() {
-  const { state, ensureReportDetails, isSyncing } = useAppData()
+  const { state, ensureReportDetails } = useAppData()
+  const { isSyncing } = useAppSync()
   const [familyFilter, setFamilyFilter] = useState<FamilyFilter>('all')
   const currentPeriod = getCurrentPeriod(state)
   const currentPeriodId = currentPeriod?.id ?? ''
@@ -1122,6 +1124,15 @@ export function AdminDashboardPage() {
           </div>
         </div>
       </motion.section>
+
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.29, ease: 'easeOut' }}
+        className="md:max-w-[420px]"
+      >
+        <AcademicSnapshotCard />
+      </motion.div>
 
       <motion.section
         initial={{ opacity: 0, y: 10 }}

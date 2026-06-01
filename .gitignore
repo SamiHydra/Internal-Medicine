@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Environment files — never commit real values; commit only *.example templates.
+.env
+.env.*
+!.env*.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -23,3 +28,10 @@ dist-ssr
 *.sln
 *.sw?
 .codex-temp/
+
+# Third-party design reference (not part of the build)
+design-reference/
+
+# Binary brief archive + generated screenshots (not source)
+files.zip
+tools/shots/

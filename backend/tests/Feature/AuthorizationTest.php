@@ -47,7 +47,7 @@ class AuthorizationTest extends TestCase
 
     public function test_role_and_permission_middleware_enforce_server_side_access(): void
     {
-        Route::middleware(['auth:sanctum', 'role:admin,doctor_admin'])
+        Route::middleware(['auth:sanctum', 'role:admin'])
             ->get('/_test/role-admin', fn () => response()->json(['ok' => true]));
         Route::middleware(['auth:sanctum', 'permission:users.manage'])
             ->get('/_test/permission-users-manage', fn () => response()->json(['ok' => true]));
@@ -89,7 +89,7 @@ class AuthorizationTest extends TestCase
     {
         $nurse = User::factory()->create();
         $otherNurse = User::factory()->create();
-        $admin = User::factory()->role('doctor_admin', 'Clinical Director')->create();
+        $admin = User::factory()->role('admin', 'Administrator')->create();
         $template = ReportTemplate::query()->where('slug', 'inpatient_weekly')->firstOrFail();
         $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
         $period = ReportingPeriod::query()->create([

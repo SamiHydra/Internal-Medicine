@@ -14,6 +14,8 @@ final class Permissions
 
     public const ADMINS_MANAGE = 'admins.manage';
 
+    public const ADMINS_APPROVE = 'admins.approve';
+
     public const DEPARTMENTS_MANAGE = 'departments.manage';
 
     public const TEMPLATES_MANAGE = 'templates.manage';
@@ -40,7 +42,13 @@ final class Permissions
 
     public const NOTIFICATIONS_VIEW = 'notifications.view';
 
-    private const ADMIN_ROLES = ['superadmin', 'admin', 'doctor_admin'];
+    public const ACADEMIC_SUBMIT = 'academic.submit';
+
+    public const ACADEMIC_VIEW = 'academic.view';
+
+    public const ACADEMIC_MANAGE = 'academic.manage';
+
+    private const ADMIN_ROLES = ['superadmin', 'admin'];
 
     private const ROLE_PERMISSIONS = [
         'superadmin' => [
@@ -48,6 +56,7 @@ final class Permissions
             self::USERS_VIEW,
             self::USERS_MANAGE,
             self::ADMINS_MANAGE,
+            self::ADMINS_APPROVE,
             self::DEPARTMENTS_MANAGE,
             self::TEMPLATES_MANAGE,
             self::ASSIGNMENTS_MANAGE,
@@ -59,11 +68,14 @@ final class Permissions
             self::AUDIT_VIEW,
             self::SETTINGS_MANAGE,
             self::NOTIFICATIONS_VIEW,
+            self::ACADEMIC_VIEW,
+            self::ACADEMIC_MANAGE,
         ],
         'admin' => [
             self::AUTH_VIEW_SELF,
             self::USERS_VIEW,
             self::USERS_MANAGE,
+            self::ADMINS_APPROVE,
             self::DEPARTMENTS_MANAGE,
             self::TEMPLATES_MANAGE,
             self::ASSIGNMENTS_MANAGE,
@@ -75,22 +87,8 @@ final class Permissions
             self::AUDIT_VIEW,
             self::SETTINGS_MANAGE,
             self::NOTIFICATIONS_VIEW,
-        ],
-        'doctor_admin' => [
-            self::AUTH_VIEW_SELF,
-            self::USERS_VIEW,
-            self::USERS_MANAGE,
-            self::DEPARTMENTS_MANAGE,
-            self::TEMPLATES_MANAGE,
-            self::ASSIGNMENTS_MANAGE,
-            self::ACCESS_REQUESTS_REVIEW,
-            self::REPORTS_VIEW_ANY,
-            self::REPORTS_SUBMIT,
-            self::REPORTS_LOCK,
-            self::ANALYTICS_VIEW,
-            self::AUDIT_VIEW,
-            self::SETTINGS_MANAGE,
-            self::NOTIFICATIONS_VIEW,
+            self::ACADEMIC_VIEW,
+            self::ACADEMIC_MANAGE,
         ],
         'nurse' => [
             self::AUTH_VIEW_SELF,
@@ -98,6 +96,14 @@ final class Permissions
             self::REPORTS_VIEW_ASSIGNED,
             self::REPORTS_SUBMIT,
             self::NOTIFICATIONS_VIEW,
+        ],
+        'resident' => [
+            self::AUTH_VIEW_SELF,
+            self::ACADEMIC_SUBMIT,
+        ],
+        'consultant' => [
+            self::AUTH_VIEW_SELF,
+            self::ACADEMIC_SUBMIT,
         ],
     ];
 

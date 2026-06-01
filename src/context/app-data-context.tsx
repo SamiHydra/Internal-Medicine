@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PropsWithChildren,
@@ -14,25 +15,28 @@ import { createEmptyAppState } from '@/lib/app-state'
 import { departmentMap, templateMap } from '@/config/templates'
 import type {
   AccessRequestPayload,
-  ClaimSuperadminPayload,
+  AdminAccessRequest,
   CreateAdminAccountPayload,
   LiveAppStateLoadOptions,
+  ApiReferenceState,
   ReportDetailRecord,
   SaveReportPayload,
-  SupabaseReferenceState,
+  SubmitAdminAccessRequestPayload,
 } from '@/lib/api'
 import {
   assignUserToDepartment as assignUserToDepartmentMutation,
-  claimSuperadmin as claimSuperadminMutation,
   createAdminAccount as createAdminAccountMutation,
   createEmptyReferenceState,
   ensureDepartmentReferenceData,
+  fetchAdminAccessRequests as fetchAdminAccessRequestsQuery,
   fetchCurrentUserProfile,
   fetchReportDetails,
   fetchLiveAppState,
   isAdminRole,
   loginWithPassword,
   reviewAccessRequest as reviewAccessRequestMutation,
+  reviewAdminAccessRequest as reviewAdminAccessRequestMutation,
+  submitAdminAccessRequest as submitAdminAccessRequestMutation,
   restoreNotifications as restoreNotificationsMutation,
   resolveAssignmentReference,
   saveReport as saveReportMutation,
@@ -72,8 +76,6 @@ type AppDataContextValue = {
   state: AppState
   currentUser: UserProfile | null
   isBootstrapping: boolean
-  isSyncing: boolean
-  isDataRefreshing: boolean
   isConfigured: boolean
   missingEnvVars: string[]
   error: string | null
@@ -83,10 +85,14 @@ type AppDataContextValue = {
   clearNotifications: (userId: string, notificationIds: string[]) => Promise<void>
   restoreNotifications: (notifications: NotificationItem[]) => Promise<void>
   submitAccessRequest: (payload: AccessRequestPayload) => Promise<boolean>
-  claimSuperadmin: (payload: ClaimSuperadminPayload) => Promise<boolean>
+  submitAdminAccessRequest: (payload: SubmitAdminAccessRequestPayload) => Promise<boolean>
   createAdminAccount: (payload: CreateAdminAccountPayload) => Promise<boolean>
   approveAccessRequest: (requestId: string, reviewerId: string) => Promise<void>
   rejectAccessRequest: (requestId: string, reviewerId: string) => Promise<void>
+  adminAccessRequests: AdminAccessRequest[]
+  refreshAdminAccessRequests: () => Promise<void>
+  approveAdminAccessRequest: (requestId: string) => Promise<void>
+  rejectAdminAccessRequest: (requestId: string) => Promise<void>
   saveReport: (payload: SaveReportPayload) => Promise<boolean>
   lockReport: (reportId: string, actorId: string) => Promise<void>
   unlockReport: (reportId: string, actorId: string) => Promise<void>
@@ -111,7 +117,17 @@ type AppDataContextValue = {
 }
 
 const AppDataContext = createContext<AppDataContextValue | null>(null)
-const workspaceCacheStorageKey = 'mesay:workspace-state:v3'
+
+// isSyncing/isDataRefreshing live in a separate context so the frequent
+// background-sync flag flips (20s poll, sync indicator) do not re-render every
+// useAppData() consumer — only components that actually read the sync status.
+type AppSyncContextValue = {
+  isSyncing: boolean
+  isDataRefreshing: boolean
+}
+
+const AppSyncContext = createContext<AppSyncContextValue | null>(null)
+const workspaceCacheStorageKey = 'stpaul:workspace-state:v3'
 
 type ReportDetailLoadState = {
   status: 'idle' | 'loading' | 'loaded' | 'error'
@@ -164,7 +180,7 @@ function hasReportDetailData(report: AppState['reports'][number]) {
 }
 
 function hasAssignmentReference(
-  references: SupabaseReferenceState,
+  references: ApiReferenceState,
   departmentId: string,
   templateId: string,
 ) {
@@ -243,10 +259,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [isSyncing, setIsSyncing] = useState(false)
   const [isDataRefreshing, setIsDataRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [adminAccessRequests, setAdminAccessRequests] = useState<AdminAccessRequest[]>([])
   const [reportDetailLoadStates, setReportDetailLoadStates] = useState<
     Record<string, ReportDetailLoadState>
   >({})
-  const referencesRef = useRef<SupabaseReferenceState>(createEmptyReferenceState())
+  const referencesRef = useRef<ApiReferenceState>(createEmptyReferenceState())
   const loadVersionRef = useRef(0)
   const currentUserIdRef = useRef<string | null>(null)
   const currentStateRef = useRef<AppState>(createEmptyAppState())
@@ -622,10 +639,6 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       syncReportDetailLoadStates,
     ],
   )
-
-  async function refreshData() {
-    await refreshDataWithOptions()
-  }
 
   const ensureReportDetails = useCallback(
     async (reportIds: string[], options?: EnsureReportDetailsOptions) => {
@@ -1084,16 +1097,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [persistWorkspaceCache],
   )
 
-  const value: AppDataContextValue = {
-    state,
-    currentUser,
-    isBootstrapping,
-    isSyncing,
-    isDataRefreshing,
-    isConfigured: isApiConfigured,
-    missingEnvVars: missingApiEnvKeys,
-    error,
-    login: async (email, password) => {
+  const login = useCallback(
+    async (email: string, password: string): Promise<UserRole | null> => {
       if (!client) {
         const message = `Laravel API is not configured. ${apiEnvSetupHint}`
         setError(message)
@@ -1134,59 +1139,76 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return null
       }
     },
-    logout: async () => {
-      if (!client) {
-        return
-      }
+    [client, loadUserState, ensureReportDetails],
+  )
 
-      try {
-        isSigningOutRef.current = true
-        await signOutMutation(client)
-        clearSignedOutState()
-      } catch (logoutError) {
-        isSigningOutRef.current = false
-        toast.error(getMessage(logoutError, 'Unable to sign out.'))
-      }
-    },
-    markNotificationsRead: async (userId, notificationIds) => {
+  const logout = useCallback(async (): Promise<void> => {
+    if (!client) {
+      return
+    }
+
+    try {
+      isSigningOutRef.current = true
+      await signOutMutation(client)
+      clearSignedOutState()
+    } catch (logoutError) {
+      isSigningOutRef.current = false
+      toast.error(getMessage(logoutError, 'Unable to sign out.'))
+    }
+  }, [client, clearSignedOutState])
+
+  const markNotificationsRead = useCallback(
+    async (userId: string, notificationIds: string[]): Promise<void> => {
       if (!client || !notificationIds.length) {
         return
       }
 
       try {
         await updateNotificationReadState(client, userId, notificationIds)
-        await refreshData()
+        await refreshDataWithOptions()
       } catch (notificationError) {
         toast.error(
           getMessage(notificationError, 'Unable to mark notifications as read.'),
         )
       }
     },
-    clearNotifications: async (userId, notificationIds) => {
+    [client, refreshDataWithOptions],
+  )
+
+  const clearNotifications = useCallback(
+    async (userId: string, notificationIds: string[]): Promise<void> => {
       if (!client || !notificationIds.length) {
         return
       }
 
       try {
         await clearNotificationsMutation(client, userId, notificationIds)
-        await refreshData()
+        await refreshDataWithOptions()
       } catch (notificationError) {
         toast.error(getMessage(notificationError, 'Unable to clear notifications.'))
       }
     },
-    restoreNotifications: async (notifications) => {
+    [client, refreshDataWithOptions],
+  )
+
+  const restoreNotifications = useCallback(
+    async (notifications: NotificationItem[]): Promise<void> => {
       if (!client || !notifications.length) {
         return
       }
 
       try {
         await restoreNotificationsMutation(client, notifications)
-        await refreshData()
+        await refreshDataWithOptions()
       } catch (notificationError) {
         toast.error(getMessage(notificationError, 'Unable to restore notifications.'))
       }
     },
-    submitAccessRequest: async (payload) => {
+    [client, refreshDataWithOptions],
+  )
+
+  const submitAccessRequest = useCallback(
+    async (payload: AccessRequestPayload): Promise<boolean> => {
       if (!client) {
         toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
         return false
@@ -1205,33 +1227,77 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return false
       }
     },
-    claimSuperadmin: async (payload) => {
+    [client, currentUser, refreshDataWithOptions],
+  )
+
+  const submitAdminAccessRequest = useCallback(
+    async (payload: SubmitAdminAccessRequestPayload): Promise<boolean> => {
       if (!client) {
         toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
         return false
       }
 
       try {
-        const result = await claimSuperadminMutation(client, payload)
-        await refreshDataWithOptions({
-          includeProfiles: profileDirectoryLoadedRef.current,
-        })
-
-        if (result.pendingEmail) {
-          toast.success(
-            `Superadmin claimed. Email change is pending for ${result.pendingEmail}. Keep using ${result.currentEmail} until you confirm the email-change link.`,
-          )
-        } else {
-          toast.success('Superadmin account updated.')
-        }
-
+        await submitAdminAccessRequestMutation(client, payload)
         return true
-      } catch (claimError) {
-        toast.error(getMessage(claimError, 'Unable to claim the superadmin account.'))
+      } catch (requestError) {
+        toast.error(getMessage(requestError, 'Unable to submit the admin access request.'))
         return false
       }
     },
-    createAdminAccount: async (payload) => {
+    [client],
+  )
+
+  const refreshAdminAccessRequests = useCallback(async (): Promise<void> => {
+    if (!client || !currentUser || !isAdminRole(currentUser.role)) {
+      return
+    }
+
+    try {
+      setAdminAccessRequests(await fetchAdminAccessRequestsQuery(client))
+    } catch {
+      // A non-approver (e.g. a nurse) gets a 403 here; leave the list empty.
+      setAdminAccessRequests([])
+    }
+  }, [client, currentUser])
+
+  const approveAdminAccessRequest = useCallback(
+    async (requestId: string): Promise<void> => {
+      if (!client) {
+        return
+      }
+
+      try {
+        await reviewAdminAccessRequestMutation(client, requestId, 'approved')
+        await refreshAdminAccessRequests()
+        await refreshDataWithOptions({ includeProfiles: profileDirectoryLoadedRef.current })
+        toast.success('Admin account approved.')
+      } catch (reviewError) {
+        toast.error(getMessage(reviewError, 'Unable to approve the admin request.'))
+      }
+    },
+    [client, refreshAdminAccessRequests, refreshDataWithOptions],
+  )
+
+  const rejectAdminAccessRequest = useCallback(
+    async (requestId: string): Promise<void> => {
+      if (!client) {
+        return
+      }
+
+      try {
+        await reviewAdminAccessRequestMutation(client, requestId, 'rejected')
+        await refreshAdminAccessRequests()
+        toast.success('Admin request rejected.')
+      } catch (reviewError) {
+        toast.error(getMessage(reviewError, 'Unable to reject the admin request.'))
+      }
+    },
+    [client, refreshAdminAccessRequests],
+  )
+
+  const createAdminAccount = useCallback(
+    async (payload: CreateAdminAccountPayload): Promise<boolean> => {
       if (!client) {
         toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
         return false
@@ -1253,7 +1319,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return false
       }
     },
-    approveAccessRequest: async (requestId) => {
+    [client, currentUser, refreshDataWithOptions],
+  )
+
+  const approveAccessRequest = useCallback(
+    async (requestId: string): Promise<void> => {
       if (!client) {
         return
       }
@@ -1267,7 +1337,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         )
       }
     },
-    rejectAccessRequest: async (requestId) => {
+    [client, refreshDataWithOptions],
+  )
+
+  const rejectAccessRequest = useCallback(
+    async (requestId: string): Promise<void> => {
       if (!client) {
         return
       }
@@ -1281,7 +1355,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         )
       }
     },
-    saveReport: async (payload) => {
+    [client, refreshDataWithOptions],
+  )
+
+  const saveReport = useCallback(
+    async (payload: SaveReportPayload): Promise<boolean> => {
       if (!client) {
         return false
       }
@@ -1338,7 +1416,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return false
       }
     },
-    lockReport: async (reportId) => {
+    [client, refreshDataWithOptions, applySavedReportDetails],
+  )
+
+  const lockReport = useCallback(
+    async (reportId: string): Promise<void> => {
       if (!client) {
         return
       }
@@ -1351,7 +1433,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         toast.error(getMessage(lockError, 'Unable to lock the report.'))
       }
     },
-    unlockReport: async (reportId) => {
+    [client, refreshDataWithOptions],
+  )
+
+  const unlockReport = useCallback(
+    async (reportId: string): Promise<void> => {
       if (!client) {
         return
       }
@@ -1364,7 +1450,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         toast.error(getMessage(unlockError, 'Unable to unlock the report.'))
       }
     },
-    updateSettings: async (settings) => {
+    [client, refreshDataWithOptions],
+  )
+
+  const updateSettings = useCallback(
+    async (settings: Partial<AppSettings>): Promise<void> => {
       if (!client) {
         return
       }
@@ -1376,7 +1466,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         toast.error(getMessage(settingsError, 'Unable to save the settings.'))
       }
     },
-    toggleUserActive: async (userId) => {
+    [client, refreshDataWithOptions],
+  )
+
+  const toggleUserActive = useCallback(
+    async (userId: string): Promise<void> => {
       if (!client) {
         return
       }
@@ -1396,7 +1490,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         toast.error(getMessage(profileError, 'Unable to update the user status.'))
       }
     },
-    toggleAssignmentActive: async (assignmentId) => {
+    [client, state, refreshDataWithOptions],
+  )
+
+  const toggleAssignmentActive = useCallback(
+    async (assignmentId: string): Promise<void> => {
       if (!client) {
         return
       }
@@ -1424,7 +1522,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         )
       }
     },
-    assignUserToDepartment: async (userId, departmentId, templateId) => {
+    [client, state, refreshDataWithOptions],
+  )
+
+  const assignUserToDepartment = useCallback(
+    async (userId: string, departmentId: string, templateId: string): Promise<void> => {
       if (!client || !currentUser) {
         return
       }
@@ -1495,7 +1597,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         )
       }
     },
-    ensureProfileDirectoryData: async () => {
+    [client, currentUser, loadUserState, refreshDataWithOptions],
+  )
+
+  const ensureProfileDirectoryData = useCallback(
+    async (): Promise<void> => {
       if (!client || !currentUserIdRef.current || profileDirectoryLoadedRef.current) {
         return
       }
@@ -1509,7 +1615,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         toast.error(getMessage(loadError, 'Unable to load the user directory.'))
       }
     },
-    ensureAccessRequestData: async () => {
+    [client, loadUserState],
+  )
+
+  const ensureAccessRequestData = useCallback(
+    async (): Promise<void> => {
       if (!client || !currentUserIdRef.current || accessRequestDataLoadedRef.current) {
         return
       }
@@ -1523,7 +1633,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         toast.error(getMessage(loadError, 'Unable to load access requests.'))
       }
     },
-    ensureHistoryData: async () => {
+    [client, loadUserState],
+  )
+
+  const ensureHistoryData = useCallback(
+    async (): Promise<void> => {
       if (!client || !currentUserIdRef.current || historyDataLoadedRef.current) {
         return
       }
@@ -1537,13 +1651,92 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         toast.error(getMessage(loadError, 'Unable to load report history.'))
       }
     },
-    ensureReportDetails,
-    isReportDetailLoaded,
-    getReportDetailLoadState,
-    refreshData: refreshDataWithOptions,
-  }
+    [client, loadUserState],
+  )
 
-  return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>
+  const value = useMemo<AppDataContextValue>(
+    () => ({
+      state,
+      currentUser,
+      isBootstrapping,
+      isConfigured: isApiConfigured,
+      missingEnvVars: missingApiEnvKeys,
+      error,
+      login,
+      logout,
+      markNotificationsRead,
+      clearNotifications,
+      restoreNotifications,
+      submitAccessRequest,
+      submitAdminAccessRequest,
+      createAdminAccount,
+      approveAccessRequest,
+      rejectAccessRequest,
+      adminAccessRequests,
+      refreshAdminAccessRequests,
+      approveAdminAccessRequest,
+      rejectAdminAccessRequest,
+      saveReport,
+      lockReport,
+      unlockReport,
+      isReportDetailLoaded,
+      getReportDetailLoadState,
+      updateSettings,
+      toggleUserActive,
+      toggleAssignmentActive,
+      assignUserToDepartment,
+      ensureProfileDirectoryData,
+      ensureAccessRequestData,
+      ensureHistoryData,
+      ensureReportDetails,
+      refreshData: refreshDataWithOptions,
+    }),
+    [
+      state,
+      currentUser,
+      isBootstrapping,
+      error,
+      login,
+      logout,
+      markNotificationsRead,
+      clearNotifications,
+      restoreNotifications,
+      submitAccessRequest,
+      submitAdminAccessRequest,
+      createAdminAccount,
+      approveAccessRequest,
+      rejectAccessRequest,
+      adminAccessRequests,
+      refreshAdminAccessRequests,
+      approveAdminAccessRequest,
+      rejectAdminAccessRequest,
+      saveReport,
+      lockReport,
+      unlockReport,
+      isReportDetailLoaded,
+      getReportDetailLoadState,
+      updateSettings,
+      toggleUserActive,
+      toggleAssignmentActive,
+      assignUserToDepartment,
+      ensureProfileDirectoryData,
+      ensureAccessRequestData,
+      ensureHistoryData,
+      ensureReportDetails,
+      refreshDataWithOptions,
+    ],
+  )
+
+  const syncValue = useMemo<AppSyncContextValue>(
+    () => ({ isSyncing, isDataRefreshing }),
+    [isSyncing, isDataRefreshing],
+  )
+
+  return (
+    <AppDataContext.Provider value={value}>
+      <AppSyncContext.Provider value={syncValue}>{children}</AppSyncContext.Provider>
+    </AppDataContext.Provider>
+  )
 }
 
 export function useAppData() {
@@ -1551,6 +1744,16 @@ export function useAppData() {
 
   if (!context) {
     throw new Error('useAppData must be used inside AppDataProvider')
+  }
+
+  return context
+}
+
+export function useAppSync() {
+  const context = useContext(AppSyncContext)
+
+  if (!context) {
+    throw new Error('useAppSync must be used inside AppDataProvider')
   }
 
   return context

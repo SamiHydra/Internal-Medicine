@@ -121,6 +121,16 @@ export class LaravelApiClient {
     this.authListeners.forEach((listener) => listener(event, session))
   }
 
+  /**
+   * Mark the client as signed out: drop the cached CSRF readiness so the next
+   * login re-primes the cookie (otherwise a stale XSRF token causes 419s after
+   * logout/expiry), and notify listeners so the app can redirect to /login.
+   */
+  markSignedOut() {
+    this.csrfReady = false
+    this.emitAuthStateChange('SIGNED_OUT', null)
+  }
+
   async get<T>(path: string, options?: RequestOptions) {
     return this.request<T>(path, { ...options, method: 'GET' })
   }
@@ -182,6 +192,14 @@ export class LaravelApiClient {
     const payload = await this.parseResponse(response)
 
     if (!response.ok) {
+      // A mid-session 401 on a non-auth endpoint means the Sanctum session
+      // expired. Proactively sign out so the app redirects to /login instead of
+      // stranding the user on an authenticated shell where every action 401s.
+      // Auth endpoints (/api/auth/me, /login) handle their own 401s.
+      if (response.status === 401 && !path.startsWith('/api/auth/')) {
+        this.markSignedOut()
+      }
+
       throw new ApiError(this.errorMessage(payload, response), response.status, payload)
     }
 

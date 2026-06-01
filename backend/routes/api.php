@@ -1,9 +1,14 @@
 <?php
 
+use App\Http\Controllers\Api\AcademicAnalyticsController;
+use App\Http\Controllers\Api\AcademicEvaluationController;
+use App\Http\Controllers\Api\AcademicRegistrationController;
 use App\Http\Controllers\Api\AccessRequestSubmissionController;
+use App\Http\Controllers\Api\AdminRegistrationController;
+use App\Http\Controllers\Api\Admin\AcademicEvaluationController as AdminAcademicEvaluationController;
 use App\Http\Controllers\Api\Admin\AccessRequestController;
+use App\Http\Controllers\Api\Admin\AdminAccessRequestController;
 use App\Http\Controllers\Api\Admin\AuditLogController;
-use App\Http\Controllers\Api\Admin\ClaimSuperadminController;
 use App\Http\Controllers\Api\Admin\ReferenceDataController;
 use App\Http\Controllers\Api\Admin\ReportAssignmentController;
 use App\Http\Controllers\Api\Admin\SettingsController;
@@ -28,6 +33,8 @@ Route::prefix('auth')->group(function (): void {
 });
 
 Route::post('/access-requests', [AccessRequestSubmissionController::class, 'store'])->middleware('throttle:10,1');
+Route::post('/academic-access-requests', [AcademicRegistrationController::class, 'store'])->middleware('throttle:10,1');
+Route::post('/admin-access-requests', [AdminRegistrationController::class, 'store'])->middleware('throttle:10,1');
 
 Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
     Route::get('/workspace', [WorkspaceController::class, 'show']);
@@ -60,8 +67,22 @@ Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
             Route::get('/export', [AnalyticsController::class, 'export']);
         });
 
+    Route::prefix('academic')->group(function (): void {
+        Route::get('/form-options', [AcademicEvaluationController::class, 'formOptions'])->middleware('permission:academic.submit');
+        Route::post('/consultant-evaluations', [AcademicEvaluationController::class, 'storeConsultantEvaluation'])->middleware('permission:academic.submit');
+        Route::post('/resident-evaluations', [AcademicEvaluationController::class, 'storeResidentEvaluation'])->middleware('permission:academic.submit');
+        Route::get('/my-submissions', [AcademicEvaluationController::class, 'mySubmissions'])->middleware('permission:academic.submit');
+        Route::get('/my-performance', [AcademicEvaluationController::class, 'myPerformance'])->middleware('permission:academic.submit');
+
+        Route::get('/analytics/summary', [AcademicAnalyticsController::class, 'summary'])->middleware('permission:academic.view');
+        Route::get('/analytics/trend', [AcademicAnalyticsController::class, 'trend'])->middleware('permission:academic.view');
+        Route::get('/analytics/people', [AcademicAnalyticsController::class, 'people'])->middleware('permission:academic.view');
+    });
+
     Route::prefix('admin')->group(function (): void {
-        Route::post('/claim-superadmin', [ClaimSuperadminController::class, 'store'])->middleware('permission:users.manage');
+        Route::get('/admin-access-requests', [AdminAccessRequestController::class, 'index'])->middleware('permission:admins.approve');
+        Route::post('/admin-access-requests/{adminAccessRequest}/approve', [AdminAccessRequestController::class, 'approve'])->middleware('permission:admins.approve');
+        Route::post('/admin-access-requests/{adminAccessRequest}/reject', [AdminAccessRequestController::class, 'reject'])->middleware('permission:admins.approve');
 
         Route::get('/users', [UserController::class, 'index'])->middleware('permission:users.view');
         Route::post('/users', [UserController::class, 'store'])->middleware('permission:users.manage');
@@ -103,5 +124,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
 
         Route::get('/audit-logs', [AuditLogController::class, 'cellEdits'])->middleware('permission:audit.view');
         Route::get('/admin-audit-logs', [AuditLogController::class, 'adminActions'])->middleware('permission:audit.view');
+
+        Route::get('/academic/evaluations', [AdminAcademicEvaluationController::class, 'index'])->middleware('permission:academic.view');
     });
 });

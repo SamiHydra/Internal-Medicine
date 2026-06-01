@@ -86,6 +86,19 @@ class AnalyticsService
     ];
 
     /**
+     * Request-scoped memo for reports(). A single analytics endpoint funnels
+     * through one AnalyticsService instance and re-runs the identical report
+     * query 3-6 times (overview/familySummary -> summary + weekly + monthly +
+     * departments). Caching by (filters, family) collapses those to one query
+     * and one hydration. The instance lives only for the request, so there is
+     * no cross-request staleness, and every consumer uses non-mutating
+     * collection operations, so sharing the instance is safe.
+     *
+     * @var array<string, Collection<int, Report>>
+     */
+    private array $reportsMemo = [];
+
+    /**
      * @return array<string, mixed>
      */
     public function overview(AnalyticsFilters $filters): array
@@ -205,6 +218,12 @@ class AnalyticsService
      */
     public function reports(AnalyticsFilters $filters, ?string $family = null): Collection
     {
+        $memoKey = $this->reportsMemoKey($filters, $family);
+
+        if (isset($this->reportsMemo[$memoKey])) {
+            return $this->reportsMemo[$memoKey];
+        }
+
         $query = Report::query()
             ->with(['department', 'template', 'reportingPeriod', 'fieldValues.fieldDefinition', 'calculatedMetric', 'assignment'])
             ->whereHas('department', function (Builder $departmentQuery) use ($filters, $family): void {
@@ -242,13 +261,33 @@ class AnalyticsService
             $query->whereHas('department', fn (Builder $departmentQuery) => $departmentQuery->where('family', $filters->reportType));
         }
 
-        return $query
+        return $this->reportsMemo[$memoKey] = $query
             ->get()
             ->sortBy(fn (Report $report) => [
                 $report->reportingPeriod?->week_start?->toDateString(),
                 $report->department?->name,
             ])
             ->values();
+    }
+
+    /**
+     * Stable cache key covering every filter dimension reports() reads.
+     */
+    private function reportsMemoKey(AnalyticsFilters $filters, ?string $family): string
+    {
+        return md5(serialize([
+            $family,
+            $filters->family,
+            $filters->reportType,
+            $filters->departmentFilter(),
+            $filters->procedureCategory,
+            $filters->periodId,
+            $filters->weekStart,
+            $filters->month,
+            $filters->year,
+            $filters->dateFrom,
+            $filters->dateTo,
+        ]));
     }
 
     /**

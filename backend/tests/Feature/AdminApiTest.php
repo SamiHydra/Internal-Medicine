@@ -62,24 +62,24 @@ class AdminApiTest extends TestCase
 
         $this->actingAs($this->admin)
             ->postJson('/api/admin/users', [
-                'full_name' => 'Clinical Lead',
-                'email' => 'lead@example.test',
-                'username' => 'clinical.lead',
+                'full_name' => 'Second Admin',
+                'email' => 'second.admin@example.test',
+                'username' => 'second.admin',
                 'password' => 'Password123!',
-                'role_key' => 'doctor_admin',
+                'role_key' => 'admin',
             ])
             ->assertForbidden();
 
-        $doctorAdminId = $this->actingAs($this->superadmin)
+        $secondAdminId = $this->actingAs($this->superadmin)
             ->postJson('/api/admin/users', [
-                'full_name' => 'Clinical Lead',
-                'email' => 'lead@example.test',
-                'username' => 'clinical.lead',
+                'full_name' => 'Second Admin',
+                'email' => 'second.admin@example.test',
+                'username' => 'second.admin',
                 'password' => 'Password123!',
-                'role_key' => 'doctor_admin',
+                'role_key' => 'admin',
             ])
             ->assertCreated()
-            ->assertJsonPath('role', 'doctor_admin')
+            ->assertJsonPath('role', 'admin')
             ->json('id');
 
         $managedNurseId = $this->actingAs($this->admin)
@@ -96,11 +96,11 @@ class AdminApiTest extends TestCase
             ->json('id');
 
         $this->actingAs($this->admin)
-            ->patchJson("/api/admin/users/{$doctorAdminId}/active", ['active' => false])
+            ->patchJson("/api/admin/users/{$secondAdminId}/active", ['active' => false])
             ->assertForbidden();
 
         $this->actingAs($this->superadmin)
-            ->patchJson("/api/admin/users/{$doctorAdminId}/active", ['active' => false])
+            ->patchJson("/api/admin/users/{$secondAdminId}/active", ['active' => false])
             ->assertOk()
             ->assertJsonPath('active', false);
 

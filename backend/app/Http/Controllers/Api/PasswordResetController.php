@@ -28,8 +28,8 @@ class PasswordResetController extends Controller
                 .'/reset-password?token='.urlencode($token).'&email='.urlencode($email);
 
             Mail::raw(
-                "Use this link to reset your St Paulos reporting password:\n\n{$resetUrl}",
-                fn ($message) => $message->to($email)->subject('St Paulos reporting password reset'),
+                "Use this link to reset your St Paul reporting password:\n\n{$resetUrl}",
+                fn ($message) => $message->to($email)->subject('St Paul reporting password reset'),
             );
         }
 

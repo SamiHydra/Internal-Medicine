@@ -12,23 +12,28 @@ class RoleSeeder extends Seeder
         $roles = [
             [
                 'role_key' => 'superadmin',
-                'label' => 'Superadmin',
-                'description' => 'Single protected administrator who can provision and manage admin accounts',
+                'label' => 'Maintenance',
+                'description' => 'Protected maintenance owner, created only via the server/database. Approves and manages admin accounts.',
             ],
             [
                 'role_key' => 'admin',
-                'label' => 'Admin 1',
-                'description' => 'Full platform administration permissions',
-            ],
-            [
-                'role_key' => 'doctor_admin',
-                'label' => 'Dr. Mesay',
-                'description' => 'Clinical director with full platform permissions',
+                'label' => 'Admin',
+                'description' => 'Administrative doctor with full platform administration permissions',
             ],
             [
                 'role_key' => 'nurse',
                 'label' => 'Nurse',
                 'description' => 'Weekly reporting and approved assignment access',
+            ],
+            [
+                'role_key' => 'resident',
+                'label' => 'Resident',
+                'description' => 'Submits MDT round evaluations of consultants and is evaluated by consultants',
+            ],
+            [
+                'role_key' => 'consultant',
+                'label' => 'Consultant',
+                'description' => 'Submits performance evaluations of residents and is evaluated by residents',
             ],
         ];
 

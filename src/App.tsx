@@ -5,6 +5,7 @@ import { AppStateScreen } from '@/components/layout/app-state-screen'
 import { useAppData } from '@/context/app-data-context'
 import { apiEnvSetupHint } from '@/lib/api/env'
 import { LoginPage } from '@/pages/auth/login-page'
+import { landingPathForRole } from '@/routes/landing'
 import { ProtectedRoute, ProtectedShell } from '@/routes/route-guards'
 
 const DepartmentDetailPage = lazy(() =>
@@ -15,6 +16,16 @@ const DepartmentDetailPage = lazy(() =>
 const AdminDashboardPage = lazy(() =>
   import('@/pages/admin/admin-dashboard-page').then((module) => ({
     default: module.AdminDashboardPage,
+  })),
+)
+const AcademicDashboardPage = lazy(() =>
+  import('@/pages/admin/academic-dashboard-page').then((module) => ({
+    default: module.AcademicDashboardPage,
+  })),
+)
+const AcademicPersonDetailPage = lazy(() =>
+  import('@/pages/admin/academic-person-detail-page').then((module) => ({
+    default: module.AcademicPersonDetailPage,
   })),
 )
 const AuditLogPage = lazy(() =>
@@ -90,6 +101,21 @@ const ReportSelectionPage = lazy(() =>
 const ReportFormPage = lazy(() =>
   import('@/pages/report-form-page').then((module) => ({
     default: module.ReportFormPage,
+  })),
+)
+const AcademicEvaluationFormPage = lazy(() =>
+  import('@/pages/academic/evaluation-form-page').then((module) => ({
+    default: module.AcademicEvaluationFormPage,
+  })),
+)
+const AcademicHomePage = lazy(() =>
+  import('@/pages/academic/academic-home-page').then((module) => ({
+    default: module.AcademicHomePage,
+  })),
+)
+const AcademicHistoryPage = lazy(() =>
+  import('@/pages/academic/academic-history-page').then((module) => ({
+    default: module.AcademicHistoryPage,
   })),
 )
 
@@ -172,7 +198,7 @@ function HomeRedirect() {
     return <Navigate to="/login" replace />
   }
 
-  return <Navigate to={currentUser.role === 'nurse' ? '/nurse' : '/admin'} replace />
+  return <Navigate to={landingPathForRole(currentUser.role)} replace />
 }
 
 function App() {
@@ -200,6 +226,18 @@ function App() {
               element={renderLazyRoute(<ReportFormPage />, 'inline')}
             />
 
+            <Route element={<ProtectedRoute roles={['resident', 'consultant']} />}>
+              <Route path="/academic" element={renderLazyRoute(<AcademicHomePage />, 'inline')} />
+              <Route
+                path="/academic/submit"
+                element={renderLazyRoute(<AcademicEvaluationFormPage />, 'inline')}
+              />
+              <Route
+                path="/academic/history"
+                element={renderLazyRoute(<AcademicHistoryPage />, 'inline')}
+              />
+            </Route>
+
             <Route element={<ProtectedRoute roles={['nurse']} />}>
               <Route path="/nurse" element={renderLazyRoute(<NurseDashboardPage />, 'inline')} />
               <Route
@@ -212,8 +250,16 @@ function App() {
               />
             </Route>
 
-            <Route element={<ProtectedRoute roles={['superadmin', 'admin', 'doctor_admin']} />}>
+            <Route element={<ProtectedRoute roles={['superadmin', 'admin']} />}>
               <Route path="/admin" element={renderLazyRoute(<AdminDashboardPage />, 'inline')} />
+              <Route
+                path="/admin/academic"
+                element={renderLazyRoute(<AcademicDashboardPage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/people/:userId"
+                element={renderLazyRoute(<AcademicPersonDetailPage />, 'inline')}
+              />
               <Route
                 path="/admin/departments/:departmentId"
                 element={renderLazyRoute(<DepartmentDetailPage />, 'inline')}

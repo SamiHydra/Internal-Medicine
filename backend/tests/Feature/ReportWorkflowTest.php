@@ -52,7 +52,7 @@ class ReportWorkflowTest extends TestCase
         $this->superadmin = User::factory()->role('superadmin', 'Superadmin')->create([
             'full_name' => 'Protected Admin',
         ]);
-        User::factory()->inactive()->role('doctor_admin', 'Clinical Director')->create();
+        User::factory()->inactive()->role('admin', 'Administrator')->create();
 
         $template = ReportTemplate::query()->where('slug', 'inpatient_weekly')->firstOrFail();
         $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();

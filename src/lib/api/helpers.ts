@@ -10,7 +10,7 @@ export function createEmptyReferenceState(): ApiReferenceState {
 }
 
 export function isAdminRole(role: UserRole) {
-  return role === 'superadmin' || role === 'admin' || role === 'doctor_admin'
+  return role === 'superadmin' || role === 'admin'
 }
 
 export function resolveAssignmentReference(

@@ -29,10 +29,11 @@ const serviceLineLabels = {
 } as const
 
 const roleLabels = {
-  superadmin: 'Superadmin',
+  superadmin: 'Maintenance',
   admin: 'Admin',
-  doctor_admin: 'Clinical lead',
   nurse: 'Nurse',
+  resident: 'Resident',
+  consultant: 'Consultant',
 } as const
 
 export function UserManagementPage() {
@@ -46,9 +47,16 @@ export function UserManagementPage() {
     currentUser,
     ensureProfileDirectoryData,
     ensureAccessRequestData,
+    adminAccessRequests,
+    refreshAdminAccessRequests,
+    approveAdminAccessRequest,
+    rejectAdminAccessRequest,
   } = useAppData()
   const [selectedUserId, setSelectedUserId] = useState<string>('')
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('')
+
+  // Only the maintenance owner and admins approve other admins.
+  const canApproveAdmins = currentUser?.role === 'superadmin' || currentUser?.role === 'admin'
 
   useEffect(() => {
     if (!currentUser) {
@@ -57,11 +65,22 @@ export function UserManagementPage() {
 
     void ensureProfileDirectoryData()
     void ensureAccessRequestData()
-  }, [currentUser, ensureAccessRequestData, ensureProfileDirectoryData])
+    if (canApproveAdmins) {
+      void refreshAdminAccessRequests()
+    }
+  }, [
+    currentUser,
+    canApproveAdmins,
+    ensureAccessRequestData,
+    ensureProfileDirectoryData,
+    refreshAdminAccessRequests,
+  ])
 
   if (!currentUser) {
     return null
   }
+
+  const pendingAdminRequests = adminAccessRequests.filter((request) => request.status === 'pending')
 
   const nurses = state.profiles
     .filter((profile) => profile.role === 'nurse')
@@ -248,6 +267,87 @@ export function UserManagementPage() {
             )}
           </div>
         </motion.section>
+
+        {canApproveAdmins ? (
+          <motion.section
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
+            className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5"
+          >
+            <div className="space-y-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+                    Pending
+                  </p>
+                  <h2 className="font-display text-[1.85rem] text-[#000a1e]">Admin access requests</h2>
+                  <p className="text-sm text-[#44474e]">
+                    Approve to create the admin account, or reject the request.
+                  </p>
+                </div>
+                <div className="rounded-[0.25rem] border border-[#d4dde8] bg-[#ffffff] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#44474e]">
+                  {pendingAdminRequests.length} in queue
+                </div>
+              </div>
+
+              {pendingAdminRequests.length ? (
+                <div className="space-y-3">
+                  {pendingAdminRequests.map((request, index) => (
+                    <motion.div
+                      key={request.id}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.24, ease: 'easeOut', delay: index * 0.03 }}
+                      className="rounded-[0.35rem] bg-[#ffffff] p-5 outline outline-1 outline-[#d4dde8]/65"
+                    >
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0 space-y-3">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-base font-semibold text-slate-950">
+                                {request.fullName}
+                              </p>
+                              <span className="rounded-[0.25rem] border border-[#d4dde8] bg-[#edf4fb] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
+                                Admin
+                              </span>
+                            </div>
+                            <p className="text-sm text-slate-500">{request.email}</p>
+                          </div>
+
+                          {request.notes ? (
+                            <p className="text-sm leading-6 text-[#44474e]">{request.notes}</p>
+                          ) : null}
+                        </div>
+
+                        <div className="flex flex-wrap gap-3">
+                          <Button
+                            variant="secondary"
+                            onClick={() => void approveAdminAccessRequest(request.id)}
+                          >
+                            <CheckCheck className="h-4 w-4" />
+                            Approve
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            onClick={() => void rejectAdminAccessRequest(request.id)}
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex min-h-[160px] flex-col items-center justify-center gap-3 rounded-[0.5rem] border border-dashed border-[#d4dde8] bg-[#ffffff] px-6 text-center text-[#74777f]">
+                  <ShieldCheck className="h-5 w-5 text-[#005db6]" />
+                  <p className="text-sm leading-6">No admin requests awaiting approval.</p>
+                </div>
+              )}
+            </div>
+          </motion.section>
+        ) : null}
 
         <motion.section
           initial={{ opacity: 0, y: 10 }}

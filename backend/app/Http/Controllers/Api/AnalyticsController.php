@@ -12,9 +12,9 @@ use App\Services\Analytics\OutpatientAnalyticsService;
 use App\Services\Analytics\ProcedureAnalyticsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AnalyticsController extends Controller
 {
@@ -86,7 +86,7 @@ class AnalyticsController extends Controller
         ]);
     }
 
-    public function export(Request $request): Response
+    public function export(Request $request): StreamedResponse
     {
         $validated = $request->validate([
             'period' => ['sometimes', 'uuid', 'exists:reporting_periods,id'],
@@ -100,15 +100,15 @@ class AnalyticsController extends Controller
             abort(404, 'No reporting period matched the export request.');
         }
 
-        $csv = $this->exportService->csv($periods);
         $label = $periods->count() === 1
             ? ($periods->first()->week_start?->toDateString() ?? 'period')
             : ($validated['month'] ?? 'periods');
 
-        return response($csv, 200, [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="st-paulos-report-'.$label.'.csv"',
-        ]);
+        return response()->streamDownload(
+            $this->exportService->streamCallback($periods),
+            'st-paul-report-'.$label.'.csv',
+            ['Content-Type' => 'text/csv; charset=UTF-8'],
+        );
     }
 
     /**

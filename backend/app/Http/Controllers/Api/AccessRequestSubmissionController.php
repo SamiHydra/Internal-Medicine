@@ -134,7 +134,7 @@ class AccessRequestSubmissionController extends Controller
     {
         User::query()
             ->where('active', true)
-            ->whereIn('role_key', ['superadmin', 'admin', 'doctor_admin'])
+            ->whereIn('role_key', ['superadmin', 'admin'])
             ->get()
             ->each(fn (User $admin) => Notification::query()->create([
                 'recipient_id' => $admin->id,

@@ -12,6 +12,15 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    // Proxy the Laravel API through the Vite origin so the browser treats the
+    // SPA and API as same-origin. This keeps Sanctum's SameSite session/XSRF
+    // cookies working (localhost vs 127.0.0.1 would otherwise be cross-site).
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:8000', changeOrigin: false },
+      '/sanctum': { target: 'http://127.0.0.1:8000', changeOrigin: false },
+    },
+  },
   build: {
     rollupOptions: {
       output: {
@@ -26,10 +35,6 @@ export default defineConfig({
 
           if (id.includes('framer-motion')) {
             return 'motion'
-          }
-
-          if (id.includes('@supabase')) {
-            return 'supabase'
           }
 
           if (id.includes('@radix-ui')) {

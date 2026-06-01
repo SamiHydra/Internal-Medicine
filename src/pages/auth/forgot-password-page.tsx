@@ -58,14 +58,14 @@ export function ForgotPasswordPage() {
               <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[6px] bg-white ring-1 ring-[#d7dbe0]">
                 <img
                   src={stPaulosLogo}
-                  alt="St Paulos logo"
+                  alt="St Paul logo"
                   className="h-full w-full object-cover"
                 />
               </div>
 
               <div>
                 <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
-                  St Paulos Hospital
+                  St Paul Hospital
                 </p>
                 <p className="font-display text-[1.1rem] text-[#000a1e]">
                   Internal Medicine
@@ -98,7 +98,7 @@ export function ForgotPasswordPage() {
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
-                  placeholder="resident.id@stpaulos.edu"
+                  placeholder="resident.id@stpaul.edu"
                   className="h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 text-[0.95rem] font-medium text-[#191c1d] outline-none transition placeholder:text-[#8c929b] focus:border-[#005db6] focus:bg-[#fbfdff]"
                   disabled={isSubmitting}
                 />

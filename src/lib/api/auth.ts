@@ -1,9 +1,5 @@
 import type { ApiSession, LaravelApiClient } from '@/lib/api/client'
-import type {
-  ClaimSuperadminPayload,
-  ClaimSuperadminResult,
-  SessionPayload,
-} from '@/lib/api/types'
+import type { SessionPayload } from '@/lib/api/types'
 
 export async function loginWithPassword(
   client: LaravelApiClient,
@@ -23,23 +19,11 @@ export async function loginWithPassword(
 
 export async function signOut(client: LaravelApiClient) {
   await client.post<null>('/api/auth/logout')
-  client.emitAuthStateChange('SIGNED_OUT', null)
+  client.markSignedOut()
 }
 
 export async function fetchSession(client: LaravelApiClient) {
   return client.get<SessionPayload>('/api/auth/me')
-}
-
-export async function claimSuperadmin(
-  client: LaravelApiClient,
-  payload: ClaimSuperadminPayload,
-): Promise<ClaimSuperadminResult> {
-  return client.post<ClaimSuperadminResult>('/api/admin/claim-superadmin', {
-    fullName: payload.fullName,
-    username: payload.username,
-    email: payload.email,
-    password: payload.password,
-  })
 }
 
 export function sessionUserId(session: ApiSession | null) {

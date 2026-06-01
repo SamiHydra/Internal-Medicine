@@ -377,19 +377,33 @@ class ReportSubmissionService
 
     private function notifyAdmins(string $type, string $title, string $message, string $route, string $entity, string $reportId, Carbon $createdAt): void
     {
-        User::query()
-            ->whereIn('role_key', ['superadmin', 'admin', 'doctor_admin'])
+        $adminIds = User::query()
+            ->whereIn('role_key', ['superadmin', 'admin'])
             ->where('active', true)
-            ->each(fn (User $admin) => Notification::query()->create([
-                'recipient_id' => $admin->id,
-                'type' => $type,
-                'title' => $title,
-                'message' => $message,
-                'related_route' => $route,
-                'related_entity' => $entity,
-                'related_id' => $reportId,
-                'created_at' => $createdAt,
-            ]));
+            ->pluck('id');
+
+        if ($adminIds->isEmpty()) {
+            return;
+        }
+
+        // Single bulk INSERT instead of one query per admin. This runs inside the
+        // submit transaction (which holds a row lock), so minimizing round-trips
+        // directly shortens lock-hold time during end-of-week submission spikes.
+        $model = new Notification();
+        $rows = $adminIds->map(fn (string $adminId): array => [
+            'id' => $model->newUniqueId(),
+            'recipient_id' => $adminId,
+            'type' => $type,
+            'title' => $title,
+            'message' => $message,
+            'related_route' => $route,
+            'related_entity' => $entity,
+            'related_id' => $reportId,
+            'read_at' => null,
+            'created_at' => $createdAt,
+        ])->all();
+
+        Notification::query()->insert($rows);
     }
 
     private function relatedRoute(ReportAssignment $assignment, ReportingPeriod $period): string

@@ -20,7 +20,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { departmentMap, templateMap } from '@/config/templates'
 import { deriveReportStatus, getReportForAssignmentPeriod } from '@/data/selectors'
-import { useAppData } from '@/context/app-data-context'
+import { useAppData, useAppSync } from '@/context/app-data-context'
 import { formatTimestamp, getDeadlineForPeriod } from '@/lib/dates'
 import { computeWeeklyValue } from '@/lib/metrics'
 import { cn } from '@/lib/utils'
@@ -38,12 +38,23 @@ type ReportFormValues = {
   values: Record<string, Partial<Record<Weekday, string>>>
 }
 
+// Generous upper bound for any plausible weekly hospital metric. Guards against
+// non-finite input (Infinity/1e308) and values past the DB column / safe-integer
+// range, which would otherwise corrupt aggregates or serialize to null on save.
+const MAX_FIELD_VALUE = 1_000_000_000
+
 function createFieldValidation(field: ReportTemplateField) {
   if (field.kind === 'integer' || field.kind === 'decimal') {
     return z
       .string()
       .refine(
-        (value) => value.trim() === '' || (!Number.isNaN(Number(value)) && Number(value) >= 0),
+        (value) => {
+          if (value.trim() === '') {
+            return true
+          }
+          const parsed = Number(value)
+          return Number.isFinite(parsed) && parsed >= 0 && parsed <= MAX_FIELD_VALUE
+        },
         'Enter a non-negative number',
       )
   }
@@ -114,11 +125,13 @@ function coerceFieldValue(field: ReportTemplateField, rawValue: string) {
   }
 
   if (field.kind === 'integer') {
-    return Math.max(0, Math.round(Number(rawValue)))
+    const parsed = Number(rawValue)
+    return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : null
   }
 
   if (field.kind === 'decimal') {
-    return Math.max(0, Number(rawValue))
+    const parsed = Number(rawValue)
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : null
   }
 
   return rawValue
@@ -389,12 +402,12 @@ type ResolvedReportFormProps = Pick<
   | 'ensureReportDetails'
   | 'getReportDetailLoadState'
   | 'isReportDetailLoaded'
-  | 'isDataRefreshing'
-  | 'isSyncing'
 > & {
   currentUser: NonNullable<ReturnType<typeof useAppData>['currentUser']>
   assignment: ReportAssignment
   period: ReportingPeriod
+  isDataRefreshing: boolean
+  isSyncing: boolean
 }
 
 function ResolvedReportForm({
@@ -1218,10 +1231,11 @@ export function ReportForm({
   periodId: string
 }) {
   const appData = useAppData()
+  const { isSyncing, isDataRefreshing } = useAppSync()
   const assignment = appData.state.assignments.find((entry) => entry.id === assignmentId)
   const period = appData.state.reportingPeriods.find((entry) => entry.id === periodId)
   const isRouteDataLoading =
-    appData.isBootstrapping || appData.isDataRefreshing || appData.isSyncing
+    appData.isBootstrapping || isDataRefreshing || isSyncing
 
   if (!assignmentId || !periodId) {
     return (
@@ -1297,6 +1311,8 @@ export function ReportForm({
       currentUser={appData.currentUser}
       assignment={assignment}
       period={period}
+      isDataRefreshing={isDataRefreshing}
+      isSyncing={isSyncing}
     />
   )
 }

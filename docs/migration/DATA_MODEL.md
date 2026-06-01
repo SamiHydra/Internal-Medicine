@@ -1,4 +1,4 @@
-# Data Model — St Paulos / Mesay Hospital Reporting System
+# Data Model — St Paul Hospital Reporting System
 
 **Phase 2 deliverable.** Schema inferred from `supabase/migrations/*.sql`, `supabase/seed.sql`, and `src/types/domain.ts`, restated in MySQL/MariaDB-compatible terms for the Laravel migration plan.
 
@@ -105,8 +105,8 @@ Both should be queryable from `/admin/audit-logs`.
 
 | Column | Type | Notes |
 |---|---|---|
-| `role_key` | VARCHAR(32) PK | `superadmin`, `admin`, `doctor_admin`, `nurse` |
-| `label` | VARCHAR(64) NOT NULL | Display label (e.g. "Admin 1", "Dr. Mesay") |
+| `role_key` | VARCHAR(32) PK | `superadmin`, `admin`, `nurse`, `resident`, `consultant` |
+| `label` | VARCHAR(64) NOT NULL | Display label (e.g. "Maintenance", "Admin") |
 | `description` | TEXT NOT NULL | |
 | `created_at`, `updated_at` | TIMESTAMP | |
 
@@ -466,10 +466,10 @@ Use SPA mode (cookie + CSRF) if the React app and Laravel API share a parent dom
 | # | Question | Decision |
 |---|---|---|
 | 1 | One `departments` table vs split `departments` + `wards`? | **One table** — matches current UI; `family` discriminator already serves the purpose |
-| 2 | Roles | **Keep existing 4**: `superadmin`, `admin`, `doctor_admin`, `nurse` |
+| 2 | Roles | Five roles: `superadmin` (Maintenance), `admin`, `nurse`, `resident`, `consultant` (the legacy `doctor_admin` was removed) |
 | 3 | Add `access_request_reviewed` to notification types? | **Yes** — store as `VARCHAR(64)` to allow future types without migrations |
 | 4 | `calculated_metrics` for non-inpatient reports? | **Persist empty row** — preserves current behavior, avoids LEFT JOIN edge cases |
-| 5 | Sanctum auth mode | **SPA cookie + CSRF** — HttpOnly session cookie. Requires shared parent domain between frontend and API in production (e.g. `app.stpaulos.com` + `api.stpaulos.com`), local dev uses `localhost` for both |
+| 5 | Sanctum auth mode | **SPA cookie + CSRF** — HttpOnly session cookie. Requires shared parent domain between frontend and API in production (e.g. `app.stpaul.com` + `api.stpaul.com`), local dev uses `localhost` for both |
 | 6 | MySQL or MariaDB | **MariaDB 10.6+** unless hosting pins MySQL 8 (then MySQL 8) — both support `JSON`, `lower()` functional indexes, and CHECK constraints we need |
 | 7 | Soft deletes? | **No** — keep `active` flags |
 | 8 | Add `admin_audit_logs` table? | **Yes** — separate from per-cell `audit_logs` |
@@ -481,7 +481,7 @@ Use SPA mode (cookie + CSRF) if the React app and Laravel API share a parent dom
 ### Sanctum SPA cookie mode implications
 
 - `config/sanctum.php` `stateful` array includes the frontend hostnames (production + staging + `localhost`).
-- `SESSION_DOMAIN` set to `.stpaulos.com` (or equivalent) in production so the cookie is shared.
+- `SESSION_DOMAIN` set to `.stpaul.com` (or equivalent) in production so the cookie is shared.
 - Frontend axios/fetch client always sets `withCredentials: true` and POSTs to `/sanctum/csrf-cookie` once on app boot before any auth call.
 - `VITE_API_BASE_URL` must point at the same parent domain as the frontend.
 - For staging/local: the React dev server (`vite`) needs a proxy entry so `/api/*` and `/sanctum/*` route to the Laravel dev server; otherwise the cookie won't be set on the right domain.

@@ -1,11 +1,11 @@
-import { Bell, LogOut, Menu } from 'lucide-react'
+import { Bell, LogOut, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useEffect, useState, type PropsWithChildren } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
 import { navigationByRole } from '@/config/navigation'
 import { getUnreadNotificationCount } from '@/data/selectors'
-import { useAppData, useCurrentReportingPeriod } from '@/context/app-data-context'
+import { useAppData, useAppSync, useCurrentReportingPeriod } from '@/context/app-data-context'
 import { formatWeekLabel } from '@/lib/dates'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -16,46 +16,50 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 function BrandLockup({
   compact = false,
   inverted = false,
+  collapsed = false,
 }: {
   compact?: boolean
   inverted?: boolean
+  collapsed?: boolean
 }) {
   return (
-    <div className={cn('flex items-center', compact ? 'gap-3' : 'gap-4')}>
+    <div className={cn('flex items-center', collapsed ? 'justify-center' : compact ? 'gap-3' : 'gap-3.5')}>
       <img
         src={stPaulosLogo}
-        alt="St. Paulos Hospital logo"
+        alt="St. Paul Hospital logo"
         className={cn(
-          'shrink-0 rounded-[0.35rem] object-cover',
-          compact ? 'h-10 w-10' : 'h-12 w-12',
+          'shrink-0 rounded-[0.4rem] object-cover',
+          compact ? 'h-10 w-10' : collapsed ? 'h-11 w-11' : 'h-12 w-12',
         )}
       />
 
-      <div className="min-w-0 space-y-1">
-        <p
-          className={cn(
-            'font-semibold uppercase tracking-[0.28em]',
-            inverted ? 'text-[#f0b429]' : 'text-[#005db6]',
-            compact ? 'text-[0.58rem]' : 'text-[0.6rem]',
-          )}
-        >
-          St. Paulos Hospital
-        </p>
-        <p
-          className={cn(
-            'font-display leading-tight',
-            inverted ? 'text-white' : 'text-[#000a1e]',
-            compact ? 'text-base' : 'text-[1.15rem]',
-          )}
-        >
-          Internal Medicine
-        </p>
-      </div>
+      {!collapsed && (
+        <div className="min-w-0">
+          <p
+            className={cn(
+              'whitespace-nowrap font-bold uppercase tracking-[0.08em]',
+              inverted ? 'text-[#f0b429]' : 'text-[#005db6]',
+              compact ? 'text-[0.62rem]' : 'text-[0.78rem]',
+            )}
+          >
+            St. Paul Hospital
+          </p>
+          <p
+            className={cn(
+              'whitespace-nowrap font-display leading-tight',
+              inverted ? 'text-white' : 'text-[#000a1e]',
+              compact ? 'text-base' : 'text-[1.15rem]',
+            )}
+          >
+            Internal Medicine
+          </p>
+        </div>
+      )}
     </div>
   )
 }
 
-function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarNav({ onNavigate, collapsed = false }: { onNavigate?: () => void; collapsed?: boolean }) {
   const { currentUser } = useAppData()
 
   if (!currentUser) {
@@ -75,9 +79,11 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             to={item.href}
             end={item.href === '/admin' || item.href === '/nurse'}
             onClick={onNavigate}
+            title={collapsed ? item.label : undefined}
             className={({ isActive }) =>
               cn(
-                'group flex items-center gap-3 border-l border-transparent py-2.5 pl-4 pr-2 text-[13px] font-medium tracking-[0.01em] transition-colors duration-200',
+                'group flex items-center border-l border-transparent text-[15px] font-medium tracking-[0.01em] transition-colors duration-200',
+                collapsed ? 'justify-center px-0 py-3' : 'gap-3.5 py-3 pl-4 pr-2',
                 isActive
                   ? 'border-[#f0b429] bg-white/[0.04] text-white'
                   : 'text-[#92a3ba] hover:border-[#294567] hover:bg-white/[0.03] hover:text-white',
@@ -85,16 +91,18 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             }
           >
             {({ isActive }) => (
-              <span className="flex items-center gap-3">
+              <span className={cn('flex items-center', collapsed ? '' : 'gap-3.5')}>
                 <Icon
                   className={cn(
-                    'h-4 w-4 transition-colors duration-200',
+                    'h-5 w-5 shrink-0 transition-colors duration-200',
                     isActive ? 'text-[#f0b429]' : 'text-[#92a3ba] group-hover:text-white',
                   )}
                 />
-                <span className={cn(isActive ? 'text-white' : 'text-[#92a3ba] group-hover:text-white')}>
-                  {item.label}
-                </span>
+                {!collapsed && (
+                  <span className={cn(isActive ? 'text-white' : 'text-[#92a3ba] group-hover:text-white')}>
+                    {item.label}
+                  </span>
+                )}
               </span>
             )}
           </NavLink>
@@ -159,8 +167,20 @@ function ViewportDebugReadout() {
 
 export function AppShell({ children }: PropsWithChildren) {
   const navigate = useNavigate()
-  const { currentUser, isSyncing, logout, state } = useAppData()
+  const { currentUser, logout, state } = useAppData()
+  const { isSyncing } = useAppSync()
   const currentPeriod = useCurrentReportingPeriod()
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false
+    }
+
+    return window.localStorage.getItem('stpaul:sidebar-collapsed') === '1'
+  })
+
+  useEffect(() => {
+    window.localStorage.setItem('stpaul:sidebar-collapsed', collapsed ? '1' : '0')
+  }, [collapsed])
 
   if (!currentUser) {
     return <>{children}</>
@@ -173,26 +193,38 @@ export function AppShell({ children }: PropsWithChildren) {
     <div className="min-h-screen bg-[#f8f9fa]">
       <ViewportDebugReadout />
 
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[292px] border-r border-[#163153] bg-[linear-gradient(150deg,#000a1e_0%,#07162f_52%,#002147_100%)] sm:block">
-        <div className="flex h-full flex-col px-7 py-8">
-          <BrandLockup inverted />
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-40 hidden border-r border-[#163153] bg-[linear-gradient(150deg,#000a1e_0%,#07162f_52%,#002147_100%)] transition-[width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] sm:block',
+          collapsed ? 'w-[84px]' : 'w-[292px]',
+        )}
+      >
+        <div className={cn('flex h-full flex-col py-8', collapsed ? 'px-3' : 'px-7')}>
+          <BrandLockup inverted collapsed={collapsed} />
           <Separator className="my-6 bg-white/10" />
-          <div className="flex-1 overflow-y-auto pr-2">
-            <SidebarNav />
+          <div className="flex-1 overflow-y-auto overflow-x-hidden pr-1">
+            <SidebarNav collapsed={collapsed} />
           </div>
-          <div className="mt-8 border-t border-white/10 pt-5 text-white">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#f0b429]">
-              Reporting week
-            </p>
-            <p className="mt-2 font-display text-[1.35rem] leading-tight text-white">
-              {currentPeriod ? formatWeekLabel(currentPeriod) : '-'}
-            </p>
-            <p className="mt-2 text-sm text-[#9fb0c6]">Live administrative reporting window</p>
-          </div>
+          {!collapsed && (
+            <div className="mt-8 border-t border-white/10 pt-5 text-white">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#f0b429]">
+                Reporting week
+              </p>
+              <p className="mt-2 font-display text-[1.35rem] leading-tight text-white">
+                {currentPeriod ? formatWeekLabel(currentPeriod) : '-'}
+              </p>
+              <p className="mt-2 text-sm text-[#9fb0c6]">Live administrative reporting window</p>
+            </div>
+          )}
         </div>
       </aside>
 
-      <div className="min-h-screen sm:pl-[292px]">
+      <div
+        className={cn(
+          'min-h-screen transition-[padding] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]',
+          collapsed ? 'sm:pl-[84px]' : 'sm:pl-[292px]',
+        )}
+      >
         <div className="flex min-h-screen min-w-0 flex-col">
           <header className="sticky top-0 z-30 border-b border-[#d9e0e7] bg-[#f8f9fa]/96 backdrop-blur-sm">
             <div className="flex items-center justify-between gap-4 px-4 py-3 md:px-6 lg:px-8">
@@ -201,9 +233,9 @@ export function AppShell({ children }: PropsWithChildren) {
                   <Sheet>
                     <SheetTrigger asChild>
                       <Button
-                        variant="secondary"
+                        variant="ghost"
                         size="icon"
-                        className="border-[#d9e0e7] bg-[#ffffff] shadow-none hover:bg-[#f6f8fa]"
+                        className="rounded-[0.35rem] border border-[#d9e0e7] bg-[#ffffff] text-[#000a1e] hover:bg-[#f6f8fa]"
                       >
                         <Menu className="h-4 w-4" />
                       </Button>
@@ -217,6 +249,16 @@ export function AppShell({ children }: PropsWithChildren) {
                     </SheetContent>
                   </Sheet>
                 </div>
+
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCollapsed((value) => !value)}
+                  aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                  className="hidden rounded-[0.35rem] border border-[#d9e0e7] bg-[#ffffff] text-[#000a1e] hover:bg-[#f6f8fa] sm:inline-flex"
+                >
+                  {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+                </Button>
 
                 <div className="min-w-0 rounded-[0.35rem] bg-[#eef2f6] px-4 py-3">
                   <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-[#005db6]">

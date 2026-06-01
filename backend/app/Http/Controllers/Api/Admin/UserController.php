@@ -25,7 +25,7 @@ class UserController extends Controller
         Gate::authorize('viewAny', User::class);
 
         $validated = $request->validate([
-            'role' => ['sometimes', Rule::in(['superadmin', 'admin', 'doctor_admin', 'nurse'])],
+            'role' => ['sometimes', Rule::in(['superadmin', 'admin', 'nurse'])],
             'active' => ['sometimes', 'boolean'],
             'q' => ['sometimes', 'string', 'max:100'],
         ]);
@@ -64,8 +64,8 @@ class UserController extends Controller
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'username' => ['nullable', 'string', 'min:3', 'max:64', 'regex:/^[a-zA-Z0-9._-]+$/', 'unique:users,username'],
             'password' => ['required', 'string', 'min:8'],
-            'role_key' => ['required_without:role', Rule::in(['admin', 'doctor_admin', 'nurse'])],
-            'role' => ['required_without:role_key', Rule::in(['admin', 'doctor_admin', 'nurse'])],
+            'role_key' => ['required_without:role', Rule::in(['admin', 'nurse'])],
+            'role' => ['required_without:role_key', Rule::in(['admin', 'nurse'])],
             'title' => ['nullable', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:32'],
             'active' => ['sometimes', 'boolean'],
@@ -113,8 +113,8 @@ class UserController extends Controller
             'fullName' => ['sometimes', 'string', 'max:255'],
             'email' => ['sometimes', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
             'username' => ['sometimes', 'nullable', 'string', 'min:3', 'max:64', 'regex:/^[a-zA-Z0-9._-]+$/', Rule::unique('users', 'username')->ignore($user->id)],
-            'role_key' => ['sometimes', Rule::in(['admin', 'doctor_admin', 'nurse'])],
-            'role' => ['sometimes', Rule::in(['admin', 'doctor_admin', 'nurse'])],
+            'role_key' => ['sometimes', Rule::in(['admin', 'nurse'])],
+            'role' => ['sometimes', Rule::in(['admin', 'nurse'])],
             'title' => ['sometimes', 'nullable', 'string', 'max:255'],
             'phone' => ['sometimes', 'nullable', 'string', 'max:32'],
         ]);
@@ -239,7 +239,6 @@ class UserController extends Controller
     {
         return match ($roleKey) {
             'admin' => 'Administrator',
-            'doctor_admin' => 'Clinical Director',
             default => 'Nurse',
         };
     }

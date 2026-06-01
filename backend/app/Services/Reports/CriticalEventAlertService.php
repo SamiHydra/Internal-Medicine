@@ -82,7 +82,7 @@ class CriticalEventAlertService
         $message = sprintf('%s reported: %s.', $departmentName, $summary);
 
         User::query()
-            ->whereIn('role_key', ['superadmin', 'admin', 'doctor_admin'])
+            ->whereIn('role_key', ['superadmin', 'admin'])
             ->where('active', true)
             ->each(fn (User $admin) => Notification::query()->create([
                 'recipient_id' => $admin->id,

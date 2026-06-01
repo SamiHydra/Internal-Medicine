@@ -1,4 +1,9 @@
-export type UserRole = 'superadmin' | 'admin' | 'doctor_admin' | 'nurse'
+export type UserRole =
+  | 'superadmin'
+  | 'admin'
+  | 'nurse'
+  | 'resident'
+  | 'consultant'
 
 export type ReportFamily = 'inpatient' | 'outpatient' | 'procedure'
 

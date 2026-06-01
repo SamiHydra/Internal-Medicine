@@ -21,53 +21,88 @@ class AnalyticsExportService
     private const HEADER = ['Week start', 'Week end', 'Department', 'Family', 'Section', 'Field', 'Aggregate', 'Value'];
 
     /**
+     * Returns a callback that streams the CSV directly to the output buffer.
+     *
+     * Reports are walked in bounded chunks via lazy() so peak memory stays flat
+     * regardless of how many weeks/departments are exported (the previous
+     * implementation buffered every report AND the assembled CSV string in RAM,
+     * which would OOM as history accumulates). Ordering is pushed to SQL with a
+     * deterministic id tiebreaker so chunk boundaries are stable.
+     *
      * @param  Collection<int, ReportingPeriod>  $periods
      */
-    public function csv(Collection $periods): string
+    public function streamCallback(Collection $periods): \Closure
     {
-        $reports = Report::query()
-            ->with(['department', 'template.fieldDefinitions', 'fieldValues', 'reportingPeriod'])
-            ->whereIn('reporting_period_id', $periods->pluck('id')->all())
-            ->whereNotNull('submitted_at')
-            ->get()
-            ->sortBy(fn (Report $report) => [
-                $report->reportingPeriod?->week_start?->toDateString(),
-                $report->department?->name,
-            ])
-            ->values();
+        $periodIds = $periods->pluck('id')->all();
 
-        $handle = fopen('php://temp', 'r+');
-        fputcsv($handle, self::HEADER);
+        return function () use ($periodIds): void {
+            $handle = fopen('php://output', 'w');
+            fputcsv($handle, self::HEADER);
 
-        foreach ($reports as $report) {
-            $weekStart = $report->reportingPeriod?->week_start?->toDateString() ?? '';
-            $weekEnd = $report->reportingPeriod?->week_end?->toDateString() ?? '';
-            $definitions = $report->template?->fieldDefinitions?->sortBy('display_order') ?? collect();
+            Report::query()
+                ->select('reports.*')
+                ->with(['department', 'template.fieldDefinitions', 'fieldValues', 'reportingPeriod'])
+                ->join('reporting_periods', 'reporting_periods.id', '=', 'reports.reporting_period_id')
+                ->join('departments', 'departments.id', '=', 'reports.department_id')
+                ->whereIn('reports.reporting_period_id', $periodIds)
+                ->whereNotNull('reports.submitted_at')
+                ->orderBy('reporting_periods.week_start')
+                ->orderBy('departments.name')
+                ->orderBy('reports.id')
+                ->lazy(500)
+                ->each(fn (Report $report) => $this->writeReportRows($handle, $report));
 
-            foreach ($definitions as $definition) {
-                $value = $this->aggregate($definition, $report->fieldValues);
-                if ($value === null) {
-                    continue;
-                }
+            fclose($handle);
+        };
+    }
 
-                fputcsv($handle, [
-                    $weekStart,
-                    $weekEnd,
-                    $report->department?->name ?? '',
-                    $report->department?->family ?? '',
-                    $definition->section_key,
-                    $definition->label,
-                    $definition->aggregate_type,
-                    $value,
-                ]);
+    /**
+     * @param  resource  $handle
+     */
+    private function writeReportRows($handle, Report $report): void
+    {
+        $weekStart = $report->reportingPeriod?->week_start?->toDateString() ?? '';
+        $weekEnd = $report->reportingPeriod?->week_end?->toDateString() ?? '';
+        $definitions = $report->template?->fieldDefinitions?->sortBy('display_order') ?? collect();
+
+        foreach ($definitions as $definition) {
+            $value = $this->aggregate($definition, $report->fieldValues);
+            if ($value === null) {
+                continue;
             }
+
+            fputcsv($handle, array_map($this->sanitizeCell(...), [
+                $weekStart,
+                $weekEnd,
+                $report->department?->name ?? '',
+                $report->department?->family ?? '',
+                $definition->section_key,
+                $definition->label,
+                $definition->aggregate_type,
+                $value,
+            ]));
+        }
+    }
+
+    /**
+     * Neutralize CSV/spreadsheet formula injection. A cell beginning with
+     * =, +, @, or a control char can execute when opened in Excel/Sheets, and
+     * report values include nurse-entered free text. Negative numbers are left
+     * intact so the export stays numerically usable.
+     */
+    private function sanitizeCell(mixed $value): string
+    {
+        $value = (string) $value;
+
+        if ($value === '') {
+            return $value;
         }
 
-        rewind($handle);
-        $csv = stream_get_contents($handle);
-        fclose($handle);
+        $first = $value[0];
+        $dangerous = in_array($first, ['=', '+', '@', "\t", "\r"], true)
+            || ($first === '-' && ! is_numeric($value));
 
-        return $csv;
+        return $dangerous ? "'".$value : $value;
     }
 
     /**

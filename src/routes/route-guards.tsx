@@ -4,6 +4,7 @@ import { AppStateScreen } from '@/components/layout/app-state-screen'
 import { AppShell } from '@/components/layout/app-shell'
 import { useAppData } from '@/context/app-data-context'
 import { apiEnvSetupHint } from '@/lib/api/env'
+import { landingPathForRole } from '@/routes/landing'
 import type { UserRole } from '@/types/domain'
 
 export function ProtectedRoute({ roles }: { roles?: UserRole[] }) {
@@ -50,12 +51,7 @@ export function ProtectedRoute({ roles }: { roles?: UserRole[] }) {
   }
 
   if (roles && !roles.includes(currentUser.role)) {
-    return (
-      <Navigate
-        to={currentUser.role === 'nurse' ? '/nurse' : '/admin'}
-        replace
-      />
-    )
+    return <Navigate to={landingPathForRole(currentUser.role)} replace />
   }
 
   return <Outlet />

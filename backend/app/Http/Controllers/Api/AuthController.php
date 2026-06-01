@@ -124,9 +124,10 @@ class AuthController extends Controller
     private function defaultTitle(string $roleKey): string
     {
         return match ($roleKey) {
-            'superadmin' => 'Super Administrator',
+            'superadmin' => 'Maintenance',
             'admin' => 'Administrator',
-            'doctor_admin' => 'Clinical Director',
+            'resident' => 'Resident',
+            'consultant' => 'Consultant',
             default => 'Nurse',
         };
     }

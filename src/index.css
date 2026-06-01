@@ -3,7 +3,7 @@
 
 :root {
   color: #091223;
-  background: #e7f0fb;
+  background: #f8f9fa;
   font-family: 'Plus Jakarta Sans', sans-serif;
   --brand-primary: #005db6;
   --brand-primary-strong: #00468c;
@@ -51,39 +51,7 @@ body {
   min-height: 100vh;
   font-family: var(--font-sans);
   color: #091223;
-  background:
-    radial-gradient(circle at 12% 12%, rgba(56, 189, 248, 0.22), transparent 28%),
-    radial-gradient(circle at 88% 14%, rgba(45, 212, 191, 0.18), transparent 26%),
-    radial-gradient(circle at 72% 74%, rgba(59, 130, 246, 0.14), transparent 30%),
-    linear-gradient(180deg, #eff7ff 0%, #f7fbff 38%, #eaf4ff 100%);
-}
-
-body::before,
-body::after {
-  content: '';
-  pointer-events: none;
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-}
-
-body::before {
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.36) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.36) 1px, transparent 1px);
-  background-size: 72px 72px;
-  mask-image: radial-gradient(circle at center, black 30%, transparent 82%);
-  opacity: 0.22;
-}
-
-body::after {
-  inset: -12%;
-  background:
-    radial-gradient(circle at 18% 26%, rgba(34, 211, 238, 0.18), transparent 24%),
-    radial-gradient(circle at 82% 22%, rgba(59, 130, 246, 0.15), transparent 22%),
-    radial-gradient(circle at 54% 86%, rgba(16, 185, 129, 0.14), transparent 24%);
-  filter: blur(40px);
-  animation: aurora-drift 18s ease-in-out infinite alternate;
+  background: #f8f9fa;
 }
 
 button,

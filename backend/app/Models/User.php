@@ -22,6 +22,7 @@ class User extends Authenticatable
         'role_key',
         'phone',
         'active',
+        'home_ward_id',
         'last_login_at',
         'password_change_required',
     ];
@@ -67,9 +68,14 @@ class User extends Authenticatable
         return $this->hasMany(Notification::class, 'recipient_id');
     }
 
+    public function homeWard(): BelongsTo
+    {
+        return $this->belongsTo(Department::class, 'home_ward_id');
+    }
+
     public function isAdminLike(): bool
     {
-        return in_array($this->role_key, ['superadmin', 'admin', 'doctor_admin'], true);
+        return in_array($this->role_key, ['superadmin', 'admin'], true);
     }
 
     public function isSuperadmin(): bool

@@ -1,25 +1,32 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { AnimatePresence, motion, useReducedMotion, type Variants } from 'framer-motion'
 import {
   ArrowLeft,
+  Building2,
   CheckCircle2,
   Eye,
   EyeOff,
-  FileCheck2,
-  Info,
+  GraduationCap,
   LockKeyhole,
   Mail,
   Send,
   ShieldCheck,
+  Stethoscope,
   UserRound,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { Link } from 'react-router-dom'
+import { toast } from 'sonner'
 import { z } from 'zod'
 
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
+import { technicalSupport } from '@/config/support'
 import { departments } from '@/config/templates'
 import { useAppData } from '@/context/app-data-context'
+import { submitAcademicRegistration } from '@/lib/api/academic'
+import { getApiBrowserClient, isApiConfigured } from '@/lib/api/client'
+import { apiEnvSetupHint } from '@/lib/api/env'
 import { formatTimestamp } from '@/lib/dates'
 import { cn, formatCompactNumber } from '@/lib/utils'
 
@@ -34,29 +41,83 @@ const requestSchema = z.object({
 
 type RequestValues = z.infer<typeof requestSchema>
 
+const academicSchema = z.object({
+  fullName: z.string().trim().min(3, 'Enter your full name.'),
+  email: z.string().trim().email('Enter a valid email address.'),
+  password: z.string().optional(),
+  confirmPassword: z.string().optional(),
+  role: z.string().min(1, 'Choose Resident or Consultant.'),
+  homeWard: z.string().optional(),
+  notes: z.string().max(240, 'Keep the note under 240 characters.').optional(),
+})
+
+type AcademicValues = z.infer<typeof academicSchema>
+
+const academicDefaults: AcademicValues = {
+  fullName: '',
+  email: '',
+  password: '',
+  confirmPassword: '',
+  role: '',
+  homeWard: '',
+  notes: '',
+}
+
+const adminSchema = z.object({
+  fullName: z.string().trim().min(3, 'Enter your full name.'),
+  email: z.string().trim().email('Enter a valid email address.'),
+  password: z.string().optional(),
+  confirmPassword: z.string().optional(),
+  notes: z.string().max(240, 'Keep the note under 240 characters.').optional(),
+})
+
+type AdminValues = z.infer<typeof adminSchema>
+
+const adminDefaults: AdminValues = {
+  fullName: '',
+  email: '',
+  password: '',
+  confirmPassword: '',
+  notes: '',
+}
+
 const familySections = [
-  {
-    key: 'inpatient',
-    label: 'Inpatient services',
-    description: 'Ward coverage, rounding, and bedside reporting assignments.',
-    accent: 'bg-[#005db6]',
-    chipClass: 'bg-[#d6e3ff] text-[#00468c]',
-  },
-  {
-    key: 'outpatient',
-    label: 'Outpatient services',
-    description: 'Clinic reporting assignments and ambulatory follow-up services.',
-    accent: 'bg-[#0b7285]',
-    chipClass: 'bg-[#e1f2f6] text-[#165a67]',
-  },
-  {
-    key: 'procedure',
-    label: 'Procedure services',
-    description: 'Procedure room activity and intervention reporting access.',
-    accent: 'bg-[#4867a6]',
-    chipClass: 'bg-[#e6edf9] text-[#35507f]',
-  },
+  { key: 'inpatient', label: 'Inpatient services' },
+  { key: 'outpatient', label: 'Outpatient services' },
+  { key: 'procedure', label: 'Procedure services' },
 ] as const
+
+const TRACKS = [
+  { key: 'clinical' as const, label: 'Clinical', icon: Stethoscope },
+  { key: 'academic' as const, label: 'Academic', icon: GraduationCap },
+  { key: 'admin' as const, label: 'Admin', icon: ShieldCheck },
+]
+
+type Track = (typeof TRACKS)[number]['key']
+
+const ACADEMIC_ROLES = [
+  { value: 'resident' as const, title: 'Resident', description: 'Evaluate consultants.', icon: Stethoscope },
+  { value: 'consultant' as const, title: 'Consultant', description: 'Evaluate residents.', icon: GraduationCap },
+]
+
+const panelClass =
+  'relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#ffffff_0%,#f2f5f8_100%)] p-5 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-6'
+const inputClass =
+  'h-12 w-full rounded-[4px] border border-transparent border-b-[#d4dde8] bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 text-sm text-[#191c1d] outline-none transition placeholder:text-[#9aa0a8] focus:border-[#005db6] focus:bg-[#fbfdff] disabled:cursor-not-allowed disabled:border-[#e1e3e4] disabled:bg-[#edeeef] disabled:text-[#74777f]'
+const iconInputClass = `${inputClass} pl-11 pr-11`
+const labelClass = 'text-[11px] font-bold uppercase tracking-[0.18em] text-[#000a1e]'
+const textareaClass =
+  'w-full resize-none rounded-[4px] border border-transparent border-b-[#d4dde8] bg-[linear-gradient(180deg,#eef4fb_0%,#fbfdff_100%)] px-4 py-3 text-sm text-[#191c1d] outline-none transition placeholder:text-[#9aa0a8] focus:border-[#005db6] focus:bg-[#ffffff]'
+const eyebrowClass = 'text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]'
+const sectionHeadingClass = 'text-[1.45rem] font-bold tracking-[-0.03em] text-[#000a1e]'
+
+const sectionStagger: Variants = {
+  show: { transition: { staggerChildren: 0.05, delayChildren: 0.03 } },
+}
+const sectionItem: Variants = {
+  hidden: { opacity: 0, y: 6 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.18, ease: [0.23, 1, 0.32, 1] } },
+}
 
 function getStatusClass(status: string) {
   switch (status) {
@@ -69,25 +130,86 @@ function getStatusClass(status: string) {
   }
 }
 
+function TrackToggle({
+  track,
+  onChange,
+  reduceMotion,
+  variant = 'navy',
+  idKey,
+}: {
+  track: Track
+  onChange: (track: Track) => void
+  reduceMotion: boolean
+  variant?: 'navy' | 'light'
+  idKey: string
+}) {
+  const onNavy = variant === 'navy'
+  return (
+    <div
+      className={cn(
+        'inline-flex items-center gap-1 rounded-[0.45rem] border p-1 backdrop-blur-sm',
+        onNavy
+          ? 'border-white/18 bg-white/10 shadow-[0_16px_34px_-22px_rgba(0,0,0,0.6)]'
+          : 'border-[#c8d5e6] bg-white/80 shadow-[0_16px_34px_-22px_rgba(0,33,71,0.5)]',
+      )}
+    >
+      {TRACKS.map((entry) => {
+        const active = track === entry.key
+        const Icon = entry.icon
+        return (
+          <button
+            key={entry.key}
+            type="button"
+            onClick={() => onChange(entry.key)}
+            aria-pressed={active}
+            className={cn(
+              'relative flex items-center gap-2 rounded-[0.35rem] px-6 py-2.5 text-[11px] font-bold uppercase tracking-[0.16em] transition-[color,transform] duration-150 ease-out active:scale-[0.97]',
+              active
+                ? 'text-white'
+                : onNavy
+                  ? 'text-[#9fb4d0] hover:text-white'
+                  : 'text-[#5b6169] hover:text-[#000a1e]',
+            )}
+          >
+            {active ? (
+              <motion.span
+                layoutId={idKey}
+                className="absolute inset-0 rounded-[0.35rem] bg-[linear-gradient(180deg,#005db6_0%,#00468c_100%)] shadow-[0_12px_22px_-12px_rgba(0,93,182,0.85)]"
+                transition={
+                  reduceMotion ? { duration: 0 } : { type: 'spring', duration: 0.5, bounce: 0.2 }
+                }
+              />
+            ) : null}
+            <Icon className="relative z-10 h-4 w-4" />
+            <span className="relative z-10">{entry.label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export function AccessRequestPage() {
-  const { currentUser, state, submitAccessRequest, ensureAccessRequestData } = useAppData()
+  const { currentUser, state, submitAccessRequest, submitAdminAccessRequest, ensureAccessRequestData } =
+    useAppData()
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const isNewAccountFlow = !currentUser
-  const backTarget = currentUser
-    ? currentUser.role === 'nurse'
-      ? '/nurse'
-      : '/admin'
-    : '/login'
+  const [track, setTrack] = useState<Track>('clinical')
+  const reduceMotion = useReducedMotion() ?? false
+  const showAcademic = isNewAccountFlow && track === 'academic'
+  const showAdmin = isNewAccountFlow && track === 'admin'
+  const backTarget = currentUser ? (currentUser.role === 'nurse' ? '/nurse' : '/admin') : '/login'
   const backLabel = currentUser ? 'Back to workspace' : 'Back to sign in'
+
   const groupedDepartments = {
     inpatient: departments.filter((department) => department.family === 'inpatient'),
     outpatient: departments.filter((department) => department.family === 'outpatient'),
     procedure: departments.filter((department) => department.family === 'procedure'),
   }
 
-  const form = useForm<RequestValues>({
+  const clinicalForm = useForm<RequestValues>({
     resolver: zodResolver(requestSchema),
     defaultValues: {
       fullName: currentUser?.fullName ?? '',
@@ -98,9 +220,17 @@ export function AccessRequestPage() {
       notes: '',
     },
   })
+  const academicForm = useForm<AcademicValues>({
+    resolver: zodResolver(academicSchema),
+    defaultValues: academicDefaults,
+  })
+  const adminForm = useForm<AdminValues>({
+    resolver: zodResolver(adminSchema),
+    defaultValues: adminDefaults,
+  })
 
   useEffect(() => {
-    form.reset({
+    clinicalForm.reset({
       fullName: currentUser?.fullName ?? '',
       email: currentUser?.email ?? '',
       password: '',
@@ -108,13 +238,12 @@ export function AccessRequestPage() {
       requestedDepartments: [],
       notes: '',
     })
-  }, [currentUser, form])
+  }, [currentUser, clinicalForm])
 
   useEffect(() => {
     if (!currentUser) {
       return
     }
-
     void ensureAccessRequestData()
   }, [currentUser, ensureAccessRequestData])
 
@@ -123,54 +252,39 @@ export function AccessRequestPage() {
         .filter((request) => request.userId === currentUser.id)
         .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt))
     : []
+
   const requestedDepartments = useWatch({
-    control: form.control,
+    control: clinicalForm.control,
     name: 'requestedDepartments',
     defaultValue: [],
   })
-  const notesValue =
-    useWatch({
-      control: form.control,
-      name: 'notes',
-      defaultValue: '',
-    }) ?? ''
-
+  const clinicalNotes =
+    useWatch({ control: clinicalForm.control, name: 'notes', defaultValue: '' }) ?? ''
   const selectedDepartments = departments.filter((department) =>
     requestedDepartments.includes(department.id),
   )
   const selectedCount = selectedDepartments.length
-  const recentRequests = currentUserRequests.slice(0, 3)
-  const pageTitle = isNewAccountFlow
-    ? 'Request Reporting Access'
-    : 'Request Additional Access'
-  const pageDescription = isNewAccountFlow
-    ? 'Create your profile, choose the internal medicine reporting assignments you need, and submit the request for department review.'
-    : 'Choose the additional reporting assignments you need and send the update for administrator approval.'
-  const inputClassName =
-    'h-12 w-full rounded-[4px] border border-transparent border-b-[#d4dde8] bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 text-sm text-[#191c1d] outline-none transition placeholder:text-[#9aa0a8] focus:border-[#005db6] focus:bg-[#fbfdff] disabled:cursor-not-allowed disabled:border-[#e1e3e4] disabled:bg-[#edeeef] disabled:text-[#74777f]'
-  const iconInputClassName = `${inputClassName} pl-11`
-  const textareaClassName =
-    'min-h-[112px] w-full resize-none rounded-[4px] border border-transparent border-b-[#d4dde8] bg-[linear-gradient(180deg,#eef4fb_0%,#fbfdff_100%)] px-4 py-3 text-sm text-[#191c1d] outline-none transition placeholder:text-[#9aa0a8] focus:border-[#005db6] focus:bg-[#ffffff]'
-  const panelClassName =
-    'relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#ffffff_0%,#f2f5f8_100%)] p-6 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-8'
-  const labelClassName =
-    'text-[11px] font-bold uppercase tracking-[0.18em] text-[#000a1e]'
 
-  const onSubmit = form.handleSubmit(async (values) => {
+  const role = useWatch({ control: academicForm.control, name: 'role', defaultValue: '' })
+  const homeWard =
+    useWatch({ control: academicForm.control, name: 'homeWard', defaultValue: '' }) ?? ''
+  const academicNotes =
+    useWatch({ control: academicForm.control, name: 'notes', defaultValue: '' }) ?? ''
+  const wards = groupedDepartments.inpatient
+  const selectedWard = wards.find((ward) => ward.id === homeWard)
+  const selectedRole = ACADEMIC_ROLES.find((entry) => entry.value === role)
+
+  const onSubmitClinical = clinicalForm.handleSubmit(async (values) => {
     setSuccessMessage(null)
-
     if (!currentUser) {
       if (!values.password || values.password.length < 8) {
-        form.setError('password', {
+        clinicalForm.setError('password', {
           message: 'Use at least 8 characters for the new account password.',
         })
         return
       }
-
       if (values.password !== values.confirmPassword) {
-        form.setError('confirmPassword', {
-          message: 'Passwords must match.',
-        })
+        clinicalForm.setError('confirmPassword', { message: 'Passwords must match.' })
         return
       }
     }
@@ -195,8 +309,7 @@ export function AccessRequestPage() {
         ? 'Additional access request submitted for review.'
         : 'Access request submitted. Confirm your email before signing in if email confirmation is enabled.',
     )
-
-    form.reset({
+    clinicalForm.reset({
       fullName: currentUser?.fullName ?? '',
       email: currentUser?.email ?? '',
       password: '',
@@ -206,712 +319,1174 @@ export function AccessRequestPage() {
     })
   })
 
-  return (
-    <div className="min-h-screen bg-[linear-gradient(180deg,#edf2f7_0%,#f7f8fa_32%,#eef2f7_100%)] px-4 py-6 md:px-8 md:py-8">
-      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,#edf2f7_0%,#f6f8fa_36%,#eef2f7_100%)]" />
-        <div className="absolute inset-x-0 top-0 h-[30rem] bg-[radial-gradient(circle_at_50%_16%,rgba(0,93,182,0.17),transparent_20%),radial-gradient(circle_at_50%_28%,rgba(99,161,255,0.10),transparent_30%)]" />
-        <div className="absolute left-[18%] top-[8rem] h-[18rem] w-[18rem] rounded-full bg-[#002147]/[0.08] blur-3xl" />
-        <div className="absolute right-[12%] top-[6rem] h-[16rem] w-[16rem] rounded-full bg-[#63a1ff]/[0.10] blur-3xl" />
-        <div className="absolute left-1/2 top-[3rem] h-[32rem] w-[32rem] -translate-x-1/2 rounded-full border border-[#d7e2f0]" />
-        <div className="absolute left-1/2 top-[-1rem] h-[42rem] w-[42rem] -translate-x-1/2 rounded-full border border-[#e2e9f3]/80" />
-        <div
-          className="absolute inset-0 opacity-[0.04]"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle, rgba(0, 33, 71, 0.65) 1px, transparent 1px)',
-            backgroundSize: '36px 36px',
-          }}
-        />
+  const onSubmitAcademic = academicForm.handleSubmit(async (values) => {
+    setSuccessMessage(null)
+    if (!values.role) {
+      academicForm.setError('role', { message: 'Choose Resident or Consultant.' })
+      return
+    }
+    if (!values.password || values.password.length < 8) {
+      academicForm.setError('password', { message: 'Use at least 8 characters for your password.' })
+      return
+    }
+    if (values.password !== values.confirmPassword) {
+      academicForm.setError('confirmPassword', { message: 'Passwords must match.' })
+      return
+    }
+
+    const client = getApiBrowserClient()
+    if (!client || !isApiConfigured) {
+      toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
+      return
+    }
+
+    try {
+      await submitAcademicRegistration(client, {
+        fullName: values.fullName,
+        email: values.email,
+        password: values.password,
+        role: values.role as 'resident' | 'consultant',
+        homeWardId: values.homeWard ? values.homeWard : null,
+        notes: values.notes ? values.notes : null,
+      })
+      setSuccessMessage('Academic account created. Sign in to start submitting evaluations.')
+      academicForm.reset(academicDefaults)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to create your account.')
+    }
+  })
+
+  const onSubmitAdmin = adminForm.handleSubmit(async (values) => {
+    setSuccessMessage(null)
+    if (!values.password || values.password.length < 8) {
+      adminForm.setError('password', { message: 'Use at least 8 characters for your password.' })
+      return
+    }
+    if (values.password !== values.confirmPassword) {
+      adminForm.setError('confirmPassword', { message: 'Passwords must match.' })
+      return
+    }
+
+    const success = await submitAdminAccessRequest({
+      fullName: values.fullName,
+      email: values.email,
+      password: values.password,
+      notes: values.notes ? values.notes : undefined,
+    })
+
+    if (!success) {
+      return
+    }
+
+    setSuccessMessage(
+      'Admin access request submitted. An administrator will review it before your account is created.',
+    )
+    adminForm.reset(adminDefaults)
+  })
+
+  const submitting = showAdmin
+    ? adminForm.formState.isSubmitting
+    : showAcademic
+      ? academicForm.formState.isSubmitting
+      : clinicalForm.formState.isSubmitting
+
+  const valueSwap = {
+    initial: reduceMotion ? false : { opacity: 0, y: 8 },
+    animate: { opacity: 1, y: 0 },
+    exit: reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 },
+    transition: {
+      duration: reduceMotion ? 0 : 0.2,
+      ease: [0.23, 1, 0.32, 1] as [number, number, number, number],
+    },
+  }
+
+  const renderSummary = () => (
+    <div className="space-y-3.5">
+      <div className="flex items-center gap-3">
+        <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#f0b429]">
+          Review and submit
+        </span>
+        <span className="h-px flex-1 bg-white/10" />
       </div>
 
-      <div className="mx-auto max-w-[1180px]">
-        <div className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            className="inline-flex items-center gap-2 rounded-[4px] border border-[#c8d5e6] bg-[#eef4fb] px-4 py-2 text-[11px] font-bold uppercase tracking-[0.16em] text-[#000a1e] transition hover:bg-[#e3edf8]"
-            to={backTarget}
+      <AnimatePresence mode="wait" initial={false}>
+        {successMessage ? (
+          <motion.div
+            key="success"
+            initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+            transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.23, 1, 0.32, 1] }}
+            className="rounded-[0.35rem] border border-[#cfe7d9] bg-[#edf7f0] p-3.5"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            {backLabel}
-          </Link>
-
-          <div className="hidden items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-[#74777f] md:flex">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Reporting system active
-          </div>
-        </div>
-
-        <header className="mb-10 text-center">
-          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center overflow-hidden rounded-[0.5rem] bg-[#002147] p-2 shadow-[0_16px_32px_rgba(0,33,71,0.16)]">
-            <img
-              src={stPaulosLogo}
-              alt="St. Paulos logo"
-              className="h-full w-full rounded-[0.25rem] object-cover"
-            />
-          </div>
-          <h1
-            className="text-[2rem] font-extrabold uppercase tracking-[-0.03em] text-[#000a1e] sm:text-[2.35rem]"
-            style={{ fontFamily: 'Manrope, sans-serif' }}
+            <div className="flex items-start gap-2.5">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#1f6b3b]" />
+              <p className="text-[0.82rem] leading-5 text-[#1f6b3b]">{successMessage}</p>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="slab"
+            initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+            transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.23, 1, 0.32, 1] }}
+            className="relative rounded-[0.35rem] border border-white/10 bg-white/[0.03] py-3.5 pl-4 pr-3.5"
           >
-            St. Paulos
-          </h1>
-          <p
-            className="mt-2 text-base font-semibold tracking-[0.02em] text-[#44474e]"
-            style={{ fontFamily: 'Manrope, sans-serif' }}
-          >
-            Internal Medicine Reporting System
-          </p>
-          <div className="mx-auto mt-4 h-px w-28 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_68%,#f0b429_100%)]" />
-        </header>
-
-        <form
-          className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start"
-          onSubmit={onSubmit}
-        >
-          <div className="space-y-6">
-            <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(135deg,#000a1e_0%,#00152f_44%,#002147_100%)] p-6 text-white shadow-[0_24px_48px_rgba(0,33,71,0.18)] outline outline-1 outline-[#11345b]/55 md:p-8">
-              <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_72%,#f0b429_100%)]" />
-              <div className="absolute right-[-10%] top-[-12%] h-48 w-48 rounded-full bg-[#63a1ff]/15 blur-3xl" />
-              <div className="relative z-10 space-y-6">
-                <div className="space-y-3">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#f0b429]">
-                    {isNewAccountFlow ? 'New access request' : 'Access extension'}
-                  </p>
-                  <div className="space-y-2">
-                    <h2
-                      className="text-[1.9rem] font-bold tracking-[-0.035em] text-white sm:text-[2.2rem]"
-                      style={{ fontFamily: 'Manrope, sans-serif' }}
-                    >
-                      {pageTitle}
-                    </h2>
-                    <p className="max-w-[46rem] text-sm leading-7 text-[#c6d3e4] sm:text-[0.96rem]">
-                      {pageDescription}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-3">
-                  {[
-                    {
-                      step: '01',
-                      title: 'Profile',
-                      description: isNewAccountFlow
-                        ? 'Create your reporting identity.'
-                        : 'Current account information on file.',
-                    },
-                    {
-                      step: '02',
-                      title: 'Assignments',
-                      description: 'Choose the services you report for.',
-                    },
-                    {
-                      step: '03',
-                      title: 'Review',
-                      description: 'Department administrators confirm access.',
-                    },
-                  ].map((entry) => (
-                    <div
-                      key={entry.step}
-                      className="rounded-[0.45rem] bg-white/8 p-4 outline outline-1 outline-white/12 backdrop-blur-sm"
-                    >
-                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#f0b429]">
-                        Step {entry.step}
-                      </p>
-                      <h3
-                        className="mt-3 text-lg font-bold tracking-[-0.03em] text-white"
+            <span className="absolute inset-y-2.5 left-0 w-[3px] rounded-r-[2px] bg-[#f0b429]" />
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#9fb4d0]">
+                  {showAdmin ? 'Account type' : showAcademic ? 'Academic role' : 'Your selection'}
+                </p>
+                <div className="mt-1 flex items-baseline gap-2">
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    {showAdmin ? (
+                      <motion.span
+                        key="admin"
+                        {...valueSwap}
+                        className="text-[1.15rem] font-bold leading-none tracking-[-0.01em] text-white"
                         style={{ fontFamily: 'Manrope, sans-serif' }}
                       >
-                        {entry.title}
-                      </h3>
-                      <p className="mt-2 text-sm leading-6 text-[#c6d3e4]">{entry.description}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            <section className={panelClassName}>
-              <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
-              <div className="space-y-6">
-                <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-                  <div className="space-y-2">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
-                      Profile details
-                    </p>
-                    <h2
-                      className="text-[1.7rem] font-bold tracking-[-0.03em] text-[#000a1e]"
-                      style={{ fontFamily: 'Manrope, sans-serif' }}
-                    >
-                      Account information
-                    </h2>
-                  </div>
-                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
-                    {isNewAccountFlow ? 'New profile setup' : 'Current profile on record'}
-                  </p>
-                </div>
-
-                <div className="grid gap-5 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className={labelClassName} htmlFor="fullName">
-                      Full name
-                    </label>
-                    <div className="relative">
-                      <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
-                      <input
-                        id="fullName"
-                        type="text"
-                        placeholder="e.g. Hana Abera"
-                        autoComplete="name"
-                        aria-invalid={form.formState.errors.fullName ? 'true' : 'false'}
-                        className={iconInputClassName}
-                        disabled={Boolean(currentUser)}
-                        {...form.register('fullName')}
-                      />
-                    </div>
-                    {form.formState.errors.fullName ? (
-                      <p className="text-sm text-[#ba1a1a]">
-                        {form.formState.errors.fullName.message}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className={labelClassName} htmlFor="email">
-                      Institutional email
-                    </label>
-                    <div className="relative">
-                      <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
-                      <input
-                        id="email"
-                        type="email"
-                        placeholder="name@stpaulos.org"
-                        autoComplete="email"
-                        aria-invalid={form.formState.errors.email ? 'true' : 'false'}
-                        className={iconInputClassName}
-                        disabled={Boolean(currentUser)}
-                        {...form.register('email')}
-                      />
-                    </div>
-                    {form.formState.errors.email ? (
-                      <p className="text-sm text-[#ba1a1a]">
-                        {form.formState.errors.email.message}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-
-                {!currentUser ? (
-                  <div className="grid gap-5 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <label className={labelClassName} htmlFor="password">
-                        Create password
-                      </label>
-                      <div className="relative">
-                        <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
-                        <input
-                          id="password"
-                          type={showPassword ? 'text' : 'password'}
-                          placeholder="At least 8 characters"
-                          autoComplete="new-password"
-                          aria-invalid={form.formState.errors.password ? 'true' : 'false'}
-                          className={iconInputClassName}
-                          {...form.register('password')}
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
-                          onClick={() => setShowPassword((current) => !current)}
-                          aria-label={showPassword ? 'Hide password' : 'Show password'}
-                        >
-                          {showPassword ? (
-                            <EyeOff className="h-4 w-4" />
-                          ) : (
-                            <Eye className="h-4 w-4" />
-                          )}
-                        </button>
-                      </div>
-                      {form.formState.errors.password ? (
-                        <p className="text-sm text-[#ba1a1a]">
-                          {form.formState.errors.password.message}
-                        </p>
-                      ) : null}
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className={labelClassName} htmlFor="confirmPassword">
-                        Confirm password
-                      </label>
-                      <div className="relative">
-                        <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
-                        <input
-                          id="confirmPassword"
-                          type={showConfirmPassword ? 'text' : 'password'}
-                          placeholder="Repeat your password"
-                          autoComplete="new-password"
-                          aria-invalid={form.formState.errors.confirmPassword ? 'true' : 'false'}
-                          className={iconInputClassName}
-                          {...form.register('confirmPassword')}
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
-                          onClick={() => setShowConfirmPassword((current) => !current)}
-                          aria-label={showConfirmPassword ? 'Hide confirmation password' : 'Show confirmation password'}
-                        >
-                          {showConfirmPassword ? (
-                            <EyeOff className="h-4 w-4" />
-                          ) : (
-                            <Eye className="h-4 w-4" />
-                          )}
-                        </button>
-                      </div>
-                      {form.formState.errors.confirmPassword ? (
-                        <p className="text-sm text-[#ba1a1a]">
-                          {form.formState.errors.confirmPassword.message}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </section>
-
-            <section className={panelClassName}>
-              <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
-                    Reporting assignments
-                  </p>
-                  <h2
-                    className="text-[1.7rem] font-bold tracking-[-0.03em] text-[#000a1e]"
-                    style={{ fontFamily: 'Manrope, sans-serif' }}
-                  >
-                    Choose departments
-                  </h2>
-                  <p className="text-sm leading-7 text-[#5b6169]">
-                    Select every department or service line that should be included in your weekly reporting scope.
-                  </p>
-                </div>
-
-                <div className="space-y-5">
-                  {familySections.map((family) => (
-                    <div
-                      key={family.key}
-                      className="overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#eef4fb_0%,#f9fbfd_100%)] outline outline-1 outline-[#c7d5e4]/26"
-                    >
-                      <div className={cn('h-1 w-full', family.accent)} />
-                      <div className="space-y-5 p-5">
-                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                          <div className="space-y-2">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#74777f]">
-                              Service line
-                            </p>
-                            <h3
-                              className="text-[1.35rem] font-bold tracking-[-0.03em] text-[#000a1e]"
-                              style={{ fontFamily: 'Manrope, sans-serif' }}
-                            >
-                              {family.label}
-                            </h3>
-                            <p className="text-sm leading-6 text-[#5b6169]">{family.description}</p>
-                          </div>
-                          <span
-                            className={cn(
-                              'inline-flex items-center rounded-[4px] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em]',
-                              family.chipClass,
-                            )}
-                          >
-                            {groupedDepartments[family.key].length} assignments
-                          </span>
-                        </div>
-
-                        <Controller
-                          control={form.control}
-                          name="requestedDepartments"
-                          render={({ field }) => (
-                            <div className="grid gap-3 md:grid-cols-2">
-                              {groupedDepartments[family.key].map((department) => {
-                                const checked = field.value.includes(department.id)
-
-                                return (
-                                  <label
-                                    key={department.id}
-                                    className={cn(
-                                      'flex items-start gap-3 rounded-[0.45rem] bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fb_100%)] px-4 py-4 outline outline-1 transition',
-                                      checked
-                                        ? 'outline-[#005db6]/28 bg-[linear-gradient(180deg,#eef5ff_0%,#f9fbff_100%)]'
-                                        : 'outline-[#c4c6cf]/18 hover:bg-[linear-gradient(180deg,#f8fbff_0%,#ffffff_100%)]',
-                                    )}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      className="mt-1 h-4 w-4 rounded-[2px] border-[#c4c6cf] accent-[#005db6]"
-                                      onChange={(event) => {
-                                        field.onChange(
-                                          event.target.checked
-                                            ? [...field.value, department.id]
-                                            : field.value.filter((value) => value !== department.id),
-                                        )
-                                      }}
-                                    />
-                                    <span className="min-w-0 space-y-1.5">
-                                      <span className="flex flex-wrap items-center gap-2">
-                                        <span className="text-sm font-semibold text-[#000a1e]">
-                                          {department.name}
-                                        </span>
-                                        {checked ? (
-                                          <span className="rounded-[4px] bg-[#d6e3ff] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#00468c]">
-                                            Selected
-                                          </span>
-                                        ) : null}
-                                      </span>
-                                      <span className="block text-sm leading-6 text-[#5b6169]">
-                                        {department.description}
-                                      </span>
-                                    </span>
-                                  </label>
-                                )
-                              })}
-                            </div>
-                          )}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {form.formState.errors.requestedDepartments ? (
-                  <p className="text-sm text-[#ba1a1a]">
-                    {form.formState.errors.requestedDepartments.message}
-                  </p>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#eef4fb_0%,#ffffff_100%)] p-6 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-8">
-              <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_78%,#f0b429_100%)]" />
-              <div className="space-y-5">
-                <div className="space-y-2">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
-                    Optional note
-                  </p>
-                  <h2
-                    className="text-[1.7rem] font-bold tracking-[-0.03em] text-[#000a1e]"
-                    style={{ fontFamily: 'Manrope, sans-serif' }}
-                  >
-                    Department note
-                  </h2>
-                  <p className="text-sm leading-7 text-[#5b6169]">
-                    Add any context that will help the reviewers approve the reporting assignments you need.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className={labelClassName} htmlFor="notes">
-                    Reviewer note
-                  </label>
-                  <textarea
-                    id="notes"
-                    placeholder="Briefly explain your service coverage, rotation, or reporting needs."
-                    className={textareaClassName}
-                    {...form.register('notes')}
-                  />
-                  <div className="flex items-center justify-between gap-3 text-sm text-[#74777f]">
-                    <span>Optional</span>
-                    <span>{notesValue.length}/240</span>
-                  </div>
-                  {form.formState.errors.notes ? (
-                    <p className="text-sm text-[#ba1a1a]">{form.formState.errors.notes.message}</p>
-                  ) : null}
-                </div>
-              </div>
-            </section>
-
-            {currentUser ? (
-              <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#eef4fb_0%,#ffffff_100%)] p-6 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-8">
-                <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
-                <div className="space-y-6">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-                    <div className="space-y-2">
-                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
-                        Request history
-                      </p>
-                      <h2
-                        className="text-[1.7rem] font-bold tracking-[-0.03em] text-[#000a1e]"
+                        Administrator
+                      </motion.span>
+                    ) : showAcademic ? (
+                      <motion.span
+                        key={selectedRole?.value ?? 'none'}
+                        {...valueSwap}
+                        className={cn(
+                          'text-[1.15rem] font-bold leading-none tracking-[-0.01em]',
+                          selectedRole ? 'text-white' : 'text-[#9fb4d0]',
+                        )}
                         style={{ fontFamily: 'Manrope, sans-serif' }}
                       >
-                        Previous submissions
-                      </h2>
-                    </div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
-                      {formatCompactNumber(currentUserRequests.length)} total requests
-                    </p>
-                  </div>
-
-                  {currentUserRequests.length ? (
-                    <div className="space-y-3">
-                      {currentUserRequests.map((request) => (
-                        <article
-                          key={request.id}
-                          className="rounded-[0.5rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] p-5 outline outline-1 outline-[#c7d5e4]/24"
-                        >
-                          <div className="space-y-4">
-                            <div className="flex flex-wrap gap-2">
-                              {request.requestedAssignments.map((assignment) => (
-                                <span
-                                  key={`${request.id}-${assignment.departmentId}`}
-                                  className="rounded-[4px] bg-[#ffffff] px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#244261] outline outline-1 outline-[#c7d5e4]/30"
-                                >
-                                  {
-                                    departments.find(
-                                      (department) => department.id === assignment.departmentId,
-                                    )?.name
-                                  }
-                                </span>
-                              ))}
-                            </div>
-
-                            <div className="grid gap-3 text-sm text-[#5b6169] sm:grid-cols-2">
-                              <div className="space-y-1">
-                                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
-                                  Submitted
-                                </p>
-                                <p>{formatTimestamp(request.requestedAt)}</p>
-                              </div>
-                              <div className="space-y-1">
-                                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
-                                  Status
-                                </p>
-                                <span
-                                  className={cn(
-                                    'inline-flex rounded-[4px] border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em]',
-                                    getStatusClass(request.status),
-                                  )}
-                                >
-                                  {request.status}
-                                </span>
-                              </div>
-                            </div>
-
-                            {request.notes ? (
-                              <p className="text-sm leading-6 text-[#5b6169]">{request.notes}</p>
-                            ) : null}
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-[0.5rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] px-5 py-8 text-center text-sm text-[#5b6169] outline outline-1 outline-[#c7d5e4]/24">
-                      No requests yet.
-                    </div>
+                        {selectedRole ? selectedRole.title : 'Not selected'}
+                      </motion.span>
+                    ) : (
+                      <motion.span
+                        key={selectedCount}
+                        {...valueSwap}
+                        className={cn(
+                          'text-[1.5rem] font-extrabold leading-none tracking-[-0.02em]',
+                          selectedCount ? 'text-white' : 'text-[#9fb4d0]',
+                        )}
+                        style={{ fontFamily: 'Manrope, sans-serif' }}
+                      >
+                        {formatCompactNumber(selectedCount)}
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                  {showAcademic || showAdmin ? null : (
+                    <span className="text-[0.82rem] font-medium text-[#c6d3e4]">
+                      {selectedCount === 1 ? 'assignment' : 'assignments'}
+                    </span>
                   )}
                 </div>
-              </section>
-            ) : null}
-          </div>
-
-          <aside className="space-y-6 xl:sticky xl:top-8">
-            <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#000a1e_0%,#00182f_46%,#002147_100%)] p-6 text-white shadow-[0_24px_48px_rgba(0,33,71,0.2)] outline outline-1 outline-[#143963]/55 md:p-8">
-              <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_72%,#f0b429_100%)]" />
-              <div className="absolute right-[-14%] top-[-8%] h-52 w-52 rounded-full bg-[#63a1ff]/16 blur-3xl" />
-              <div className="relative z-10 space-y-6">
-                <div className="space-y-2">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#f0b429]">
-                    Request summary
-                  </p>
-                  <h2
-                    className="text-[1.7rem] font-bold tracking-[-0.03em] text-white"
-                    style={{ fontFamily: 'Manrope, sans-serif' }}
-                  >
-                    Review and submit
-                  </h2>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                  <div className="rounded-[0.45rem] bg-white/8 p-4 outline outline-1 outline-white/12 backdrop-blur-sm">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#f0b429]">
-                      Selected assignments
-                    </p>
-                    <p
-                      className="mt-3 text-[2rem] font-bold tracking-[-0.04em] text-white"
-                      style={{ fontFamily: 'Manrope, sans-serif' }}
-                    >
-                      {formatCompactNumber(selectedCount)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-[0.45rem] bg-white/8 p-4 outline outline-1 outline-white/12 backdrop-blur-sm">
-                    <div className="flex items-center gap-2">
-                      <FileCheck2 className="h-4 w-4 text-[#63a1ff]" />
-                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#f0b429]">
-                        Approval route
-                      </p>
-                    </div>
-                    <p className="mt-3 text-sm font-semibold text-white">
+                <p className="mt-1.5 truncate text-[0.78rem] leading-5 text-[#9fb4d0]">
+                  {showAdmin ? (
+                    <>
+                      Pending approval
+                      <span className="text-[#c6d3e4]"> · created after an admin reviews it</span>
+                    </>
+                  ) : showAcademic ? (
+                    <>
+                      Single approval
+                      {selectedWard ? (
+                        <span className="text-[#c6d3e4]"> · {selectedWard.name}</span>
+                      ) : null}
+                    </>
+                  ) : selectedCount ? (
+                    <>
                       Department review
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#f0b429]">
-                    Selected departments
-                  </p>
-                  {selectedDepartments.length ? (
-                    <div className="flex flex-wrap gap-2">
-                      {selectedDepartments.map((department) => (
-                        <span
-                          key={department.id}
-                          className="rounded-[4px] bg-white/10 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#e2ebf6] outline outline-1 outline-white/12"
-                        >
-                          {department.name}
-                        </span>
-                      ))}
-                    </div>
+                      <span className="text-[#c6d3e4]">
+                        {' · '}
+                        {selectedDepartments
+                          .slice(0, 2)
+                          .map((department) => department.name)
+                          .join(', ')}
+                        {selectedCount > 2 ? ` +${selectedCount - 2}` : ''}
+                      </span>
+                    </>
                   ) : (
-                    <p className="text-sm leading-6 text-[#c6d3e4]">
-                      No reporting assignments selected yet.
-                    </p>
+                    'Department review · choose at least one assignment'
                   )}
-                </div>
-
-                {successMessage ? (
-                  <div className="rounded-[0.45rem] border border-[#cfe7d9] bg-[#edf7f0] p-4">
-                    <div className="flex items-start gap-3">
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 text-[#1f6b3b]" />
-                      <p className="text-sm leading-6 text-[#1f6b3b]">{successMessage}</p>
-                    </div>
-                  </div>
-                ) : null}
-
-                <button
-                  type="submit"
-                  className="auth-accent-button flex h-14 w-full items-center justify-center gap-3 rounded-[4px] px-6 text-[0.8rem] font-bold uppercase tracking-[0.1em]"
-                  style={{ fontFamily: 'Manrope, sans-serif' }}
-                >
-                  Submit access request
-                  <Send className="h-3.5 w-3.5" />
-                </button>
-
-                <p className="text-center text-xs leading-6 text-[#c6d3e4]">
-                  {isNewAccountFlow ? 'Existing system user? ' : 'Need to leave this form? '}
-                  <Link className="font-semibold text-[#63a1ff] hover:underline" to={backTarget}>
-                    {isNewAccountFlow ? 'Secure sign in' : 'Return to workspace'}
-                  </Link>
                 </p>
               </div>
-            </section>
+              <span className="shrink-0 rounded-[3px] bg-[#005db6] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white">
+                {showAdmin ? 'Admin' : showAcademic ? 'Academic' : 'Clinical'}
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#eef4fb_0%,#ffffff_100%)] p-6 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-8">
-              <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#63a1ff_0%,#005db6_70%,#f0b429_100%)]" />
-              <div className="space-y-5">
-                <div className="space-y-2">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
-                    Review process
-                  </p>
-                  <h2
-                    className="text-[1.6rem] font-bold tracking-[-0.03em] text-[#000a1e]"
+      <button
+        type="submit"
+        form={
+          showAdmin
+            ? 'admin-enroll-form'
+            : showAcademic
+              ? 'academic-enroll-form'
+              : 'clinical-request-form'
+        }
+        disabled={submitting || (!showAcademic && !showAdmin && selectedCount === 0)}
+        className={cn(
+          'auth-accent-button flex h-12 w-full items-center justify-center gap-2.5 rounded-[4px] px-6 text-[0.78rem] font-bold uppercase tracking-[0.1em] transition-[transform,opacity] duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-60',
+          reduceMotion ? '' : 'active:scale-[0.97]',
+        )}
+        style={{ fontFamily: 'Manrope, sans-serif' }}
+      >
+        {submitting
+          ? showAcademic
+            ? 'Creating account...'
+            : 'Submitting...'
+          : showAdmin
+            ? 'Request admin access'
+            : showAcademic
+              ? 'Create academic account'
+              : 'Submit access request'}
+        <Send className="h-3.5 w-3.5" />
+      </button>
+
+      <p className="text-center text-xs leading-5 text-[#c6d3e4]">
+        {isNewAccountFlow ? 'Existing system user? ' : 'Need to leave? '}
+        <Link className="font-semibold text-[#63a1ff] hover:underline" to={backTarget}>
+          {isNewAccountFlow ? 'Secure sign in' : 'Return to workspace'}
+        </Link>
+      </p>
+    </div>
+  )
+
+  const headerEyebrow = showAdmin
+    ? 'Admin enrollment'
+    : showAcademic
+      ? 'Academic enrollment'
+      : isNewAccountFlow
+        ? 'New access request'
+        : 'Access extension'
+  const headerTitle = showAdmin
+    ? 'Request an admin account'
+    : showAcademic
+      ? 'Create your academic profile'
+      : isNewAccountFlow
+        ? 'Request reporting access'
+        : 'Request additional access'
+
+  return (
+    <div className="relative min-h-screen overflow-x-clip bg-[#f8f9fa] px-3 py-3 sm:px-4 sm:py-4 md:px-5 md:py-5 xl:px-6 xl:py-6">
+      <main className="relative mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[1460px] items-start">
+        <div className="grid w-full rounded-[0.35rem] bg-[#04162f] shadow-[0_28px_60px_rgba(0,33,71,0.12)] outline outline-1 outline-[#c8d5e6]/30 md:grid-cols-[minmax(0,1fr)_minmax(520px,590px)] xl:grid-cols-[minmax(0,1.04fr)_minmax(560px,640px)]">
+          {/* LEFT — navy hero; sticks while the form scrolls, holds the submit */}
+          <section className="relative hidden overflow-hidden rounded-l-[0.35rem] bg-[#04162f] text-white md:sticky md:top-5 md:flex md:min-h-[calc(100vh-2.5rem)] md:flex-col md:self-start md:p-12 lg:p-14 xl:p-16">
+            <div className="absolute inset-y-0 left-0 w-px bg-white/10" />
+            <div className="absolute inset-y-0 right-0 w-px bg-white/8" />
+
+            <div className="relative z-10 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
+                  <img src={stPaulosLogo} alt="St Paul logo" className="h-full w-full object-cover" />
+                </div>
+                <div>
+                  <p
+                    className="text-[1.55rem] font-extrabold leading-none tracking-[-0.03em] text-white"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
-                    What happens next
-                  </h2>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex items-start gap-3 rounded-[0.45rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] p-4 outline outline-1 outline-[#c7d5e4]/24">
-                    <Mail className="mt-0.5 h-4 w-4 text-[#005db6]" />
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#000a1e]">
-                        Email verification
-                      </p>
-                      <p className="text-sm leading-6 text-[#5b6169]">
-                        {isNewAccountFlow
-                          ? 'New accounts receive a verification email before sign-in can begin.'
-                          : 'Your current account stays active while the additional request is reviewed.'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-3 rounded-[0.45rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] p-4 outline outline-1 outline-[#c7d5e4]/24">
-                    <Info className="mt-0.5 h-4 w-4 text-[#005db6]" />
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#000a1e]">
-                        Administrative review
-                      </p>
-                      <p className="text-sm leading-6 text-[#5b6169]">
-                        Reporting assignments are confirmed by department administrators before access is activated.
-                      </p>
-                    </div>
-                  </div>
+                    St Paul
+                  </p>
+                  <p className="mt-1 text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
+                    Internal Medicine
+                  </p>
                 </div>
               </div>
-            </section>
+              <Link
+                to={backTarget}
+                className="group inline-flex min-h-[2.5rem] items-center gap-1.5 rounded-[0.4rem] border border-white/10 bg-white/[0.06] px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#9fb4d0] transition-[transform,background-color,border-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-white/20 hover:bg-white/[0.12] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-2 focus-visible:ring-offset-[#04162f] motion-safe:active:scale-[0.97]"
+              >
+                <ArrowLeft className="h-3.5 w-3.5 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-safe:group-hover:-translate-x-0.5" />
+                {backLabel}
+              </Link>
+            </div>
 
-            {currentUser ? (
-              <section className="relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#eef4fb_0%,#ffffff_100%)] p-6 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-8">
-                <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
-                <div className="space-y-5">
-                  <div className="space-y-2">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
-                      Recent activity
-                    </p>
-                    <h2
-                      className="text-[1.6rem] font-bold tracking-[-0.03em] text-[#000a1e]"
-                      style={{ fontFamily: 'Manrope, sans-serif' }}
-                    >
-                      Latest requests
-                    </h2>
-                  </div>
+            <motion.div
+              initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
+              className="relative z-10 mt-14 max-w-[31rem] space-y-10 md:mt-auto md:pt-14"
+            >
+              <div className="space-y-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#f0b429]">
+                  {isNewAccountFlow ? 'Platform enrollment' : 'Access extension'}
+                </p>
+                <h1
+                  className="text-[2.9rem] font-extrabold leading-[0.95] tracking-[-0.05em] text-white lg:text-[3.2rem] xl:text-[3.5rem]"
+                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                >
+                  {isNewAccountFlow ? 'Request Access' : 'Request Additional'}
+                  <br />
+                  <span className="text-[#63a1ff]">
+                    {isNewAccountFlow ? '& Academic Review' : 'Reporting Access'}
+                  </span>
+                </h1>
+                <div className="h-1 w-12 bg-[#f0b429]" />
+              </div>
 
-                  {recentRequests.length ? (
-                    <div className="space-y-3">
-                      {recentRequests.map((request) => (
-                        <div
-                          key={request.id}
-                          className="rounded-[0.45rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] p-4 outline outline-1 outline-[#c7d5e4]/24"
+              {isNewAccountFlow ? (
+                <TrackToggle
+                  track={track}
+                  onChange={setTrack}
+                  reduceMotion={reduceMotion}
+                  variant="navy"
+                  idKey="trackNavy"
+                />
+              ) : null}
+
+              {renderSummary()}
+            </motion.div>
+          </section>
+
+          {/* RIGHT — white scrolling form panel */}
+          <section className="relative flex overflow-hidden rounded-[0.35rem] bg-white md:rounded-l-none">
+            <div className="absolute inset-x-0 top-0 z-20 h-1 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_72%,#f0b429_100%)]" />
+            <div
+              className="w-full px-6 py-9 sm:px-10 md:px-12 md:py-10 lg:px-14 xl:px-16"
+              style={{ fontFamily: 'Inter, sans-serif' }}
+            >
+              <div className="mx-auto w-full max-w-[34rem]">
+                {/* mobile-only header (the navy panel is hidden below md) */}
+                <div className="mb-8 md:hidden">
+                  <div className="mb-6 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_12px_24px_rgba(0,33,71,0.14)] ring-1 ring-[#d7dbe0]">
+                        <img
+                          src={stPaulosLogo}
+                          alt="St Paul logo"
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                      <div>
+                        <p
+                          className="text-base font-extrabold leading-none tracking-[-0.03em] text-[#000a1e]"
+                          style={{ fontFamily: 'Manrope, sans-serif' }}
                         >
-                          <div className="space-y-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <p className="text-sm font-semibold text-[#000a1e]">
-                                {formatTimestamp(request.requestedAt)}
-                              </p>
-                              <span
-                                className={cn(
-                                  'inline-flex rounded-[4px] border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em]',
-                                  getStatusClass(request.status),
-                                )}
-                              >
-                                {request.status}
-                              </span>
-                            </div>
-                            <p className="text-sm leading-6 text-[#5b6169]">
-                              {request.requestedAssignments.length} assignments requested
-                            </p>
-                          </div>
-                        </div>
-                      ))}
+                          St Paul
+                        </p>
+                        <p className="mt-1 text-[0.6rem] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
+                          Internal Medicine
+                        </p>
+                      </div>
                     </div>
-                  ) : (
-                    <p className="text-sm leading-6 text-[#5b6169]">No requests yet.</p>
-                  )}
+                    <Link
+                      to={backTarget}
+                      className="group inline-flex min-h-[2.5rem] items-center gap-1.5 rounded-[0.4rem] border border-[#d4dde8] bg-[#f1f5fa] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#005db6] transition-[transform,background-color,border-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#005db6]/40 hover:bg-[#e9eff7] hover:text-[#00468c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#005db6]/30 motion-safe:active:scale-[0.97]"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-safe:group-hover:-translate-x-0.5" />
+                      Back
+                    </Link>
+                  </div>
+                  {isNewAccountFlow ? (
+                    <TrackToggle
+                      track={track}
+                      onChange={setTrack}
+                      reduceMotion={reduceMotion}
+                      variant="light"
+                      idKey="trackMobile"
+                    />
+                  ) : null}
                 </div>
-              </section>
-            ) : null}
-          </aside>
-        </form>
 
-        <footer className="mt-8 flex flex-col gap-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[#74777f] sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-4">
-            <span>Reporting policy</span>
-            <span>Department review</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            HIPAA aligned workspace
-          </div>
-        </footer>
-      </div>
+                <header className="mb-8">
+                  <p className="mb-2.5 text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
+                    {headerEyebrow}
+                  </p>
+                  <h2
+                    className="text-[2rem] font-extrabold tracking-[-0.035em] text-[#000a1e]"
+                    style={{ fontFamily: 'Manrope, sans-serif' }}
+                  >
+                    {headerTitle}
+                  </h2>
+                </header>
+
+                <AnimatePresence mode="wait" initial={false}>
+                  {showAdmin ? (
+                    <motion.div
+                      key="admin"
+                      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
+                      transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
+                    >
+                      <form id="admin-enroll-form" onSubmit={onSubmitAdmin}>
+                        <motion.div
+                          initial={reduceMotion ? false : 'hidden'}
+                          animate="show"
+                          variants={sectionStagger}
+                          className="space-y-7"
+                        >
+                          <motion.section variants={sectionItem} className={panelClass}>
+                            <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
+                            <div className="space-y-6">
+                              <div className="space-y-1.5">
+                                <p className={eyebrowClass}>Profile details</p>
+                                <h2
+                                  className={sectionHeadingClass}
+                                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                                >
+                                  Account information
+                                </h2>
+                              </div>
+                              <div className="grid gap-5 md:grid-cols-2">
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="adminFullName">
+                                    Full name
+                                  </label>
+                                  <div className="relative">
+                                    <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <input
+                                      id="adminFullName"
+                                      type="text"
+                                      placeholder="e.g. Dr. Hana Abera"
+                                      autoComplete="name"
+                                      className={iconInputClass}
+                                      {...adminForm.register('fullName')}
+                                    />
+                                  </div>
+                                  {adminForm.formState.errors.fullName ? (
+                                    <p className="text-sm text-[#ba1a1a]">
+                                      {adminForm.formState.errors.fullName.message}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="adminEmail">
+                                    Institutional email
+                                  </label>
+                                  <div className="relative">
+                                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <input
+                                      id="adminEmail"
+                                      type="email"
+                                      placeholder="name@stpaul.org"
+                                      autoComplete="email"
+                                      className={iconInputClass}
+                                      {...adminForm.register('email')}
+                                    />
+                                  </div>
+                                  {adminForm.formState.errors.email ? (
+                                    <p className="text-sm text-[#ba1a1a]">
+                                      {adminForm.formState.errors.email.message}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="grid gap-5 md:grid-cols-2">
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="adminPassword">
+                                    Create password
+                                  </label>
+                                  <div className="relative">
+                                    <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <input
+                                      id="adminPassword"
+                                      type={showPassword ? 'text' : 'password'}
+                                      placeholder="8+ characters"
+                                      autoComplete="new-password"
+                                      className={iconInputClass}
+                                      {...adminForm.register('password')}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                      onClick={() => setShowPassword((current) => !current)}
+                                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                    >
+                                      {showPassword ? (
+                                        <EyeOff className="h-4 w-4" />
+                                      ) : (
+                                        <Eye className="h-4 w-4" />
+                                      )}
+                                    </button>
+                                  </div>
+                                  {adminForm.formState.errors.password ? (
+                                    <p className="text-sm text-[#ba1a1a]">
+                                      {adminForm.formState.errors.password.message}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="adminConfirm">
+                                    Confirm password
+                                  </label>
+                                  <div className="relative">
+                                    <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <input
+                                      id="adminConfirm"
+                                      type={showConfirmPassword ? 'text' : 'password'}
+                                      placeholder="Repeat password"
+                                      autoComplete="new-password"
+                                      className={iconInputClass}
+                                      {...adminForm.register('confirmPassword')}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                      onClick={() => setShowConfirmPassword((current) => !current)}
+                                      aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                                    >
+                                      {showConfirmPassword ? (
+                                        <EyeOff className="h-4 w-4" />
+                                      ) : (
+                                        <Eye className="h-4 w-4" />
+                                      )}
+                                    </button>
+                                  </div>
+                                  {adminForm.formState.errors.confirmPassword ? (
+                                    <p className="text-sm text-[#ba1a1a]">
+                                      {adminForm.formState.errors.confirmPassword.message}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </div>
+                          </motion.section>
+
+                          <motion.section variants={sectionItem} className={panelClass}>
+                            <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
+                            <div className="space-y-4">
+                              <div className="space-y-1.5">
+                                <p className={eyebrowClass}>Optional note</p>
+                                <h2
+                                  className={sectionHeadingClass}
+                                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                                >
+                                  Why you need admin access
+                                </h2>
+                              </div>
+                              <textarea
+                                rows={3}
+                                placeholder="Briefly explain your administrative responsibility."
+                                className={cn(textareaClass, 'min-h-[88px]')}
+                                {...adminForm.register('notes')}
+                              />
+                              <div className="flex items-start gap-2.5 rounded-[0.4rem] border border-[#c9d7e8] bg-[#edf4fb] p-3.5">
+                                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#005db6]" />
+                                <p className="text-[0.82rem] leading-5 text-[#244261]">
+                                  Admin accounts require approval. The maintenance owner or an existing
+                                  admin reviews your request before your account is created, so you
+                                  will not be able to sign in until then.
+                                </p>
+                              </div>
+                            </div>
+                          </motion.section>
+                        </motion.div>
+                      </form>
+                    </motion.div>
+                  ) : showAcademic ? (
+                    <motion.div
+                      key="academic"
+                      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
+                      transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
+                    >
+                      <form id="academic-enroll-form" onSubmit={onSubmitAcademic}>
+                        <motion.div
+                          initial={reduceMotion ? false : 'hidden'}
+                          animate="show"
+                          variants={sectionStagger}
+                          className="space-y-7"
+                        >
+                          <motion.section variants={sectionItem} className={panelClass}>
+                            <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
+                            <div className="space-y-6">
+                              <div className="space-y-1.5">
+                                <p className={eyebrowClass}>Profile details</p>
+                                <h2
+                                  className={sectionHeadingClass}
+                                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                                >
+                                  Account information
+                                </h2>
+                              </div>
+                              <div className="grid gap-5 md:grid-cols-2">
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="academicFullName">
+                                    Full name
+                                  </label>
+                                  <div className="relative">
+                                    <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <input
+                                      id="academicFullName"
+                                      type="text"
+                                      placeholder="e.g. Dr. Hana Abera"
+                                      autoComplete="name"
+                                      className={iconInputClass}
+                                      {...academicForm.register('fullName')}
+                                    />
+                                  </div>
+                                  {academicForm.formState.errors.fullName ? (
+                                    <p className="text-sm text-[#ba1a1a]">
+                                      {academicForm.formState.errors.fullName.message}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="academicEmail">
+                                    Institutional email
+                                  </label>
+                                  <div className="relative">
+                                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <input
+                                      id="academicEmail"
+                                      type="email"
+                                      placeholder="name@stpaul.org"
+                                      autoComplete="email"
+                                      className={iconInputClass}
+                                      {...academicForm.register('email')}
+                                    />
+                                  </div>
+                                  {academicForm.formState.errors.email ? (
+                                    <p className="text-sm text-[#ba1a1a]">
+                                      {academicForm.formState.errors.email.message}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="grid gap-5 md:grid-cols-2">
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="academicPassword">
+                                    Create password
+                                  </label>
+                                  <div className="relative">
+                                    <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <input
+                                      id="academicPassword"
+                                      type={showPassword ? 'text' : 'password'}
+                                      placeholder="8+ characters"
+                                      autoComplete="new-password"
+                                      className={iconInputClass}
+                                      {...academicForm.register('password')}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                      onClick={() => setShowPassword((current) => !current)}
+                                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                    >
+                                      {showPassword ? (
+                                        <EyeOff className="h-4 w-4" />
+                                      ) : (
+                                        <Eye className="h-4 w-4" />
+                                      )}
+                                    </button>
+                                  </div>
+                                  {academicForm.formState.errors.password ? (
+                                    <p className="text-sm text-[#ba1a1a]">
+                                      {academicForm.formState.errors.password.message}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="academicConfirm">
+                                    Confirm password
+                                  </label>
+                                  <div className="relative">
+                                    <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <input
+                                      id="academicConfirm"
+                                      type={showConfirmPassword ? 'text' : 'password'}
+                                      placeholder="Repeat password"
+                                      autoComplete="new-password"
+                                      className={iconInputClass}
+                                      {...academicForm.register('confirmPassword')}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                      onClick={() => setShowConfirmPassword((current) => !current)}
+                                      aria-label={
+                                        showConfirmPassword
+                                          ? 'Hide confirmation password'
+                                          : 'Show confirmation password'
+                                      }
+                                    >
+                                      {showConfirmPassword ? (
+                                        <EyeOff className="h-4 w-4" />
+                                      ) : (
+                                        <Eye className="h-4 w-4" />
+                                      )}
+                                    </button>
+                                  </div>
+                                  {academicForm.formState.errors.confirmPassword ? (
+                                    <p className="text-sm text-[#ba1a1a]">
+                                      {academicForm.formState.errors.confirmPassword.message}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </div>
+                          </motion.section>
+
+                          <motion.section variants={sectionItem} className={panelClass}>
+                            <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
+                            <div className="space-y-6">
+                              <div className="space-y-1.5">
+                                <p className={eyebrowClass}>Your role</p>
+                                <h2
+                                  className={sectionHeadingClass}
+                                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                                >
+                                  Your evaluation role
+                                </h2>
+                              </div>
+                              <Controller
+                                control={academicForm.control}
+                                name="role"
+                                render={({ field }) => (
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    {ACADEMIC_ROLES.map((entry) => {
+                                      const active = field.value === entry.value
+                                      const Icon = entry.icon
+                                      return (
+                                        <button
+                                          key={entry.value}
+                                          type="button"
+                                          onClick={() => field.onChange(entry.value)}
+                                          className={cn(
+                                            'flex items-center gap-3 rounded-[0.45rem] px-4 py-3.5 text-left outline outline-1 transition-[transform,outline-color,background] duration-150 ease-out active:scale-[0.98]',
+                                            active
+                                              ? 'bg-[linear-gradient(180deg,#eef5ff_0%,#f9fbff_100%)] outline-[#005db6]'
+                                              : 'bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fb_100%)] outline-[#c4c6cf]/30 hover:outline-[#b8c7d8]',
+                                          )}
+                                        >
+                                          <span
+                                            className={cn(
+                                              'flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.3rem] transition-colors',
+                                              active
+                                                ? 'bg-[#005db6] text-white'
+                                                : 'bg-[#eef2f6] text-[#5b6169]',
+                                            )}
+                                          >
+                                            <Icon className="h-4 w-4" />
+                                          </span>
+                                          <span className="min-w-0">
+                                            <span className="flex items-center gap-2">
+                                              <span className="text-sm font-bold text-[#000a1e]">
+                                                {entry.title}
+                                              </span>
+                                              {active ? (
+                                                <CheckCircle2 className="h-4 w-4 text-[#005db6]" />
+                                              ) : null}
+                                            </span>
+                                            <span className="block text-sm leading-5 text-[#5b6169]">
+                                              {entry.description}
+                                            </span>
+                                          </span>
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                              />
+                              {academicForm.formState.errors.role ? (
+                                <p className="text-sm text-[#ba1a1a]">
+                                  {academicForm.formState.errors.role.message}
+                                </p>
+                              ) : null}
+
+                              <div className="grid gap-5 md:grid-cols-2">
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="academicHomeWard">
+                                    Home ward{' '}
+                                    <span className="font-semibold text-[#74777f]">(optional)</span>
+                                  </label>
+                                  <div className="relative">
+                                    <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <select
+                                      id="academicHomeWard"
+                                      className={iconInputClass}
+                                      {...academicForm.register('homeWard')}
+                                    >
+                                      <option value="">No home ward</option>
+                                      {wards.map((ward) => (
+                                        <option key={ward.id} value={ward.id}>
+                                          {ward.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="academicNotes">
+                                    Note{' '}
+                                    <span className="font-semibold text-[#74777f]">(optional)</span>
+                                  </label>
+                                  <textarea
+                                    id="academicNotes"
+                                    placeholder="Anything the department should know."
+                                    className={cn(textareaClass, 'min-h-[60px]')}
+                                    {...academicForm.register('notes')}
+                                  />
+                                  <div className="flex items-center justify-end text-xs text-[#74777f]">
+                                    <span>{academicNotes.length}/240</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </motion.section>
+                        </motion.div>
+                      </form>
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="clinical"
+                      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
+                      transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
+                    >
+                      <form id="clinical-request-form" onSubmit={onSubmitClinical}>
+                        <motion.div
+                          initial={reduceMotion ? false : 'hidden'}
+                          animate="show"
+                          variants={sectionStagger}
+                          className="space-y-7"
+                        >
+                          <motion.section variants={sectionItem} className={panelClass}>
+                            <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
+                            <div className="space-y-6">
+                              <div className="space-y-1.5">
+                                <p className={eyebrowClass}>Profile details</p>
+                                <h2
+                                  className={sectionHeadingClass}
+                                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                                >
+                                  Account information
+                                </h2>
+                              </div>
+                              <div className="grid gap-5 md:grid-cols-2">
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="fullName">
+                                    Full name
+                                  </label>
+                                  <div className="relative">
+                                    <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <input
+                                      id="fullName"
+                                      type="text"
+                                      placeholder="e.g. Hana Abera"
+                                      autoComplete="name"
+                                      className={iconInputClass}
+                                      disabled={Boolean(currentUser)}
+                                      {...clinicalForm.register('fullName')}
+                                    />
+                                  </div>
+                                  {clinicalForm.formState.errors.fullName ? (
+                                    <p className="text-sm text-[#ba1a1a]">
+                                      {clinicalForm.formState.errors.fullName.message}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <div className="space-y-2">
+                                  <label className={labelClass} htmlFor="email">
+                                    Institutional email
+                                  </label>
+                                  <div className="relative">
+                                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <input
+                                      id="email"
+                                      type="email"
+                                      placeholder="name@stpaul.org"
+                                      autoComplete="email"
+                                      className={iconInputClass}
+                                      disabled={Boolean(currentUser)}
+                                      {...clinicalForm.register('email')}
+                                    />
+                                  </div>
+                                  {clinicalForm.formState.errors.email ? (
+                                    <p className="text-sm text-[#ba1a1a]">
+                                      {clinicalForm.formState.errors.email.message}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              </div>
+                              {!currentUser ? (
+                                <div className="grid gap-5 md:grid-cols-2">
+                                  <div className="space-y-2">
+                                    <label className={labelClass} htmlFor="password">
+                                      Create password
+                                    </label>
+                                    <div className="relative">
+                                      <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                      <input
+                                        id="password"
+                                        type={showPassword ? 'text' : 'password'}
+                                        placeholder="8+ characters"
+                                        autoComplete="new-password"
+                                        className={iconInputClass}
+                                        {...clinicalForm.register('password')}
+                                      />
+                                      <button
+                                        type="button"
+                                        className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                        onClick={() => setShowPassword((current) => !current)}
+                                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                      >
+                                        {showPassword ? (
+                                          <EyeOff className="h-4 w-4" />
+                                        ) : (
+                                          <Eye className="h-4 w-4" />
+                                        )}
+                                      </button>
+                                    </div>
+                                    {clinicalForm.formState.errors.password ? (
+                                      <p className="text-sm text-[#ba1a1a]">
+                                        {clinicalForm.formState.errors.password.message}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                  <div className="space-y-2">
+                                    <label className={labelClass} htmlFor="confirmPassword">
+                                      Confirm password
+                                    </label>
+                                    <div className="relative">
+                                      <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                      <input
+                                        id="confirmPassword"
+                                        type={showConfirmPassword ? 'text' : 'password'}
+                                        placeholder="Repeat password"
+                                        autoComplete="new-password"
+                                        className={iconInputClass}
+                                        {...clinicalForm.register('confirmPassword')}
+                                      />
+                                      <button
+                                        type="button"
+                                        className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                        onClick={() => setShowConfirmPassword((current) => !current)}
+                                        aria-label={
+                                          showConfirmPassword
+                                            ? 'Hide confirmation password'
+                                            : 'Show confirmation password'
+                                        }
+                                      >
+                                        {showConfirmPassword ? (
+                                          <EyeOff className="h-4 w-4" />
+                                        ) : (
+                                          <Eye className="h-4 w-4" />
+                                        )}
+                                      </button>
+                                    </div>
+                                    {clinicalForm.formState.errors.confirmPassword ? (
+                                      <p className="text-sm text-[#ba1a1a]">
+                                        {clinicalForm.formState.errors.confirmPassword.message}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          </motion.section>
+
+                          <motion.section variants={sectionItem} className={panelClass}>
+                            <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
+                            <div className="space-y-6">
+                              <div className="space-y-1.5">
+                                <p className={eyebrowClass}>Reporting assignments</p>
+                                <h2
+                                  className={sectionHeadingClass}
+                                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                                >
+                                  Choose departments
+                                </h2>
+                              </div>
+                              <Controller
+                                control={clinicalForm.control}
+                                name="requestedDepartments"
+                                render={({ field }) => (
+                                  <div className="space-y-4">
+                                    {familySections.map((family) => (
+                                      <div
+                                        key={family.key}
+                                        className="overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#eef4fb_0%,#f9fbfd_100%)] outline outline-1 outline-[#c7d5e4]/26"
+                                      >
+                                        <div className="h-1 w-full bg-[#005db6]" />
+                                        <div className="space-y-4 p-4 md:p-5">
+                                          <div className="flex items-center justify-between gap-3">
+                                            <h3
+                                              className="text-[1.05rem] font-bold tracking-[-0.02em] text-[#000a1e]"
+                                              style={{ fontFamily: 'Manrope, sans-serif' }}
+                                            >
+                                              {family.label}
+                                            </h3>
+                                            <span className="inline-flex shrink-0 items-center rounded-[4px] bg-[#d6e3ff] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#00468c]">
+                                              {groupedDepartments[family.key].length}
+                                            </span>
+                                          </div>
+                                          <div className="grid gap-2.5 md:grid-cols-2">
+                                            {groupedDepartments[family.key].map((department) => {
+                                              const checked = field.value.includes(department.id)
+                                              return (
+                                                <label
+                                                  key={department.id}
+                                                  className={cn(
+                                                    'flex cursor-pointer items-center gap-3 rounded-[0.45rem] px-3.5 py-3 outline outline-1 transition active:scale-[0.99]',
+                                                    checked
+                                                      ? 'bg-[linear-gradient(180deg,#eef5ff_0%,#f9fbff_100%)] outline-[#005db6]/40'
+                                                      : 'bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fb_100%)] outline-[#c4c6cf]/25 hover:outline-[#b8c7d8]',
+                                                  )}
+                                                >
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    className="h-4 w-4 shrink-0 rounded-[2px] border-[#c4c6cf] accent-[#005db6]"
+                                                    onChange={(event) => {
+                                                      field.onChange(
+                                                        event.target.checked
+                                                          ? [...field.value, department.id]
+                                                          : field.value.filter(
+                                                              (value) => value !== department.id,
+                                                            ),
+                                                      )
+                                                    }}
+                                                  />
+                                                  <span className="text-sm font-semibold text-[#000a1e]">
+                                                    {department.name}
+                                                  </span>
+                                                </label>
+                                              )
+                                            })}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              />
+                              {clinicalForm.formState.errors.requestedDepartments ? (
+                                <p className="text-sm text-[#ba1a1a]">
+                                  {clinicalForm.formState.errors.requestedDepartments.message}
+                                </p>
+                              ) : null}
+                            </div>
+                          </motion.section>
+
+                          <motion.section variants={sectionItem} className={panelClass}>
+                            <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_78%,#f0b429_100%)]" />
+                            <div className="space-y-4">
+                              <div className="space-y-1.5">
+                                <p className={eyebrowClass}>Optional note</p>
+                                <h2
+                                  className={sectionHeadingClass}
+                                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                                >
+                                  Department note
+                                </h2>
+                              </div>
+                              <textarea
+                                id="notes"
+                                placeholder="Briefly explain your service coverage or rotation."
+                                className={cn(textareaClass, 'min-h-[88px]')}
+                                {...clinicalForm.register('notes')}
+                              />
+                              <div className="flex items-center justify-end text-xs text-[#74777f]">
+                                <span>{clinicalNotes.length}/240</span>
+                              </div>
+                              {clinicalForm.formState.errors.notes ? (
+                                <p className="text-sm text-[#ba1a1a]">
+                                  {clinicalForm.formState.errors.notes.message}
+                                </p>
+                              ) : null}
+                            </div>
+                          </motion.section>
+
+                          {currentUser ? (
+                            <motion.section variants={sectionItem} className={panelClass}>
+                              <div className="absolute inset-x-0 top-0 h-1 bg-[#005db6]" />
+                              <div className="space-y-5">
+                                <div className="flex items-end justify-between gap-3">
+                                  <h2
+                                    className={sectionHeadingClass}
+                                    style={{ fontFamily: 'Manrope, sans-serif' }}
+                                  >
+                                    Previous submissions
+                                  </h2>
+                                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
+                                    {formatCompactNumber(currentUserRequests.length)} total
+                                  </p>
+                                </div>
+                                {currentUserRequests.length ? (
+                                  <div className="space-y-3">
+                                    {currentUserRequests.map((request) => (
+                                      <article
+                                        key={request.id}
+                                        className="rounded-[0.5rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] p-4 outline outline-1 outline-[#c7d5e4]/24"
+                                      >
+                                        <div className="space-y-3">
+                                          <div className="flex flex-wrap gap-2">
+                                            {request.requestedAssignments.map((assignment) => (
+                                              <span
+                                                key={`${request.id}-${assignment.departmentId}`}
+                                                className="rounded-[4px] bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#244261] outline outline-1 outline-[#c7d5e4]/30"
+                                              >
+                                                {
+                                                  departments.find(
+                                                    (department) =>
+                                                      department.id === assignment.departmentId,
+                                                  )?.name
+                                                }
+                                              </span>
+                                            ))}
+                                          </div>
+                                          <div className="flex items-center justify-between gap-3 text-sm text-[#5b6169]">
+                                            <span>{formatTimestamp(request.requestedAt)}</span>
+                                            <span
+                                              className={cn(
+                                                'inline-flex rounded-[4px] border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em]',
+                                                getStatusClass(request.status),
+                                              )}
+                                            >
+                                              {request.status}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </article>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="rounded-[0.5rem] bg-[linear-gradient(180deg,#f2f6fb_0%,#ffffff_100%)] px-5 py-8 text-center text-sm text-[#5b6169] outline outline-1 outline-[#c7d5e4]/24">
+                                    No requests yet.
+                                  </div>
+                                )}
+                              </div>
+                            </motion.section>
+                          ) : null}
+                        </motion.div>
+                      </form>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* mobile-only submit (the sticky left panel is hidden below md) */}
+                <div className="mt-8 rounded-[0.5rem] bg-[#04162f] p-5 md:hidden">{renderSummary()}</div>
+
+                <div className="mt-9 border-t border-[#edeeef] pt-6 text-center">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#005db6]">
+                    Technical support
+                  </p>
+                  <p className="mt-2 text-sm text-[#44474e]">
+                    Developed and supported by {technicalSupport.name}
+                  </p>
+                  <a
+                    className="mt-1 inline-block text-sm font-medium text-[#000a1e] transition-colors hover:text-[#005db6]"
+                    href={`tel:${technicalSupport.phone.replace(/\s+/g, '')}`}
+                  >
+                    {technicalSupport.phone}
+                  </a>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
     </div>
   )
 }

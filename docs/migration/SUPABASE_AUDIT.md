@@ -1,4 +1,4 @@
-# Supabase Audit — St Paulos / Mesay Hospital Reporting System
+# Supabase Audit — St Paul Hospital Reporting System
 
 **Phase 1 deliverable.** Read-only inventory of every Supabase touch-point in the React/Vite frontend. No code modified.
 
@@ -281,7 +281,7 @@ Post-migration replacement (browser): `VITE_API_BASE_URL` only. Service-role use
 
 | File | Service-role calls |
 |---|---|
-| [scripts/create-demo-users.mjs](scripts/create-demo-users.mjs) | `auth.admin.createUser()` + `profiles.upsert()` for 5 demo accounts (`admin1`, `mesay.gemechu`, `hana.abera`, `samuel.hailu`, `ruth.mamo`) with shared dev password `Mesay2026!` |
+| [scripts/create-demo-users.mjs](scripts/create-demo-users.mjs) | `auth.admin.createUser()` + `profiles.upsert()` for 5 demo accounts (`admin1`, `abel.gemechu`, `hana.abera`, `samuel.hailu`, `ruth.mamo`) with shared dev password `StPaul2026!` |
 
 Service role is **not** used anywhere in browser bundle.
 
