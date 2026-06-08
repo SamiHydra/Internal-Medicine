@@ -35,3 +35,6 @@ design-reference/
 # Binary brief archive + generated screenshots (not source)
 files.zip
 tools/shots/
+
+# Local Playwright dashboard screenshots (dev verification only)
+artifacts/dashboard-shots/

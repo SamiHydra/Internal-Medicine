@@ -18,8 +18,15 @@ const context = await browser.newContext({ viewport: { width: 1600, height: 1000
 const page = await context.newPage()
 
 const logs = []
+let detailRequests = 0
+let analyticsRequests = 0
 page.on('console', (msg) => logs.push(`[${msg.type()}] ${msg.text()}`))
 page.on('pageerror', (err) => logs.push(`[pageerror] ${err.message}`))
+page.on('request', (req) => {
+  const url = req.url()
+  if (url.includes('/api/reports/details')) detailRequests += 1
+  if (url.includes('/api/analytics/dashboard')) analyticsRequests += 1
+})
 
 await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle' })
 await page.fill('#identifier', identifier)
@@ -37,6 +44,9 @@ const chartCount = await page.locator('svg.recharts-surface').count()
 await page.screenshot({ path: `${outDir}/${tag}-full.png`, fullPage: true })
 await writeFile(`${outDir}/${tag}-console.log`, logs.join('\n'))
 
-console.log(`captured tag=${tag} url=${page.url()} charts=${chartCount}`)
+console.log(
+  `captured tag=${tag} url=${page.url()} charts=${chartCount} ` +
+    `reportsDetailsRequests=${detailRequests} analyticsDashboardRequests=${analyticsRequests}`,
+)
 
 await browser.close()
