@@ -41,6 +41,11 @@ const AuditLogPage = lazy(() =>
     default: module.AuditLogPage,
   })),
 )
+const ActionItemsPage = lazy(() =>
+  import('@/pages/admin/action-items-page').then((module) => ({
+    default: module.ActionItemsPage,
+  })),
+)
 const SettingsPage = lazy(() =>
   import('@/pages/admin/settings-page').then((module) => ({
     default: module.SettingsPage,
@@ -276,6 +281,10 @@ function App() {
               <Route
                 path="/admin/templates"
                 element={renderLazyRoute(<TemplateManagementPage />, 'inline')}
+              />
+              <Route
+                path="/admin/action-items"
+                element={renderLazyRoute(<ActionItemsPage />, 'inline')}
               />
               <Route
                 path="/admin/audit"

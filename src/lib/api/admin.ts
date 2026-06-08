@@ -1,6 +1,8 @@
 import type { LaravelApiClient } from '@/lib/api/client'
 import { resolveAssignmentReference } from '@/lib/api/helpers'
 import type {
+  ActionItem,
+  ActionItemStatus,
   AdminAccessRequest,
   AdminAuditEntry,
   ApiReferenceState,
@@ -86,6 +88,38 @@ export async function reviewAdminAccessRequest(
   decision: 'approved' | 'rejected',
 ) {
   await client.post(`/api/admin/admin-access-requests/${requestId}/${decision === 'approved' ? 'approve' : 'reject'}`)
+}
+
+/** Follow-up action items (auto-opened by critical alerts, or created manually). */
+export async function fetchActionItems(
+  client: LaravelApiClient,
+  status: ActionItemStatus | 'all' = 'open',
+): Promise<{ items: ActionItem[]; openCount: number }> {
+  const response = await client.get<{ data: ActionItem[]; meta: { openCount?: number } }>(
+    `/api/admin/action-items?status=${status}`,
+  )
+
+  return { items: response.data, openCount: response.meta?.openCount ?? 0 }
+}
+
+export async function updateActionItem(
+  client: LaravelApiClient,
+  id: string,
+  payload: Partial<{
+    status: ActionItemStatus
+    resolution_note: string
+    assigned_to: string | null
+    severity: 'low' | 'medium' | 'high'
+  }>,
+): Promise<ActionItem> {
+  return client.patch<ActionItem>(`/api/admin/action-items/${id}`, payload)
+}
+
+export async function createActionItem(
+  client: LaravelApiClient,
+  payload: { title: string; description?: string; severity?: 'low' | 'medium' | 'high' },
+): Promise<ActionItem> {
+  return client.post<ActionItem>('/api/admin/action-items', payload)
 }
 
 /** Cross-cutting account & access actions (approvals, role/assignment changes) for the Audit Log. */

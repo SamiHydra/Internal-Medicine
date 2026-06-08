@@ -4,6 +4,7 @@ import {
   ClipboardList,
   FilePenLine,
   LayoutDashboard,
+  ListChecks,
   LockKeyhole,
   Settings,
   ShieldCheck,
@@ -36,6 +37,7 @@ export const adminWorkspaceNav: Record<Workspace, NavigationItem[]> = {
   clinical: [
     { label: 'Dashboard', href: '/admin', icon: LayoutDashboard, end: true },
     { label: 'Submissions', href: '/admin/submissions', icon: ClipboardList },
+    { label: 'Action items', shortLabel: 'Actions', href: '/admin/action-items', icon: ListChecks },
     { label: 'Templates', href: '/admin/templates', icon: FilePenLine },
     ...adminSystemNav,
   ],
@@ -91,6 +93,7 @@ export function workspaceForPath(pathname: string): Workspace | null {
   if (
     pathname === '/admin' ||
     pathname.startsWith('/admin/submissions') ||
+    pathname.startsWith('/admin/action-items') ||
     pathname.startsWith('/admin/templates') ||
     pathname.startsWith('/admin/departments')
   ) {

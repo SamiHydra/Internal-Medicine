@@ -1728,14 +1728,24 @@ export function AdminDashboardPage() {
                 />
               </KpiGrid>
               <TargetStatusStrip items={targetStatusItems} />
-              <Button asChild variant="secondary" className="w-full sm:w-fit">
-                <a
-                  href={apiEnv.baseUrl ? `${apiEnv.baseUrl}/api/analytics/export${effectivePeriodId ? `?period=${effectivePeriodId}` : ''}` : undefined}
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  Export CSV
-                </a>
-              </Button>
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                <Button asChild variant="secondary" className="w-full sm:w-fit">
+                  <a
+                    href={apiEnv.baseUrl ? `${apiEnv.baseUrl}/api/analytics/export${effectivePeriodId ? `?period=${effectivePeriodId}` : ''}` : undefined}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Export CSV
+                  </a>
+                </Button>
+                <Button asChild variant="secondary" className="w-full sm:w-fit">
+                  <a
+                    href={apiEnv.baseUrl ? `${apiEnv.baseUrl}/api/analytics/export?format=xlsx${effectivePeriodId ? `&period=${effectivePeriodId}` : ''}` : undefined}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Export Excel
+                  </a>
+                </Button>
+              </div>
             </div>
           </div>
 

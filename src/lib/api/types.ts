@@ -401,6 +401,30 @@ export type AdminAuditEntry = {
   createdAt: string | null
 }
 
+export type ActionItemStatus = 'open' | 'in_progress' | 'resolved'
+
+export type ActionItem = {
+  id: string
+  reportId: string | null
+  departmentId: string | null
+  departmentName: string | null
+  source: string
+  title: string
+  description: string | null
+  severity: 'low' | 'medium' | 'high'
+  status: ActionItemStatus
+  assignedTo: string | null
+  assignedToName: string | null
+  createdBy: string | null
+  createdByName: string | null
+  resolvedBy: string | null
+  resolvedByName: string | null
+  resolutionNote: string | null
+  resolvedAt: string | null
+  createdAt: string | null
+  updatedAt: string | null
+}
+
 export type SubmitAcademicRegistrationPayload = {
   fullName: string
   email: string
