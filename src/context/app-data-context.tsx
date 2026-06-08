@@ -79,7 +79,6 @@ import {
 import {
   getCurrentPeriod,
   getCurrentUser,
-  getVisibleReportingPeriods,
 } from '@/data/selectors'
 import type {
   AppSettings,
@@ -202,15 +201,15 @@ function hasAssignmentReference(
   return Boolean(resolveAssignmentReference(references, departmentId, templateId))
 }
 
-function getAdminDashboardWarmReportIds(state: AppState) {
-  const visibleReportingPeriods = getVisibleReportingPeriods(state)
-  const dashboardPeriodIds = new Set(
-    visibleReportingPeriods.slice(-8).map((period) => period.id),
-  )
+function getAdminDashboardWarmReportIds(state: AppState): string[] {
+  // Intentionally empty. The admin dashboard's weekly view is served entirely by
+  // /api/analytics/dashboard (server-side aggregates incl. per-week chartMetrics),
+  // and monthly mode hydrates report details on demand. Eager warm-hydration here
+  // was the last thing pulling per-report field values into the browser on every
+  // bootstrap; the weekly charts no longer read hydrated state.
+  void state
 
-  return state.reports
-    .filter((report) => dashboardPeriodIds.has(report.reportingPeriodId))
-    .map((report) => report.id)
+  return []
 }
 
 export function AppDataProvider({ children }: PropsWithChildren) {
