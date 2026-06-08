@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Concerns;
 
 use App\Models\AccessRequest;
+use App\Models\ActionItem;
 use App\Models\AdminAccessRequest;
 use App\Models\AdminAuditLog;
 use App\Models\AppSetting;
@@ -355,6 +356,36 @@ trait SerializesAdminResources
             'value' => $setting->value_json,
             'updatedBy' => $setting->updated_by,
             'updatedAt' => $setting->updated_at?->toJSON(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function serializeActionItem(ActionItem $item): array
+    {
+        $item->loadMissing(['department', 'assignee', 'creator', 'resolver']);
+
+        return [
+            'id' => $item->id,
+            'reportId' => $item->report_id,
+            'departmentId' => $item->department_id,
+            'departmentName' => $item->department?->name,
+            'source' => $item->source,
+            'title' => $item->title,
+            'description' => $item->description,
+            'severity' => $item->severity,
+            'status' => $item->status,
+            'assignedTo' => $item->assigned_to,
+            'assignedToName' => $item->assignee?->full_name,
+            'createdBy' => $item->created_by,
+            'createdByName' => $item->creator?->full_name,
+            'resolvedBy' => $item->resolved_by,
+            'resolvedByName' => $item->resolver?->full_name,
+            'resolutionNote' => $item->resolution_note,
+            'resolvedAt' => $item->resolved_at?->toJSON(),
+            'createdAt' => $item->created_at?->toJSON(),
+            'updatedAt' => $item->updated_at?->toJSON(),
         ];
     }
 

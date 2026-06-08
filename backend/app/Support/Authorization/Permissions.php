@@ -46,6 +46,10 @@ final class Permissions
 
     public const SETTINGS_MANAGE = 'settings.manage';
 
+    public const ACTION_ITEMS_VIEW = 'actionItems.view';
+
+    public const ACTION_ITEMS_MANAGE = 'actionItems.manage';
+
     public const NOTIFICATIONS_VIEW = 'notifications.view';
 
     public const ACADEMIC_SUBMIT = 'academic.submit';
@@ -75,6 +79,8 @@ final class Permissions
             self::ANALYTICS_VIEW,
             self::AUDIT_VIEW,
             self::SETTINGS_MANAGE,
+            self::ACTION_ITEMS_VIEW,
+            self::ACTION_ITEMS_MANAGE,
             self::NOTIFICATIONS_VIEW,
             self::ACADEMIC_VIEW,
             self::ACADEMIC_MANAGE,
@@ -95,6 +101,8 @@ final class Permissions
             self::ANALYTICS_VIEW,
             self::AUDIT_VIEW,
             self::SETTINGS_MANAGE,
+            self::ACTION_ITEMS_VIEW,
+            self::ACTION_ITEMS_MANAGE,
             self::NOTIFICATIONS_VIEW,
             self::ACADEMIC_VIEW,
             self::ACADEMIC_MANAGE,

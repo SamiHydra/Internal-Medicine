@@ -20,6 +20,7 @@ class CriticalEventAlertService
 {
     public function __construct(
         private readonly AppSettingsService $settings,
+        private readonly ActionItemService $actionItems,
     ) {}
 
     /**
@@ -80,6 +81,9 @@ class CriticalEventAlertService
             ->implode(', ');
 
         $message = sprintf('%s reported: %s.', $departmentName, $summary);
+
+        // Open a trackable follow-up task in addition to the passive notification.
+        $this->actionItems->recordCriticalEvent($report, $triggered, $now);
 
         User::query()
             ->whereIn('role_key', ['superadmin', 'admin'])

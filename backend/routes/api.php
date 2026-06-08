@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\AccessRequestSubmissionController;
 use App\Http\Controllers\Api\AdminRegistrationController;
 use App\Http\Controllers\Api\Admin\AcademicEvaluationController as AdminAcademicEvaluationController;
 use App\Http\Controllers\Api\Admin\AccessRequestController;
+use App\Http\Controllers\Api\Admin\ActionItemController;
 use App\Http\Controllers\Api\Admin\AdminAccessRequestController;
 use App\Http\Controllers\Api\Admin\AuditLogController;
 use App\Http\Controllers\Api\Admin\ReferenceDataController;
@@ -129,6 +130,10 @@ Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
 
         Route::get('/audit-logs', [AuditLogController::class, 'cellEdits'])->middleware('permission:audit.view');
         Route::get('/admin-audit-logs', [AuditLogController::class, 'adminActions'])->middleware('permission:audit.view');
+
+        Route::get('/action-items', [ActionItemController::class, 'index'])->middleware('permission:actionItems.view');
+        Route::post('/action-items', [ActionItemController::class, 'store'])->middleware('permission:actionItems.manage');
+        Route::patch('/action-items/{actionItem}', [ActionItemController::class, 'update'])->middleware('permission:actionItems.manage');
 
         Route::get('/academic/evaluations', [AdminAcademicEvaluationController::class, 'index'])->middleware('permission:academic.view');
         Route::get('/academic/audit', [AdminAcademicEvaluationController::class, 'audit'])->middleware('permission:academic.view');
