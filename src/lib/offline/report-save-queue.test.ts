@@ -6,6 +6,7 @@ import {
   getReportSaveQueueId,
   isLikelyOfflineError,
   listQueuedReportSaves,
+  MAX_QUEUED_SAVE_ATTEMPTS,
   queueReportSave,
   recordQueuedReportSaveFailure,
   removeQueuedReportSave,
@@ -106,5 +107,24 @@ describe('offline report save queue', () => {
   it('detects fetch-style network failures without treating validation errors as offline', () => {
     expect(isLikelyOfflineError(new TypeError('Failed to fetch'))).toBe(true)
     expect(isLikelyOfflineError(new Error('Validation failed'))).toBe(false)
+  })
+
+  it('returns the updated record and reaches the dead-letter cap after repeated failures', async () => {
+    const queued = await queueReportSave('user-1', createPayload())
+
+    let updated = null
+    for (let attempt = 1; attempt <= MAX_QUEUED_SAVE_ATTEMPTS; attempt += 1) {
+      updated = await recordQueuedReportSaveFailure(queued.id, `failure ${attempt}`)
+      expect(updated?.attempts).toBe(attempt)
+    }
+
+    // At the cap the caller (flush loop) dead-letters the save.
+    expect(MAX_QUEUED_SAVE_ATTEMPTS).toBeGreaterThan(0)
+    expect(updated?.attempts).toBe(MAX_QUEUED_SAVE_ATTEMPTS)
+    expect(updated?.lastError).toBe(`failure ${MAX_QUEUED_SAVE_ATTEMPTS}`)
+  })
+
+  it('returns null when recording a failure for a save that no longer exists', async () => {
+    expect(await recordQueuedReportSaveFailure('missing-id', 'gone')).toBeNull()
   })
 })
