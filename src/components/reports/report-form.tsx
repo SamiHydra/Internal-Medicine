@@ -9,6 +9,7 @@ import { z } from 'zod'
 
 import { panelClass, SectionEyebrow } from '@/components/dashboard/section-panel'
 import { ReportContentSkeleton } from '@/components/layout/loading-skeletons'
+import { ReportComments } from '@/components/reports/report-comments'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -1433,6 +1434,14 @@ function ResolvedReportForm({
           </div>
         </div>
       </form>
+
+      {report?.id ? (
+        <ReportComments
+          reportId={report.id}
+          currentUserId={currentUser.id}
+          currentUserRole={currentUser.role}
+        />
+      ) : null}
     </div>
   )
 }

@@ -425,6 +425,18 @@ export type ActionItem = {
   updatedAt: string | null
 }
 
+export type ReportComment = {
+  id: string
+  reportId: string
+  parentId: string | null
+  authorId: string
+  authorName: string
+  authorRole: string | null
+  body: string
+  createdAt: string | null
+  updatedAt: string | null
+}
+
 export type SubmitAcademicRegistrationPayload = {
   fullName: string
   email: string

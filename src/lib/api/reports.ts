@@ -1,10 +1,36 @@
 import type { LaravelApiClient } from '@/lib/api/client'
 import type {
   ListResponse,
+  ReportComment,
   ReportDetailRecord,
   ReportResponse,
   SaveReportPayload,
 } from '@/lib/api/types'
+
+export async function fetchReportComments(
+  client: LaravelApiClient,
+  reportId: string,
+): Promise<ReportComment[]> {
+  const response = await client.get<{ data: ReportComment[] }>(`/api/reports/${reportId}/comments`)
+
+  return response.data
+}
+
+export async function postReportComment(
+  client: LaravelApiClient,
+  reportId: string,
+  body: string,
+): Promise<ReportComment> {
+  return client.post<ReportComment>(`/api/reports/${reportId}/comments`, { body })
+}
+
+export async function deleteReportComment(
+  client: LaravelApiClient,
+  reportId: string,
+  commentId: string,
+): Promise<void> {
+  await client.delete(`/api/reports/${reportId}/comments/${commentId}`)
+}
 
 const reportDetailBatchSize = 100
 
