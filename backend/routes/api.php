@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PasswordResetController;
+use App\Http\Controllers\Api\ReportCommentController;
 use App\Http\Controllers\Api\ReportWorkflowController;
 use App\Http\Controllers\Api\WorkspaceController;
 use Illuminate\Support\Facades\Route;
@@ -48,6 +49,10 @@ Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
     Route::post('/reports/{report}/submit', [ReportWorkflowController::class, 'submit']);
     Route::post('/reports/{report}/lock', [ReportWorkflowController::class, 'lock']);
     Route::post('/reports/{report}/unlock', [ReportWorkflowController::class, 'unlock']);
+
+    Route::get('/reports/{report}/comments', [ReportCommentController::class, 'index']);
+    Route::post('/reports/{report}/comments', [ReportCommentController::class, 'store']);
+    Route::delete('/reports/{report}/comments/{comment}', [ReportCommentController::class, 'destroy']);
 
     Route::get('/notifications', [NotificationController::class, 'index'])->middleware('permission:notifications.view');
     Route::patch('/notifications/read', [NotificationController::class, 'markRead'])->middleware('permission:notifications.view');
