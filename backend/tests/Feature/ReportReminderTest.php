@@ -161,7 +161,7 @@ class ReportReminderTest extends TestCase
                 ['setting_key' => 'workflow_controls'],
                 ['value_json' => ['deadline_enforced' => false], 'updated_at' => now()],
             );
-            Cache::forget('app-settings:structured:v1');
+            Cache::forget('app-settings:structured:v2');
 
             Report::query()->delete();
 

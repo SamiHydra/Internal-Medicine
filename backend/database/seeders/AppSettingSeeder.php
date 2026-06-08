@@ -28,6 +28,12 @@ class AppSettingSeeder extends Seeder
                 'hai_cauti',
                 'hai_vap',
             ],
+            'metric_targets' => [
+                'deliveryRate' => ['enabled' => true, 'direction' => 'atLeast', 'amber' => 75, 'green' => 90],
+                'inpatientSafetyEvents' => ['enabled' => true, 'direction' => 'atMost', 'amber' => 3, 'green' => 0],
+                'outpatientSameDayRate' => ['enabled' => true, 'direction' => 'atLeast', 'amber' => 75, 'green' => 90],
+                'procedureThroughput' => ['enabled' => true, 'direction' => 'atLeast', 'amber' => 50, 'green' => 100],
+            ],
         ];
 
         foreach ($settings as $key => $value) {

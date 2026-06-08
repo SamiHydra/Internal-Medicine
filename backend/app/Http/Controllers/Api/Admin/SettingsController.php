@@ -63,6 +63,16 @@ class SettingsController extends Controller
             'criticalNonZeroFields' => ['sometimes', 'array'],
             'critical_non_zero_fields.*' => ['string', 'max:64'],
             'criticalNonZeroFields.*' => ['string', 'max:64'],
+            'metric_targets' => ['sometimes', 'array'],
+            'metricTargets' => ['sometimes', 'array'],
+            'metric_targets.*.enabled' => ['sometimes', 'boolean'],
+            'metricTargets.*.enabled' => ['sometimes', 'boolean'],
+            'metric_targets.*.direction' => ['sometimes', Rule::in(['atLeast', 'atMost'])],
+            'metricTargets.*.direction' => ['sometimes', Rule::in(['atLeast', 'atMost'])],
+            'metric_targets.*.amber' => ['sometimes', 'numeric', 'min:0'],
+            'metricTargets.*.amber' => ['sometimes', 'numeric', 'min:0'],
+            'metric_targets.*.green' => ['sometimes', 'numeric', 'min:0'],
+            'metricTargets.*.green' => ['sometimes', 'numeric', 'min:0'],
         ]);
         $oldValues = $this->settingsService->structured();
         $settings = $this->settingsService->update($request->user(), $validated);

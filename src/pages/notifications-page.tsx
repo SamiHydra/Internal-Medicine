@@ -189,6 +189,12 @@ const notificationMeta: Record<
     iconTone: 'bg-[#fceeee] text-[#ba1a1a]',
     chipTone: 'border-[#f3cccc] bg-[#fceeee] text-[#ba1a1a]',
   },
+  trend_alert: {
+    label: 'Trend',
+    icon: TriangleAlert,
+    iconTone: 'bg-[#fbf4e6] text-[#8a5a00]',
+    chipTone: 'border-[#f0d9aa] bg-[#fbf4e6] text-[#8a5a00]',
+  },
 }
 
 const fallbackMeta = {

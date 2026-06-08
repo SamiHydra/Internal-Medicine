@@ -25,6 +25,7 @@ class ReportSubmissionService
     public function __construct(
         private readonly ReportCalculationService $calculationService,
         private readonly CriticalEventAlertService $criticalEventAlertService,
+        private readonly ReportTrendAlertService $trendAlertService,
         private readonly DashboardAnalyticsService $dashboardAnalytics,
         private readonly ReportQualityService $qualityService,
     ) {}
@@ -119,6 +120,8 @@ class ReportSubmissionService
 
             if ((! $hadSubmission && $submit) || ($hadSubmission && $hasChanges)) {
                 $this->criticalEventAlertService->notify($report, $this->relatedRoute($assignment, $period), $now);
+                $quality = $this->qualityService->analyze($report->refresh(), true);
+                $this->trendAlertService->notify($report, $quality['warnings'] ?? [], $this->relatedRoute($assignment, $period), $now);
             }
 
             $this->calculationService->upsertForReport($report->refresh());

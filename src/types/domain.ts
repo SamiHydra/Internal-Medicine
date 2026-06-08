@@ -33,6 +33,7 @@ export type NotificationType =
   | 'admin_access_request'
   | 'access_request_reviewed'
   | 'critical_value_alert'
+  | 'trend_alert'
 
 export type Weekday =
   | 'monday'
@@ -258,12 +259,28 @@ export interface AppSettings {
   notableRiseThresholdPercent: number
   notableDropThresholdPercent: number
   criticalNonZeroFields: string[]
+  metricTargets: Record<PerformanceTargetKey, PerformanceTarget>
   reportReminderThresholds: {
     inAppHoursBeforeDeadline: number
     emailHoursBeforeDeadline: number
     smsHoursBeforeDeadline: number
     overdueHoursAfterDeadline: number
   }
+}
+
+export type PerformanceTargetKey =
+  | 'deliveryRate'
+  | 'inpatientSafetyEvents'
+  | 'outpatientSameDayRate'
+  | 'procedureThroughput'
+
+export type PerformanceTargetDirection = 'atLeast' | 'atMost'
+
+export interface PerformanceTarget {
+  enabled: boolean
+  direction: PerformanceTargetDirection
+  amber: number
+  green: number
 }
 
 export interface PendingDraftState {

@@ -70,6 +70,13 @@ import {
   removeQueuedReportSave,
 } from '@/lib/offline/report-save-queue'
 import {
+  clearWorkspaceCache,
+  readLastWorkspaceCache,
+  readWorkspaceCache,
+  writeWorkspaceCache,
+  type WorkspaceCacheRecord,
+} from '@/lib/offline/workspace-cache'
+import {
   getCurrentPeriod,
   getCurrentUser,
   getVisibleReportingPeriods,
@@ -139,7 +146,6 @@ type AppSyncContextValue = {
 }
 
 const AppSyncContext = createContext<AppSyncContextValue | null>(null)
-const workspaceCacheStorageKey = 'stpaul:workspace-state:v3'
 
 type ReportDetailLoadState = {
   status: 'idle' | 'loading' | 'loaded' | 'error'
@@ -159,15 +165,6 @@ type SaveReportResult = {
 const idleReportDetailLoadState: ReportDetailLoadState = {
   status: 'idle',
   error: null,
-}
-
-type WorkspaceCacheRecord = {
-  version: 3
-  userId: string
-  state: AppState
-  profileDirectoryLoaded: boolean
-  accessRequestDataLoaded: boolean
-  historyDataLoaded: boolean
 }
 
 function getMessage(error: unknown, fallback: string) {
@@ -203,60 +200,6 @@ function hasAssignmentReference(
   templateId: string,
 ) {
   return Boolean(resolveAssignmentReference(references, departmentId, templateId))
-}
-
-function readWorkspaceCache(userId: string) {
-  if (typeof window === 'undefined') {
-    return null
-  }
-
-  try {
-    const rawValue = window.sessionStorage.getItem(workspaceCacheStorageKey)
-    if (!rawValue) {
-      return null
-    }
-
-    const parsedValue = JSON.parse(rawValue) as Partial<WorkspaceCacheRecord>
-
-    if (
-      parsedValue.version !== 3 ||
-      parsedValue.userId !== userId ||
-      !parsedValue.state
-    ) {
-      return null
-    }
-
-    return parsedValue as WorkspaceCacheRecord
-  } catch {
-    return null
-  }
-}
-
-function writeWorkspaceCache(cacheRecord: WorkspaceCacheRecord) {
-  if (typeof window === 'undefined') {
-    return
-  }
-
-  try {
-    window.sessionStorage.setItem(
-      workspaceCacheStorageKey,
-      JSON.stringify(cacheRecord),
-    )
-  } catch {
-    // Keep the app responsive even if the session cache cannot be written.
-  }
-}
-
-function clearWorkspaceCache() {
-  if (typeof window === 'undefined') {
-    return
-  }
-
-  try {
-    window.sessionStorage.removeItem(workspaceCacheStorageKey)
-  } catch {
-    // Ignore session cache cleanup errors.
-  }
 }
 
 function getAdminDashboardWarmReportIds(state: AppState) {
@@ -462,8 +405,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       writeWorkspaceCache({
-        version: 3,
+        version: 4,
         userId: nextState.currentUserId,
+        cachedAt: new Date().toISOString(),
         state: nextState,
         profileDirectoryLoaded:
           overrides?.profileDirectoryLoaded ?? profileDirectoryLoadedRef.current,
@@ -840,6 +784,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       if (sessionError) {
+        if (isLikelyOfflineError(sessionError)) {
+          const cachedWorkspace = readLastWorkspaceCache()
+
+          if (cachedWorkspace) {
+            applyWorkspaceCache(cachedWorkspace)
+            setError('Offline mode: showing the last saved workspace snapshot.')
+            toast.info('Offline workspace restored', {
+              description: 'You can keep working from the last synced data.',
+            })
+            return
+          }
+        }
+
         setError(getMessage(sessionError, 'Unable to read the current session.'))
         setIsBootstrapping(false)
         setIsSyncing(false)
@@ -868,7 +825,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               warmAdminReportDetails(result.state)
             })
             .catch((loadError) => {
-              if (!isSigningOutRef.current) {
+              if (!isSigningOutRef.current && !isLikelyOfflineError(loadError)) {
                 toast.error(getMessage(loadError, 'Unable to load the signed-in workspace.'))
               }
             })

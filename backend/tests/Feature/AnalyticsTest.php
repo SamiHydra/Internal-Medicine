@@ -107,6 +107,39 @@ class AnalyticsTest extends TestCase
         }
     }
 
+    public function test_dashboard_weekly_rows_include_chart_metrics_for_client_charts(): void
+    {
+        $this->createSampleReports();
+
+        $response = $this->actingAs($this->admin)
+            ->getJson("/api/analytics/dashboard?period_id={$this->period->id}")
+            ->assertOk()
+            ->assertJsonPath('families.inpatient.summary.totals.newAdmissions', 7)
+            ->assertJsonPath('families.inpatient.summary.totals.deaths', 1)
+            ->assertJsonPath('families.inpatient.summary.totals.newPressureUlcers', 2)
+            ->assertJsonPath('families.inpatient.weekly.0.chartMetrics.newAdmissions', 7)
+            ->assertJsonPath('families.inpatient.weekly.0.chartMetrics.deaths', 1)
+            ->assertJsonPath('families.inpatient.weekly.0.chartMetrics.ulcers', 2)
+            ->assertJsonPath('families.inpatient.weekly.0.departments.0.metrics.newAdmissions', 7)
+            ->assertJsonPath('families.outpatient.weekly.0.chartMetrics.seen', 40)
+            ->assertJsonPath('families.outpatient.weekly.0.chartMetrics.notSeenSameDay', 2)
+            ->assertJsonPath('families.outpatient.weekly.0.chartMetrics.wait', 2)
+            ->assertJsonPath('families.outpatient.weekly.0.chartMetrics.startMinutes', 510)
+            ->assertJsonPath('families.outpatient.weekly.0.chartMetrics.availability.fullDay', 1)
+            ->assertJsonPath('families.outpatient.weekly.0.departments.0.metrics.availability.total', 1)
+            ->assertJsonPath('families.procedure.weekly.0.chartMetrics.totalThroughput', 10);
+
+        $procedureServices = collect($response->json('families.procedure.weekly.0.chartMetrics.services'));
+        $dialysis = $procedureServices->firstWhere('serviceId', 'dialysis_unit');
+
+        $this->assertEquals(10, $dialysis['total']);
+
+        $dialysisMix = collect($response->json('families.procedure.weekly.0.chartMetrics.dialysisMix'));
+
+        $this->assertEquals(4, $dialysisMix->firstWhere('key', 'acuteHd')['value']);
+        $this->assertEquals(6, $dialysisMix->firstWhere('key', 'chronicHd')['value']);
+    }
+
     public function test_nurses_cannot_read_analytics(): void
     {
         $this->actingAs($this->nurse)
@@ -268,6 +301,9 @@ class AnalyticsTest extends TestCase
                 'new_admitted_patients' => $this->dailyValue('new_admitted_patients', 7),
                 'discharged_home' => $this->dailyValue('discharged_home', 2),
                 'discharged_ama' => $this->dailyValue('discharged_ama', 1),
+                'new_deaths' => $this->dailyValue('new_deaths', 1),
+                'new_pressure_ulcer' => $this->dailyValue('new_pressure_ulcer', 2),
+                'total_pressure_ulcer' => $this->dailyValue('total_pressure_ulcer', 3),
                 'total_hai' => $this->dailyValue('total_hai', 2),
                 'total_patient_days' => $this->dailyValue('total_patient_days', 30),
             ]),

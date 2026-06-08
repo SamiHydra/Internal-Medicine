@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Delta, DeltaIcon, DeltaValue } from '@/components/delta'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import type { RagStatus } from '@/lib/performance-targets'
 
 type Accent = 'navy' | 'gold' | 'steel'
 
@@ -10,6 +11,13 @@ const accentBarClass: Record<Accent, string> = {
   navy: 'bg-[#002147]',
   gold: 'bg-[#f0b429]',
   steel: 'bg-[#6c7f95]',
+}
+
+const ragStatusClass: Record<RagStatus, string> = {
+  green: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  amber: 'border-amber-200 bg-amber-50 text-amber-800',
+  red: 'border-rose-200 bg-rose-50 text-rose-800',
+  neutral: 'border-slate-200 bg-slate-50 text-slate-600',
 }
 
 /**
@@ -47,6 +55,7 @@ export function KpiCard({
   deltaSuffix = '%',
   hint,
   accent = 'navy',
+  status,
 }: {
   label: string
   value: ReactNode
@@ -55,6 +64,10 @@ export function KpiCard({
   deltaSuffix?: string
   hint?: string
   accent?: Accent
+  status?: {
+    tone: RagStatus
+    label: string
+  }
 }) {
   return (
     <Card className="gap-0 rounded-none border-0 pl-1 outline-none">
@@ -72,8 +85,13 @@ export function KpiCard({
           {value}
         </p>
       </CardContent>
-      {delta !== undefined || hint ? (
+      {delta !== undefined || hint || status ? (
         <CardFooter className="flex-wrap gap-1.5 p-4 pt-2.5 text-xs md:p-5 md:pt-3">
+          {status ? (
+            <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em]', ragStatusClass[status.tone])}>
+              {status.label}
+            </span>
+          ) : null}
           {delta !== undefined ? (
             <Delta value={delta} variant="badge">
               <DeltaIcon variant="trend" />

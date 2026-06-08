@@ -247,11 +247,28 @@ class AdminApiTest extends TestCase
                 'notableRiseThresholdPercent' => 15,
                 'notableDropThresholdPercent' => 12,
                 'criticalNonZeroFields' => ['new_deaths', 'total_hai'],
+                'metricTargets' => [
+                    'deliveryRate' => [
+                        'enabled' => true,
+                        'direction' => 'atLeast',
+                        'amber' => 80,
+                        'green' => 95,
+                    ],
+                    'inpatientSafetyEvents' => [
+                        'enabled' => true,
+                        'direction' => 'atMost',
+                        'amber' => 2,
+                        'green' => 0,
+                    ],
+                ],
             ])
             ->assertOk()
             ->assertJsonPath('settings.deadlineEnforced', false)
             ->assertJsonPath('settings.weeklyDeadlineDay', 'tuesday')
-            ->assertJsonPath('settings.autoLockHoursAfterDeadline', 48);
+            ->assertJsonPath('settings.autoLockHoursAfterDeadline', 48)
+            ->assertJsonPath('settings.metricTargets.deliveryRate.green', 95)
+            ->assertJsonPath('settings.metricTargets.inpatientSafetyEvents.direction', 'atMost')
+            ->assertJsonPath('settings.metricTargets.procedureThroughput.green', 100);
 
         $expectedDeadline = Carbon::parse($period->week_start)->addDay()->setTime(9, 15);
 
@@ -261,6 +278,10 @@ class AdminApiTest extends TestCase
         );
         $this->assertDatabaseHas('app_settings', [
             'setting_key' => 'workflow_controls',
+            'updated_by' => $this->admin->id,
+        ]);
+        $this->assertDatabaseHas('app_settings', [
+            'setting_key' => 'metric_targets',
             'updated_by' => $this->admin->id,
         ]);
 

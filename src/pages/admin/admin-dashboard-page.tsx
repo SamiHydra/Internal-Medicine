@@ -31,9 +31,21 @@ import { Delta, DeltaIcon, DeltaValue } from '@/components/delta'
 import { KpiCard, KpiGrid } from '@/components/dashboard/kpi-card'
 import { PageSkeleton } from '@/components/layout/loading-skeletons'
 import { Button } from '@/components/ui/button'
-import { fetchDashboardAnalytics, type AnalyticsSummary, type DashboardAnalyticsPayload } from '@/lib/api/analytics'
+import {
+  fetchDashboardAnalytics,
+  type AnalyticsChartMetrics,
+  type AnalyticsSummary,
+  type AnalyticsWeeklyRow,
+  type DashboardAnalyticsPayload,
+} from '@/lib/api/analytics'
 import { getApiBrowserClient } from '@/lib/api/client'
 import { apiEnv } from '@/lib/api/env'
+import {
+  evaluateMetricTarget,
+  formatTargetThreshold,
+  performanceTargetDefinitions,
+  type RagStatus,
+} from '@/lib/performance-targets'
 import {
   Select,
   SelectContent,
@@ -55,6 +67,8 @@ import {
   getOutpatientMonthlyDepartmentComparisonData,
   getOutpatientWeeklyAvailabilitySeries,
   getOutpatientWeeklyTrendSeries,
+  PROCEDURE_DIALYSIS_MIX_DEFINITIONS,
+  PROCEDURE_ENDOSCOPY_MIX_DEFINITIONS,
   getProcedureDialysisSplitData,
   getProcedureEndoscopyMixData,
   getProcedureMonthlyServiceComparisonData,
@@ -70,13 +84,18 @@ import {
   resolveDashboardTrendBucket,
   shouldShowInpatientOccupancyAnalytics,
   type DashboardTrendScale,
+  type NumericDashboardPoint,
+  type OutpatientAvailabilityPoint,
+  type OutpatientMetricDefinition,
+  type ProcedureMixPoint,
+  type ProcedureServicePoint,
   type ReportingTimeRange,
 } from '@/data/selectors'
 import { useAppData } from '@/context/app-data-context'
 import { departments, departmentMap, templateMap } from '@/config/templates'
 import { computeWeeklyValue } from '@/lib/metrics'
 import { cn, formatCompactNumber } from '@/lib/utils'
-import type { ReportFamily, ReportRecord, ReportingPeriod } from '@/types/domain'
+import type { PerformanceTargetKey, ReportFamily, ReportRecord, ReportingPeriod } from '@/types/domain'
 
 type FamilyFilter = 'all' | 'inpatient' | 'outpatient' | 'procedure'
 type StatusFilter =
@@ -94,6 +113,28 @@ type TrendBucket = {
   label: string
   periods: ReportingPeriod[]
   periodIds: Set<string>
+}
+
+type TargetStatusItem = {
+  key: string
+  label: string
+  displayValue: string
+  threshold: string
+  tone: RagStatus
+}
+
+const targetStatusClass: Record<RagStatus, string> = {
+  green: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  amber: 'border-amber-200 bg-amber-50 text-amber-800',
+  red: 'border-rose-200 bg-rose-50 text-rose-800',
+  neutral: 'border-slate-200 bg-slate-50 text-slate-600',
+}
+
+const targetStatusLabel: Record<RagStatus, string> = {
+  green: 'Green',
+  amber: 'Amber',
+  red: 'Red',
+  neutral: 'No target',
 }
 
 function ChartEmptyState({
@@ -137,6 +178,34 @@ function ChartLegend({
             }}
           />
           <span>{item.label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TargetStatusStrip({ items }: { items: TargetStatusItem[] }) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {items.map((item) => (
+        <div
+          key={item.key}
+          className="rounded-[0.35rem] border border-[#e6ecf3] bg-[#f8fafc] px-3 py-2"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <p className="truncate text-[11px] font-semibold uppercase tracking-[0.16em] text-[#5b6169]">
+              {item.label}
+            </p>
+            <span className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]', targetStatusClass[item.tone])}>
+              {targetStatusLabel[item.tone]}
+            </span>
+          </div>
+          <div className="mt-2 flex items-end justify-between gap-3">
+            <p className="font-display text-xl font-bold leading-none text-[#000a1e]">
+              {item.displayValue}
+            </p>
+            <p className="text-right text-[11px] font-medium text-[#74777f]">{item.threshold}</p>
+          </div>
         </div>
       ))}
     </div>
@@ -455,6 +524,206 @@ function getDashboardFamilySummary(
   return payload.families[family]?.summary ?? null
 }
 
+function getAnalyticsWeeklyRowForBucket(
+  rows: readonly AnalyticsWeeklyRow[],
+  bucket: TrendBucket,
+) {
+  return rows.find((row) => row.periodId && bucket.periodIds.has(row.periodId)) ?? null
+}
+
+function getMetricNumber(metrics: AnalyticsChartMetrics | undefined, key: string) {
+  const value = metrics?.[key]
+
+  return typeof value === 'number' && !Number.isNaN(value) ? value : 0
+}
+
+function getMetricNullableNumber(metrics: AnalyticsChartMetrics | undefined, key: string) {
+  const value = metrics?.[key]
+
+  return typeof value === 'number' && !Number.isNaN(value) ? value : null
+}
+
+function getScopedDepartmentMetrics(
+  row: AnalyticsWeeklyRow | null,
+  scope: string,
+  allScope: string,
+) {
+  const departments = row?.departments ?? []
+
+  if (scope === allScope) {
+    return departments.map((department) => department.metrics)
+  }
+
+  const department = departments.find(
+    (candidate) =>
+      candidate.departmentId === scope ||
+      candidate.departmentSlug === scope,
+  )
+
+  return department ? [department.metrics] : []
+}
+
+function averageMetricValue(
+  metricsRows: readonly AnalyticsChartMetrics[],
+  key: string,
+  emptyValue: number | null,
+) {
+  const values = metricsRows
+    .map((metrics) => getMetricNullableNumber(metrics, key))
+    .filter((value): value is number => value !== null)
+
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : emptyValue
+}
+
+function getAvailabilityMetrics(metrics: AnalyticsChartMetrics | undefined) {
+  const availability = metrics?.availability
+
+  return {
+    fullDay: availability?.fullDay ?? 0,
+    partialDay: availability?.partialDay ?? 0,
+    unavailable: availability?.unavailable ?? 0,
+    total: availability?.total ?? 0,
+  }
+}
+
+function buildAnalyticsInpatientWeeklySeries(
+  rows: readonly AnalyticsWeeklyRow[],
+  buckets: readonly TrendBucket[],
+  metrics: readonly { key: string }[],
+  scope: string,
+): NumericDashboardPoint[] {
+  return buckets.map((bucket) => {
+    const row = getAnalyticsWeeklyRowForBucket(rows, bucket)
+    const metricsRows = getScopedDepartmentMetrics(row, scope, ALL_INPATIENT_AVERAGE)
+
+    return {
+      label: bucket.label,
+      ...Object.fromEntries(
+        metrics.map((metric) => [
+          metric.key,
+          scope === ALL_INPATIENT_AVERAGE
+            ? averageMetricValue(metricsRows, metric.key, 0)
+            : getMetricNumber(metricsRows[0], metric.key),
+        ]),
+      ),
+    }
+  })
+}
+
+function buildAnalyticsOutpatientWeeklySeries(
+  rows: readonly AnalyticsWeeklyRow[],
+  buckets: readonly TrendBucket[],
+  metrics: readonly OutpatientMetricDefinition[],
+  scope: string,
+): NumericDashboardPoint[] {
+  return buckets.map((bucket) => {
+    const row = getAnalyticsWeeklyRowForBucket(rows, bucket)
+    const metricsRows = getScopedDepartmentMetrics(row, scope, ALL_OUTPATIENT_AVERAGE)
+
+    return {
+      label: bucket.label,
+      ...Object.fromEntries(
+        metrics.map((metric) => {
+          const emptyValue = metric.valueType === 'sum' ? 0 : null
+
+          return [
+            metric.key,
+            scope === ALL_OUTPATIENT_AVERAGE
+              ? averageMetricValue(metricsRows, metric.key, emptyValue)
+              : getMetricNullableNumber(metricsRows[0], metric.key) ?? emptyValue,
+          ]
+        }),
+      ),
+    }
+  })
+}
+
+function buildAnalyticsOutpatientAvailabilitySeries(
+  rows: readonly AnalyticsWeeklyRow[],
+  buckets: readonly TrendBucket[],
+  scope: string,
+): OutpatientAvailabilityPoint[] {
+  return buckets.map((bucket) => {
+    const row = getAnalyticsWeeklyRowForBucket(rows, bucket)
+    const metrics =
+      scope === ALL_OUTPATIENT_AVERAGE
+        ? row?.chartMetrics
+        : getScopedDepartmentMetrics(row, scope, ALL_OUTPATIENT_AVERAGE)[0]
+
+    return {
+      label: bucket.label,
+      ...getAvailabilityMetrics(metrics),
+    }
+  })
+}
+
+function buildAnalyticsProcedureWeeklySeries(
+  rows: readonly AnalyticsWeeklyRow[],
+  buckets: readonly TrendBucket[],
+  scope: string,
+): ProcedureServicePoint[] {
+  return buckets.map((bucket) => {
+    const row = getAnalyticsWeeklyRowForBucket(rows, bucket)
+    const services = row?.chartMetrics?.services ?? []
+
+    if (scope !== ALL_PROCEDURE_SERVICES_TOTAL) {
+      const service = services.find((candidate) => candidate.serviceId === scope)
+
+      return {
+        key: `${bucket.key}:${scope}`,
+        label: bucket.label,
+        serviceId: scope,
+        serviceName: service?.serviceName ?? scope,
+        metricLabel: service?.metricLabel ?? 'Total throughput',
+        fieldIds: service?.fieldIds ?? '',
+        total: service?.total ?? 0,
+      }
+    }
+
+    return {
+      key: `${bucket.key}:${ALL_PROCEDURE_SERVICES_TOTAL}`,
+      label: bucket.label,
+      serviceId: ALL_PROCEDURE_SERVICES_TOTAL,
+      serviceName: 'All procedure services total',
+      metricLabel: 'Total throughput',
+      fieldIds: PROCEDURE_SERVICE_DEFINITIONS.flatMap((service) => service.fieldIds).join(', '),
+      total: row?.chartMetrics?.totalThroughput ?? 0,
+    }
+  })
+}
+
+function buildAnalyticsProcedureMixData(
+  rows: readonly AnalyticsWeeklyRow[],
+  mixKey: 'dialysisMix' | 'endoscopyMix',
+): ProcedureMixPoint[] {
+  const definitions =
+    mixKey === 'dialysisMix'
+      ? PROCEDURE_DIALYSIS_MIX_DEFINITIONS
+      : PROCEDURE_ENDOSCOPY_MIX_DEFINITIONS
+
+  return definitions.map((definition) => ({
+    key: definition.key,
+    label: definition.label,
+    fieldIds: definition.fieldIds.join(', '),
+    value: rows.reduce((sum, row) => {
+      const mixPoints = row.chartMetrics?.[mixKey]
+      const point = Array.isArray(mixPoints)
+        ? mixPoints.find((candidate): candidate is ProcedureMixPoint => (
+            Boolean(candidate) &&
+            typeof candidate === 'object' &&
+            'key' in candidate &&
+            'value' in candidate &&
+            (candidate as ProcedureMixPoint).key === definition.key
+          ))
+        : null
+
+      return sum + (point?.value ?? 0)
+    }, 0),
+  }))
+}
+
 export function AdminDashboardPage() {
   const { state, ensureReportDetails, refreshData } = useAppData()
   const reduceMotion = useReducedMotion()
@@ -566,10 +835,14 @@ export function AdminDashboardPage() {
     .join('|')
 
   useEffect(() => {
+    if (trendScale !== 'monthly') {
+      return
+    }
+
     const detailReportIds = detailReportIdsKey ? detailReportIdsKey.split('|') : []
 
     void ensureReportDetails(detailReportIds)
-  }, [detailReportIdsKey, ensureReportDetails])
+  }, [detailReportIdsKey, ensureReportDetails, trendScale])
 
   useEffect(() => {
     const nextReportWindow = timeRange === 'all' ? 'all' : 'default'
@@ -909,6 +1182,12 @@ export function AdminDashboardPage() {
     { key: 'ulcers', fieldIds: ['new_pressure_ulcer'] },
     { key: 'hai', fieldIds: ['total_hai'] },
   ] as const
+  const inpatientWeeklyAnalyticsRows = dashboardAnalytics?.families.inpatient.weekly ?? []
+  const outpatientWeeklyAnalyticsRows = dashboardAnalytics?.families.outpatient.weekly ?? []
+  const procedureWeeklyAnalyticsRows = dashboardAnalytics?.families.procedure.weekly ?? []
+  const hasInpatientWeeklyAnalytics = trendScale === 'weekly' && inpatientWeeklyAnalyticsRows.length > 0
+  const hasOutpatientWeeklyAnalytics = trendScale === 'weekly' && outpatientWeeklyAnalyticsRows.length > 0
+  const hasProcedureWeeklyAnalytics = trendScale === 'weekly' && procedureWeeklyAnalyticsRows.length > 0
   const inpatientFlowSeries =
     trendScale === 'monthly'
       ? getInpatientMonthlyWardComparisonData(
@@ -917,6 +1196,13 @@ export function AdminDashboardPage() {
           inpatientFlowMetrics,
           effectiveInpatientComparisonMonthKey,
         )
+      : hasInpatientWeeklyAnalytics
+        ? buildAnalyticsInpatientWeeklySeries(
+            inpatientWeeklyAnalyticsRows,
+            trendBuckets,
+            inpatientFlowMetrics,
+            inpatientTrendScope,
+          )
       : getInpatientWeeklyCountTrendSeries(
           state,
           trendBuckets,
@@ -937,6 +1223,13 @@ export function AdminDashboardPage() {
           inpatientSafetyMetrics,
           effectiveInpatientComparisonMonthKey,
         )
+      : hasInpatientWeeklyAnalytics
+        ? buildAnalyticsInpatientWeeklySeries(
+            inpatientWeeklyAnalyticsRows,
+            trendBuckets,
+            inpatientSafetyMetrics,
+            inpatientTrendScope,
+          )
       : getInpatientWeeklyCountTrendSeries(
           state,
           trendBuckets,
@@ -969,6 +1262,13 @@ export function AdminDashboardPage() {
           outpatientSeenMetrics,
           effectiveOutpatientComparisonMonthKey,
         )
+      : hasOutpatientWeeklyAnalytics
+        ? buildAnalyticsOutpatientWeeklySeries(
+            outpatientWeeklyAnalyticsRows,
+            trendBuckets,
+            outpatientSeenMetrics,
+            outpatientTrendScope,
+          )
       : getOutpatientWeeklyTrendSeries(
           state,
           trendBuckets,
@@ -987,6 +1287,13 @@ export function AdminDashboardPage() {
           outpatientVolumeMetrics,
           effectiveOutpatientComparisonMonthKey,
         )
+      : hasOutpatientWeeklyAnalytics
+        ? buildAnalyticsOutpatientWeeklySeries(
+            outpatientWeeklyAnalyticsRows,
+            trendBuckets,
+            outpatientVolumeMetrics,
+            outpatientTrendScope,
+          )
       : getOutpatientWeeklyTrendSeries(
           state,
           trendBuckets,
@@ -1001,6 +1308,13 @@ export function AdminDashboardPage() {
           outpatientFollowUpWaitMetrics,
           effectiveOutpatientComparisonMonthKey,
         )
+      : hasOutpatientWeeklyAnalytics
+        ? buildAnalyticsOutpatientWeeklySeries(
+            outpatientWeeklyAnalyticsRows,
+            trendBuckets,
+            outpatientFollowUpWaitMetrics,
+            outpatientTrendScope,
+          )
       : getOutpatientWeeklyTrendSeries(
           state,
           trendBuckets,
@@ -1015,6 +1329,13 @@ export function AdminDashboardPage() {
           outpatientClinicStartMetrics,
           effectiveOutpatientComparisonMonthKey,
         )
+      : hasOutpatientWeeklyAnalytics
+        ? buildAnalyticsOutpatientWeeklySeries(
+            outpatientWeeklyAnalyticsRows,
+            trendBuckets,
+            outpatientClinicStartMetrics,
+            outpatientTrendScope,
+          )
       : getOutpatientWeeklyTrendSeries(
           state,
           trendBuckets,
@@ -1028,16 +1349,28 @@ export function AdminDashboardPage() {
           monthlyTrendBuckets,
           effectiveOutpatientComparisonMonthKey,
         )
+      : hasOutpatientWeeklyAnalytics
+        ? buildAnalyticsOutpatientAvailabilitySeries(
+            outpatientWeeklyAnalyticsRows,
+            trendBuckets,
+            outpatientTrendScope,
+          )
       : getOutpatientWeeklyAvailabilitySeries(
           state,
           trendBuckets,
           outpatientTrendScope,
         )
-  const procedureTrendSeries = getProcedureWeeklyTrendSeries(
-    state,
-    trendBuckets,
-    procedureTrendScope,
-  )
+  const procedureTrendSeries = hasProcedureWeeklyAnalytics
+    ? buildAnalyticsProcedureWeeklySeries(
+        procedureWeeklyAnalyticsRows,
+        trendBuckets,
+        procedureTrendScope,
+      )
+    : getProcedureWeeklyTrendSeries(
+        state,
+        trendBuckets,
+        procedureTrendScope,
+      )
   const procedureComparisonSeries = getProcedureMonthlyServiceComparisonData(
     state,
     monthlyTrendBuckets,
@@ -1060,12 +1393,20 @@ export function AdminDashboardPage() {
     trendScale === 'monthly' ? monthlyTrendBuckets : trendBuckets,
     procedureDetailMonthKey,
   )
-  const dialysisTotal = dialysisMix.reduce((sum, item) => sum + item.value, 0)
+  const resolvedDialysisMix =
+    trendScale === 'weekly' && hasProcedureWeeklyAnalytics
+      ? buildAnalyticsProcedureMixData(procedureWeeklyAnalyticsRows, 'dialysisMix')
+      : dialysisMix
+  const dialysisTotal = resolvedDialysisMix.reduce((sum, item) => sum + item.value, 0)
   const endoscopyMix = getProcedureEndoscopyMixData(
     state,
     trendScale === 'monthly' ? monthlyTrendBuckets : trendBuckets,
     procedureDetailMonthKey,
   )
+  const resolvedEndoscopyMix =
+    trendScale === 'weekly' && hasProcedureWeeklyAnalytics
+      ? buildAnalyticsProcedureMixData(procedureWeeklyAnalyticsRows, 'endoscopyMix')
+      : endoscopyMix
   const hasReportingTrendSignal = reportingTrendSeries.some(
     (point) => point.delivered > 0 || point.open > 0 || point.overdue > 0,
   )
@@ -1098,8 +1439,8 @@ export function AdminDashboardPage() {
     (item) => getChartPointNumber(item, 'totalSeen') > 0,
   )
   const hasProcedureSignal = procedureMainSeries.some((item) => item.total > 0)
-  const hasEndoscopyMixSignal = endoscopyMix.some((item) => item.value > 0)
-  const hasDialysisMixSignal = dialysisMix.some((item) => item.value > 0)
+  const hasEndoscopyMixSignal = resolvedEndoscopyMix.some((item) => item.value > 0)
+  const hasDialysisMixSignal = resolvedDialysisMix.some((item) => item.value > 0)
   const occupancyScopeDepartment =
     inpatientOccupancyScope === ALL_INPATIENT_POOLED
       ? null
@@ -1265,6 +1606,62 @@ export function AdminDashboardPage() {
     bronchoscopy: grayscalePalette.steel,
     ligation: grayscalePalette.cloud,
   } as const
+  const metricTargets = state.settings.metricTargets ?? {}
+  const inpatientTotals = dashboardAnalytics?.families.inpatient.summary.totals
+  const outpatientTotals = dashboardAnalytics?.families.outpatient.summary.totals
+  const inpatientSafetyEventCount =
+    (inpatientTotals?.deaths ?? sumFieldTotalsForRange('inpatient', ['new_deaths'])) +
+    (inpatientTotals?.newPressureUlcers ?? sumFieldTotalsForRange('inpatient', ['new_pressure_ulcer'])) +
+    (inpatientTotals?.haiCount ?? sumFieldTotalsForRange('inpatient', ['total_hai']))
+  const outpatientNotSeenSameDayTotal =
+    outpatientTotals?.notSeenSameDay ?? sumFieldTotalsForRange('outpatient', ['not_seen_same_day'])
+  const outpatientSameDayRate = outpatientSeenTotal
+    ? Math.max(0, Math.round(((outpatientSeenTotal - outpatientNotSeenSameDayTotal) / outpatientSeenTotal) * 100))
+    : null
+  const targetStatusValues: Array<{
+    key: PerformanceTargetKey
+    label: string
+    value: number | null
+    displayValue: string
+  }> = [
+    {
+      key: 'deliveryRate',
+      label: 'Delivery rate',
+      value: deliveryRate,
+      displayValue: `${deliveryRate}%`,
+    },
+    {
+      key: 'inpatientSafetyEvents',
+      label: 'Safety events',
+      value: inpatientSafetyEventCount,
+      displayValue: formatCompactNumber(inpatientSafetyEventCount),
+    },
+    {
+      key: 'outpatientSameDayRate',
+      label: 'Same-day outpatient',
+      value: outpatientSameDayRate,
+      displayValue: outpatientSameDayRate === null ? '-' : `${outpatientSameDayRate}%`,
+    },
+    {
+      key: 'procedureThroughput',
+      label: 'Procedure throughput',
+      value: procedureHeaderTotal,
+      displayValue: formatCompactNumber(procedureHeaderTotal),
+    },
+  ]
+  const targetStatusItems = targetStatusValues.map((item): TargetStatusItem => {
+    const target = metricTargets[item.key]
+    const definition = performanceTargetDefinitions.find((candidate) => candidate.key === item.key)
+
+    return {
+      key: item.key,
+      label: item.label,
+      displayValue: item.displayValue,
+      threshold: formatTargetThreshold(target, definition?.unit ?? 'count'),
+      tone: evaluateMetricTarget(item.value, target),
+    }
+  })
+  const deliveryTargetStatus = targetStatusItems.find((item) => item.key === 'deliveryRate')
 
   return (
     <div className="space-y-6 px-4 py-5 text-[#000a1e] md:space-y-8 md:px-6 md:py-8">
@@ -1322,8 +1719,15 @@ export function AdminDashboardPage() {
                   deltaSuffix="pts"
                   hint="vs range start"
                   accent="steel"
+                  status={deliveryTargetStatus
+                    ? {
+                        tone: deliveryTargetStatus.tone,
+                        label: targetStatusLabel[deliveryTargetStatus.tone],
+                      }
+                    : undefined}
                 />
               </KpiGrid>
+              <TargetStatusStrip items={targetStatusItems} />
               <Button asChild variant="secondary" className="w-full sm:w-fit">
                 <a
                   href={apiEnv.baseUrl ? `${apiEnv.baseUrl}/api/analytics/export${effectivePeriodId ? `?period=${effectivePeriodId}` : ''}` : undefined}
@@ -2377,7 +2781,7 @@ export function AdminDashboardPage() {
                   />
                 </div>
                 <ChartLegend
-                  items={dialysisMix.map((item) => ({
+                  items={resolvedDialysisMix.map((item) => ({
                     label: item.label,
                     color: procedureMixColorMap[item.key as keyof typeof procedureMixColorMap],
                   }))}
@@ -2385,7 +2789,7 @@ export function AdminDashboardPage() {
                 <div className="h-[300px]">
                   {hasDialysisMixSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={dialysisMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
+                      <BarChart data={resolvedDialysisMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                         <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={44} allowDecimals={false} />
@@ -2394,7 +2798,7 @@ export function AdminDashboardPage() {
                           content={<ProcedureMixTooltip />}
                         />
                         <Bar dataKey="value" name="Dialysis" maxBarSize={42} radius={[6, 6, 0, 0]} isAnimationActive={!reduceMotion} animationDuration={1200} animationEasing="ease-out">
-                          {dialysisMix.map((item) => (
+                          {resolvedDialysisMix.map((item) => (
                             <Cell key={item.key} fill={procedureMixColorMap[item.key as keyof typeof procedureMixColorMap]} />
                           ))}
                         </Bar>
@@ -2413,7 +2817,7 @@ export function AdminDashboardPage() {
                   Endoscopy procedure mix
                 </h3>
                 <ChartLegend
-                  items={endoscopyMix.map((item) => ({
+                  items={resolvedEndoscopyMix.map((item) => ({
                     label: item.label,
                     color: procedureMixColorMap[item.key as keyof typeof procedureMixColorMap],
                   }))}
@@ -2421,7 +2825,7 @@ export function AdminDashboardPage() {
                 <div className="h-[300px]">
                   {hasEndoscopyMixSignal ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={endoscopyMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
+                      <BarChart data={resolvedEndoscopyMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                         <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={44} allowDecimals={false} />
@@ -2430,7 +2834,7 @@ export function AdminDashboardPage() {
                           content={<ProcedureMixTooltip />}
                         />
                         <Bar dataKey="value" name="Endoscopy" maxBarSize={42} radius={[6, 6, 0, 0]} isAnimationActive={!reduceMotion} animationDuration={1200} animationEasing="ease-out">
-                          {endoscopyMix.map((item) => (
+                          {resolvedEndoscopyMix.map((item) => (
                             <Cell key={item.key} fill={procedureMixColorMap[item.key as keyof typeof procedureMixColorMap]} />
                           ))}
                         </Bar>

@@ -12,6 +12,7 @@ export type AnalyticsSummary = {
   statusCounts: AnalyticsStatusCounts
   totals: {
     totalAdmissions?: number
+    newAdmissions?: number
     totalDischarges?: number
     totalPatientDays?: number
     totalOutpatientVisits?: number
@@ -23,6 +24,8 @@ export type AnalyticsSummary = {
     noShowCount?: number
     notSeenAppointment?: number
     haiCount?: number
+    deaths?: number
+    newPressureUlcers?: number
     procedureThroughput?: number
   }
   occupancy: {
@@ -32,10 +35,59 @@ export type AnalyticsSummary = {
   }
 }
 
+export type AnalyticsAvailabilityCounts = {
+  fullDay: number
+  partialDay: number
+  unavailable: number
+  total: number
+}
+
+export type AnalyticsProcedureServicePoint = {
+  serviceId: string
+  serviceName: string
+  departmentSlug: string
+  metricLabel: string
+  fieldIds: string
+  total: number
+}
+
+export type AnalyticsProcedureMixPoint = {
+  key: string
+  label: string
+  value: number
+  fieldIds: string
+}
+
+export type AnalyticsChartMetrics = Record<string, number | null | unknown> & {
+  availability?: AnalyticsAvailabilityCounts
+  totalThroughput?: number
+  services?: AnalyticsProcedureServicePoint[]
+  dialysisMix?: AnalyticsProcedureMixPoint[]
+  endoscopyMix?: AnalyticsProcedureMixPoint[]
+}
+
+export type AnalyticsWeeklyDepartment = {
+  departmentId: string
+  departmentSlug: string | null
+  departmentName: string | null
+  family: ReportFamily | null
+  metrics: AnalyticsChartMetrics
+}
+
+export type AnalyticsWeeklyRow = {
+  periodId: string
+  weekStart: string | null
+  weekEnd: string | null
+  label: string | null
+  summary: AnalyticsSummary
+  chartMetrics?: AnalyticsChartMetrics
+  departments?: AnalyticsWeeklyDepartment[]
+}
+
 export type AnalyticsOverviewPayload = {
   scope: Record<string, unknown>
   summary: AnalyticsSummary
-  weekly: unknown[]
+  weekly: AnalyticsWeeklyRow[]
   monthly: unknown[]
 }
 

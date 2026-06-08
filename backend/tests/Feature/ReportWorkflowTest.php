@@ -429,6 +429,17 @@ class ReportWorkflowTest extends TestCase
             $warnings->contains(fn (array $warning): bool => str_starts_with($warning['key'] ?? '', 'outlier:total_patient_days')),
             'Expected an outlier warning for the total_patient_days spike.',
         );
+
+        $this->assertSame(2, Notification::query()->where('type', 'trend_alert')->count());
+
+        $alert = Notification::query()
+            ->where('type', 'trend_alert')
+            ->where('recipient_id', $this->admin->id)
+            ->firstOrFail();
+
+        $this->assertSame('Trend alert', $alert->title);
+        $this->assertSame($response->json('id'), (string) $alert->related_id);
+        $this->assertStringContainsString('Total Patient Days', $alert->message);
     }
 
     public function test_report_index_defaults_to_recent_period_window_and_paginates_all_history(): void

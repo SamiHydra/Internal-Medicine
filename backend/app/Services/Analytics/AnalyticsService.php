@@ -85,6 +85,37 @@ class AnalyticsService
         'sunday' => 6,
     ];
 
+    private const INPATIENT_CHART_METRICS = [
+        'newAdmissions' => ['new_admitted_patients'],
+        'discharges' => ['discharged_home', 'discharged_ama'],
+        'deaths' => ['new_deaths'],
+        'ulcers' => ['new_pressure_ulcer'],
+        'hai' => ['total_hai'],
+    ];
+
+    private const OUTPATIENT_CHART_METRICS = [
+        ['key' => 'seen', 'fieldKey' => 'total_patients_seen', 'valueType' => 'sum'],
+        ['key' => 'notSeenSameDay', 'fieldKey' => 'not_seen_same_day', 'valueType' => 'sum'],
+        ['key' => 'totalSeen', 'fieldKey' => 'total_patients_seen', 'valueType' => 'sum'],
+        ['key' => 'newPatients', 'fieldKey' => 'new_patients_seen', 'valueType' => 'sum'],
+        ['key' => 'followUp', 'fieldKey' => 'follow_up_patients', 'valueType' => 'sum'],
+        ['key' => 'wait', 'fieldKey' => 'wait_time_followup_months', 'valueType' => 'average'],
+        ['key' => 'startMinutes', 'fieldKey' => 'clinic_start_time', 'valueType' => 'timeAverage'],
+    ];
+
+    private const PROCEDURE_DIALYSIS_MIX = [
+        ['key' => 'acuteHd', 'label' => 'Acute HD', 'fieldKeys' => ['dialysis_acute']],
+        ['key' => 'chronicHd', 'label' => 'Chronic HD', 'fieldKeys' => ['dialysis_chronic']],
+    ];
+
+    private const PROCEDURE_ENDOSCOPY_MIX = [
+        ['key' => 'ugi', 'label' => 'UGI', 'fieldKeys' => ['upper_gi_elective', 'upper_gi_emergency']],
+        ['key' => 'ercp', 'label' => 'ERCP', 'fieldKeys' => ['ercp']],
+        ['key' => 'colonoscopy', 'label' => 'Colonoscopy', 'fieldKeys' => ['colonoscopy']],
+        ['key' => 'bronchoscopy', 'label' => 'Bronchoscopy', 'fieldKeys' => ['bronchoscopy']],
+        ['key' => 'ligation', 'label' => 'Ligation', 'fieldKeys' => ['variceal_ligation']],
+    ];
+
     /**
      * Request-scoped memo for reports(). A single analytics endpoint funnels
      * through one AnalyticsService instance and re-runs the identical report
@@ -154,6 +185,8 @@ class AnalyticsService
                     'weekEnd' => $period->week_end?->toDateString(),
                     'label' => $period->week_start?->format('M j'),
                     'summary' => $this->summary($bucket, collect([$period]), $filters, $family),
+                    'chartMetrics' => $this->chartMetrics($bucket, $family),
+                    'departments' => $this->chartDepartmentMetrics($bucket, $family),
                 ];
             })
             ->sortBy('weekStart')
@@ -393,6 +426,7 @@ class AnalyticsService
             ],
             'totals' => [
                 'totalAdmissions' => $this->sumFields($reports, ['total_admitted_patients', 'new_admitted_patients']),
+                'newAdmissions' => $this->sumFields($reports, ['new_admitted_patients']),
                 'totalDischarges' => $totalDischarges,
                 'totalPatientDays' => $totalPatientDays,
                 'totalOutpatientVisits' => $totalOutpatientVisits,
@@ -404,10 +438,147 @@ class AnalyticsService
                 'noShowCount' => $failedToCome,
                 'notSeenAppointment' => $this->sumFields($reports, ['not_seen_appointment']),
                 'haiCount' => $this->sumFields($reports, ['total_hai']),
+                'deaths' => $this->sumFields($reports, ['new_deaths']),
+                'newPressureUlcers' => $this->sumFields($reports, ['new_pressure_ulcer']),
                 'procedureThroughput' => $this->procedureThroughput($reports),
             ],
             'occupancy' => $this->occupancy($reports, $departments, max($periods->count() * 7, 30)),
         ];
+    }
+
+    /**
+     * @param  Collection<int, Report>  $reports
+     * @return array<string, mixed>
+     */
+    private function chartMetrics(Collection $reports, ?string $family): array
+    {
+        return match ($family) {
+            'inpatient' => $this->inpatientChartMetrics($reports),
+            'outpatient' => [
+                ...$this->outpatientChartMetrics($reports),
+                'availability' => $this->availabilityCounts($reports),
+            ],
+            'procedure' => $this->procedureChartMetrics($reports),
+            default => [],
+        };
+    }
+
+    /**
+     * @param  Collection<int, Report>  $reports
+     * @return list<array<string, mixed>>
+     */
+    private function chartDepartmentMetrics(Collection $reports, ?string $family): array
+    {
+        if (! in_array($family, ['inpatient', 'outpatient'], true)) {
+            return [];
+        }
+
+        return $reports
+            ->groupBy('department_id')
+            ->map(function (Collection $bucket) use ($family): array {
+                $department = $bucket->first()->department;
+
+                return [
+                    'departmentId' => $bucket->first()->department_id,
+                    'departmentSlug' => $department?->slug,
+                    'departmentName' => $department?->name,
+                    'family' => $department?->family,
+                    'metrics' => $this->chartMetrics($bucket, $family),
+                ];
+            })
+            ->sortBy('departmentName')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  Collection<int, Report>  $reports
+     * @return array<string, float>
+     */
+    private function inpatientChartMetrics(Collection $reports): array
+    {
+        return collect(self::INPATIENT_CHART_METRICS)
+            ->mapWithKeys(fn (array $fieldKeys, string $key): array => [
+                $key => $this->sumFields($reports, $fieldKeys),
+            ])
+            ->all();
+    }
+
+    /**
+     * @param  Collection<int, Report>  $reports
+     * @return array<string, float|null>
+     */
+    private function outpatientChartMetrics(Collection $reports): array
+    {
+        return collect(self::OUTPATIENT_CHART_METRICS)
+            ->mapWithKeys(fn (array $metric): array => [
+                $metric['key'] => $this->outpatientChartMetricValue(
+                    $reports,
+                    $metric['fieldKey'],
+                    $metric['valueType'],
+                ),
+            ])
+            ->all();
+    }
+
+    /**
+     * @param  Collection<int, Report>  $reports
+     */
+    private function outpatientChartMetricValue(Collection $reports, string $fieldKey, string $valueType): ?float
+    {
+        return match ($valueType) {
+            'sum' => $this->sumFields($reports, [$fieldKey]),
+            'average' => $this->averageWeeklyField($reports, $fieldKey),
+            'timeAverage' => $this->averageTimeWeeklyField($reports, $fieldKey),
+            default => null,
+        };
+    }
+
+    /**
+     * @param  Collection<int, Report>  $reports
+     * @return array<string, mixed>
+     */
+    private function procedureChartMetrics(Collection $reports): array
+    {
+        return [
+            'totalThroughput' => $this->procedureThroughput($reports),
+            'services' => collect(self::PROCEDURE_SERVICES)
+                ->map(fn (array $service): array => [
+                    'serviceId' => $service['id'],
+                    'serviceName' => $service['label'],
+                    'departmentSlug' => $service['departmentSlug'],
+                    'metricLabel' => $service['metricLabel'],
+                    'fieldIds' => implode(', ', $service['fieldKeys']),
+                    'total' => $this->sumFields(
+                        $reports->filter(fn (Report $report) => $report->department?->slug === $service['departmentSlug']),
+                        $service['fieldKeys'],
+                    ),
+                ])
+                ->values()
+                ->all(),
+            'dialysisMix' => $this->procedureMix($reports, 'dialysis_unit', self::PROCEDURE_DIALYSIS_MIX),
+            'endoscopyMix' => $this->procedureMix($reports, 'endoscopy_lab', self::PROCEDURE_ENDOSCOPY_MIX),
+        ];
+    }
+
+    /**
+     * @param  Collection<int, Report>  $reports
+     * @param  list<array{key: string, label: string, fieldKeys: list<string>}>  $definitions
+     * @return list<array<string, mixed>>
+     */
+    private function procedureMix(Collection $reports, string $departmentSlug, array $definitions): array
+    {
+        $departmentReports = $reports->filter(fn (Report $report) => $report->department?->slug === $departmentSlug);
+
+        return collect($definitions)
+            ->map(fn (array $definition): array => [
+                'key' => $definition['key'],
+                'label' => $definition['label'],
+                'value' => $this->sumFields($departmentReports, $definition['fieldKeys']),
+                'fieldIds' => implode(', ', $definition['fieldKeys']),
+            ])
+            ->values()
+            ->all();
     }
 
     /**

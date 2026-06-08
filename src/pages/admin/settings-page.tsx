@@ -3,7 +3,7 @@ import { addHours, format } from 'date-fns'
 import { motion } from 'framer-motion'
 import { useEffect } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
-import { Clock3, Lock, PhoneCall, Save } from 'lucide-react'
+import { Clock3, Gauge, Lock, PhoneCall, Save } from 'lucide-react'
 import { z } from 'zod'
 
 import { Button } from '@/components/ui/button'
@@ -21,6 +21,7 @@ import {
 import { useAppData } from '@/context/app-data-context'
 import { getCurrentPeriod } from '@/data/selectors'
 import { getDeadlineForPeriod } from '@/lib/dates'
+import { performanceTargetDefinitions } from '@/lib/performance-targets'
 import { cn, formatCompactNumber } from '@/lib/utils'
 import type { Weekday } from '@/types/domain'
 
@@ -53,6 +54,12 @@ const settingsSchema = z.object({
   autoLockHoursAfterDeadline: z.coerce.number().min(1),
   notableRiseThresholdPercent: z.coerce.number().min(1),
   notableDropThresholdPercent: z.coerce.number().min(1),
+  metricTargets: z.record(z.string(), z.object({
+    enabled: z.boolean(),
+    direction: z.enum(['atLeast', 'atMost']),
+    amber: z.coerce.number().min(0),
+    green: z.coerce.number().min(0),
+  })),
 })
 
 type SettingsValues = z.infer<typeof settingsSchema>
@@ -198,6 +205,68 @@ export function SettingsPage() {
                 <div className="space-y-2 md:col-span-2">
                   <Label>Notable drop threshold (%)</Label>
                   <Input type="number" className="h-12 px-4" {...form.register('notableDropThresholdPercent')} />
+                </div>
+              </div>
+
+              <div className="rounded-[0.35rem] border border-[#e6ecf3] bg-white px-4 py-4">
+                <div className="mb-4 flex items-center gap-2">
+                  <Gauge className="h-4 w-4 text-[#005db6]" />
+                  <Label>Performance targets</Label>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {performanceTargetDefinitions.map((target) => {
+                    const targetPath = `metricTargets.${target.key}` as const
+
+                    return (
+                      <div key={target.key} className="rounded-[0.35rem] border border-[#eef2f6] bg-[#f8fafc] p-3">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-[#1d3047]">{target.label}</p>
+                            <p className="text-xs text-[#74777f]">{target.unit === '%' ? 'Percentage target' : 'Count target'}</p>
+                          </div>
+                          <Controller
+                            control={form.control}
+                            name={`${targetPath}.enabled`}
+                            render={({ field }) => (
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                                aria-label={`${target.label} target enabled`}
+                              />
+                            )}
+                          />
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Direction</Label>
+                            <Controller
+                              control={form.control}
+                              name={`${targetPath}.direction`}
+                              render={({ field }) => (
+                                <Select value={field.value} onValueChange={field.onChange}>
+                                  <SelectTrigger className="h-10 bg-white">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="atLeast">At least</SelectItem>
+                                    <SelectItem value="atMost">At most</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              )}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Amber</Label>
+                            <Input type="number" className="h-10 bg-white px-3" {...form.register(`${targetPath}.amber`)} />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Green</Label>
+                            <Input type="number" className="h-10 bg-white px-3" {...form.register(`${targetPath}.green`)} />
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
 
