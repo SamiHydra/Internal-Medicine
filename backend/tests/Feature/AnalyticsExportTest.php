@@ -84,10 +84,39 @@ class AnalyticsExportTest extends TestCase
         $this->assertStringContainsString('20', $csv);           // total_patient_days weekly sum
     }
 
+    public function test_admin_can_export_a_period_as_xlsx(): void
+    {
+        $response = $this->actingAs($this->admin)
+            ->get('/api/analytics/export?format=xlsx&period='.$this->period->id);
+
+        $response->assertOk();
+        $response->assertHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        $disposition = (string) $response->headers->get('Content-Disposition');
+        $this->assertStringContainsString('attachment', $disposition);
+        $this->assertStringContainsString('.xlsx', $disposition);
+
+        // The body is a genuine .xlsx (zip) carrying the period's data.
+        $file = $response->baseResponse->getFile()->getPathname();
+        $this->assertTrue(is_file($file));
+
+        $zip = new \ZipArchive();
+        $this->assertTrue($zip->open($file) === true);
+        $sheet = (string) $zip->getFromName('xl/worksheets/sheet1.xml');
+        $zip->close();
+
+        $this->assertStringContainsString('Week start', $sheet);
+        $this->assertStringContainsString('2026-05-25', $sheet);
+        $this->assertStringContainsString('<v>20</v>', $sheet);
+    }
+
     public function test_nurses_cannot_export(): void
     {
         $this->actingAs($this->nurse)
             ->get('/api/analytics/export?period='.$this->period->id)
+            ->assertForbidden();
+
+        $this->actingAs($this->nurse)
+            ->get('/api/analytics/export?format=xlsx&period='.$this->period->id)
             ->assertForbidden();
     }
 }

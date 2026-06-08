@@ -39,16 +39,7 @@ class AnalyticsExportService
             $handle = fopen('php://output', 'w');
             fputcsv($handle, self::HEADER);
 
-            Report::query()
-                ->select('reports.*')
-                ->with(['department', 'template.fieldDefinitions', 'fieldValues', 'reportingPeriod'])
-                ->join('reporting_periods', 'reporting_periods.id', '=', 'reports.reporting_period_id')
-                ->join('departments', 'departments.id', '=', 'reports.department_id')
-                ->whereIn('reports.reporting_period_id', $periodIds)
-                ->whereNotNull('reports.submitted_at')
-                ->orderBy('reporting_periods.week_start')
-                ->orderBy('departments.name')
-                ->orderBy('reports.id')
+            $this->exportQuery($periodIds)
                 ->lazy(500)
                 ->each(fn (Report $report) => $this->writeReportRows($handle, $report));
 
@@ -57,9 +48,61 @@ class AnalyticsExportService
     }
 
     /**
+     * @return list<string>
+     */
+    public function header(): array
+    {
+        return self::HEADER;
+    }
+
+    /**
+     * Long-format data rows (no header), yielded in bounded chunks so memory stays
+     * flat. Shared by the CSV stream and the xlsx export.
+     *
+     * @param  Collection<int, ReportingPeriod>  $periods
+     * @return \Generator<int, list<string>>
+     */
+    public function lazyRows(Collection $periods): \Generator
+    {
+        $periodIds = $periods->pluck('id')->all();
+
+        foreach ($this->exportQuery($periodIds)->lazy(500) as $report) {
+            yield from $this->reportRows($report);
+        }
+    }
+
+    /**
+     * @param  list<string>  $periodIds
+     * @return \Illuminate\Database\Eloquent\Builder<Report>
+     */
+    private function exportQuery(array $periodIds)
+    {
+        return Report::query()
+            ->select('reports.*')
+            ->with(['department', 'template.fieldDefinitions', 'fieldValues', 'reportingPeriod'])
+            ->join('reporting_periods', 'reporting_periods.id', '=', 'reports.reporting_period_id')
+            ->join('departments', 'departments.id', '=', 'reports.department_id')
+            ->whereIn('reports.reporting_period_id', $periodIds)
+            ->whereNotNull('reports.submitted_at')
+            ->orderBy('reporting_periods.week_start')
+            ->orderBy('departments.name')
+            ->orderBy('reports.id');
+    }
+
+    /**
      * @param  resource  $handle
      */
     private function writeReportRows($handle, Report $report): void
+    {
+        foreach ($this->reportRows($report) as $row) {
+            fputcsv($handle, array_map($this->sanitizeCell(...), $row));
+        }
+    }
+
+    /**
+     * @return \Generator<int, list<string>>
+     */
+    private function reportRows(Report $report): \Generator
     {
         $weekStart = $report->reportingPeriod?->week_start?->toDateString() ?? '';
         $weekEnd = $report->reportingPeriod?->week_end?->toDateString() ?? '';
@@ -71,16 +114,16 @@ class AnalyticsExportService
                 continue;
             }
 
-            fputcsv($handle, array_map($this->sanitizeCell(...), [
+            yield [
                 $weekStart,
                 $weekEnd,
                 $report->department?->name ?? '',
                 $report->department?->family ?? '',
-                $definition->section_key,
-                $definition->label,
-                $definition->aggregate_type,
+                (string) $definition->section_key,
+                (string) $definition->label,
+                (string) $definition->aggregate_type,
                 $value,
-            ]));
+            ];
         }
     }
 

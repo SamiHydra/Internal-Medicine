@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\ReportingPeriod;
 use App\Services\Analytics\AnalyticsExportService;
+use App\Support\Export\XlsxWriter;
 use App\Services\Analytics\AnalyticsFilters;
 use App\Services\Analytics\AnalyticsService;
 use App\Services\Analytics\DashboardAnalyticsService;
@@ -113,12 +114,13 @@ class AnalyticsController extends Controller
         ]);
     }
 
-    public function export(Request $request): StreamedResponse
+    public function export(Request $request): \Symfony\Component\HttpFoundation\Response
     {
         $validated = $request->validate([
             'period' => ['sometimes', 'uuid', 'exists:reporting_periods,id'],
             'periodId' => ['sometimes', 'uuid', 'exists:reporting_periods,id'],
             'month' => ['sometimes', 'date_format:Y-m'],
+            'format' => ['sometimes', 'in:csv,xlsx'],
         ]);
 
         $periods = $this->resolveExportPeriods($validated);
@@ -130,6 +132,19 @@ class AnalyticsController extends Controller
         $label = $periods->count() === 1
             ? ($periods->first()->week_start?->toDateString() ?? 'period')
             : ($validated['month'] ?? 'periods');
+
+        if (($validated['format'] ?? 'csv') === 'xlsx') {
+            $path = (new XlsxWriter())->toTempFile(
+                $this->exportService->header(),
+                $this->exportService->lazyRows($periods),
+            );
+
+            return response()->download(
+                $path,
+                'st-paul-report-'.$label.'.xlsx',
+                ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+            )->deleteFileAfterSend();
+        }
 
         return response()->streamDownload(
             $this->exportService->streamCallback($periods),
