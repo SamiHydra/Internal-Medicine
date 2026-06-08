@@ -60,6 +60,16 @@ import {
   missingApiEnvKeys,
 } from '@/lib/api/env'
 import {
+  getReportSaveQueueId,
+  isBrowserOffline,
+  isLikelyOfflineError,
+  listQueuedReportSaves,
+  MAX_QUEUED_SAVE_ATTEMPTS,
+  queueReportSave,
+  recordQueuedReportSaveFailure,
+  removeQueuedReportSave,
+} from '@/lib/offline/report-save-queue'
+import {
   getCurrentPeriod,
   getCurrentUser,
   getVisibleReportingPeriods,
@@ -93,7 +103,9 @@ type AppDataContextValue = {
   refreshAdminAccessRequests: () => Promise<void>
   approveAdminAccessRequest: (requestId: string) => Promise<void>
   rejectAdminAccessRequest: (requestId: string) => Promise<void>
-  saveReport: (payload: SaveReportPayload) => Promise<boolean>
+  saveReport: (payload: SaveReportPayload) => Promise<SaveReportResult>
+  queuedReportSaveCount: number
+  hasQueuedReportSave: (assignmentId: string, reportingPeriodId: string) => boolean
   lockReport: (reportId: string, actorId: string) => Promise<void>
   unlockReport: (reportId: string, actorId: string) => Promise<void>
   isReportDetailLoaded: (reportId: string) => boolean
@@ -136,6 +148,12 @@ type ReportDetailLoadState = {
 
 type EnsureReportDetailsOptions = {
   force?: boolean
+  silent?: boolean
+}
+
+type SaveReportResult = {
+  saved: boolean
+  queued: boolean
 }
 
 const idleReportDetailLoadState: ReportDetailLoadState = {
@@ -260,6 +278,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [isDataRefreshing, setIsDataRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [adminAccessRequests, setAdminAccessRequests] = useState<AdminAccessRequest[]>([])
+  const [queuedReportSaveIds, setQueuedReportSaveIds] = useState<Set<string>>(
+    () => new Set(),
+  )
   const [reportDetailLoadStates, setReportDetailLoadStates] = useState<
     Record<string, ReportDetailLoadState>
   >({})
@@ -275,12 +296,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const historyDataLoadedRef = useRef(false)
   const loadedReportDetailIdsRef = useRef<Set<string>>(new Set())
   const pendingReportDetailIdsRef = useRef<Set<string>>(new Set())
+  const reportPeriodWindowRef = useRef<NonNullable<LiveAppStateLoadOptions['reportPeriodWindow']>>('default')
   const overdueSyncInFlightRef = useRef(false)
   const lastOverdueSyncAtRef = useRef(0)
   const syncPendingCountRef = useRef(0)
   const syncIndicatorTimeoutRef = useRef<number | null>(null)
   const adminLiveRefreshTimerRef = useRef<number | null>(null)
   const adminLiveRefreshInFlightRef = useRef(false)
+  const queuedReportSyncInFlightRef = useRef(false)
 
   const currentUser = getCurrentUser(state)
   const signedInUserId = currentUser?.id
@@ -316,10 +339,38 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     }
   }, [])
 
+  const refreshQueuedReportSaveState = useCallback(async (userId?: string | null) => {
+    if (!userId) {
+      setQueuedReportSaveIds(new Set())
+      return
+    }
+
+    const queuedSaves = await listQueuedReportSaves(userId)
+    setQueuedReportSaveIds(new Set(queuedSaves.map((queuedSave) => queuedSave.id)))
+  }, [])
+
+  const hasQueuedReportSave = useCallback(
+    (assignmentId: string, reportingPeriodId: string) => {
+      const userId = currentUserIdRef.current
+      if (!userId) {
+        return false
+      }
+
+      return queuedReportSaveIds.has(
+        getReportSaveQueueId(userId, assignmentId, reportingPeriodId),
+      )
+    },
+    [queuedReportSaveIds],
+  )
+
   useEffect(() => {
     currentUserIdRef.current = state.currentUserId
     currentStateRef.current = state
   }, [state])
+
+  useEffect(() => {
+    void refreshQueuedReportSaveState(signedInUserId ?? null)
+  }, [refreshQueuedReportSaveState, signedInUserId])
 
   useEffect(
     () => () => {
@@ -364,6 +415,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     historyDataLoadedRef.current = false
     loadedReportDetailIdsRef.current = new Set()
     pendingReportDetailIdsRef.current = new Set()
+    reportPeriodWindowRef.current = 'default'
     setReportDetailLoadStates({})
   }, [])
 
@@ -455,6 +507,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     currentUserIdRef.current = null
     currentStateRef.current = createEmptyAppState()
     syncPendingCountRef.current = 0
+    reportPeriodWindowRef.current = 'default'
     setState(createEmptyAppState())
     resetDeferredDataState()
     clearWorkspaceCache()
@@ -462,6 +515,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     setIsBootstrapping(false)
     setIsSyncing(false)
     setIsDataRefreshing(false)
+    setQueuedReportSaveIds(new Set())
   }, [resetDeferredDataState])
 
   const applyAuthenticatedProfile = useCallback(
@@ -505,6 +559,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const includeProfiles = options?.includeProfiles ?? false
       const includeAccessRequests = options?.includeAccessRequests ?? false
       const includeHistory = options?.includeHistory ?? false
+      const reportPeriodWindow = options?.reportPeriodWindow ?? reportPeriodWindowRef.current
 
       if (showBootstrapping) {
         setIsBootstrapping(true)
@@ -518,6 +573,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           includeProfiles,
           includeAccessRequests,
           includeHistory,
+          reportPeriodWindow,
         })
 
         if (loadVersion !== loadVersionRef.current) {
@@ -592,6 +648,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         currentUserIdRef.current = nextState.currentUserId
         currentStateRef.current = nextState
+        reportPeriodWindowRef.current = reportPeriodWindow
         setState(nextState)
         profileDirectoryLoadedRef.current =
           includeProfiles || !isAdminRole(result.currentUser.role)
@@ -647,6 +704,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       const force = options?.force ?? false
+      const silent = options?.silent ?? false
       const uniqueMissingReportIds = [...new Set(reportIds.filter(Boolean))].filter(
         (reportId) =>
           (force || !loadedReportDetailIdsRef.current.has(reportId)) &&
@@ -695,6 +753,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
                 ...report,
                 values: details.values,
                 calculatedMetrics: details.calculatedMetrics,
+                quality: details.quality,
               }
             }),
           }
@@ -730,7 +789,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
           return nextStates
         })
-        toast.error(message)
+        if (!silent) {
+          toast.error(message)
+        }
         return {} as Record<string, ReportDetailRecord>
       } finally {
         uniqueMissingReportIds.forEach((reportId) => {
@@ -740,6 +801,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
     },
     [beginBackgroundSync, client, endBackgroundSync, persistWorkspaceCache],
+  )
+
+  const warmAdminReportDetails = useCallback(
+    (workspaceState: AppState) => {
+      const reportIds = getAdminDashboardWarmReportIds(workspaceState)
+
+      if (!reportIds.length) {
+        return
+      }
+
+      void ensureReportDetails(reportIds, { silent: true })
+    },
+    [ensureReportDetails],
   )
 
   useEffect(() => {
@@ -791,7 +865,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
                 return
               }
 
-              void ensureReportDetails(getAdminDashboardWarmReportIds(result.state))
+              warmAdminReportDetails(result.state)
             })
             .catch((loadError) => {
               if (!isSigningOutRef.current) {
@@ -813,7 +887,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           return
         }
 
-        await ensureReportDetails(getAdminDashboardWarmReportIds(result.state))
+        warmAdminReportDetails(result.state)
       } catch (loadError) {
         clearSignedOutState()
         if (!isSigningOutRef.current) {
@@ -864,7 +938,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               return
             }
 
-            void ensureReportDetails(getAdminDashboardWarmReportIds(result.state))
+            warmAdminReportDetails(result.state)
           })
           .catch((loadError) => {
             if (!isSigningOutRef.current) {
@@ -907,9 +981,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     applyWorkspaceCache,
     client,
     clearSignedOutState,
-    ensureReportDetails,
     loadUserState,
     resetDeferredDataState,
+    warmAdminReportDetails,
   ])
 
   const refreshDataWithOptions = useCallback(async (options?: LiveAppStateLoadOptions) => {
@@ -945,17 +1019,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         includeProfiles: options?.includeProfiles ?? profileDirectoryLoadedRef.current,
         includeAccessRequests: options?.includeAccessRequests ?? false,
         includeHistory: options?.includeHistory ?? false,
+        reportPeriodWindow: options?.reportPeriodWindow ?? reportPeriodWindowRef.current,
       })
 
       if (result && isAdminRole(result.currentUser.role)) {
-        await ensureReportDetails(getAdminDashboardWarmReportIds(currentStateRef.current))
+        warmAdminReportDetails(currentStateRef.current)
       }
     } catch (refreshError) {
       if (!isSigningOutRef.current) {
         toast.error(getMessage(refreshError, 'Unable to refresh the live dashboard data.'))
       }
     }
-  }, [client, ensureReportDetails, loadUserState, resetDeferredDataState])
+  }, [client, loadUserState, resetDeferredDataState, warmAdminReportDetails])
 
   const scheduleAdminLiveRefresh = useCallback(
     (delayMs = 700) => {
@@ -976,6 +1051,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           includeProfiles: profileDirectoryLoadedRef.current,
           includeAccessRequests: accessRequestDataLoadedRef.current,
           includeHistory: historyDataLoadedRef.current,
+          reportPeriodWindow: reportPeriodWindowRef.current,
         }).finally(() => {
           adminLiveRefreshInFlightRef.current = false
         })
@@ -985,53 +1061,40 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   )
 
   useEffect(() => {
-    if (!client || !signedInUserId || !signedInUserRole || !isAdminRole(signedInUserRole)) {
+    if (!client || !signedInUserId || !signedInUserRole) {
       return
     }
+
+    // Reverb is disabled on shared hosting and the data client's realtime
+    // channel is a no-op shim, so live updates come from refreshing on focus /
+    // tab visibility. Every role gets that; admins additionally poll on a 20s
+    // interval because they drive the live submission board.
+    const isAdmin = isAdminRole(signedInUserRole)
 
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') {
         scheduleAdminLiveRefresh(150)
       }
     }
-    const refreshFromRealtime = () => {
-      scheduleAdminLiveRefresh()
-    }
-    const channel = client
-      .channel(`admin-report-sync:${signedInUserId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'reports' },
-        refreshFromRealtime,
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'report_field_values' },
-        refreshFromRealtime,
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'calculated_metrics' },
-        refreshFromRealtime,
-      )
-
-    void channel.subscribe()
 
     window.addEventListener('focus', refreshWhenVisible)
     document.addEventListener('visibilitychange', refreshWhenVisible)
-    const fallbackPollId = window.setInterval(refreshWhenVisible, 20_000)
+    const fallbackPollId = isAdmin
+      ? window.setInterval(refreshWhenVisible, 20_000)
+      : null
 
     return () => {
       window.removeEventListener('focus', refreshWhenVisible)
       document.removeEventListener('visibilitychange', refreshWhenVisible)
-      window.clearInterval(fallbackPollId)
+
+      if (fallbackPollId !== null) {
+        window.clearInterval(fallbackPollId)
+      }
 
       if (adminLiveRefreshTimerRef.current !== null) {
         window.clearTimeout(adminLiveRefreshTimerRef.current)
         adminLiveRefreshTimerRef.current = null
       }
-
-      void client.removeChannel(channel)
     }
   }, [
     client,
@@ -1057,6 +1120,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       payload: SaveReportPayload,
       values: SaveReportPayload['values'],
       calculatedMetrics?: AppState['reports'][number]['calculatedMetrics'],
+      quality?: AppState['reports'][number]['quality'],
     ) => {
       loadedReportDetailIdsRef.current.add(reportId)
 
@@ -1077,6 +1141,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             ...report,
             values,
             calculatedMetrics: calculatedMetrics ?? report.calculatedMetrics,
+            quality: quality ?? report.quality,
           }
         })
 
@@ -1096,6 +1161,186 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     },
     [persistWorkspaceCache],
   )
+
+  const applyServerSavedReport = useCallback(
+    async (payload: SaveReportPayload, reportId: string | null) => {
+      if (!client) {
+        return
+      }
+
+      historyDataLoadedRef.current = false
+      await refreshDataWithOptions()
+
+      const savedReport =
+        (reportId
+          ? currentStateRef.current.reports.find((report) => report.id === reportId)
+          : null) ??
+        currentStateRef.current.reports.find(
+          (report) =>
+            report.assignmentId === payload.assignmentId &&
+            report.reportingPeriodId === payload.reportingPeriodId,
+        )
+      const savedReportId = reportId ?? savedReport?.id
+
+      if (!savedReportId) {
+        return
+      }
+
+      let savedValues = payload.values
+      let savedCalculatedMetrics = savedReport?.calculatedMetrics
+      let savedQuality = savedReport?.quality
+
+      try {
+        const reportDetailsById = await fetchReportDetails(client, [savedReportId])
+        const reportDetails = reportDetailsById[savedReportId]
+
+        if (reportDetails) {
+          savedValues = Object.keys(reportDetails.values).length
+            ? reportDetails.values
+            : payload.values
+          savedCalculatedMetrics = reportDetails.calculatedMetrics
+          savedQuality = reportDetails.quality
+        }
+      } catch (detailError) {
+        toast.error(
+          getMessage(
+            detailError,
+            'Report saved, but the saved cell values could not be refreshed.',
+          ),
+        )
+      }
+
+      applySavedReportDetails(
+        savedReportId,
+        payload,
+        savedValues,
+        savedCalculatedMetrics,
+        savedQuality,
+      )
+    },
+    [client, refreshDataWithOptions, applySavedReportDetails],
+  )
+
+  const flushQueuedReportSaves = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const userId = currentUserIdRef.current
+
+      if (
+        !client ||
+        !userId ||
+        queuedReportSyncInFlightRef.current ||
+        isBrowserOffline()
+      ) {
+        return
+      }
+
+      queuedReportSyncInFlightRef.current = true
+      let shouldEndBackgroundSync = false
+      let syncedCount = 0
+      let discardedCount = 0
+
+      try {
+        const queuedSaves = await listQueuedReportSaves(userId)
+        if (!queuedSaves.length) {
+          setQueuedReportSaveIds(new Set())
+          return
+        }
+
+        beginBackgroundSync()
+        shouldEndBackgroundSync = true
+
+        for (const queuedSave of queuedSaves) {
+          try {
+            const reportId = await saveReportMutation(client, queuedSave.payload)
+            await removeQueuedReportSave(queuedSave.id)
+            syncedCount += 1
+            await applyServerSavedReport(queuedSave.payload, reportId)
+          } catch (syncError) {
+            if (isLikelyOfflineError(syncError)) {
+              await recordQueuedReportSaveFailure(
+                queuedSave.id,
+                getMessage(syncError, 'Unable to sync the queued report save.'),
+              )
+              break
+            }
+
+            // A non-offline failure (e.g. the report was locked or the
+            // assignment removed) will never succeed on retry — count attempts
+            // and dead-letter after the cap instead of retrying forever.
+            const updated = await recordQueuedReportSaveFailure(
+              queuedSave.id,
+              getMessage(syncError, 'Unable to sync the queued report save.'),
+            )
+
+            if (updated && updated.attempts >= MAX_QUEUED_SAVE_ATTEMPTS) {
+              await removeQueuedReportSave(queuedSave.id)
+              discardedCount += 1
+            }
+          }
+        }
+
+        await refreshQueuedReportSaveState(userId)
+
+        if (syncedCount > 0 && !options?.silent) {
+          toast.success(
+            syncedCount === 1
+              ? 'Offline report save synced.'
+              : `${syncedCount} offline report saves synced.`,
+          )
+        }
+
+        if (discardedCount > 0) {
+          toast.error(
+            discardedCount === 1
+              ? 'A queued report save could not be synced after several attempts and was discarded. Please re-enter it.'
+              : `${discardedCount} queued report saves could not be synced and were discarded. Please re-enter them.`,
+          )
+        }
+      } finally {
+        queuedReportSyncInFlightRef.current = false
+        if (shouldEndBackgroundSync) {
+          endBackgroundSync()
+        }
+      }
+    },
+    [
+      applyServerSavedReport,
+      beginBackgroundSync,
+      client,
+      endBackgroundSync,
+      refreshQueuedReportSaveState,
+    ],
+  )
+
+  useEffect(() => {
+    if (!client || !signedInUserId) {
+      return
+    }
+
+    const flushWithNotice = () => {
+      void flushQueuedReportSaves()
+    }
+    const flushSilently = () => {
+      void flushQueuedReportSaves({ silent: true })
+    }
+    const flushWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        flushSilently()
+      }
+    }
+
+    window.addEventListener('online', flushWithNotice)
+    document.addEventListener('visibilitychange', flushWhenVisible)
+    const retryIntervalId = window.setInterval(flushSilently, 30_000)
+
+    flushSilently()
+
+    return () => {
+      window.removeEventListener('online', flushWithNotice)
+      document.removeEventListener('visibilitychange', flushWhenVisible)
+      window.clearInterval(retryIntervalId)
+    }
+  }, [client, flushQueuedReportSaves, signedInUserId])
 
   const login = useCallback(
     async (email: string, password: string): Promise<UserRole | null> => {
@@ -1125,7 +1370,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
 
         if (isAdminRole(result.currentUser.role)) {
-          await ensureReportDetails(getAdminDashboardWarmReportIds(result.state))
+          warmAdminReportDetails(result.state)
         }
 
         pendingExplicitAuthUserIdRef.current = null
@@ -1139,7 +1384,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return null
       }
     },
-    [client, loadUserState, ensureReportDetails],
+    [client, loadUserState, warmAdminReportDetails],
   )
 
   const logout = useCallback(async (): Promise<void> => {
@@ -1359,64 +1604,59 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   )
 
   const saveReport = useCallback(
-    async (payload: SaveReportPayload): Promise<boolean> => {
+    async (payload: SaveReportPayload): Promise<SaveReportResult> => {
       if (!client) {
-        return false
+        return { saved: false, queued: false }
       }
 
       try {
         const reportId = await saveReportMutation(client, payload)
-        historyDataLoadedRef.current = false
-        await refreshDataWithOptions()
-        const savedReport =
-          (reportId
-            ? currentStateRef.current.reports.find((report) => report.id === reportId)
-            : null) ??
-          currentStateRef.current.reports.find(
-            (report) =>
-              report.assignmentId === payload.assignmentId &&
-              report.reportingPeriodId === payload.reportingPeriodId,
-          )
-        const savedReportId = reportId ?? savedReport?.id
+        const userId = currentUserIdRef.current ?? payload.actorId
 
-        if (savedReportId) {
-          let savedValues = payload.values
-          let savedCalculatedMetrics = savedReport?.calculatedMetrics
+        await removeQueuedReportSave(
+          getReportSaveQueueId(userId, payload.assignmentId, payload.reportingPeriodId),
+        )
+        await refreshQueuedReportSaveState(userId)
+        await applyServerSavedReport(payload, reportId)
 
+        return { saved: true, queued: false }
+      } catch (saveError) {
+        if (isLikelyOfflineError(saveError)) {
           try {
-            const reportDetailsById = await fetchReportDetails(client, [savedReportId])
-            const reportDetails = reportDetailsById[savedReportId]
+            const userId = currentUserIdRef.current ?? payload.actorId
+            await queueReportSave(userId, payload)
+            await refreshQueuedReportSaveState(userId)
 
-            if (reportDetails) {
-              savedValues = Object.keys(reportDetails.values).length
-                ? reportDetails.values
-                : payload.values
-              savedCalculatedMetrics = reportDetails.calculatedMetrics
-            }
-          } catch (detailError) {
+            toast.info(
+              payload.submit
+                ? 'Report submission queued offline.'
+                : 'Report draft queued offline.',
+              {
+                description: 'It will sync automatically when the connection returns.',
+              },
+            )
+
+            return { saved: true, queued: true }
+          } catch (queueError) {
             toast.error(
               getMessage(
-                detailError,
-                'Report saved, but the saved cell values could not be refreshed.',
+                queueError,
+                'Unable to save the report or store an offline copy.',
               ),
             )
+            return { saved: false, queued: false }
           }
-
-          applySavedReportDetails(
-            savedReportId,
-            payload,
-            savedValues,
-            savedCalculatedMetrics,
-          )
         }
 
-        return true
-      } catch (saveError) {
         toast.error(getMessage(saveError, 'Unable to save the report.'))
-        return false
+        return { saved: false, queued: false }
       }
     },
-    [client, refreshDataWithOptions, applySavedReportDetails],
+    [
+      applyServerSavedReport,
+      client,
+      refreshQueuedReportSaveState,
+    ],
   )
 
   const lockReport = useCallback(
@@ -1677,6 +1917,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       approveAdminAccessRequest,
       rejectAdminAccessRequest,
       saveReport,
+      queuedReportSaveCount: queuedReportSaveIds.size,
+      hasQueuedReportSave,
       lockReport,
       unlockReport,
       isReportDetailLoaded,
@@ -1711,6 +1953,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       approveAdminAccessRequest,
       rejectAdminAccessRequest,
       saveReport,
+      queuedReportSaveIds,
+      hasQueuedReportSave,
       lockReport,
       unlockReport,
       isReportDetailLoaded,

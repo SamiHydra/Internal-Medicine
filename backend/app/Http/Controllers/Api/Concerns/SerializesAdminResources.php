@@ -136,6 +136,7 @@ trait SerializesAdminResources
             'fieldKind' => $field->field_kind,
             'aggregateType' => $field->aggregate_type,
             'displayOrder' => $field->display_order,
+            'active' => (bool) ($field->active ?? true),
             'metadata' => $field->metadata,
         ];
     }

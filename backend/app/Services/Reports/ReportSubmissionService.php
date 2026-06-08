@@ -11,6 +11,7 @@ use App\Models\ReportFieldValue;
 use App\Models\ReportingPeriod;
 use App\Models\ReportStatusHistory;
 use App\Models\User;
+use App\Services\Analytics\DashboardAnalyticsService;
 use App\Support\Authorization\Permissions;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Carbon;
@@ -24,6 +25,8 @@ class ReportSubmissionService
     public function __construct(
         private readonly ReportCalculationService $calculationService,
         private readonly CriticalEventAlertService $criticalEventAlertService,
+        private readonly DashboardAnalyticsService $dashboardAnalytics,
+        private readonly ReportQualityService $qualityService,
     ) {}
 
     /**
@@ -34,7 +37,7 @@ class ReportSubmissionService
      */
     public function save(User $actor, ReportAssignment $assignment, ReportingPeriod $period, array $values, bool $submit = false): Report
     {
-        return DB::transaction(function () use ($actor, $assignment, $period, $values, $submit): Report {
+        $report = DB::transaction(function () use ($actor, $assignment, $period, $values, $submit): Report {
             $assignment->loadMissing(['department', 'template.fieldDefinitions']);
 
             $this->authorizeAssignmentEdit($actor, $assignment);
@@ -72,6 +75,7 @@ class ReportSubmissionService
             $report->loadMissing(['assignment', 'template', 'department']);
 
             $hasChanges = $this->persistValues($actor, $assignment, $report, $values, $hadSubmission, $now);
+            $this->qualityService->assertValid($report->refresh());
             $nextStatus = $this->nextStatus($report, $hadSubmission, $hasChanges, $submit);
 
             $report->forceFill([
@@ -129,6 +133,10 @@ class ReportSubmissionService
                 'calculatedMetric',
             ]);
         });
+
+        $this->dashboardAnalytics->invalidate();
+
+        return $report;
     }
 
     /**
@@ -224,7 +232,13 @@ class ReportSubmissionService
      */
     private function coerceValue(ReportFieldDefinition $fieldDefinition, mixed $rawValue, string $fieldKey): array
     {
-        $value = is_string($rawValue) ? $rawValue : $rawValue;
+        // Normalize strings: trim whitespace and treat an empty string as a
+        // cleared cell so "   " does not get stored or fail numeric coercion.
+        $value = is_string($rawValue) ? trim($rawValue) : $rawValue;
+
+        if ($value === '') {
+            $value = null;
+        }
 
         if ($value === null) {
             return [

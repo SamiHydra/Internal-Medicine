@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
-    "verify": "npm run lint && npm run test:run && npm run build"
+    "verify": "npm run lint && npm run test:run && npm run build",
+    "load:test": "node scripts/load-test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

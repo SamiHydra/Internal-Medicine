@@ -28,6 +28,20 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    'sms' => [
+        'driver' => env('SMS_DRIVER', 'log'),
+        'from' => env('SMS_FROM'),
+        'log_channel' => env('SMS_LOG_CHANNEL'),
+        'http' => [
+            'endpoint' => env('SMS_HTTP_ENDPOINT'),
+            'token' => env('SMS_HTTP_TOKEN'),
+            'to_field' => env('SMS_HTTP_TO_FIELD', 'to'),
+            'message_field' => env('SMS_HTTP_MESSAGE_FIELD', 'message'),
+            'from_field' => env('SMS_HTTP_FROM_FIELD', 'from'),
+            'timeout' => (int) env('SMS_HTTP_TIMEOUT', 10),
+        ],
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

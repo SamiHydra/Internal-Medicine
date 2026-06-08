@@ -13,6 +13,7 @@ import { z } from 'zod'
 import { technicalSupport } from '@/config/support'
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
 import { useAppData } from '@/context/app-data-context'
+import { getApiBrowserClient } from '@/lib/api/client'
 
 const loginSchema = z.object({
   identifier: z.string().trim().min(1),
@@ -50,6 +51,14 @@ export function LoginPage() {
       })
     }
   }, [currentUser, isSigningIn, navigate])
+
+  useEffect(() => {
+    const client = getApiBrowserClient()
+
+    void client?.primeCsrfCookie().catch(() => {
+      // The submit flow will retry CSRF setup and surface any real login error.
+    })
+  }, [])
 
   useEffect(() => {
     const preloadDashboards = () => {

@@ -6,9 +6,12 @@ use App\Models\AppSetting;
 use App\Models\ReportingPeriod;
 use App\Models\User;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 class AppSettingsService
 {
+    private const CACHE_KEY = 'app-settings:structured:v1';
+
     private const WEEKDAY_OFFSETS = [
         'monday' => 0,
         'tuesday' => 1,
@@ -24,17 +27,25 @@ class AppSettingsService
      */
     public function structured(): array
     {
-        $rows = AppSetting::query()->get()->keyBy('setting_key');
+        return Cache::remember(self::CACHE_KEY, 300, function (): array {
+            $rows = AppSetting::query()->get()->keyBy('setting_key');
 
-        return [
-            'deadlineEnforced' => (bool) ($rows->get('workflow_controls')?->value_json['deadline_enforced'] ?? true),
-            'weeklyDeadlineDay' => (string) ($rows->get('weekly_deadline')?->value_json['day'] ?? 'monday'),
-            'weeklyDeadlineTime' => (string) ($rows->get('weekly_deadline')?->value_json['time'] ?? '10:00'),
-            'autoLockHoursAfterDeadline' => (int) ($rows->get('locking_rules')?->value_json['auto_lock_hours_after_deadline'] ?? 36),
-            'notableRiseThresholdPercent' => (int) ($rows->get('insight_thresholds')?->value_json['rise_percent'] ?? 10),
-            'notableDropThresholdPercent' => (int) ($rows->get('insight_thresholds')?->value_json['drop_percent'] ?? 10),
-            'criticalNonZeroFields' => array_values($rows->get('critical_non_zero_fields')?->value_json ?? []),
-        ];
+            return [
+                'deadlineEnforced' => (bool) ($rows->get('workflow_controls')?->value_json['deadline_enforced'] ?? true),
+                'weeklyDeadlineDay' => (string) ($rows->get('weekly_deadline')?->value_json['day'] ?? 'monday'),
+                'weeklyDeadlineTime' => (string) ($rows->get('weekly_deadline')?->value_json['time'] ?? '10:00'),
+                'autoLockHoursAfterDeadline' => (int) ($rows->get('locking_rules')?->value_json['auto_lock_hours_after_deadline'] ?? 36),
+                'notableRiseThresholdPercent' => (int) ($rows->get('insight_thresholds')?->value_json['rise_percent'] ?? 10),
+                'notableDropThresholdPercent' => (int) ($rows->get('insight_thresholds')?->value_json['drop_percent'] ?? 10),
+                'criticalNonZeroFields' => array_values($rows->get('critical_non_zero_fields')?->value_json ?? []),
+                'reportReminderThresholds' => [
+                    'inAppHoursBeforeDeadline' => (int) ($rows->get('report_reminders')?->value_json['in_app_hours_before_deadline'] ?? 24),
+                    'emailHoursBeforeDeadline' => (int) ($rows->get('report_reminders')?->value_json['email_hours_before_deadline'] ?? 4),
+                    'smsHoursBeforeDeadline' => (int) ($rows->get('report_reminders')?->value_json['sms_hours_before_deadline'] ?? 1),
+                    'overdueHoursAfterDeadline' => (int) ($rows->get('report_reminders')?->value_json['overdue_hours_after_deadline'] ?? 0),
+                ],
+            ];
+        });
     }
 
     /**
@@ -53,6 +64,12 @@ class AppSettingsService
             'notableRiseThresholdPercent' => (int) $this->value($validated, 'notable_rise_threshold_percent', 'notableRiseThresholdPercent', $current['notableRiseThresholdPercent']),
             'notableDropThresholdPercent' => (int) $this->value($validated, 'notable_drop_threshold_percent', 'notableDropThresholdPercent', $current['notableDropThresholdPercent']),
             'criticalNonZeroFields' => $this->value($validated, 'critical_non_zero_fields', 'criticalNonZeroFields', $current['criticalNonZeroFields']),
+            'reportReminderThresholds' => [
+                'inAppHoursBeforeDeadline' => (int) $this->value($validated, 'reminder_in_app_hours_before_deadline', 'reminderInAppHoursBeforeDeadline', $current['reportReminderThresholds']['inAppHoursBeforeDeadline']),
+                'emailHoursBeforeDeadline' => (int) $this->value($validated, 'reminder_email_hours_before_deadline', 'reminderEmailHoursBeforeDeadline', $current['reportReminderThresholds']['emailHoursBeforeDeadline']),
+                'smsHoursBeforeDeadline' => (int) $this->value($validated, 'reminder_sms_hours_before_deadline', 'reminderSmsHoursBeforeDeadline', $current['reportReminderThresholds']['smsHoursBeforeDeadline']),
+                'overdueHoursAfterDeadline' => (int) $this->value($validated, 'reminder_overdue_hours_after_deadline', 'reminderOverdueHoursAfterDeadline', $current['reportReminderThresholds']['overdueHoursAfterDeadline']),
+            ],
         ];
 
         $this->upsert('workflow_controls', ['deadline_enforced' => (bool) $next['deadlineEnforced']], $actor);
@@ -68,7 +85,14 @@ class AppSettingsService
             'drop_percent' => $next['notableDropThresholdPercent'],
         ], $actor);
         $this->upsert('critical_non_zero_fields', array_values($next['criticalNonZeroFields']), $actor);
+        $this->upsert('report_reminders', [
+            'in_app_hours_before_deadline' => $next['reportReminderThresholds']['inAppHoursBeforeDeadline'],
+            'email_hours_before_deadline' => $next['reportReminderThresholds']['emailHoursBeforeDeadline'],
+            'sms_hours_before_deadline' => $next['reportReminderThresholds']['smsHoursBeforeDeadline'],
+            'overdue_hours_after_deadline' => $next['reportReminderThresholds']['overdueHoursAfterDeadline'],
+        ], $actor);
         $this->recalculateDeadlines($next['weeklyDeadlineDay'], $next['weeklyDeadlineTime']);
+        Cache::forget(self::CACHE_KEY);
 
         return $this->structured();
     }

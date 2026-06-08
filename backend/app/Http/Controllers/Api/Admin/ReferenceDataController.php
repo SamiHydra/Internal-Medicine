@@ -8,6 +8,7 @@ use App\Models\Department;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportTemplate;
 use App\Services\Admin\AdminAuditService;
+use App\Support\Authorization\Permissions;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -79,6 +80,7 @@ class ReferenceDataController extends Controller
         Gate::authorize('update', $resolvedTemplate);
 
         $validated = $this->validateTemplate($request, $resolvedTemplate);
+        $this->guardStructuralChanges($request, $resolvedTemplate, $validated);
 
         return DB::transaction(function () use ($request, $resolvedTemplate, $validated): JsonResponse {
             $oldValues = $this->templateAuditValues($resolvedTemplate->load('fieldDefinitions'));
@@ -107,6 +109,23 @@ class ReferenceDataController extends Controller
         $resolvedTemplate->refresh();
 
         $this->auditService->record($request->user(), 'set_active', 'report_template', $resolvedTemplate->id, $oldValues, $this->templateAuditValues($resolvedTemplate), $request);
+
+        return response()->json($this->serializeTemplate($resolvedTemplate));
+    }
+
+    public function setFieldActive(Request $request, string $template, string $field): JsonResponse
+    {
+        $resolvedTemplate = $this->resolveTemplate($template);
+        Gate::authorize('update', $resolvedTemplate);
+
+        $validated = $request->validate(['active' => ['required', 'boolean']]);
+        $definition = $resolvedTemplate->fieldDefinitions()->where('field_key', $field)->firstOrFail();
+
+        $oldValues = $definition->only(['field_key', 'active']);
+        $definition->forceFill(['active' => (bool) $validated['active']])->save();
+
+        $resolvedTemplate->refresh()->load(['fieldDefinitions' => fn ($query) => $query->orderBy('display_order')]);
+        $this->auditService->record($request->user(), 'set_field_active', 'report_template', $resolvedTemplate->id, $oldValues, $definition->only(['field_key', 'active']), $request);
 
         return response()->json($this->serializeTemplate($resolvedTemplate));
     }
@@ -328,6 +347,14 @@ class ReferenceDataController extends Controller
     {
         foreach ($fields as $index => $field) {
             $fieldKey = $field['field_key'] ?? $field['fieldKey'];
+            $existing = ReportFieldDefinition::query()
+                ->where('template_id', $template->id)
+                ->where('field_key', $fieldKey)
+                ->first();
+
+            // Merge incoming metadata over what's persisted so a content edit that
+            // omits some flags (unit/options/highlight) never wipes them.
+            $metadata = array_merge($existing?->metadata ?? [], $field['metadata'] ?? []);
 
             ReportFieldDefinition::query()->updateOrCreate(
                 [
@@ -340,9 +367,51 @@ class ReferenceDataController extends Controller
                     'field_kind' => $field['field_kind'] ?? $field['fieldKind'],
                     'aggregate_type' => $field['aggregate_type'] ?? $field['aggregateType'],
                     'display_order' => $field['display_order'] ?? $field['displayOrder'] ?? (($index + 1) * 10),
-                    'metadata' => $field['metadata'] ?? [],
+                    'metadata' => $metadata,
                 ],
             );
+        }
+    }
+
+    /**
+     * Enforce the content/structure permission split. Admins (templates.edit-content)
+     * may edit safe attributes; only Maintenance (templates.edit-structure) may make
+     * structural changes — rename the slug/family, add a new field, or change a field
+     * type. Field keys with saved values stay immutable regardless (protects history).
+     */
+    private function guardStructuralChanges(Request $request, ReportTemplate $template, array $validated): void
+    {
+        if (Permissions::userCan($request->user(), Permissions::TEMPLATES_EDIT_STRUCTURE)) {
+            return;
+        }
+
+        $newSlug = $validated['slug'] ?? null;
+        if ($newSlug !== null && $newSlug !== $template->slug) {
+            throw ValidationException::withMessages(['slug' => 'Only Maintenance can change a template key.']);
+        }
+
+        $newFamily = $validated['family'] ?? null;
+        if ($newFamily !== null && $newFamily !== $template->family) {
+            throw ValidationException::withMessages(['family' => 'Only Maintenance can change a template service line.']);
+        }
+
+        if (! array_key_exists('fields', $validated)) {
+            return;
+        }
+
+        $existing = $template->fieldDefinitions()->get()->keyBy('field_key');
+        foreach ($validated['fields'] as $field) {
+            $key = $field['field_key'] ?? $field['fieldKey'] ?? null;
+            $current = $key ? $existing->get($key) : null;
+
+            if (! $current) {
+                throw ValidationException::withMessages(['fields' => 'Only Maintenance can add new fields to a template.']);
+            }
+
+            $kind = $field['field_kind'] ?? $field['fieldKind'] ?? null;
+            if ($kind !== null && $kind !== $current->field_kind) {
+                throw ValidationException::withMessages(['fields' => 'Only Maintenance can change a field type.']);
+            }
         }
     }
 
@@ -392,7 +461,7 @@ class ReferenceDataController extends Controller
         return [
             ...$template->only(['id', 'slug', 'family', 'name', 'description', 'active_days', 'metadata', 'active']),
             'fields' => $template->relationLoaded('fieldDefinitions')
-                ? $template->fieldDefinitions->map(fn (ReportFieldDefinition $field) => $field->only(['section_key', 'field_key', 'label', 'field_kind', 'aggregate_type', 'display_order', 'metadata']))->values()->all()
+                ? $template->fieldDefinitions->map(fn (ReportFieldDefinition $field) => $field->only(['section_key', 'field_key', 'label', 'field_kind', 'aggregate_type', 'display_order', 'active', 'metadata']))->values()->all()
                 : null,
         ];
     }

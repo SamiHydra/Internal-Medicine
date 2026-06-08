@@ -22,6 +22,52 @@ class ReportTemplateSeeder extends Seeder
                 'metadata' => [
                     'ui_family' => 'inpatient',
                     'supports_metrics' => ['bor_percent', 'btr', 'alos'],
+                    'validation_rules' => [
+                        [
+                            'key' => 'hai_components_lte_total',
+                            'type' => 'sum_lte',
+                            'severity' => 'error',
+                            'left' => ['hai_clabsi', 'hai_cauti', 'hai_pneumonia', 'hai_vap', 'hai_cdi'],
+                            'right' => ['total_hai'],
+                            'message' => 'HAI subtype counts cannot exceed total HAI.',
+                        ],
+                        [
+                            'key' => 'new_pressure_ulcer_lte_total',
+                            'type' => 'sum_lte',
+                            'severity' => 'error',
+                            'left' => ['new_pressure_ulcer'],
+                            'right' => ['total_pressure_ulcer'],
+                            'message' => 'New pressure ulcers cannot exceed total pressure ulcers.',
+                        ],
+                        // Deaths vs admissions is a soft sanity check, not a hard
+                        // invariant: "total admitted" is a daily census (summed)
+                        // while flows accumulate over the week, so this warns
+                        // rather than blocks.
+                        [
+                            'key' => 'deaths_lte_patients',
+                            'type' => 'sum_lte',
+                            'severity' => 'warning',
+                            'left' => ['new_deaths'],
+                            'right' => ['total_admitted_patients'],
+                            'message' => 'Deaths exceed the total admitted patients this week — please double-check.',
+                        ],
+                        [
+                            'key' => 'discharges_lte_patients',
+                            'type' => 'sum_lte',
+                            'severity' => 'warning',
+                            'left' => ['discharged_home', 'discharged_ama'],
+                            'right' => ['total_admitted_patients'],
+                            'message' => 'Discharges exceed the total number of admitted patients — please double-check.',
+                        ],
+                        [
+                            'key' => 'hai_lte_patients',
+                            'type' => 'sum_lte',
+                            'severity' => 'warning',
+                            'left' => ['total_hai'],
+                            'right' => ['total_admitted_patients'],
+                            'message' => 'Patients with hospital-acquired infections exceed total admitted patients — please double-check.',
+                        ],
+                    ],
                 ],
             ],
             [
@@ -30,7 +76,27 @@ class ReportTemplateSeeder extends Seeder
                 'name' => 'ART',
                 'description' => 'Weekly outpatient ART clinic activity and access reporting.',
                 'active_days' => $weekdaysClinic,
-                'metadata' => ['ui_family' => 'outpatient'],
+                'metadata' => [
+                    'ui_family' => 'outpatient',
+                    'validation_rules' => [
+                        [
+                            'key' => 'new_followup_lte_seen',
+                            'type' => 'sum_lte',
+                            'severity' => 'error',
+                            'left' => ['new_patients_seen', 'follow_up_patients'],
+                            'right' => ['total_patients_seen'],
+                            'message' => 'New and follow-up patients cannot exceed total patients seen.',
+                        ],
+                        [
+                            'key' => 'not_seen_lte_total',
+                            'type' => 'sum_lte',
+                            'severity' => 'warning',
+                            'left' => ['not_seen_same_day'],
+                            'right' => ['total_patients_seen'],
+                            'message' => 'Patients not seen same day exceed total patients seen — please double-check.',
+                        ],
+                    ],
+                ],
             ],
             [
                 'slug' => 'eeg_weekly',
@@ -38,7 +104,19 @@ class ReportTemplateSeeder extends Seeder
                 'name' => 'EEG',
                 'description' => 'Weekly operational reporting for electroencephalography services.',
                 'active_days' => $weekdaysClinic,
-                'metadata' => ['ui_family' => 'procedure'],
+                'metadata' => [
+                    'ui_family' => 'procedure',
+                    'validation_rules' => [
+                        [
+                            'key' => 'eeg_reports_lte_done',
+                            'type' => 'sum_lte',
+                            'severity' => 'error',
+                            'left' => ['eeg_report_received'],
+                            'right' => ['eeg_done'],
+                            'message' => 'EEG reports received cannot exceed EEGs done.',
+                        ],
+                    ],
+                ],
             ],
             [
                 'slug' => 'echocardiography_weekly',
@@ -46,7 +124,19 @@ class ReportTemplateSeeder extends Seeder
                 'name' => 'Echocardiography Lab',
                 'description' => 'Weekly diagnostic throughput and turnaround reporting for echo services.',
                 'active_days' => $weekdaysClinic,
-                'metadata' => ['ui_family' => 'procedure'],
+                'metadata' => [
+                    'ui_family' => 'procedure',
+                    'validation_rules' => [
+                        [
+                            'key' => 'echo_reports_lte_done',
+                            'type' => 'sum_lte',
+                            'severity' => 'error',
+                            'left' => ['echo_report_received'],
+                            'right' => ['echo_done'],
+                            'message' => 'Echo reports received cannot exceed echocardiograms done.',
+                        ],
+                    ],
+                ],
             ],
             [
                 'slug' => 'endoscopy_weekly',
@@ -54,7 +144,19 @@ class ReportTemplateSeeder extends Seeder
                 'name' => 'Endoscopy Lab',
                 'description' => 'Weekly reporting for endoscopy throughput and procedure mix.',
                 'active_days' => $weekdaysClinic,
-                'metadata' => ['ui_family' => 'procedure'],
+                'metadata' => [
+                    'ui_family' => 'procedure',
+                    'validation_rules' => [
+                        [
+                            'key' => 'upper_gi_reports_lte_done',
+                            'type' => 'sum_lte',
+                            'severity' => 'error',
+                            'left' => ['upper_gi_report_received'],
+                            'right' => ['upper_gi_elective'],
+                            'message' => 'Elective upper GI reports received cannot exceed elective upper GI endoscopies done.',
+                        ],
+                    ],
+                ],
             ],
             [
                 'slug' => 'hematology_procedures_weekly',

@@ -30,6 +30,7 @@ export type NotificationType =
   | 'report_unlocked'
   | 'overdue_report'
   | 'nurse_access_request'
+  | 'admin_access_request'
   | 'access_request_reviewed'
   | 'critical_value_alert'
 
@@ -176,6 +177,25 @@ export interface CalculatedMetricSet {
   alos: number | null
 }
 
+export type ReportQualityIssue = {
+  key: string
+  severity: 'error' | 'warning'
+  message: string
+  leftValue?: number
+  rightValue?: number
+}
+
+export interface ReportQuality {
+  completeness: {
+    expectedCells: number
+    filledCells: number
+    missingCells: number
+    percent: number
+  }
+  errors: ReportQualityIssue[]
+  warnings: ReportQualityIssue[]
+}
+
 export interface ReportRecord {
   id: string
   assignmentId: string
@@ -191,6 +211,7 @@ export interface ReportRecord {
   status: StoredReportStatus
   values: Record<string, ReportFieldValue>
   calculatedMetrics: Partial<CalculatedMetricSet>
+  quality?: ReportQuality
 }
 
 export interface ReportStatusHistoryEntry {
@@ -237,6 +258,12 @@ export interface AppSettings {
   notableRiseThresholdPercent: number
   notableDropThresholdPercent: number
   criticalNonZeroFields: string[]
+  reportReminderThresholds: {
+    inAppHoursBeforeDeadline: number
+    emailHoursBeforeDeadline: number
+    smsHoursBeforeDeadline: number
+    overdueHoursAfterDeadline: number
+  }
 }
 
 export interface PendingDraftState {

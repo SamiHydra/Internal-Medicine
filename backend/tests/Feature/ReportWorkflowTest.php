@@ -17,6 +17,7 @@ use Database\Seeders\ReportFieldDefinitionSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
 class ReportWorkflowTest extends TestCase
@@ -87,7 +88,10 @@ class ReportWorkflowTest extends TestCase
             ->assertJsonPath('status', 'draft')
             ->assertJsonPath('values.total_patient_days.dailyValues.monday', 30)
             ->assertJsonPath('values.discharged_home.dailyValues.monday', 2)
-            ->assertJsonPath('calculatedMetrics.payload.total_patient_days', 30);
+            ->assertJsonPath('calculatedMetrics.payload.total_patient_days', 30)
+            ->assertJsonPath('quality.completeness.expectedCells', 161)
+            ->assertJsonPath('quality.completeness.filledCells', 4)
+            ->assertJsonPath('quality.completeness.percent', 2);
 
         $report = Report::query()->firstOrFail();
 
@@ -274,6 +278,40 @@ class ReportWorkflowTest extends TestCase
             ->assertJsonCount(2, 'data');
     }
 
+    public function test_report_batch_details_preserve_order_and_authorization(): void
+    {
+        $ownReport = $this->submitReport();
+        $otherNurse = User::factory()->create();
+        $otherAssignment = ReportAssignment::query()->create([
+            'nurse_id' => $otherNurse->id,
+            'department_id' => $this->assignment->department_id,
+            'template_id' => $this->assignment->template_id,
+            'active' => true,
+            'approved_at' => now(),
+        ]);
+        $otherReport = Report::query()->create([
+            'assignment_id' => $otherAssignment->id,
+            'department_id' => $otherAssignment->department_id,
+            'template_id' => $otherAssignment->template_id,
+            'reporting_period_id' => $this->period->id,
+            'status' => 'draft',
+            'created_by' => $otherNurse->id,
+            'updated_by' => $otherNurse->id,
+        ]);
+
+        $this->actingAs($this->admin)
+            ->getJson("/api/reports/details?ids={$otherReport->id},{$ownReport->id}")
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.id', $otherReport->id)
+            ->assertJsonPath('data.1.id', $ownReport->id)
+            ->assertJsonPath('data.1.values.total_patient_days.dailyValues.monday', 30);
+
+        $this->actingAs($this->nurse)
+            ->getJson("/api/reports/details?ids={$ownReport->id},{$otherReport->id}")
+            ->assertForbidden();
+    }
+
     public function test_invalid_fields_days_and_values_are_rejected(): void
     {
         $this->actingAs($this->nurse)
@@ -319,6 +357,115 @@ class ReportWorkflowTest extends TestCase
             ->assertJsonValidationErrors('values.not_a_real_field');
     }
 
+    public function test_cross_field_quality_rules_reject_impossible_totals(): void
+    {
+        $this->actingAs($this->nurse)
+            ->postJson('/api/reports', [
+                'assignmentId' => $this->assignment->id,
+                'reportingPeriodId' => $this->period->id,
+                'values' => [
+                    'total_hai' => [
+                        'fieldId' => 'total_hai',
+                        'dailyValues' => ['monday' => 1],
+                    ],
+                    'hai_clabsi' => [
+                        'fieldId' => 'hai_clabsi',
+                        'dailyValues' => ['monday' => 2],
+                    ],
+                ],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('values');
+
+        $this->assertSame(0, Report::query()->count());
+    }
+
+    public function test_cross_field_warning_is_returned_without_blocking_the_save(): void
+    {
+        $this->actingAs($this->nurse)
+            ->postJson('/api/reports', [
+                'assignmentId' => $this->assignment->id,
+                'reportingPeriodId' => $this->period->id,
+                'values' => [
+                    'total_admitted_patients' => ['fieldId' => 'total_admitted_patients', 'dailyValues' => ['monday' => 2]],
+                    'discharged_home' => ['fieldId' => 'discharged_home', 'dailyValues' => ['monday' => 5]],
+                ],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('status', 'draft')
+            ->assertJsonPath('quality.warnings.0.severity', 'warning');
+
+        $this->assertSame(1, Report::query()->count());
+    }
+
+    public function test_outlier_warning_flags_a_spike_against_the_recent_baseline(): void
+    {
+        $baselinePeriods = collect(range(0, 2))->map(fn (int $offset): ReportingPeriod => $this->createReportingPeriod(
+            Carbon::parse('2026-03-16')->addWeeks($offset)->toDateString(),
+        ));
+
+        foreach ($baselinePeriods as $period) {
+            $this->actingAs($this->nurse)->postJson('/api/reports', [
+                'assignmentId' => $this->assignment->id,
+                'reportingPeriodId' => $period->id,
+                'submit' => true,
+                'values' => [
+                    'total_patient_days' => ['fieldId' => 'total_patient_days', 'dailyValues' => ['monday' => 20]],
+                ],
+            ])->assertCreated();
+        }
+
+        $response = $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'submit' => true,
+            'values' => [
+                'total_patient_days' => ['fieldId' => 'total_patient_days', 'dailyValues' => ['monday' => 100]],
+            ],
+        ])->assertCreated();
+
+        $warnings = collect($response->json('quality.warnings'));
+        $this->assertTrue(
+            $warnings->contains(fn (array $warning): bool => str_starts_with($warning['key'] ?? '', 'outlier:total_patient_days')),
+            'Expected an outlier warning for the total_patient_days spike.',
+        );
+    }
+
+    public function test_report_index_defaults_to_recent_period_window_and_paginates_all_history(): void
+    {
+        Carbon::setTestNow('2026-05-26 12:00:00');
+
+        try {
+            ReportingPeriod::query()->delete();
+
+            $periods = collect(range(0, 10))
+                ->map(fn (int $offset): ReportingPeriod => $this->createReportingPeriod(
+                    Carbon::parse('2026-03-16')->addWeeks($offset)->toDateString(),
+                ));
+            $reports = $periods->map(fn (ReportingPeriod $period): Report => $this->reportForPeriod($period));
+
+            $defaultResponse = $this->actingAs($this->admin)
+                ->getJson('/api/reports')
+                ->assertOk()
+                ->assertJsonCount(9, 'data')
+                ->assertJsonPath('meta.total', 9);
+            $defaultReportIds = collect($defaultResponse->json('data'))->pluck('id')->all();
+
+            $this->assertEmpty(array_intersect($reports->take(2)->pluck('id')->all(), $defaultReportIds));
+            $this->assertEqualsCanonicalizing($reports->slice(2)->pluck('id')->all(), $defaultReportIds);
+
+            $this->actingAs($this->admin)
+                ->getJson('/api/reports?reportPeriodWindow=all&perPage=5')
+                ->assertOk()
+                ->assertJsonCount(5, 'data')
+                ->assertJsonPath('meta.total', 11)
+                ->assertJsonPath('meta.perPage', 5)
+                ->assertJsonPath('meta.lastPage', 3);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     private function submitReport(): Report
     {
         $this->actingAs($this->nurse)->postJson('/api/reports', [
@@ -329,6 +476,33 @@ class ReportWorkflowTest extends TestCase
         ])->assertCreated();
 
         return Report::query()->firstOrFail();
+    }
+
+    private function reportForPeriod(ReportingPeriod $period): Report
+    {
+        return Report::query()->create([
+            'assignment_id' => $this->assignment->id,
+            'department_id' => $this->assignment->department_id,
+            'template_id' => $this->assignment->template_id,
+            'reporting_period_id' => $period->id,
+            'status' => 'draft',
+            'created_by' => $this->nurse->id,
+            'updated_by' => $this->nurse->id,
+        ]);
+    }
+
+    private function createReportingPeriod(string $weekStart): ReportingPeriod
+    {
+        $start = Carbon::parse($weekStart);
+
+        return ReportingPeriod::query()->create([
+            'week_start' => $start->toDateString(),
+            'week_end' => $start->copy()->addDays(6)->toDateString(),
+            'deadline_at' => $start->copy()->addWeek()->setTime(10, 0),
+            'month_label' => $start->format('M Y'),
+            'quarter_label' => sprintf('Q%d %d', $start->quarter, $start->year),
+            'year_num' => $start->year,
+        ]);
     }
 
     /**

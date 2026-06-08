@@ -17,6 +17,7 @@ use Database\Seeders\ReportingPeriodSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
 use Tests\TestCase;
@@ -57,7 +58,8 @@ class WorkspaceApiTest extends TestCase
         $otherDepartment = Department::query()->where('slug', 'cardiac_inpatient')->firstOrFail();
         $period = ReportingPeriod::query()
             ->whereDate('week_start', '>=', '2026-03-02')
-            ->orderBy('week_start')
+            ->whereDate('week_start', '<=', Carbon::today()->toDateString())
+            ->orderByDesc('week_start')
             ->firstOrFail();
         $assignment = $this->assignment($this->nurse, $department);
         $otherAssignment = $this->assignment($this->otherNurse, $otherDepartment);
@@ -195,6 +197,39 @@ class WorkspaceApiTest extends TestCase
         $this->assertTrue(password_verify('NewPassword123!', $this->nurse->refresh()->password));
     }
 
+    public function test_workspace_report_summaries_default_to_recent_period_window_and_can_load_all_history(): void
+    {
+        Carbon::setTestNow('2026-05-26 12:00:00');
+
+        try {
+            ReportingPeriod::query()->delete();
+
+            $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
+            $assignment = $this->assignment($this->nurse, $department);
+            $periods = collect(range(0, 10))
+                ->map(fn (int $offset): ReportingPeriod => $this->createReportingPeriod(
+                    Carbon::parse('2026-03-16')->addWeeks($offset)->toDateString(),
+                ));
+            $reports = $periods->map(fn (ReportingPeriod $period): Report => $this->report($assignment, $period));
+
+            $defaultResponse = $this->actingAs($this->admin)
+                ->getJson('/api/workspace')
+                ->assertOk()
+                ->assertJsonCount(9, 'state.reports');
+            $defaultReportIds = collect($defaultResponse->json('state.reports'))->pluck('id')->all();
+
+            $this->assertEmpty(array_intersect($reports->take(2)->pluck('id')->all(), $defaultReportIds));
+            $this->assertEqualsCanonicalizing($reports->slice(2)->pluck('id')->all(), $defaultReportIds);
+
+            $this->actingAs($this->admin)
+                ->getJson('/api/workspace?reportPeriodWindow=all')
+                ->assertOk()
+                ->assertJsonCount(11, 'state.reports');
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     private function assignment(User $nurse, Department $department): ReportAssignment
     {
         return ReportAssignment::query()->create([
@@ -218,6 +253,20 @@ class WorkspaceApiTest extends TestCase
             'submitted_at' => now(),
             'created_by' => $assignment->nurse_id,
             'updated_by' => $assignment->nurse_id,
+        ]);
+    }
+
+    private function createReportingPeriod(string $weekStart): ReportingPeriod
+    {
+        $start = Carbon::parse($weekStart);
+
+        return ReportingPeriod::query()->create([
+            'week_start' => $start->toDateString(),
+            'week_end' => $start->copy()->addDays(6)->toDateString(),
+            'deadline_at' => $start->copy()->addWeek()->setTime(10, 0),
+            'month_label' => $start->format('M Y'),
+            'quarter_label' => sprintf('Q%d %d', $start->quarter, $start->year),
+            'year_num' => $start->year,
         ]);
     }
 }

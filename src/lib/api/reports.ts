@@ -6,6 +6,8 @@ import type {
   SaveReportPayload,
 } from '@/lib/api/types'
 
+const reportDetailBatchSize = 100
+
 export async function fetchReportDetails(
   client: LaravelApiClient,
   reportIds: string[],
@@ -16,11 +18,21 @@ export async function fetchReportDetails(
     return {} as Record<string, ReportDetailRecord>
   }
 
-  const reports = await Promise.all(
-    uniqueReportIds.map((reportId) =>
-      client.get<ReportResponse>(`/api/reports/${reportId}`),
+  const batches = Array.from(
+    { length: Math.ceil(uniqueReportIds.length / reportDetailBatchSize) },
+    (_, index) => uniqueReportIds.slice(
+      index * reportDetailBatchSize,
+      (index + 1) * reportDetailBatchSize,
     ),
   )
+  const responses = await Promise.all(
+    batches.map((batch) =>
+      client.get<ListResponse<ReportResponse>>('/api/reports/details', {
+        query: { ids: batch.join(',') },
+      }),
+    ),
+  )
+  const reports = responses.flatMap((response) => response.data)
 
   return Object.fromEntries(
     reports.map((report) => [
@@ -57,8 +69,25 @@ export async function setReportLockState(
   )
 }
 
-export async function listReports(client: LaravelApiClient) {
-  return client.get<ListResponse<ReportResponse>>('/api/reports')
+export async function listReports(
+  client: LaravelApiClient,
+  options?: {
+    assignmentId?: string
+    reportingPeriodId?: string
+    reportPeriodWindow?: 'default' | 'all'
+    page?: number
+    perPage?: number
+  },
+) {
+  return client.get<ListResponse<ReportResponse>>('/api/reports', {
+    query: {
+      assignmentId: options?.assignmentId,
+      reportingPeriodId: options?.reportingPeriodId,
+      reportPeriodWindow: options?.reportPeriodWindow ?? 'default',
+      page: options?.page,
+      perPage: options?.perPage,
+    },
+  })
 }
 
 export async function syncOverdueNotifications(client: LaravelApiClient) {

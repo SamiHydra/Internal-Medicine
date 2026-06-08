@@ -13,7 +13,7 @@ class ReportFieldDefinition extends Model
 
     protected $fillable = [
         'template_id', 'section_key', 'field_key', 'label',
-        'field_kind', 'aggregate_type', 'display_order', 'metadata',
+        'field_kind', 'aggregate_type', 'display_order', 'metadata', 'active',
     ];
 
     protected function casts(): array
@@ -21,7 +21,16 @@ class ReportFieldDefinition extends Model
         return [
             'metadata' => 'array',
             'display_order' => 'integer',
+            'active' => 'boolean',
         ];
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<ReportFieldDefinition>  $query
+     */
+    public function scopeActive($query): void
+    {
+        $query->where('active', true);
     }
 
     public function template(): BelongsTo

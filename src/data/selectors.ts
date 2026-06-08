@@ -1,6 +1,7 @@
 import { parseISO } from 'date-fns'
 
-import { departments, departmentMap, reportTemplates, templateMap } from '@/config/templates'
+import { departments, departmentMap } from '@/config/templates'
+import { templateStore } from '@/config/template-registry'
 import { getDeadlineForPeriod, isPastDeadline } from '@/lib/dates'
 import { computeWeeklyValue, getNumericTotal } from '@/lib/metrics'
 import { formatDelta } from '@/lib/utils'
@@ -444,7 +445,7 @@ export function getAssignmentCardsForPeriod(
     .map((assignment) => {
       const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
       const department = departmentMap[assignment.departmentId]
-      const template = templateMap[assignment.templateId]
+      const template = templateStore.map[assignment.templateId]
 
       return {
         assignment,
@@ -482,7 +483,7 @@ function sumReportFieldTotals(reports: ReportRecord[], fieldIds: readonly string
 }
 
 function getReportWeeklyFieldValue(report: ReportRecord, fieldId: string) {
-  const field = templateMap[report.templateId]?.fields.find((item) => item.id === fieldId)
+  const field = templateStore.map[report.templateId]?.fields.find((item) => item.id === fieldId)
 
   if (!field) {
     return null
@@ -1481,7 +1482,7 @@ export function getSubmissionBoard(
     .map((assignment) => ({
       assignment,
       department: departmentMap[assignment.departmentId],
-      template: templateMap[assignment.templateId],
+      template: templateStore.map[assignment.templateId],
       statuses: periods.map((period) => {
         const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
       return {
@@ -1504,7 +1505,7 @@ export function getNurseSubmissionBoard(state: AppState, userId: string) {
   return getAssignmentsForUser(state, userId).map((assignment) => ({
     assignment,
     department: departmentMap[assignment.departmentId],
-    template: templateMap[assignment.templateId],
+    template: templateStore.map[assignment.templateId],
     statuses: periods.map((period) => {
       const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
 
@@ -1552,7 +1553,7 @@ export function getWhatChangedThisWeek(
     }
 
     const department = departmentMap[assignment.departmentId]
-    const template = templateMap[assignment.templateId]
+    const template = templateStore.map[assignment.templateId]
     const currentReport = getReportForAssignmentPeriod(state, assignment.id, currentPeriod.id)
     const previousReport = getReportForAssignmentPeriod(state, assignment.id, previousPeriod.id)
 
@@ -1645,11 +1646,11 @@ export function getDepartmentDetail(
       ? 'total_admitted_patients'
       : department.family === 'outpatient'
         ? 'total_patients_seen'
-        : templateMap[department.templateId].summaryCards[0]?.sourceId ?? ''
+        : templateStore.map[department.templateId].summaryCards[0]?.sourceId ?? ''
 
   return {
     department,
-    template: templateMap[department.templateId],
+    template: templateStore.map[department.templateId],
     assignment,
     period,
     rangePeriods,
@@ -1674,7 +1675,7 @@ export function getDepartmentDetail(
 }
 
 export function getAllTemplatesByFamily() {
-  return reportTemplates.reduce<Record<ReportFamily, typeof reportTemplates>>(
+  return templateStore.list.reduce<Record<ReportFamily, typeof templateStore.list>>(
     (accumulator, template) => {
       accumulator[template.family] = [
         ...(accumulator[template.family] ?? []),

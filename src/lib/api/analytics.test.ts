@@ -1,0 +1,101 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { fetchDashboardAnalytics, fetchQuarterlyAnalytics } from '@/lib/api/analytics'
+import { LaravelApiClient } from '@/lib/api/client'
+
+describe('fetchDashboardAnalytics', () => {
+  const originalFetch = globalThis.fetch
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  it('loads the cached dashboard aggregate with range filters', async () => {
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({
+        generatedAt: '2026-06-07T10:00:00.000000Z',
+        scope: {},
+        overview: {
+          scope: {},
+          summary: {
+            totalReports: 0,
+            expectedReports: 0,
+            missingReports: 0,
+            statusCounts: {},
+            totals: {},
+            occupancy: { borPercent: null, btr: null, alos: null },
+          },
+          weekly: [],
+          monthly: [],
+        },
+        families: {
+          inpatient: { scope: {}, summary: {}, departments: [], weekly: [], monthly: [] },
+          outpatient: { scope: {}, summary: {}, departments: [], weekly: [], monthly: [] },
+          procedure: { scope: {}, summary: {}, departments: [], weekly: [], monthly: [] },
+        },
+      }),
+    })
+
+    const client = new LaravelApiClient('http://127.0.0.1:8000')
+    const payload = await fetchDashboardAnalytics(client, {
+      dateFrom: '2026-04-06',
+      dateTo: '2026-05-25',
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(decodeURIComponent(String(fetchMock.mock.calls[0][0]))).toContain(
+      '/api/analytics/dashboard?dateFrom=2026-04-06&dateTo=2026-05-25',
+    )
+    expect(payload.generatedAt).toBe('2026-06-07T10:00:00.000000Z')
+  })
+
+  it('loads quarterly rollups with year filters', async () => {
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({
+        scope: { year: 2026, family: 'inpatient' },
+        data: [
+          {
+            key: '2026-Q2',
+            quarter: 'Q2',
+            quarterLabel: 'Q2 2026',
+            year: 2026,
+            weekStart: '2026-04-06',
+            weekEnd: '2026-06-28',
+            periodIds: ['p1', 'p2'],
+            periodCount: 2,
+            summary: {
+              totalReports: 2,
+              expectedReports: 2,
+              missingReports: 0,
+              statusCounts: { submitted: 2 },
+              totals: { totalAdmissions: 12 },
+              occupancy: { borPercent: null, btr: null, alos: null },
+            },
+          },
+        ],
+      }),
+    })
+
+    const client = new LaravelApiClient('http://127.0.0.1:8000')
+    const payload = await fetchQuarterlyAnalytics(client, {
+      year: 2026,
+      family: 'inpatient',
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(decodeURIComponent(String(fetchMock.mock.calls[0][0]))).toContain(
+      '/api/analytics/quarterly?year=2026&family=inpatient',
+    )
+    expect(payload.data[0].quarterLabel).toBe('Q2 2026')
+  })
+})

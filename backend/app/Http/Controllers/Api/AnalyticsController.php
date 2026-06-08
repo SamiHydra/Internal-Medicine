@@ -7,6 +7,7 @@ use App\Models\ReportingPeriod;
 use App\Services\Analytics\AnalyticsExportService;
 use App\Services\Analytics\AnalyticsFilters;
 use App\Services\Analytics\AnalyticsService;
+use App\Services\Analytics\DashboardAnalyticsService;
 use App\Services\Analytics\InpatientAnalyticsService;
 use App\Services\Analytics\OutpatientAnalyticsService;
 use App\Services\Analytics\ProcedureAnalyticsService;
@@ -20,6 +21,7 @@ class AnalyticsController extends Controller
 {
     public function __construct(
         private readonly AnalyticsService $analytics,
+        private readonly DashboardAnalyticsService $dashboardAnalytics,
         private readonly InpatientAnalyticsService $inpatientAnalytics,
         private readonly OutpatientAnalyticsService $outpatientAnalytics,
         private readonly ProcedureAnalyticsService $procedureAnalytics,
@@ -29,6 +31,11 @@ class AnalyticsController extends Controller
     public function overview(Request $request): JsonResponse
     {
         return response()->json($this->analytics->overview($this->filters($request)));
+    }
+
+    public function dashboard(Request $request): JsonResponse
+    {
+        return response()->json($this->dashboardAnalytics->summary($this->filters($request)));
     }
 
     public function inpatient(Request $request): JsonResponse
@@ -63,6 +70,26 @@ class AnalyticsController extends Controller
         return response()->json([
             'scope' => $this->analytics->scope($filters),
             'data' => $this->analytics->monthly($filters),
+        ]);
+    }
+
+    public function quarterly(Request $request): JsonResponse
+    {
+        $filters = $this->filters($request);
+
+        return response()->json([
+            'scope' => $this->analytics->scope($filters),
+            'data' => $this->analytics->quarterly($filters),
+        ]);
+    }
+
+    public function yearly(Request $request): JsonResponse
+    {
+        $filters = $this->filters($request);
+
+        return response()->json([
+            'scope' => $this->analytics->scope($filters),
+            'data' => $this->analytics->yearly($filters),
         ]);
     }
 

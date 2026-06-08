@@ -3,6 +3,7 @@
 use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\EnsureRole;
+use App\Http\Middleware\SecurityHeaders;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -20,6 +21,17 @@ return Application::configure(basePath: dirname(__DIR__))
         __DIR__.'/../app/Console/Commands',
     ])
     ->withMiddleware(function (Middleware $middleware): void {
+        // Behind a TLS-terminating proxy (typical on shared hosting), trust the
+        // forwarded headers so $request->isSecure(), secure cookies and HSTS work.
+        // Set TRUSTED_PROXIES="*" (or a comma-separated list) in the environment.
+        $trustedProxies = env('TRUSTED_PROXIES');
+        if (! empty($trustedProxies)) {
+            $middleware->trustProxies(
+                at: $trustedProxies === '*' ? '*' : array_map('trim', explode(',', $trustedProxies)),
+            );
+        }
+
+        $middleware->append(SecurityHeaders::class);
         $middleware->statefulApi();
         $middleware->api(prepend: [
             EnsureFrontendRequestsAreStateful::class,

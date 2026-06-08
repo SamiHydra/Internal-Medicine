@@ -20,6 +20,12 @@ final class Permissions
 
     public const TEMPLATES_MANAGE = 'templates.manage';
 
+    /** Edit a template's safe content (labels, units, order, active days, signal thresholds, soft-disable). Admins + Maintenance. */
+    public const TEMPLATES_EDIT_CONTENT = 'templates.editContent';
+
+    /** Structural edits (rename keys, change field types, add/remove fields, slug/family). Maintenance only. */
+    public const TEMPLATES_EDIT_STRUCTURE = 'templates.editStructure';
+
     public const ASSIGNMENTS_MANAGE = 'assignments.manage';
 
     public const ACCESS_REQUESTS_CREATE = 'accessRequests.create';
@@ -59,6 +65,8 @@ final class Permissions
             self::ADMINS_APPROVE,
             self::DEPARTMENTS_MANAGE,
             self::TEMPLATES_MANAGE,
+            self::TEMPLATES_EDIT_CONTENT,
+            self::TEMPLATES_EDIT_STRUCTURE,
             self::ASSIGNMENTS_MANAGE,
             self::ACCESS_REQUESTS_REVIEW,
             self::REPORTS_VIEW_ANY,
@@ -78,6 +86,7 @@ final class Permissions
             self::ADMINS_APPROVE,
             self::DEPARTMENTS_MANAGE,
             self::TEMPLATES_MANAGE,
+            self::TEMPLATES_EDIT_CONTENT,
             self::ASSIGNMENTS_MANAGE,
             self::ACCESS_REQUESTS_REVIEW,
             self::REPORTS_VIEW_ANY,

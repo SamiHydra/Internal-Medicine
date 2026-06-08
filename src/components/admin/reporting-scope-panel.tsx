@@ -1,3 +1,6 @@
+import { ChevronDown, SlidersHorizontal } from 'lucide-react'
+import { useState } from 'react'
+
 import {
   Select,
   SelectContent,
@@ -42,12 +45,21 @@ export function ReportingScopePanel({
   metrics = [],
   fieldsClassName,
   className,
+  collapsibleLabel,
+  summary,
 }: {
   fields: readonly ScopeField[]
   metrics?: readonly ScopeMetric[]
   fieldsClassName?: string
   className?: string
+  /** When set, the panel collapses behind a toggle on mobile (always open from `sm`). */
+  collapsibleLabel?: string
+  /** Live one-line summary shown on the collapsed mobile header (e.g. active scope). */
+  summary?: string
 }) {
+  const [open, setOpen] = useState(false)
+  const collapsible = Boolean(collapsibleLabel)
+
   return (
     <section
       className={cn(
@@ -55,15 +67,45 @@ export function ReportingScopePanel({
         className,
       )}
     >
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          className="flex w-full items-center justify-between gap-3 text-left transition-transform duration-200 motion-safe:active:scale-[0.99] sm:hidden"
+        >
+          <span className="flex items-center gap-2 text-[13px] font-semibold text-[#1d3047]">
+            <SlidersHorizontal className="h-4 w-4 text-[#005db6]" />
+            {collapsibleLabel}
+          </span>
+          <span className="flex min-w-0 items-center gap-2">
+            {summary ? (
+              <span className="max-w-[10rem] truncate text-xs text-[#74777f]">{summary}</span>
+            ) : null}
+            <ChevronDown
+              className={cn(
+                'h-4 w-4 shrink-0 text-[#74777f] transition-transform duration-200',
+                open && 'rotate-180',
+              )}
+            />
+          </span>
+        </button>
+      ) : null}
       <div
         className={cn(
           'grid gap-3',
-          fields.length <= 1
-            ? 'grid-cols-1'
-            : fields.length === 2
-              ? 'md:grid-cols-2'
-              : 'sm:[grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]',
+          // An explicit fieldsClassName fully governs the column layout; otherwise fall
+          // back to a responsive auto-fit that can leave a lone field on its own row.
+          fieldsClassName
+            ? undefined
+            : fields.length <= 1
+              ? 'grid-cols-1'
+              : fields.length === 2
+                ? 'md:grid-cols-2'
+                : 'sm:[grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]',
           fieldsClassName,
+          // Collapsed on mobile: hidden until toggled; always visible from `sm`.
+          collapsible && (open ? 'mt-3 sm:mt-0' : 'hidden sm:grid'),
         )}
       >
         {fields.map((field) => (

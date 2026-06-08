@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Department;
+use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportingPeriod;
 use App\Models\User;
@@ -11,6 +12,7 @@ use Database\Seeders\ReportFieldDefinitionSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
 class AnalyticsTest extends TestCase
@@ -65,6 +67,44 @@ class AnalyticsTest extends TestCase
 
         $response->assertJsonCount(1, 'weekly');
         $response->assertJsonCount(1, 'monthly');
+    }
+
+    public function test_admin_can_read_cached_dashboard_analytics_and_cache_invalidates_on_report_update(): void
+    {
+        $this->createSampleReports();
+
+        $this->actingAs($this->admin)
+            ->getJson("/api/analytics/dashboard?period_id={$this->period->id}")
+            ->assertOk()
+            ->assertJsonPath('overview.summary.totalReports', 3)
+            ->assertJsonPath('overview.summary.totals.totalAdmissions', 12)
+            ->assertJsonPath('families.inpatient.summary.totals.totalAdmissions', 12)
+            ->assertJsonPath('families.outpatient.outpatient.seniorPhysicianAvailability.fullDay', 1)
+            ->assertJsonPath('families.procedure.procedures.totalThroughput', 10);
+
+        try {
+            Carbon::setTestNow(now()->addSecond());
+
+            $report = Report::query()
+                ->whereHas('department', fn ($query) => $query->where('slug', 'gi_neuro_inpatient'))
+                ->firstOrFail();
+
+            $this->actingAs($this->nurse)
+                ->putJson("/api/reports/{$report->id}", [
+                    'values' => [
+                        'total_admitted_patients' => $this->dailyValue('total_admitted_patients', 10),
+                    ],
+                ])
+                ->assertOk()
+                ->assertJsonPath('values.total_admitted_patients.dailyValues.monday', 10);
+
+            $this->actingAs($this->admin)
+                ->getJson("/api/analytics/dashboard?period_id={$this->period->id}")
+                ->assertOk()
+                ->assertJsonPath('overview.summary.totals.totalAdmissions', 17);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_nurses_cannot_read_analytics(): void
@@ -165,6 +205,58 @@ class AnalyticsTest extends TestCase
             ->assertJsonPath('data.0.summary.totals.totalPatientsSeen', 40);
     }
 
+    public function test_quarterly_and_yearly_rollups_aggregate_weekly_reports(): void
+    {
+        $assignment = $this->assignmentForDepartment('gi_neuro_inpatient');
+        $q2SecondPeriod = $this->createReportingPeriod('2026-06-01');
+        $q3Period = $this->createReportingPeriod('2026-07-06');
+
+        $this->submitReportForAssignment($assignment, $this->period, [
+            'total_admitted_patients' => $this->dailyValue('total_admitted_patients', 5),
+            'discharged_home' => $this->dailyValue('discharged_home', 3),
+            'total_patient_days' => $this->dailyValue('total_patient_days', 30),
+        ]);
+        $this->submitReportForAssignment($assignment, $q2SecondPeriod, [
+            'total_admitted_patients' => $this->dailyValue('total_admitted_patients', 7),
+            'discharged_home' => $this->dailyValue('discharged_home', 4),
+            'total_patient_days' => $this->dailyValue('total_patient_days', 40),
+        ]);
+        $this->submitReportForAssignment($assignment, $q3Period, [
+            'total_admitted_patients' => $this->dailyValue('total_admitted_patients', 11),
+            'discharged_home' => $this->dailyValue('discharged_home', 5),
+            'total_patient_days' => $this->dailyValue('total_patient_days', 55),
+        ]);
+
+        $quarterly = $this->actingAs($this->admin)
+            ->getJson('/api/analytics/quarterly?year=2026&family=inpatient')
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.quarter', 'Q2')
+            ->assertJsonPath('data.0.quarterLabel', 'Q2 2026')
+            ->assertJsonPath('data.0.periodCount', 2)
+            ->assertJsonPath('data.0.summary.totalReports', 2)
+            ->assertJsonPath('data.0.summary.expectedReports', 2)
+            ->assertJsonPath('data.0.summary.totals.totalAdmissions', 12)
+            ->assertJsonPath('data.0.summary.totals.totalDischarges', 7)
+            ->assertJsonPath('data.0.summary.totals.totalPatientDays', 70)
+            ->assertJsonPath('data.1.quarter', 'Q3')
+            ->assertJsonPath('data.1.summary.totals.totalAdmissions', 11);
+
+        $this->assertEqualsWithDelta(10, $quarterly->json('data.0.summary.occupancy.alos'), 0.001);
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/analytics/yearly?year=2026&family=inpatient')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.year', 2026)
+            ->assertJsonPath('data.0.periodCount', 3)
+            ->assertJsonPath('data.0.summary.totalReports', 3)
+            ->assertJsonPath('data.0.summary.expectedReports', 3)
+            ->assertJsonPath('data.0.summary.totals.totalAdmissions', 23)
+            ->assertJsonPath('data.0.summary.totals.totalDischarges', 12)
+            ->assertJsonPath('data.0.summary.totals.totalPatientDays', 125);
+    }
+
     /**
      * @return array<string, ReportAssignment>
      */
@@ -203,25 +295,53 @@ class AnalyticsTest extends TestCase
      */
     private function submitReport(string $departmentSlug, array $values): ReportAssignment
     {
+        $assignment = $this->assignmentForDepartment($departmentSlug);
+
+        $this->submitReportForAssignment($assignment, $this->period, $values);
+
+        return $assignment;
+    }
+
+    private function assignmentForDepartment(string $departmentSlug): ReportAssignment
+    {
         $department = Department::query()->where('slug', $departmentSlug)->firstOrFail();
-        $assignment = ReportAssignment::query()->create([
+
+        return ReportAssignment::query()->create([
             'nurse_id' => $this->nurse->id,
             'department_id' => $department->id,
             'template_id' => $department->template_id,
             'active' => true,
             'approved_at' => now(),
         ]);
+    }
 
+    /**
+     * @param  array<string, array{fieldId: string, dailyValues: array<string, mixed>}>  $values
+     */
+    private function submitReportForAssignment(ReportAssignment $assignment, ReportingPeriod $period, array $values): void
+    {
         $this->actingAs($this->nurse)
             ->postJson('/api/reports', [
                 'assignmentId' => $assignment->id,
-                'reportingPeriodId' => $this->period->id,
+                'reportingPeriodId' => $period->id,
                 'submit' => true,
                 'values' => $values,
             ])
             ->assertCreated();
+    }
 
-        return $assignment;
+    private function createReportingPeriod(string $weekStart): ReportingPeriod
+    {
+        $start = Carbon::parse($weekStart);
+
+        return ReportingPeriod::query()->create([
+            'week_start' => $start->toDateString(),
+            'week_end' => $start->copy()->addDays(6)->toDateString(),
+            'deadline_at' => $start->copy()->addWeek()->setTime(10, 0),
+            'month_label' => $start->format('M Y'),
+            'quarter_label' => sprintf('Q%d %d', $start->quarter, $start->year),
+            'year_num' => $start->year,
+        ]);
     }
 
     /**

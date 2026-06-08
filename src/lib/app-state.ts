@@ -15,6 +15,12 @@ export const defaultAppSettings: AppSettings = {
     'hai_cauti',
     'hai_vap',
   ],
+  reportReminderThresholds: {
+    inAppHoursBeforeDeadline: 24,
+    emailHoursBeforeDeadline: 4,
+    smsHoursBeforeDeadline: 1,
+    overdueHoursAfterDeadline: 0,
+  },
 }
 
 export function createEmptyAppState(): AppState {

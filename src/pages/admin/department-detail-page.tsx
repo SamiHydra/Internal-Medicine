@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { useParams } from 'react-router-dom'
 import {
@@ -26,6 +26,7 @@ import { useAppData } from '@/context/app-data-context'
 import {
   getCurrentPeriod,
   getDepartmentDetail,
+  getReportingPeriodsForRange,
   getVisibleReportingPeriods,
   type ReportingTimeRange,
 } from '@/data/selectors'
@@ -34,26 +35,52 @@ import { formatTimestamp } from '@/lib/dates'
 
 export function DepartmentDetailPage() {
   const { departmentId = '' } = useParams()
-  const { state, ensureHistoryData, ensureReportDetails } = useAppData()
+  const { state, ensureHistoryData, ensureReportDetails, refreshData } = useAppData()
   const [timeRange, setTimeRange] = useState<ReportingTimeRange>('last8')
   const [selectedPeriodId, setSelectedPeriodId] = useState('')
+  const requestedReportWindowRef = useRef<'default' | 'all' | null>(null)
   const currentPeriod = getCurrentPeriod(state)
   const availablePeriods = [...getVisibleReportingPeriods(state)].reverse()
   const fallbackPeriodId = currentPeriod?.id ?? availablePeriods[0]?.id ?? ''
   const effectivePeriodId = availablePeriods.some((period) => period.id === selectedPeriodId)
     ? selectedPeriodId
     : fallbackPeriodId
-  const departmentReportIds = state.reports
-    .filter((report) => report.departmentId === departmentId)
+  const reportingPeriodIds = new Set(
+    getReportingPeriodsForRange(state, timeRange, effectivePeriodId).map(
+      (period) => period.id,
+    ),
+  )
+  const departmentReportIdsKey = state.reports
+    .filter(
+      (report) =>
+        report.departmentId === departmentId &&
+        reportingPeriodIds.has(report.reportingPeriodId),
+    )
     .map((report) => report.id)
+    .join('|')
 
   useEffect(() => {
     void ensureHistoryData()
   }, [ensureHistoryData])
 
   useEffect(() => {
+    const nextReportWindow = timeRange === 'all' ? 'all' : 'default'
+
+    if (requestedReportWindowRef.current === nextReportWindow) {
+      return
+    }
+
+    requestedReportWindowRef.current = nextReportWindow
+    void refreshData({ reportPeriodWindow: nextReportWindow })
+  }, [refreshData, timeRange])
+
+  useEffect(() => {
+    const departmentReportIds = departmentReportIdsKey
+      ? departmentReportIdsKey.split('|')
+      : []
+
     void ensureReportDetails(departmentReportIds)
-  }, [departmentId, departmentReportIds, ensureReportDetails])
+  }, [departmentReportIdsKey, ensureReportDetails])
 
   const detail = getDepartmentDetail(state, departmentId, {
     anchorPeriodId: effectivePeriodId,

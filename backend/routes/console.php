@@ -8,5 +8,7 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Schedule::command('reports:sync-overdue')->everyMinute();
-Schedule::command('reports:ensure-periods')->daily();
+Schedule::command('reports:sync-overdue')->hourly()->withoutOverlapping();
+Schedule::command('reports:send-reminders')->hourly()->withoutOverlapping();
+Schedule::command('reports:ensure-periods')->weeklyOn(0, '00:05')->withoutOverlapping();
+Schedule::command('queue:work --stop-when-empty --max-time=50')->everyMinute()->withoutOverlapping();

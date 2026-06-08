@@ -1,6 +1,7 @@
 import type { LaravelApiClient } from '@/lib/api/client'
 import type {
   AcademicAnalyticsQuery,
+  AcademicAuditResponse,
   AcademicEvaluationListResponse,
   AcademicFormOptions,
   AcademicListQuery,
@@ -111,4 +112,9 @@ export function listAcademicEvaluations(
     '/api/admin/academic/evaluations',
     { query },
   )
+}
+
+/** Chronological evaluation-activity feed for the admin Audit Log (academic workspace). */
+export function fetchAcademicAuditTrail(client: LaravelApiClient) {
+  return client.get<AcademicAuditResponse>('/api/admin/academic/audit')
 }

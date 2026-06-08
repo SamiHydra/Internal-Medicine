@@ -1,3 +1,4 @@
+import { hydrateTemplatesFromApi } from '@/config/template-registry'
 import { fetchSession } from '@/lib/api/auth'
 import type { LaravelApiClient } from '@/lib/api/client'
 import type {
@@ -30,11 +31,18 @@ export async function fetchLiveAppState(
 ) {
   void userId
 
-  return client.get<WorkspacePayload>('/api/workspace', {
+  const payload = await client.get<WorkspacePayload>('/api/workspace', {
     query: {
       includeProfiles: options?.includeProfiles ?? false,
       includeAccessRequests: options?.includeAccessRequests ?? false,
       includeHistory: options?.includeHistory ?? false,
+      reportPeriodWindow: options?.reportPeriodWindow ?? 'default',
     },
   })
+
+  // Overlay DB template edits over the static config floor for every workspace
+  // load (bootstrap, refresh, ensure*). Safe no-op when the backend omits them.
+  hydrateTemplatesFromApi(payload.state.templates)
+
+  return payload
 }

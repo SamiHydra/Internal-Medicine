@@ -2,7 +2,9 @@ import type { LaravelApiClient } from '@/lib/api/client'
 import { resolveAssignmentReference } from '@/lib/api/helpers'
 import type {
   AdminAccessRequest,
+  AdminAuditEntry,
   ApiReferenceState,
+  ApiTemplateConfig,
   CreateAdminAccountPayload,
   DepartmentReferencePayload,
   SubmitAdminAccessRequestPayload,
@@ -84,6 +86,39 @@ export async function reviewAdminAccessRequest(
   decision: 'approved' | 'rejected',
 ) {
   await client.post(`/api/admin/admin-access-requests/${requestId}/${decision === 'approved' ? 'approve' : 'reject'}`)
+}
+
+/** Cross-cutting account & access actions (approvals, role/assignment changes) for the Audit Log. */
+export async function fetchAdminAuditTrail(client: LaravelApiClient): Promise<AdminAuditEntry[]> {
+  const response = await client.get<{ data: AdminAuditEntry[] }>('/api/admin/admin-audit-logs')
+
+  return response.data
+}
+
+/** Full template definitions (incl. inactive fields + presentation metadata) for the editor. */
+export async function fetchAdminTemplates(
+  client: LaravelApiClient,
+): Promise<ApiTemplateConfig[]> {
+  const response = await client.get<{ data: ApiTemplateConfig[] }>('/api/admin/templates')
+
+  return response.data
+}
+
+export async function updateTemplateContent(
+  client: LaravelApiClient,
+  slug: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  await client.patch(`/api/admin/templates/${slug}`, payload)
+}
+
+export async function setTemplateFieldActive(
+  client: LaravelApiClient,
+  slug: string,
+  fieldKey: string,
+  active: boolean,
+): Promise<void> {
+  await client.patch(`/api/admin/templates/${slug}/fields/${fieldKey}/active`, { active })
 }
 
 export async function ensureDepartmentReferenceData(

@@ -2,7 +2,10 @@ import { Suspense, lazy, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import { AppStateScreen } from '@/components/layout/app-state-screen'
+import { FullPageSkeleton, PageSkeleton } from '@/components/layout/loading-skeletons'
+import { ScrollToTop } from '@/components/layout/scroll-to-top'
 import { useAppData } from '@/context/app-data-context'
+import { WorkspaceProvider } from '@/context/workspace-context'
 import { apiEnvSetupHint } from '@/lib/api/env'
 import { LoginPage } from '@/pages/auth/login-page'
 import { landingPathForRole } from '@/routes/landing'
@@ -26,6 +29,11 @@ const AcademicDashboardPage = lazy(() =>
 const AcademicPersonDetailPage = lazy(() =>
   import('@/pages/admin/academic-person-detail-page').then((module) => ({
     default: module.AcademicPersonDetailPage,
+  })),
+)
+const AcademicSubmissionsPage = lazy(() =>
+  import('@/pages/admin/academic-submissions-page').then((module) => ({
+    default: module.AcademicSubmissionsPage,
   })),
 )
 const AuditLogPage = lazy(() =>
@@ -120,21 +128,7 @@ const AcademicHistoryPage = lazy(() =>
 )
 
 function InlineRouteFallback() {
-  return (
-    <section className="rounded-[0.35rem] border border-[#d9e0e7] bg-[linear-gradient(180deg,#ffffff_0%,#f1f5fa_100%)] px-5 py-10 shadow-[0_18px_36px_rgba(0,33,71,0.06)]">
-      <div className="space-y-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
-          Loading view
-        </p>
-        <h1 className="font-display text-[2rem] leading-[0.98] tracking-[-0.04em] text-[#000a1e]">
-          Opening page
-        </h1>
-        <p className="text-sm leading-7 text-[#5b6169]">
-          Preparing the selected dashboard screen.
-        </p>
-      </div>
-    </section>
-  )
+  return <PageSkeleton />
 }
 
 function renderLazyRoute(node: ReactNode, fallback: 'page' | 'inline' = 'page') {
@@ -142,10 +136,7 @@ function renderLazyRoute(node: ReactNode, fallback: 'page' | 'inline' = 'page') 
     <Suspense
       fallback={
         fallback === 'page' ? (
-          <AppStateScreen
-            title="Loading Page"
-            description="Preparing the selected workspace view."
-          />
+          <FullPageSkeleton label="Loading page" />
         ) : (
           <InlineRouteFallback />
         )
@@ -204,7 +195,9 @@ function HomeRedirect() {
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
+      <WorkspaceProvider>
+        <ScrollToTop />
+        <Routes>
         <Route path="/" element={<HomeRedirect />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={renderLazyRoute(<ForgotPasswordPage />)} />
@@ -257,6 +250,10 @@ function App() {
                 element={renderLazyRoute(<AcademicDashboardPage />, 'inline')}
               />
               <Route
+                path="/admin/academic/submissions"
+                element={renderLazyRoute(<AcademicSubmissionsPage />, 'inline')}
+              />
+              <Route
                 path="/admin/academic/people/:userId"
                 element={renderLazyRoute(<AcademicPersonDetailPage />, 'inline')}
               />
@@ -292,8 +289,9 @@ function App() {
           </Route>
         </Route>
 
-        <Route path="*" element={renderLazyRoute(<NotFoundPage />)} />
-      </Routes>
+          <Route path="*" element={renderLazyRoute(<NotFoundPage />)} />
+        </Routes>
+      </WorkspaceProvider>
     </BrowserRouter>
   )
 }

@@ -202,6 +202,49 @@ class AcademicEvaluationApiTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_admin_academic_audit_merges_both_directions_newest_first(): void
+    {
+        // Consultant evaluates the resident (resident is the subject), filed earlier.
+        $this->travelTo(now()->subMinutes(5));
+        ResidentEvaluation::query()->create($this->residentRow([
+            'on_time' => true,
+            'prepared' => true,
+            'overall_rating' => 4,
+        ]));
+        $this->travelBack();
+
+        // Resident evaluates the consultant (consultant is the subject), filed now.
+        ConsultantEvaluation::query()->create($this->consultantRow([
+            'all_patients_reviewed' => true,
+            'vte_assessed' => true,
+        ]));
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/academic/audit')
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            // Newest first: the consultant evaluation was filed most recently.
+            ->assertJsonPath('data.0.direction', 'consultant')
+            ->assertJsonPath('data.0.authorName', $this->resident->full_name)
+            ->assertJsonPath('data.0.subjectName', $this->consultant->full_name)
+            ->assertJsonPath('data.0.wardName', $this->ward->name)
+            ->assertJsonPath('data.0.overallRating', null)
+            ->assertJsonPath('data.1.direction', 'resident')
+            ->assertJsonPath('data.1.overallRating', 4);
+
+        // The direction filter narrows to a single table.
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/academic/audit?direction=resident')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.direction', 'resident');
+
+        // Non-admins cannot read the academic audit trail.
+        $this->actingAs($this->resident)
+            ->getJson('/api/admin/academic/audit')
+            ->assertForbidden();
+    }
+
     public function test_people_and_trend_endpoints_return_aggregates(): void
     {
         ConsultantEvaluation::query()->create($this->consultantRow([

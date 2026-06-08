@@ -67,14 +67,57 @@ export type LiveAppStateLoadOptions = {
   includeProfiles?: boolean
   includeAccessRequests?: boolean
   includeHistory?: boolean
+  reportPeriodWindow?: 'default' | 'all'
 }
 
-export type ReportDetailRecord = Pick<ReportRecord, 'values' | 'calculatedMetrics'>
+export type ReportDetailRecord = Pick<ReportRecord, 'values' | 'calculatedMetrics' | 'quality'>
+
+/** A field definition as serialized by the backend (serializeFieldDefinition). */
+export type ApiTemplateField = {
+  id: string
+  templateId: string
+  sectionKey: string
+  fieldKey: string
+  label: string
+  fieldKind: 'integer' | 'decimal' | 'time' | 'text' | 'choice'
+  aggregateType: 'sum' | 'average' | 'latest' | 'none'
+  displayOrder: number
+  active?: boolean
+  metadata?: {
+    unit?: string
+    highlightWhenNonZero?: boolean
+    readOnlyWeeklyTotal?: boolean
+    options?: string[]
+    description?: string
+  } | null
+}
+
+/** A template as serialized by the backend (serializeTemplate), incl. presentation metadata. */
+export type ApiTemplateConfig = {
+  id: string
+  slug: string
+  family: 'inpatient' | 'outpatient' | 'procedure'
+  name: string
+  description: string
+  activeDays: string[]
+  active?: boolean
+  metadata?: {
+    presentation?: {
+      sections?: ReportTemplateConfig['sections']
+      summaryCards?: ReportTemplateConfig['summaryCards']
+      chartMappings?: ReportTemplateConfig['chartMappings']
+      changeRules?: ReportTemplateConfig['changeRules']
+    }
+  } | null
+  fields: ApiTemplateField[]
+}
 
 export type WorkspacePayload = {
   currentUser: UserProfile
   references: ApiReferenceState
-  state: AppState
+  // The backend embeds hydrated template definitions under state.templates; the
+  // SPA overlays these (DB edits) over the static config floor at parse time.
+  state: AppState & { templates?: ApiTemplateConfig[] }
 }
 
 export type SessionPayload = {
@@ -109,6 +152,12 @@ export type ReportResponse = ReportRecord & {
 
 export type ListResponse<T> = {
   data: T[]
+  meta?: {
+    currentPage: number
+    lastPage: number
+    perPage: number
+    total: number
+  }
 }
 
 export type SettingsResponse = {
@@ -316,6 +365,40 @@ export type AcademicEvaluationListResponse = {
     perPage: number
     total: number
   }
+}
+
+export type AcademicAuditEntry = {
+  id: string
+  direction: AcademicDirection
+  authorId: string
+  authorName: string | null
+  subjectId: string
+  subjectName: string | null
+  wardId: string
+  wardName: string | null
+  evaluationDate: string | null
+  createdAt: string | null
+  overallRating: number | null
+  indicatorsMet: number
+  indicatorsTotal: number
+}
+
+export type AcademicAuditResponse = {
+  data: AcademicAuditEntry[]
+}
+
+export type AdminAuditEntry = {
+  id: string
+  userId: string | null
+  userName: string | null
+  action: string
+  entityType: string
+  entityId: string | null
+  oldValues: Record<string, unknown> | null
+  newValues: Record<string, unknown> | null
+  ipAddress: string | null
+  userAgent: string | null
+  createdAt: string | null
 }
 
 export type SubmitAcademicRegistrationPayload = {

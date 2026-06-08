@@ -6,12 +6,17 @@ use App\Models\Notification;
 use App\Models\Report;
 use App\Models\ReportStatusHistory;
 use App\Models\User;
+use App\Services\Analytics\DashboardAnalyticsService;
 use App\Support\Authorization\Permissions;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 
 class ReportLockingService
 {
+    public function __construct(
+        private readonly DashboardAnalyticsService $dashboardAnalytics,
+    ) {}
+
     /**
      * @throws AuthorizationException
      */
@@ -21,7 +26,7 @@ class ReportLockingService
             throw new AuthorizationException('Admin privileges are required to change report locks.');
         }
 
-        return DB::transaction(function () use ($actor, $report, $locked): Report {
+        $lockedReport = DB::transaction(function () use ($actor, $report, $locked): Report {
             $lockedReport = Report::query()
                 ->whereKey($report->id)
                 ->lockForUpdate()
@@ -82,6 +87,10 @@ class ReportLockingService
 
             return $lockedReport->refresh();
         });
+
+        $this->dashboardAnalytics->invalidate();
+
+        return $lockedReport;
     }
 
     private function recordStatus(Report $report, string $status, User $actor, string $note, mixed $changedAt): void

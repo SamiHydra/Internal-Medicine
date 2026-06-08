@@ -87,7 +87,7 @@ In production there is no Vite proxy: the SPA is served as static assets from Cl
 │   ├── routes/
 │   │   ├── api.php                  # the entire /api surface
 │   │   ├── web.php                  # welcome view + /up health check
-│   │   └── console.php              # scheduler: reports:sync-overdue (everyMinute), ensure-periods (daily)
+│   │   └── console.php              # scheduler: overdue/reminders hourly, ensure-periods weekly, queue drain every minute
 │   ├── app/
 │   │   ├── Http/
 │   │   │   ├── Controllers/Api/         # AuthController, WorkspaceController, ReportWorkflowController, ...
@@ -295,9 +295,10 @@ Provides `serializeUser`, `serializeAssignment`, `serializeDepartment`, `seriali
 | **Reports\ReportSubmissionService** | The submit/draft engine. `save(actor, assignment, period, values, submit)` runs in a transaction: authorizes the edit, finds the report for (assignment, period) with `lockForUpdate()` (rejects locked reports), creates it if missing, `persistValues` writes EAV rows (coercing by `field_kind`, validating day ∈ template `active_days`, logging `audit_logs` for post-submission changes), computes `nextStatus`, records `report_status_history`, notifies admins (`new_report_submitted` / `submitted_report_edited`), fires `CriticalEventAlertService::notify`, then recomputes metrics via `ReportCalculationService::upsertForReport`. |
 | **Reports\ReportLockingService** | `setLockState(actor, report, locked)` — active-admin only; transactional `lockForUpdate`, idempotent. Lock sets `status=locked`/`locked_at`; unlock restores `edited_after_submission` or `submitted` and clears `locked_at`. Notifies the nurse (`report_locked`/`report_unlocked`). |
 | **Reports\ReportCalculationService** | `upsertForReport(report)` — inpatient BOR% = `patientDays / (bedCount × 30) × 100`, BTR = `(discharged_home + discharged_ama) / bedCount`, ALOS = `patientDays / totalDischarge`. Null when `bed_count` is falsy. Non-inpatient ⇒ null metrics. |
-| **Reports\OverdueReportService** | `sync()` (cron `everyMinute`) — upserts `overdue_report` notifications for active assignments lacking a submitted report past the deadline (live periods only, `week_start >= 2026-03-02`); deletes stale ones; no-ops if deadline enforcement is off. |
+| **Reports\OverdueReportService** | `sync()` (cron `hourly`) — upserts `overdue_report` notifications for active assignments lacking a submitted report past the deadline (live periods only, `week_start >= 2026-03-02`); deletes stale ones; no-ops if deadline enforcement is off. |
 | **Reports\CriticalEventAlertService** | `detect`/`notify` — sums configured `critical_non_zero_fields` (default `new_deaths`, `new_pressure_ulcer`, `total_hai`, `hai_clabsi`, `hai_cauti`, `hai_vap`); creates `critical_value_alert` notifications to admins when any weekly total > 0. |
-| **Reports\ReportingPeriodService** | `ensureRollingWindow(pastWeeks=26, futureWeeks=52)` (cron `daily`) — `firstOrNew` a `reporting_periods` row per Monday in the window; fills week_end, deadline, labels. |
+| **Reports\ReportReminderService** | `sendDue()` (cron `hourly`) — sends one in-app/email/SMS reminder per configured tier for active assignments with no submitted report near `deadline_at`; delivery goes through the database queue. |
+| **Reports\ReportingPeriodService** | `ensureRollingWindow(pastWeeks=26, futureWeeks=52)` (cron `weekly`, Sundays at 00:05) — `firstOrNew` a `reporting_periods` row per Monday in the window; fills week_end, deadline, labels. |
 | **Analytics\AnalyticsService** | Central read-side aggregator. Request-scoped memo collapses repeated report queries. `reports(filters, family?)`, `summary(...)` (totalReports, expectedReports, missingReports, statusCounts, totals, occupancy), `occupancy(...)` (analytics BOR uses actual covered days = `max(periods×7, 30)`), `weekly`/`monthly`/`departmentSummaries`, `outpatientExtras`, `procedureExtras` (driven by `PROCEDURE_SERVICES`), `scope`. |
 | **Analytics\{Inpatient,Outpatient,Procedure}AnalyticsService** | Thin family façades merging `familySummary(...)` with the relevant extras. |
 | **Analytics\AnalyticsFilters** | Immutable VO; `fromArray` accepts snake+camel, normalizes dates/months. |
@@ -309,8 +310,10 @@ Provides `serializeUser`, `serializeAssignment`, `serializeDepartment`, `seriali
 ## Console / Scheduling (`routes/console.php`)
 
 ```php
-Schedule::command('reports:sync-overdue')->everyMinute();  // OverdueReportService::sync
-Schedule::command('reports:ensure-periods')->daily();      // ReportingPeriodService::ensureRollingWindow
+Schedule::command('reports:sync-overdue')->hourly();           // OverdueReportService::sync
+Schedule::command('reports:send-reminders')->hourly();         // ReportReminderService::sendDue
+Schedule::command('reports:ensure-periods')->weeklyOn(0, '00:05'); // ReportingPeriodService::ensureRollingWindow
+Schedule::command('queue:work --stop-when-empty --max-time=50')->everyMinute()->withoutOverlapping();
 ```
 Commands: `SyncOverdueReports`, `EnsureReportingPeriods` (`--past`/`--future`), `CreateSuperadmin`.
 
@@ -905,7 +908,7 @@ Frontend combined gate: `npm run verify` = `lint` + `test:run` + `build`. Backen
 ## Build & Deploy (two independent deploys)
 
 - **Frontend → Cloudflare Pages.** `npm run build` = `tsc -b && vite build` → `dist/`. `wrangler.toml` sets `pages_build_output_dir = "./dist"` (project `st-paul`). Set `VITE_API_BASE_URL` to the production API origin at build time; PWA assets ship with the build.
-- **Backend → separate Laravel host.** Standard deploy: install deps, `php artisan migrate --force`, `DB_CONNECTION=mariadb`, `SESSION_SECURE_COOKIE=true`, production `SANCTUM_STATEFUL_DOMAINS`/`CORS_ALLOWED_ORIGINS`, `APP_DEBUG=false`. Scheduled work (overdue reports, reporting-period creation) runs via the Laravel scheduler/queue.
+- **Backend → separate Laravel host.** Standard deploy: install deps, `php artisan migrate --force`, `DB_CONNECTION=mariadb`, `SESSION_SECURE_COOKIE=true`, production `SANCTUM_STATEFUL_DOMAINS`/`CORS_ALLOWED_ORIGINS`, `APP_DEBUG=false`. Scheduled work (overdue reports, reminders, reporting-period creation, and queue draining) runs via the Laravel scheduler.
 
 ---
 

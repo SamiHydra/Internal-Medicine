@@ -19,6 +19,9 @@ class DatabaseSeeder extends Seeder
             ReportTemplateSeeder::class,
             DepartmentSeeder::class,
             ReportFieldDefinitionSeeder::class,
+            // Enrich template/field rows with the presentation metadata that
+            // previously lived only in the frontend config. Idempotent + edit-safe.
+            BackfillTemplatePresentationSeeder::class,
             AppSettingSeeder::class,
             ReportingPeriodSeeder::class,
             // Local-dev login accounts. Self-guards against production/testing.

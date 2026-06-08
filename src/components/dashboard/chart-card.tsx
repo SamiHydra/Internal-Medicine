@@ -1,14 +1,6 @@
 import { motion } from 'framer-motion'
 import type { ReactNode } from 'react'
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-
 export function ChartCard({
   title,
   description,
@@ -25,17 +17,11 @@ export function ChartCard({
       transition={{ duration: 0.28, ease: 'easeOut' }}
       className="h-full"
     >
-      <Card className="h-full bg-[#eef2f6] shadow-none">
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-        <CardContent>
-          <div className="rounded-[0.35rem] bg-[#ffffff] p-3">
-            {children}
-          </div>
-        </CardContent>
-      </Card>
+      <div className="flex h-full flex-col rounded-[0.35rem] bg-white p-5 outline outline-1 outline-[#d4dde8]/80 shadow-[0_18px_44px_-36px_rgba(0,33,71,0.3)] md:p-6">
+        <h3 className="text-sm font-semibold uppercase tracking-[0.22em] text-[#334155]">{title}</h3>
+        <p className="mt-1 text-sm leading-6 text-[#74777f]">{description}</p>
+        <div className="mt-4 flex-1">{children}</div>
+      </div>
     </motion.div>
   )
 }

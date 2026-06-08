@@ -1,0 +1,1763 @@
+{
+  "templates": [
+    {
+      "id": "inpatient_weekly",
+      "family": "inpatient",
+      "name": "Inpatient Weekly Report",
+      "description": "Shared weekly operational template for inpatient wards.",
+      "activeDays": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday"
+      ],
+      "sections": [
+        {
+          "id": "patient_flow",
+          "title": "Patient Flow",
+          "description": "Admissions, transfers, discharges, and capacity movement."
+        },
+        {
+          "id": "quality_safety",
+          "title": "Quality & Safety",
+          "description": "Events, infections, and quality indicators that need oversight."
+        },
+        {
+          "id": "capacity",
+          "title": "Capacity & Stay",
+          "description": "Bed usage, length of stay, and occupancy-related indicators."
+        },
+        {
+          "id": "staffing",
+          "title": "Rounds & Staffing",
+          "description": "Operational coverage fields that are best reviewed alongside clinical flow."
+        }
+      ],
+      "fields": [
+        {
+          "id": "total_admitted_patients",
+          "label": "Total Number of Admitted Patients",
+          "sectionId": "patient_flow",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "new_admitted_patients",
+          "label": "Number of Newly Admitted Patients",
+          "sectionId": "patient_flow",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "readmitted_30d",
+          "label": "Number of Newly Readmitted Patients within 30 days of discharge",
+          "sectionId": "patient_flow",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "new_deaths",
+          "label": "Number of New Deaths",
+          "sectionId": "quality_safety",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true,
+          "highlightWhenNonZero": true
+        },
+        {
+          "id": "new_pressure_ulcer",
+          "label": "Number of Patients Who Developed New Pressure Ulcer",
+          "sectionId": "quality_safety",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true,
+          "highlightWhenNonZero": true
+        },
+        {
+          "id": "total_pressure_ulcer",
+          "label": "Total Number of Patients With Pressure Ulcer",
+          "sectionId": "quality_safety",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "total_hai",
+          "label": "Total Number of Patients With Hospital-acquired infections (AIs)",
+          "sectionId": "quality_safety",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true,
+          "highlightWhenNonZero": true
+        },
+        {
+          "id": "hai_clabsi",
+          "label": "Central line-associated bloodstream Infection",
+          "sectionId": "quality_safety",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true,
+          "highlightWhenNonZero": true
+        },
+        {
+          "id": "hai_cauti",
+          "label": "Catheter-Associated Urinary tract infection",
+          "sectionId": "quality_safety",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true,
+          "highlightWhenNonZero": true
+        },
+        {
+          "id": "hai_pneumonia",
+          "label": "Pneumonia",
+          "sectionId": "quality_safety",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true,
+          "highlightWhenNonZero": true
+        },
+        {
+          "id": "hai_vap",
+          "label": "Ventilator-associated pneumonia (VAP)",
+          "sectionId": "quality_safety",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true,
+          "highlightWhenNonZero": true
+        },
+        {
+          "id": "hai_cdi",
+          "label": "Clostridium difficile infections (CDI)",
+          "sectionId": "quality_safety",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true,
+          "highlightWhenNonZero": true
+        },
+        {
+          "id": "urinary_catheter",
+          "label": "Number of New Patients That Are on Urinary Catheter",
+          "sectionId": "quality_safety",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "transferred_icu",
+          "label": "Number of Patients Transferred to ICU",
+          "sectionId": "patient_flow",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "transferred_hdu",
+          "label": "Number of Patients Transferred to HDU",
+          "sectionId": "patient_flow",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "transferred_ward",
+          "label": "Number of Patients Transferred to Ward",
+          "sectionId": "patient_flow",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "discharged_home",
+          "label": "Number of Patients Discharged Home (Rx Completed)",
+          "sectionId": "patient_flow",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "discharged_ama",
+          "label": "Number of Patients Discharged Against Medical Advice",
+          "sectionId": "patient_flow",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "free_beds",
+          "label": "Number of Free Beds",
+          "sectionId": "capacity",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "median_los_days",
+          "label": "Median Length of Stay (LOS) in Days",
+          "sectionId": "capacity",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "days",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "total_patient_days",
+          "label": "Total Patient Days",
+          "sectionId": "capacity",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "mdt_round_start_day",
+          "label": "MDT Round Start Time (Day-working hours)",
+          "sectionId": "staffing",
+          "kind": "time",
+          "aggregate": "latest"
+        },
+        {
+          "id": "mdt_round_start_duty",
+          "label": "MDT Round Start Time (Duty hours)",
+          "sectionId": "staffing",
+          "kind": "time",
+          "aggregate": "latest"
+        },
+        {
+          "id": "duty_resident",
+          "label": "Duty resident",
+          "sectionId": "staffing",
+          "kind": "text",
+          "aggregate": "latest"
+        },
+        {
+          "id": "duty_senior_physician",
+          "label": "Duty senior physician",
+          "sectionId": "staffing",
+          "kind": "text",
+          "aggregate": "latest"
+        },
+        {
+          "id": "nurse_in_charge",
+          "label": "Nurse In Charge (NI) Name",
+          "sectionId": "staffing",
+          "kind": "text",
+          "aggregate": "latest"
+        }
+      ],
+      "summaryCards": [
+        {
+          "id": "admissions",
+          "label": "Admissions",
+          "sourceType": "field",
+          "sourceId": "total_admitted_patients",
+          "format": "integer"
+        },
+        {
+          "id": "discharges",
+          "label": "Discharges",
+          "sourceType": "field",
+          "sourceId": "discharged_home",
+          "format": "integer"
+        },
+        {
+          "id": "hai",
+          "label": "HAI Count",
+          "sourceType": "field",
+          "sourceId": "total_hai",
+          "format": "integer"
+        },
+        {
+          "id": "bor",
+          "label": "BOR %",
+          "sourceType": "metric",
+          "sourceId": "borPercent",
+          "format": "percent"
+        },
+        {
+          "id": "btr",
+          "label": "BTR",
+          "sourceType": "metric",
+          "sourceId": "btr",
+          "format": "decimal"
+        },
+        {
+          "id": "alos",
+          "label": "ALOS",
+          "sourceType": "metric",
+          "sourceId": "alos",
+          "format": "days"
+        }
+      ],
+      "chartMappings": [
+        {
+          "id": "admission_trend",
+          "title": "Admissions & Discharges",
+          "chartType": "line",
+          "series": [
+            {
+              "sourceType": "field",
+              "sourceId": "total_admitted_patients",
+              "label": "Admissions",
+              "color": "#0f8ea8"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "discharged_home",
+              "label": "Discharged Home",
+              "color": "#1a5f7a"
+            }
+          ]
+        },
+        {
+          "id": "quality_events",
+          "title": "Safety Events",
+          "chartType": "stacked-bar",
+          "series": [
+            {
+              "sourceType": "field",
+              "sourceId": "new_deaths",
+              "label": "Deaths",
+              "color": "#d97706"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "new_pressure_ulcer",
+              "label": "New Pressure Ulcers",
+              "color": "#b45309"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "total_hai",
+              "label": "HAI",
+              "color": "#dc2626"
+            }
+          ]
+        },
+        {
+          "id": "occupancy_metrics",
+          "title": "Occupancy & Stay",
+          "chartType": "bar",
+          "series": [
+            {
+              "sourceType": "metric",
+              "sourceId": "borPercent",
+              "label": "BOR %",
+              "color": "#0f8ea8"
+            },
+            {
+              "sourceType": "metric",
+              "sourceId": "btr",
+              "label": "BTR",
+              "color": "#2563eb"
+            },
+            {
+              "sourceType": "metric",
+              "sourceId": "alos",
+              "label": "ALOS",
+              "color": "#0f766e"
+            }
+          ]
+        }
+      ],
+      "changeRules": [
+        {
+          "fieldId": "total_admitted_patients",
+          "percentThreshold": 10,
+          "messageTemplate": "{department} inpatient admissions changed by {deltaPercent}% compared with last week."
+        },
+        {
+          "fieldId": "total_hai",
+          "percentThreshold": 1,
+          "messageTemplate": "{department} reported {currentValue} HAIs this week."
+        }
+      ]
+    },
+    {
+      "id": "outpatient_weekly",
+      "family": "outpatient",
+      "name": "ART",
+      "description": "Weekly outpatient ART clinic activity and access reporting.",
+      "activeDays": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday"
+      ],
+      "sections": [
+        {
+          "id": "activity",
+          "title": "Clinic Activity",
+          "description": "Volume, mix, and same-day service delivery."
+        },
+        {
+          "id": "access",
+          "title": "Access & Delay",
+          "description": "Wait time and appointment performance signals."
+        },
+        {
+          "id": "staffing",
+          "title": "Staffing & Coverage",
+          "description": "Clinic start and leadership presence."
+        }
+      ],
+      "fields": [
+        {
+          "id": "total_patients_seen",
+          "label": "Total Number of Patients Seen",
+          "sectionId": "activity",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "follow_up_patients",
+          "label": "Number of Follow-up Patients",
+          "sectionId": "activity",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "new_patients_seen",
+          "label": "Number of New Patients Seen",
+          "sectionId": "activity",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "not_seen_same_day",
+          "label": "Number of Patients Not Seen on Same Day",
+          "sectionId": "activity",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "wait_time_new_days",
+          "label": "Average Appointment Wait Time For New Patients",
+          "sectionId": "access",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "days",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "wait_time_followup_months",
+          "label": "Average Appointment Wait Time For Follow-up Patients",
+          "sectionId": "access",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "months",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "failed_to_come",
+          "label": "Number of Patients Who Failed to Come For Their Appointment",
+          "sectionId": "access",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "not_seen_appointment",
+          "label": "Number of Patients Who Are Not Seen During Their Appointment",
+          "sectionId": "access",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "clinic_start_time",
+          "label": "Clinic Start Time",
+          "sectionId": "staffing",
+          "kind": "time",
+          "aggregate": "latest"
+        },
+        {
+          "id": "senior_physician_availability",
+          "label": "Senior physician availability",
+          "sectionId": "staffing",
+          "kind": "choice",
+          "aggregate": "latest",
+          "options": [
+            "Full day",
+            "Partial day",
+            "Unavailable"
+          ]
+        },
+        {
+          "id": "nurse_in_charge",
+          "label": "Nurse In Charge (NI) Name",
+          "sectionId": "staffing",
+          "kind": "text",
+          "aggregate": "latest"
+        }
+      ],
+      "summaryCards": [
+        {
+          "id": "visits",
+          "label": "Visits",
+          "sourceType": "field",
+          "sourceId": "total_patients_seen",
+          "format": "integer"
+        },
+        {
+          "id": "new_patients",
+          "label": "New Patients",
+          "sourceType": "field",
+          "sourceId": "new_patients_seen",
+          "format": "integer"
+        },
+        {
+          "id": "follow_up",
+          "label": "Follow-Up",
+          "sourceType": "field",
+          "sourceId": "follow_up_patients",
+          "format": "integer"
+        },
+        {
+          "id": "no_show",
+          "label": "No-Show",
+          "sourceType": "field",
+          "sourceId": "failed_to_come",
+          "format": "integer"
+        }
+      ],
+      "chartMappings": [
+        {
+          "id": "visit_mix",
+          "title": "Visit Mix",
+          "chartType": "stacked-bar",
+          "series": [
+            {
+              "sourceType": "field",
+              "sourceId": "new_patients_seen",
+              "label": "New",
+              "color": "#0f8ea8"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "follow_up_patients",
+              "label": "Follow-up",
+              "color": "#1a5f7a"
+            }
+          ]
+        },
+        {
+          "id": "access_delays",
+          "title": "Access Pressure",
+          "chartType": "line",
+          "series": [
+            {
+              "sourceType": "field",
+              "sourceId": "wait_time_new_days",
+              "label": "New Wait (days)",
+              "color": "#f59e0b"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "failed_to_come",
+              "label": "Failed to Come",
+              "color": "#dc2626"
+            }
+          ]
+        }
+      ],
+      "changeRules": [
+        {
+          "fieldId": "total_patients_seen",
+          "percentThreshold": 12,
+          "messageTemplate": "{department} ART visits changed by {deltaPercent}% compared with last week."
+        },
+        {
+          "fieldId": "failed_to_come",
+          "percentThreshold": 10,
+          "messageTemplate": "{department} clinic no-shows moved from {previousValue} to {currentValue}."
+        }
+      ]
+    },
+    {
+      "id": "eeg_weekly",
+      "family": "procedure",
+      "name": "EEG",
+      "description": "Weekly operational reporting for electroencephalography services.",
+      "activeDays": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday"
+      ],
+      "sections": [
+        {
+          "id": "throughput",
+          "title": "Service Throughput",
+          "description": "Core service delivery volume by day."
+        },
+        {
+          "id": "turnaround",
+          "title": "Turnaround & Waiting",
+          "description": "Waiting time and reporting turnaround indicators."
+        },
+        {
+          "id": "staffing",
+          "title": "Reporting Staff",
+          "description": "Named operational accountability for the reporting week."
+        }
+      ],
+      "fields": [
+        {
+          "id": "eeg_done",
+          "label": "Total Number of Patients Who have EEG done",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "eeg_wait_tests",
+          "label": "Average Waiting Time for EEG tests",
+          "sectionId": "turnaround",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "days",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "eeg_report_received",
+          "label": "Total Number of Patients Who Received EEG Report",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "eeg_wait_reports",
+          "label": "Average Waiting Time for EEG Reports",
+          "sectionId": "turnaround",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "days",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "ncs_done",
+          "label": "Total Number of Patients Who have Nerve Conduction Study (NCS)",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "emg_done",
+          "label": "Total Number of Patients Who have Electromyography (EMG) testing",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "ep_done",
+          "label": "Total Number of Patients Who have Evoked Potential (EP) testing",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "reporting_staff",
+          "label": "Name of Reporting Nurse or EEG Technician",
+          "sectionId": "staffing",
+          "kind": "text",
+          "aggregate": "latest"
+        }
+      ],
+      "summaryCards": [
+        {
+          "id": "eeg_done",
+          "label": "EEG Done",
+          "sourceType": "field",
+          "sourceId": "eeg_done",
+          "format": "integer"
+        },
+        {
+          "id": "reports",
+          "label": "Reports Issued",
+          "sourceType": "field",
+          "sourceId": "eeg_report_received",
+          "format": "integer"
+        },
+        {
+          "id": "wait",
+          "label": "Test Wait",
+          "sourceType": "field",
+          "sourceId": "eeg_wait_tests",
+          "format": "days"
+        }
+      ],
+      "chartMappings": [
+        {
+          "id": "eeg_volume",
+          "title": "EEG Throughput",
+          "chartType": "line",
+          "series": [
+            {
+              "sourceType": "field",
+              "sourceId": "eeg_done",
+              "label": "EEG",
+              "color": "#0f8ea8"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "ncs_done",
+              "label": "NCS",
+              "color": "#1a5f7a"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "emg_done",
+              "label": "EMG",
+              "color": "#0f766e"
+            }
+          ]
+        }
+      ],
+      "changeRules": [
+        {
+          "fieldId": "eeg_done",
+          "percentThreshold": 10,
+          "messageTemplate": "{department} EEG throughput changed by {deltaPercent}% versus last week."
+        }
+      ]
+    },
+    {
+      "id": "echocardiography_weekly",
+      "family": "procedure",
+      "name": "Echocardiography Lab",
+      "description": "Weekly diagnostic throughput and turnaround reporting for echo services.",
+      "activeDays": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday"
+      ],
+      "sections": [
+        {
+          "id": "throughput",
+          "title": "Service Throughput",
+          "description": "Core service delivery volume by day."
+        },
+        {
+          "id": "turnaround",
+          "title": "Turnaround & Waiting",
+          "description": "Waiting time and reporting turnaround indicators."
+        },
+        {
+          "id": "staffing",
+          "title": "Reporting Staff",
+          "description": "Named operational accountability for the reporting week."
+        }
+      ],
+      "fields": [
+        {
+          "id": "echo_done",
+          "label": "Total Number of Patients Who have Echocardiography done",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "echo_wait_tests",
+          "label": "Average Waiting Time for Echocardiography tests",
+          "sectionId": "turnaround",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "days",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "echo_report_received",
+          "label": "Total Number of Patients Who Received Echocardiography Report",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "echo_wait_reports",
+          "label": "Average Waiting Time for Echocardiography Reports",
+          "sectionId": "turnaround",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "days",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "stress_echo",
+          "label": "Total Number of Patients Who have Stress Echocardiography",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "tee",
+          "label": "Total Number of Patients Who have TEE",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "ecg_done",
+          "label": "Total Number of Patients Who have ECG done",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "stress_ecg",
+          "label": "Total Number of Patients Who have Stress ECG",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "ambulatory_ecg",
+          "label": "Total Number of Patients Who have Ambulatory ECG",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "angiography_screening",
+          "label": "Total Number of Patients Who have Angiography Screening",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "valvotomy_screening",
+          "label": "Total Number of Patients Who have Valvotomy Screening",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "reporting_staff",
+          "label": "Name of Reporting Nurse or Nurse-in-Charge (NI)",
+          "sectionId": "staffing",
+          "kind": "text",
+          "aggregate": "latest"
+        }
+      ],
+      "summaryCards": [
+        {
+          "id": "echo_done",
+          "label": "Echo Done",
+          "sourceType": "field",
+          "sourceId": "echo_done",
+          "format": "integer"
+        },
+        {
+          "id": "ecg_done",
+          "label": "ECG Done",
+          "sourceType": "field",
+          "sourceId": "ecg_done",
+          "format": "integer"
+        },
+        {
+          "id": "echo_wait_tests",
+          "label": "Wait Time",
+          "sourceType": "field",
+          "sourceId": "echo_wait_tests",
+          "format": "days"
+        }
+      ],
+      "chartMappings": [
+        {
+          "id": "echo_volume",
+          "title": "Echo Lab Volume",
+          "chartType": "stacked-bar",
+          "series": [
+            {
+              "sourceType": "field",
+              "sourceId": "echo_done",
+              "label": "Echo",
+              "color": "#0f8ea8"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "ecg_done",
+              "label": "ECG",
+              "color": "#1a5f7a"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "stress_ecg",
+              "label": "Stress ECG",
+              "color": "#0f766e"
+            }
+          ]
+        }
+      ],
+      "changeRules": [
+        {
+          "fieldId": "echo_done",
+          "percentThreshold": 10,
+          "messageTemplate": "{department} echocardiography throughput changed by {deltaPercent}% versus last week."
+        }
+      ]
+    },
+    {
+      "id": "endoscopy_weekly",
+      "family": "procedure",
+      "name": "Endoscopy Lab",
+      "description": "Weekly reporting for endoscopy throughput and procedure mix.",
+      "activeDays": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday"
+      ],
+      "sections": [
+        {
+          "id": "throughput",
+          "title": "Service Throughput",
+          "description": "Core service delivery volume by day."
+        },
+        {
+          "id": "turnaround",
+          "title": "Turnaround & Waiting",
+          "description": "Waiting time and reporting turnaround indicators."
+        },
+        {
+          "id": "staffing",
+          "title": "Reporting Staff",
+          "description": "Named operational accountability for the reporting week."
+        }
+      ],
+      "fields": [
+        {
+          "id": "upper_gi_elective",
+          "label": "Total Number of Patients Who have Elective Upper GI Endoscopy",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "upper_gi_wait",
+          "label": "Average Waiting Time for Elective Upper GI Endoscopy",
+          "sectionId": "turnaround",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "days",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "upper_gi_report_received",
+          "label": "Total Number of Patients Who Received Upper GI Endoscopy Report (Elective Only)",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "upper_gi_report_wait",
+          "label": "Average Waiting Time for Upper GI Endoscopy Reports (Elective Only)",
+          "sectionId": "turnaround",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "days",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "upper_gi_emergency",
+          "label": "Total Number of Patients Who have Emergency Upper GI Endoscopy",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "ercp",
+          "label": "Total Number of Patients Who have ERCP",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "colonoscopy",
+          "label": "Total Number of Patients Who have Colonoscopy",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "proctoscopy",
+          "label": "Total Number of Patients Who have Proctoscopy",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "bronchoscopy",
+          "label": "Total Number of Patients Who have Bronchoscopy",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "therapeutic_upper_gi",
+          "label": "Total Number of Patients Who have Upper GI Endoscopic Therapeutic Procedures",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "esophageal_dilation",
+          "label": "Esophageal Dilation",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "variceal_ligation",
+          "label": "Variceal Ligation",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "stenting",
+          "label": "Stenting",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "liver_biopsy",
+          "label": "Total Number of Patients Who have Liver Biopsy",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "reporting_staff",
+          "label": "Name of Reporting Nurse or Nurse-in-Charge (NI)",
+          "sectionId": "staffing",
+          "kind": "text",
+          "aggregate": "latest"
+        }
+      ],
+      "summaryCards": [
+        {
+          "id": "upper_gi_elective",
+          "label": "Elective UGI",
+          "sourceType": "field",
+          "sourceId": "upper_gi_elective",
+          "format": "integer"
+        },
+        {
+          "id": "ercp",
+          "label": "ERCP",
+          "sourceType": "field",
+          "sourceId": "ercp",
+          "format": "integer"
+        },
+        {
+          "id": "upper_gi_wait",
+          "label": "Wait Time",
+          "sourceType": "field",
+          "sourceId": "upper_gi_wait",
+          "format": "days"
+        }
+      ],
+      "chartMappings": [
+        {
+          "id": "endoscopy_mix",
+          "title": "Endoscopy Mix",
+          "chartType": "stacked-bar",
+          "series": [
+            {
+              "sourceType": "field",
+              "sourceId": "upper_gi_elective",
+              "label": "Elective UGI",
+              "color": "#0f8ea8"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "upper_gi_emergency",
+              "label": "Emergency UGI",
+              "color": "#1a5f7a"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "colonoscopy",
+              "label": "Colonoscopy",
+              "color": "#0f766e"
+            }
+          ]
+        }
+      ],
+      "changeRules": [
+        {
+          "fieldId": "upper_gi_elective",
+          "percentThreshold": 10,
+          "messageTemplate": "{department} elective endoscopy volume changed by {deltaPercent}% versus last week."
+        }
+      ]
+    },
+    {
+      "id": "hematology_procedures_weekly",
+      "family": "procedure",
+      "name": "Hematology Procedures",
+      "description": "Weekly procedure volume and waiting time reporting for hematology services.",
+      "activeDays": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday"
+      ],
+      "sections": [
+        {
+          "id": "throughput",
+          "title": "Service Throughput",
+          "description": "Core service delivery volume by day."
+        },
+        {
+          "id": "turnaround",
+          "title": "Turnaround & Waiting",
+          "description": "Waiting time and reporting turnaround indicators."
+        },
+        {
+          "id": "staffing",
+          "title": "Reporting Staff",
+          "description": "Named operational accountability for the reporting week."
+        }
+      ],
+      "fields": [
+        {
+          "id": "bone_marrow_biopsy",
+          "label": "Total Number of Patients Who have Bone Marrow biopsy",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "bone_marrow_wait",
+          "label": "Average Waiting Time for Elective Bone Marrow Biopsy",
+          "sectionId": "turnaround",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "days",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "reporting_staff",
+          "label": "Name of Reporting Nurse or Nurse-in-Charge (NI)",
+          "sectionId": "staffing",
+          "kind": "text",
+          "aggregate": "latest"
+        }
+      ],
+      "summaryCards": [
+        {
+          "id": "bone_marrow_biopsy",
+          "label": "Biopsies",
+          "sourceType": "field",
+          "sourceId": "bone_marrow_biopsy",
+          "format": "integer"
+        },
+        {
+          "id": "bone_marrow_wait",
+          "label": "Wait Time",
+          "sourceType": "field",
+          "sourceId": "bone_marrow_wait",
+          "format": "days"
+        }
+      ],
+      "chartMappings": [
+        {
+          "id": "bone_marrow_trend",
+          "title": "Bone Marrow Procedures",
+          "chartType": "line",
+          "series": [
+            {
+              "sourceType": "field",
+              "sourceId": "bone_marrow_biopsy",
+              "label": "Biopsy",
+              "color": "#0f8ea8"
+            }
+          ]
+        }
+      ],
+      "changeRules": [
+        {
+          "fieldId": "bone_marrow_biopsy",
+          "percentThreshold": 10,
+          "messageTemplate": "{department} hematology procedures changed by {deltaPercent}% versus last week."
+        }
+      ]
+    },
+    {
+      "id": "bronchoscopy_weekly",
+      "family": "procedure",
+      "name": "Bronchoscopy Lab",
+      "description": "Weekly bronchoscopy volume and waiting time reporting.",
+      "activeDays": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday"
+      ],
+      "sections": [
+        {
+          "id": "throughput",
+          "title": "Service Throughput",
+          "description": "Core service delivery volume by day."
+        },
+        {
+          "id": "turnaround",
+          "title": "Turnaround & Waiting",
+          "description": "Waiting time and reporting turnaround indicators."
+        },
+        {
+          "id": "staffing",
+          "title": "Reporting Staff",
+          "description": "Named operational accountability for the reporting week."
+        }
+      ],
+      "fields": [
+        {
+          "id": "bronchoscopy_done",
+          "label": "Total Number of Patients Who have Bronchoscopy",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "bronchoscopy_wait",
+          "label": "Average Waiting Time for Bronchoscopy",
+          "sectionId": "turnaround",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "days",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "reporting_staff",
+          "label": "Name of Reporting Nurse or Nurse-in-Charge (NI)",
+          "sectionId": "staffing",
+          "kind": "text",
+          "aggregate": "latest"
+        }
+      ],
+      "summaryCards": [
+        {
+          "id": "bronchoscopy_done",
+          "label": "Bronchoscopy",
+          "sourceType": "field",
+          "sourceId": "bronchoscopy_done",
+          "format": "integer"
+        },
+        {
+          "id": "bronchoscopy_wait",
+          "label": "Wait Time",
+          "sourceType": "field",
+          "sourceId": "bronchoscopy_wait",
+          "format": "days"
+        }
+      ],
+      "chartMappings": [
+        {
+          "id": "bronchoscopy_trend",
+          "title": "Bronchoscopy Throughput",
+          "chartType": "line",
+          "series": [
+            {
+              "sourceType": "field",
+              "sourceId": "bronchoscopy_done",
+              "label": "Bronchoscopy",
+              "color": "#0f8ea8"
+            }
+          ]
+        }
+      ],
+      "changeRules": [
+        {
+          "fieldId": "bronchoscopy_done",
+          "percentThreshold": 10,
+          "messageTemplate": "{department} bronchoscopy volume changed by {deltaPercent}% versus last week."
+        }
+      ]
+    },
+    {
+      "id": "renal_procedures_weekly",
+      "family": "procedure",
+      "name": "Renal Procedures",
+      "description": "Weekly renal diagnostic and intervention throughput reporting.",
+      "activeDays": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday"
+      ],
+      "sections": [
+        {
+          "id": "throughput",
+          "title": "Service Throughput",
+          "description": "Core service delivery volume by day."
+        },
+        {
+          "id": "turnaround",
+          "title": "Turnaround & Waiting",
+          "description": "Waiting time and reporting turnaround indicators."
+        },
+        {
+          "id": "staffing",
+          "title": "Reporting Staff",
+          "description": "Named operational accountability for the reporting week."
+        }
+      ],
+      "fields": [
+        {
+          "id": "elective_renal_biopsy",
+          "label": "Total Number of Patients Who have Elective Renal Biopsy",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "central_venous_catheter_insertion",
+          "label": "Total Number of patients with Central Venous Catheter insertion",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "elective_renal_biopsy_wait",
+          "label": "Average Waiting Time for Elective Renal Biopsy",
+          "sectionId": "turnaround",
+          "kind": "decimal",
+          "aggregate": "average",
+          "unit": "days",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "reporting_staff",
+          "label": "Name of Reporting Nurse or Nurse-in-Charge (NI)",
+          "sectionId": "staffing",
+          "kind": "text",
+          "aggregate": "latest"
+        }
+      ],
+      "summaryCards": [
+        {
+          "id": "elective_renal_biopsy",
+          "label": "Renal Biopsy",
+          "sourceType": "field",
+          "sourceId": "elective_renal_biopsy",
+          "format": "integer"
+        },
+        {
+          "id": "central_venous_catheter_insertion",
+          "label": "CVC Inserts",
+          "sourceType": "field",
+          "sourceId": "central_venous_catheter_insertion",
+          "format": "integer"
+        },
+        {
+          "id": "elective_renal_biopsy_wait",
+          "label": "Wait Time",
+          "sourceType": "field",
+          "sourceId": "elective_renal_biopsy_wait",
+          "format": "days"
+        }
+      ],
+      "chartMappings": [
+        {
+          "id": "renal_mix",
+          "title": "Renal Procedure Mix",
+          "chartType": "stacked-bar",
+          "series": [
+            {
+              "sourceType": "field",
+              "sourceId": "elective_renal_biopsy",
+              "label": "Biopsy",
+              "color": "#0f8ea8"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "central_venous_catheter_insertion",
+              "label": "CVC",
+              "color": "#446b95"
+            }
+          ]
+        }
+      ],
+      "changeRules": []
+    },
+    {
+      "id": "dialysis_weekly",
+      "family": "procedure",
+      "name": "Dialysis",
+      "description": "Weekly haemodialysis throughput reporting.",
+      "activeDays": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday"
+      ],
+      "sections": [
+        {
+          "id": "throughput",
+          "title": "Service Throughput",
+          "description": "Core service delivery volume by day."
+        },
+        {
+          "id": "turnaround",
+          "title": "Turnaround & Waiting",
+          "description": "Waiting time and reporting turnaround indicators."
+        },
+        {
+          "id": "staffing",
+          "title": "Reporting Staff",
+          "description": "Named operational accountability for the reporting week."
+        }
+      ],
+      "fields": [
+        {
+          "id": "dialysis_acute",
+          "label": "Total Number of Patients Who have Haemodialysis for Acute Renal Failure",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "dialysis_chronic",
+          "label": "Total Number of Patients Who have Haemodialysis for Chronic Renal Failure",
+          "sectionId": "throughput",
+          "kind": "integer",
+          "aggregate": "sum",
+          "readOnlyWeeklyTotal": true
+        },
+        {
+          "id": "reporting_staff",
+          "label": "Name of Reporting Nurse or Nurse-in-Charge (NI)",
+          "sectionId": "staffing",
+          "kind": "text",
+          "aggregate": "latest"
+        }
+      ],
+      "summaryCards": [
+        {
+          "id": "dialysis_acute",
+          "label": "Acute HD",
+          "sourceType": "field",
+          "sourceId": "dialysis_acute",
+          "format": "integer"
+        },
+        {
+          "id": "dialysis_chronic",
+          "label": "Chronic HD",
+          "sourceType": "field",
+          "sourceId": "dialysis_chronic",
+          "format": "integer"
+        }
+      ],
+      "chartMappings": [
+        {
+          "id": "dialysis_mix",
+          "title": "Dialysis Mix",
+          "chartType": "stacked-bar",
+          "series": [
+            {
+              "sourceType": "field",
+              "sourceId": "dialysis_acute",
+              "label": "Acute HD",
+              "color": "#0f766e"
+            },
+            {
+              "sourceType": "field",
+              "sourceId": "dialysis_chronic",
+              "label": "Chronic HD",
+              "color": "#005db6"
+            }
+          ]
+        }
+      ],
+      "changeRules": [
+        {
+          "fieldId": "dialysis_chronic",
+          "percentThreshold": 8,
+          "messageTemplate": "{department} chronic haemodialysis throughput changed by {deltaPercent}% versus last week."
+        }
+      ]
+    }
+  ],
+  "departments": [
+    {
+      "id": "gi_neuro_inpatient",
+      "name": "GI/Neurology",
+      "family": "inpatient",
+      "templateId": "inpatient_weekly",
+      "description": "Inpatient GI and neurology ward reporting.",
+      "accent": "#1b7f8f",
+      "bedCount": 26
+    },
+    {
+      "id": "cardiac_inpatient",
+      "name": "Cardiac",
+      "family": "inpatient",
+      "templateId": "inpatient_weekly",
+      "description": "Cardiac inpatient ward.",
+      "accent": "#155e75",
+      "bedCount": 22
+    },
+    {
+      "id": "nephrology_inpatient",
+      "name": "Nephrology",
+      "family": "inpatient",
+      "templateId": "inpatient_weekly",
+      "description": "Nephrology inpatient ward.",
+      "accent": "#0f766e",
+      "bedCount": 20
+    },
+    {
+      "id": "chest_inpatient",
+      "name": "Chest",
+      "family": "inpatient",
+      "templateId": "inpatient_weekly",
+      "description": "Chest inpatient ward.",
+      "accent": "#0284c7",
+      "bedCount": 18
+    },
+    {
+      "id": "hematology_inpatient",
+      "name": "Hematology",
+      "family": "inpatient",
+      "templateId": "inpatient_weekly",
+      "description": "Hematology inpatient ward.",
+      "accent": "#0f5f74",
+      "bedCount": 16
+    },
+    {
+      "id": "oncology_inpatient",
+      "name": "Oncology",
+      "family": "inpatient",
+      "templateId": "inpatient_weekly",
+      "description": "Oncology inpatient ward.",
+      "accent": "#0f4c81",
+      "bedCount": 24
+    },
+    {
+      "id": "hdu_inpatient",
+      "name": "HDU",
+      "family": "inpatient",
+      "templateId": "inpatient_weekly",
+      "description": "High dependency unit reporting.",
+      "accent": "#164e63",
+      "bedCount": 12
+    },
+    {
+      "id": "transition_inpatient",
+      "name": "Transition",
+      "family": "inpatient",
+      "templateId": "inpatient_weekly",
+      "description": "Inpatient transition service reporting.",
+      "accent": "#0e7490"
+    },
+    {
+      "id": "outpatient_main",
+      "name": "ART",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "Outpatient ART clinic reporting.",
+      "accent": "#0f8ea8"
+    },
+    {
+      "id": "gi_outpatient",
+      "name": "GI",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "GI outpatient clinic.",
+      "accent": "#0d9488"
+    },
+    {
+      "id": "neuro_outpatient",
+      "name": "Neuro",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "Neurology outpatient clinic.",
+      "accent": "#2563eb"
+    },
+    {
+      "id": "cardiac_outpatient",
+      "name": "Cardiac",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "Cardiac outpatient clinic.",
+      "accent": "#0f766e"
+    },
+    {
+      "id": "nephrology_outpatient",
+      "name": "Nephrology",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "Nephrology outpatient clinic.",
+      "accent": "#0f8ea8"
+    },
+    {
+      "id": "chest_outpatient",
+      "name": "Chest",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "Chest outpatient clinic.",
+      "accent": "#1d4ed8"
+    },
+    {
+      "id": "hematology_outpatient",
+      "name": "Hematology",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "Hematology outpatient clinic.",
+      "accent": "#075985"
+    },
+    {
+      "id": "oncology_outpatient",
+      "name": "Oncology",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "Oncology outpatient clinic.",
+      "accent": "#155e75"
+    },
+    {
+      "id": "endocrine_outpatient",
+      "name": "Endocrine",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "Endocrine outpatient clinic.",
+      "accent": "#0f766e"
+    },
+    {
+      "id": "opd_28",
+      "name": "OPD 28",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "OPD 28 clinic reporting.",
+      "accent": "#0e7490"
+    },
+    {
+      "id": "rheumatology_outpatient",
+      "name": "Rheumatology",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "Rheumatology clinic reporting.",
+      "accent": "#0284c7"
+    },
+    {
+      "id": "id_outpatient",
+      "name": "ID",
+      "family": "outpatient",
+      "templateId": "outpatient_weekly",
+      "description": "Infectious disease clinic.",
+      "accent": "#1d4ed8"
+    },
+    {
+      "id": "eeg_lab",
+      "name": "Electroencephalography (EEG)",
+      "family": "procedure",
+      "templateId": "eeg_weekly",
+      "description": "EEG weekly operational report.",
+      "accent": "#0f8ea8"
+    },
+    {
+      "id": "echocardiography_lab",
+      "name": "Echocardiography Lab",
+      "family": "procedure",
+      "templateId": "echocardiography_weekly",
+      "description": "Echocardiography service report.",
+      "accent": "#0f766e"
+    },
+    {
+      "id": "endoscopy_lab",
+      "name": "Endoscopy Lab",
+      "family": "procedure",
+      "templateId": "endoscopy_weekly",
+      "description": "Endoscopy service report.",
+      "accent": "#155e75"
+    },
+    {
+      "id": "hematology_procedures",
+      "name": "Hematology Procedures",
+      "family": "procedure",
+      "templateId": "hematology_procedures_weekly",
+      "description": "Hematology procedure service report.",
+      "accent": "#1d4ed8"
+    },
+    {
+      "id": "bronchoscopy_lab",
+      "name": "Bronchoscopy Lab",
+      "family": "procedure",
+      "templateId": "bronchoscopy_weekly",
+      "description": "Bronchoscopy service report.",
+      "accent": "#0284c7"
+    },
+    {
+      "id": "renal_procedures",
+      "name": "Renal Procedures",
+      "family": "procedure",
+      "templateId": "renal_procedures_weekly",
+      "description": "Renal procedure service report.",
+      "accent": "#0f766e"
+    },
+    {
+      "id": "dialysis_unit",
+      "name": "Dialysis",
+      "family": "procedure",
+      "templateId": "dialysis_weekly",
+      "description": "Dialysis procedure service report.",
+      "accent": "#0f766e"
+    }
+  ]
+}

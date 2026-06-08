@@ -74,4 +74,88 @@ class AcademicEvaluationController extends Controller
             ],
         ]);
     }
+
+    /**
+     * Chronological "who evaluated whom" feed across both evaluation directions.
+     * Evaluations are immutable, so this is a submission trail (no field diffs).
+     * Admins see the evaluator identity — the anonymity rule only covers the
+     * resident/consultant self-view.
+     */
+    public function audit(Request $request): JsonResponse
+    {
+        Gate::authorize('viewAny', ResidentEvaluation::class);
+        Gate::authorize('viewAny', ConsultantEvaluation::class);
+
+        $validated = $request->validate([
+            'direction' => ['sometimes', Rule::in(['resident', 'consultant'])],
+            'limit' => ['sometimes', 'integer', 'min:1', 'max:500'],
+        ]);
+
+        $limit = (int) ($validated['limit'] ?? 200);
+        $direction = $validated['direction'] ?? null;
+
+        $entries = collect();
+
+        if ($direction !== 'consultant') {
+            $entries = $entries->concat(
+                ResidentEvaluation::query()
+                    ->with(['author', 'subject', 'ward'])
+                    ->orderByDesc('created_at')
+                    ->limit($limit)
+                    ->get()
+                    ->map(fn (ResidentEvaluation $evaluation) => $this->serializeAcademicAuditEntry($evaluation, 'resident')),
+            );
+        }
+
+        if ($direction !== 'resident') {
+            $entries = $entries->concat(
+                ConsultantEvaluation::query()
+                    ->with(['author', 'subject', 'ward'])
+                    ->orderByDesc('created_at')
+                    ->limit($limit)
+                    ->get()
+                    ->map(fn (ConsultantEvaluation $evaluation) => $this->serializeAcademicAuditEntry($evaluation, 'consultant')),
+            );
+        }
+
+        return response()->json([
+            'data' => $entries
+                ->sortByDesc('createdAt')
+                ->take($limit)
+                ->values(),
+        ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function serializeAcademicAuditEntry(
+        ResidentEvaluation|ConsultantEvaluation $evaluation,
+        string $direction,
+    ): array {
+        $evaluation->loadMissing(['author', 'subject', 'ward']);
+
+        $scoreItems = $direction === 'resident'
+            ? ResidentEvaluation::SCORE_ITEMS
+            : ConsultantEvaluation::SCORE_ITEMS;
+        $indicatorsMet = collect($scoreItems)
+            ->filter(fn (string $item) => (bool) $evaluation->{$item})
+            ->count();
+
+        return [
+            'id' => $evaluation->id,
+            'direction' => $direction,
+            'authorId' => $evaluation->author_id,
+            'authorName' => $evaluation->author?->full_name,
+            'subjectId' => $evaluation->subject_id,
+            'subjectName' => $evaluation->subject?->full_name,
+            'wardId' => $evaluation->ward_id,
+            'wardName' => $evaluation->ward?->name,
+            'evaluationDate' => $evaluation->evaluation_date?->toJSON(),
+            'createdAt' => $evaluation->created_at?->toJSON(),
+            'overallRating' => $direction === 'resident' ? $evaluation->overall_rating : null,
+            'indicatorsMet' => $indicatorsMet,
+            'indicatorsTotal' => count($scoreItems),
+        ];
+    }
 }

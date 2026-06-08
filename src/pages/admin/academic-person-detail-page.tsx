@@ -1,5 +1,6 @@
-import { ArrowLeft } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { animate, motion, useReducedMotion, type Variants } from 'framer-motion'
+import { ArrowLeft, ChevronRight } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import {
   Bar,
@@ -13,10 +14,11 @@ import {
   YAxis,
 } from 'recharts'
 
+import { AcademicEvaluationDetailSheet } from '@/components/admin/academic-evaluation-detail-sheet'
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { ChartCard } from '@/components/dashboard/chart-card'
 import { InsightPanel } from '@/components/dashboard/insight-panel'
-import { PageHeader } from '@/components/layout/page-header'
+import { AnalyticsContentSkeleton } from '@/components/layout/loading-skeletons'
 import {
   fetchAcademicPeople,
   fetchAcademicSummary,
@@ -27,6 +29,7 @@ import {
 } from '@/lib/api/academic'
 import { getApiBrowserClient } from '@/lib/api/client'
 import { apiEnvSetupHint } from '@/lib/api/env'
+import { cn } from '@/lib/utils'
 import {
   academicChartPalette,
   chartGridStroke,
@@ -38,7 +41,6 @@ import {
   tooltipFillCursor,
   tooltipLineCursor,
 } from '@/lib/chart-theme'
-import { cn } from '@/lib/utils'
 import type {
   AcademicDirection,
   AcademicEvaluationRecord,
@@ -81,31 +83,91 @@ function toDateLabel(value: string | null): string {
     return '—'
   }
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString()
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-const toneClasses = {
-  blue: 'bg-[#edf4fb] text-[#005db6] outline-[#cfe0f4]/75',
-  gold: 'bg-[#fcf5e8] text-[#8a5a00] outline-[#edd9b0]/75',
-  navy: 'bg-[#edf1f5] text-[#1d3047] outline-[#d4dde8]/75',
-  green: 'bg-[#edf7f0] text-[#1f6b3b] outline-[#cfe7d9]/75',
-} as const
-
-function StatTile({
-  label,
-  value,
-  tone,
-}: {
-  label: string
-  value: string
-  tone: keyof typeof toneClasses
-}) {
+function initialsFor(fullName: string | null): string {
   return (
-    <div className={cn('rounded-[0.35rem] px-4 py-4 outline outline-1', toneClasses[tone])}>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">{label}</p>
-      <p className="mt-2 font-display text-[1.8rem] leading-none tracking-[-0.03em]">{value}</p>
-    </div>
+    (fullName ?? '')
+      .split(' ')
+      .map((part) => part[0])
+      .filter(Boolean)
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || '—'
   )
+}
+
+/** Color the score pill by band so a weak evaluation reads at a glance. */
+function scoreTone(score: number): string {
+  if (score >= 80) {
+    return 'border-[#cfe7d9] bg-[#edf7f0] text-[#1f6b3b]'
+  }
+  if (score >= 50) {
+    return 'border-[#f0d9aa] bg-[#fbf4e6] text-[#8a5a00]'
+  }
+  return 'border-[#f1d1d1] bg-[#fff1f1] text-[#9d2a2a]'
+}
+
+const statRowVariants: Variants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.07, delayChildren: 0.12 } },
+}
+
+const statItemVariants: Variants = {
+  hidden: { opacity: 0, y: 8 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' } },
+}
+
+// Smoothly counts up to the value, and re-animates when a filter changes it.
+function AnimatedStat({ value, format }: { value: number; format: (value: number) => string }) {
+  const reduceMotion = useReducedMotion()
+  const [shown, setShown] = useState(value)
+  const previous = useRef(value)
+
+  useEffect(() => {
+    if (reduceMotion) {
+      return
+    }
+
+    const controls = animate(previous.current, value, {
+      duration: 0.7,
+      ease: 'easeOut',
+      onUpdate: (latest) => {
+        previous.current = latest
+        setShown(latest)
+      },
+    })
+
+    return () => controls.stop()
+  }, [value, reduceMotion])
+
+  return <>{format(reduceMotion ? value : shown)}</>
+}
+
+// Re-opening the same person (or returning from Clinical) should be instant: cache
+// the last result per person + filter signature and revalidate in the background.
+let personWardsCache: AcademicWardOption[] | null = null
+
+type PersonData = {
+  summary: AcademicSummary
+  trend: AcademicTrend
+  evaluations: AcademicEvaluationRecord[]
+  headerStat: AcademicPersonStat | null
+}
+
+const personDataCache = new Map<string, PersonData>()
+
+function personKey(
+  userId: string,
+  direction: string,
+  wardId: string | undefined,
+  dateFrom: string | undefined,
+  dateTo: string | undefined,
+): string {
+  return [userId, direction, wardId ?? '', dateFrom ?? '', dateTo ?? ''].join('|')
 }
 
 const sectionClass = 'rounded-[0.35rem] bg-[#f1f4f7] px-5 py-6 md:px-6'
@@ -119,19 +181,25 @@ export function AcademicPersonDetailPage() {
   const initialDirection: AcademicDirection =
     searchParams.get('direction') === 'resident' ? 'resident' : 'consultant'
 
+  // Seed from cache so re-opening the same person paints instantly, then revalidates.
+  const cachedPerson = personDataCache.get(
+    personKey(userId, initialDirection, undefined, undefined, undefined),
+  )
+
   const [direction, setDirection] = useState<AcademicDirection>(initialDirection)
   const [wardId, setWardId] = useState<string>(ALL)
   const [range, setRange] = useState<string>(ALL)
 
-  const [wards, setWards] = useState<AcademicWardOption[]>([])
-  const [summary, setSummary] = useState<AcademicSummary | null>(null)
-  const [trend, setTrend] = useState<AcademicTrend | null>(null)
-  const [evaluations, setEvaluations] = useState<AcademicEvaluationRecord[]>([])
-  const [headerStat, setHeaderStat] = useState<AcademicPersonStat | null>(null)
+  const [wards, setWards] = useState<AcademicWardOption[]>(personWardsCache ?? [])
+  const [summary, setSummary] = useState<AcademicSummary | null>(cachedPerson?.summary ?? null)
+  const [trend, setTrend] = useState<AcademicTrend | null>(cachedPerson?.trend ?? null)
+  const [evaluations, setEvaluations] = useState<AcademicEvaluationRecord[]>(cachedPerson?.evaluations ?? [])
+  const [selectedRecord, setSelectedRecord] = useState<AcademicEvaluationRecord | null>(null)
+  const [headerStat, setHeaderStat] = useState<AcademicPersonStat | null>(cachedPerson?.headerStat ?? null)
   const [error, setError] = useState<string | null>(() =>
     client ? null : `The Laravel API is not configured. ${apiEnvSetupHint}`,
   )
-  const [isLoading, setIsLoading] = useState(() => Boolean(client))
+  const [isLoading, setIsLoading] = useState(() => Boolean(client) && !cachedPerson)
 
   const dateRange = useMemo(() => rangeToDates(range), [range])
 
@@ -142,6 +210,7 @@ export function AcademicPersonDetailPage() {
     let active = true
     fetchAcademicWardOptions(client)
       .then((fetched) => {
+        personWardsCache = fetched
         if (active) {
           setWards(fetched)
         }
@@ -166,6 +235,7 @@ export function AcademicPersonDetailPage() {
       dateFrom: dateRange.dateFrom,
       dateTo: dateRange.dateTo,
     }
+    const cacheKey = personKey(userId, direction, query.wardId, query.dateFrom, query.dateTo)
     Promise.all([
       fetchAcademicSummary(client, query),
       fetchAcademicTrend(client, { ...query, granularity: 'weekly' }),
@@ -173,6 +243,12 @@ export function AcademicPersonDetailPage() {
       fetchAcademicPeople(client, query),
     ])
       .then(([fetchedSummary, fetchedTrend, fetchedList, fetchedPeople]) => {
+        personDataCache.set(cacheKey, {
+          summary: fetchedSummary,
+          trend: fetchedTrend,
+          evaluations: fetchedList.data,
+          headerStat: fetchedPeople.people[0] ?? null,
+        })
         if (!active) {
           return
         }
@@ -243,6 +319,30 @@ export function AcademicPersonDetailPage() {
   const issueData = summary?.issueFrequency ?? []
   const indicatorHeight = Math.max(220, indicatorData.length * 44)
 
+  const heroStats = isResident
+    ? [
+        { label: 'Evaluations', value: summary?.evaluationCount ?? 0, note: 'On record', format: (value: number) => String(Math.round(value)) },
+        { label: 'Average score', value: summary?.averageScore ?? 0, note: 'Indicators met', format: (value: number) => `${Math.round(value)}%` },
+        { label: 'Avg rating', value: summary?.avgOverallRating ?? 0, note: 'Out of 5', format: (value: number) => `${value.toFixed(1)}/5` },
+        {
+          label: 'Concerns flagged',
+          value: issueData.reduce((sum, issue) => sum + issue.count, 0),
+          note: 'Across evaluations',
+          format: (value: number) => String(Math.round(value)),
+        },
+      ]
+    : [
+        { label: 'Evaluations', value: summary?.evaluationCount ?? 0, note: 'On record', format: (value: number) => String(Math.round(value)) },
+        { label: 'Average score', value: summary?.averageScore ?? 0, note: 'Indicators met', format: (value: number) => `${Math.round(value)}%` },
+        {
+          label: 'Senior presence',
+          value: (summary?.seniorPresenceRate ?? 0) * 100,
+          note: 'Rounds with a senior',
+          format: (value: number) => `${Math.round(value)}%`,
+        },
+        { label: 'Avg patients seen', value: summary?.avgPctSeen ?? 0, note: 'Average coverage', format: (value: number) => `${Math.round(value)}%` },
+      ]
+
   const insights = useMemo(() => {
     if (!summary || summary.evaluationCount === 0) {
       return [] as string[]
@@ -275,25 +375,56 @@ export function AcademicPersonDetailPage() {
   }, [summary, isResident])
 
   return (
-    <div className="space-y-8">
-      <PageHeader
-        eyebrow={isResident ? 'Resident' : 'Consultant'}
-        title={subjectName}
-        description={
-          homeWardName
-            ? `Home ward: ${homeWardName}. Evaluation history and indicator breakdown.`
-            : 'Evaluation history and indicator breakdown.'
-        }
-        actions={
+    <div className="space-y-6 px-4 py-5 md:px-6 md:py-8">
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: 'easeOut' }}
+        className="overflow-hidden rounded-[0.35rem] bg-[#04162f] px-5 py-6 text-white shadow-[0_26px_64px_-40px_rgba(0,12,35,0.85)] md:px-7 md:py-7"
+      >
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#f0b429]">
+              {isResident ? 'Resident' : 'Consultant'}
+            </p>
+          </div>
+          <h1 className="mt-2 font-display text-[1.7rem] font-bold leading-tight tracking-[-0.02em] text-white md:text-[2.1rem]">
+            {subjectName}
+          </h1>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-[#9fb0c6]">
+            {homeWardName
+              ? `Home ward: ${homeWardName}. Evaluation history and indicator breakdown.`
+              : 'Evaluation history and indicator breakdown.'}
+          </p>
           <Link
             to="/admin/academic"
-            className="inline-flex items-center gap-2 rounded-[0.25rem] border border-[#c8d5e6] bg-[#eef4fb] px-4 py-2 text-[11px] font-bold uppercase tracking-[0.16em] text-[#000a1e] transition hover:bg-[#e3edf8]"
+            className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-[#7cb3ff] transition-colors hover:text-white"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
+            <ArrowLeft className="h-4 w-4" />
             Back to academic
           </Link>
-        }
-      />
+        </div>
+
+        <motion.div
+          variants={statRowVariants}
+          initial="hidden"
+          animate="show"
+          className="mt-6 grid grid-cols-2 gap-x-8 gap-y-5 border-t border-white/10 pt-5 lg:grid-cols-4"
+        >
+          {heroStats.map((stat) => (
+            <motion.div key={stat.label} variants={statItemVariants} className="min-w-0">
+              <p className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-[#f0b429]">
+                {stat.label}
+              </p>
+              <p className="mt-1.5 font-display text-[1.9rem] font-bold leading-none tabular-nums text-white md:text-[2.1rem]">
+                <AnimatedStat value={stat.value} format={stat.format} />
+              </p>
+              <p className="mt-1 truncate text-xs text-[#9fb0c6]">{stat.note}</p>
+            </motion.div>
+          ))}
+        </motion.div>
+      </motion.section>
 
       <ReportingScopePanel fields={scopeFields} />
 
@@ -302,35 +433,15 @@ export function AcademicPersonDetailPage() {
           {error}
         </div>
       ) : isLoading && !summary ? (
-        <div className="rounded-[0.35rem] bg-[#f1f4f7] px-5 py-12 text-center text-sm text-[#5b6169]">
-          Loading evaluation history…
-        </div>
+        <AnalyticsContentSkeleton />
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <StatTile label="Evaluations" value={`${summary?.evaluationCount ?? 0}`} tone="navy" />
-            <StatTile label="Average score" value={`${Math.round(summary?.averageScore ?? 0)}%`} tone="blue" />
-            {isResident ? (
-              <StatTile
-                label="Avg overall rating"
-                value={`${(summary?.avgOverallRating ?? 0).toFixed(1)} / 5`}
-                tone="gold"
-              />
-            ) : (
-              <StatTile
-                label="Senior presence"
-                value={`${Math.round((summary?.seniorPresenceRate ?? 0) * 100)}%`}
-                tone="gold"
-              />
-            )}
-            {isResident ? (
-              <StatTile label="Concerns flagged" value={`${issueData.reduce((sum, issue) => sum + issue.count, 0)}`} tone="green" />
-            ) : (
-              <StatTile label="Avg patients seen" value={`${Math.round(summary?.avgPctSeen ?? 0)}%`} tone="green" />
-            )}
-          </div>
-
-          <div className="grid gap-6 2xl:grid-cols-[1.35fr_1fr] 2xl:items-start">
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: 'easeOut', delay: 0.05 }}
+            className="grid gap-6 2xl:grid-cols-[1.35fr_1fr] 2xl:items-start"
+          >
             <ChartCard title="Score trend" description="Average score per week.">
               {trendData.length ? (
                 <ResponsiveContainer width="100%" height={300}>
@@ -367,7 +478,7 @@ export function AcademicPersonDetailPage() {
               description="Deterministic highlights from this person's evaluations."
               items={insights}
             />
-          </div>
+          </motion.div>
 
           <ChartCard title="Indicator breakdown" description="Share of evaluations marking each item met.">
             {indicatorData.length ? (
@@ -401,42 +512,80 @@ export function AcademicPersonDetailPage() {
             )}
           </ChartCard>
 
-          <section className={sectionClass}>
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: 'easeOut', delay: 0.08 }}
+            className={sectionClass}
+          >
             <div className="space-y-1.5">
               <p className={eyebrowClass}>Recent evaluations</p>
               <h2 className="font-display text-[1.5rem] leading-tight tracking-[-0.02em] text-[#000a1e]">
                 Evaluation log
               </h2>
+              <p className="text-sm text-[#74777f]">Every submitted evaluation.</p>
             </div>
 
             {evaluations.length ? (
-              <div className="mt-5 overflow-hidden rounded-[0.35rem] border border-[#d9e0e7] bg-white">
-                <div className="grid grid-cols-[110px_minmax(0,1.3fr)_minmax(0,1.3fr)_80px] gap-3 border-b border-[#e4e9ef] bg-[#f6f8fa] px-4 py-2.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
+              <div className="mt-5 overflow-hidden rounded-[0.4rem] border border-[#e6ecf3] bg-white">
+                <div className="hidden grid-cols-[124px_minmax(0,2fr)_minmax(0,1.1fr)_104px] items-center gap-4 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f] sm:grid">
                   <span>Date</span>
-                  <span>Ward</span>
                   <span>Author</span>
+                  <span>Ward</span>
                   <span className="text-right">Score</span>
                 </div>
-                {evaluations.map((record) => (
-                  <div
-                    key={record.id}
-                    className="grid grid-cols-[110px_minmax(0,1.3fr)_minmax(0,1.3fr)_80px] items-center gap-3 border-b border-[#eef1f5] px-4 py-3 text-sm last:border-b-0"
-                  >
-                    <span className="text-[#1d3047]">{toDateLabel(record.evaluationDate)}</span>
-                    <span className="truncate text-[#5b6169]">{record.wardName ?? '—'}</span>
-                    <span className="truncate text-[#5b6169]">{record.authorName ?? '—'}</span>
-                    <span className="text-right font-semibold text-[#005db6]">
-                      {Math.round(recordScore(record))}%
-                    </span>
-                  </div>
-                ))}
+                {evaluations.map((record) => {
+                  const score = Math.round(recordScore(record))
+                  return (
+                    <button
+                      key={record.id}
+                      type="button"
+                      onClick={() => setSelectedRecord(record)}
+                      className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#eef2f6] px-4 py-2.5 text-left text-sm transition-colors last:border-b-0 hover:bg-[#f7f9fc] focus:outline-none focus-visible:bg-[#eef4fb] sm:grid-cols-[124px_minmax(0,2fr)_minmax(0,1.1fr)_104px] sm:gap-4"
+                    >
+                      <span className="hidden text-[13px] tabular-nums text-[#5b6169] sm:block">
+                        {toDateLabel(record.evaluationDate)}
+                      </span>
+                      <span className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#04162f] text-[11px] font-bold text-[#f0b429]">
+                          {initialsFor(record.authorName)}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold text-[#000a1e]">
+                            {record.authorName ?? '—'}
+                          </span>
+                          <span className="block truncate text-xs text-[#74777f] sm:hidden">
+                            {toDateLabel(record.evaluationDate)} · {record.wardName ?? '—'}
+                          </span>
+                        </span>
+                      </span>
+                      <span className="hidden min-w-0 sm:block">
+                        <span className="inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-[#e3e9f1] bg-[#f4f7fb] px-2.5 py-1 text-xs font-medium text-[#44474e]">
+                          <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#005db6]" />
+                          <span className="truncate">{record.wardName ?? '—'}</span>
+                        </span>
+                      </span>
+                      <span className="flex items-center justify-end gap-2">
+                        <span
+                          className={cn(
+                            'inline-flex min-w-[3.25rem] justify-center rounded-full border px-2.5 py-1 text-xs font-bold tabular-nums',
+                            scoreTone(score),
+                          )}
+                        >
+                          {score}%
+                        </span>
+                        <ChevronRight className="hidden h-4 w-4 shrink-0 text-[#c4c6cf] transition-colors group-hover:text-[#005db6] sm:block" />
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
             ) : (
               <div className="mt-5 rounded-[0.35rem] border border-dashed border-[#cbd5e1] bg-white px-5 py-10 text-center text-sm text-[#5b6169]">
                 No evaluations match the current filters.
               </div>
             )}
-          </section>
+          </motion.section>
 
           <ChartCard
             title={isResident ? 'Concerns' : 'System issues'}
@@ -470,6 +619,16 @@ export function AcademicPersonDetailPage() {
           </ChartCard>
         </>
       )}
+
+      <AcademicEvaluationDetailSheet
+        record={selectedRecord}
+        open={selectedRecord !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedRecord(null)
+          }
+        }}
+      />
     </div>
   )
 }

@@ -100,6 +100,8 @@ php artisan app:create-superadmin
 
 Deploy the Laravel backend (`backend/`) to a PHP host separately, configure its database and `SANCTUM_STATEFUL_DOMAINS`/`CORS_ALLOWED_ORIGINS` for the production frontend origin, and ensure `APP_DEBUG=false`.
 
+Before launch, complete the hardening steps in `docs/PRODUCTION_LAUNCH_CHECKLIST.md`: disable Reverb unless it is actually hosted, enable secure cookies, wire `php artisan schedule:run` via cron, use MariaDB/MySQL, and test backups.
+
 ## Core Flows
 
 Login/logout, session restore, protected + role-aware routes, access requests, admin approve/reject, draft save, submit, edit-after-submit (audit-logged), lock/unlock, notifications, analytics, and CSV export — all backed by the Laravel API with server-side authorization.

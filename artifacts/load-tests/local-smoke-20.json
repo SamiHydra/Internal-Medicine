@@ -1,0 +1,121 @@
+{
+  "startedAt": "2026-06-03T06:48:11.871Z",
+  "finishedAt": "2026-06-03T06:48:38.082Z",
+  "baseUrl": "http://127.0.0.1:8000",
+  "users": 20,
+  "durationSeconds": 15,
+  "rampSeconds": 5,
+  "sessionCount": 3,
+  "totalRequests": 68,
+  "totalFailures": 0,
+  "errorRate": 0,
+  "rps": 4.53,
+  "endpoints": {
+    "csrf": {
+      "count": 3,
+      "ok": 3,
+      "failed": 0,
+      "errorRate": 0,
+      "bytes": 0,
+      "rps": 0.2,
+      "p50Ms": 254.9,
+      "p95Ms": 409.9,
+      "p99Ms": 409.9,
+      "maxMs": 409.9,
+      "statuses": {
+        "204": 3
+      }
+    },
+    "login": {
+      "count": 3,
+      "ok": 3,
+      "failed": 0,
+      "errorRate": 0,
+      "bytes": 5765,
+      "rps": 0.2,
+      "p50Ms": 727.7,
+      "p95Ms": 827.9,
+      "p99Ms": 827.9,
+      "maxMs": 827.9,
+      "statuses": {
+        "200": 3
+      }
+    },
+    "workspace-prime": {
+      "count": 3,
+      "ok": 3,
+      "failed": 0,
+      "errorRate": 0,
+      "bytes": 286893,
+      "rps": 0.2,
+      "p50Ms": 365.9,
+      "p95Ms": 906.5,
+      "p99Ms": 906.5,
+      "maxMs": 906.5,
+      "statuses": {
+        "200": 3
+      }
+    },
+    "workspace": {
+      "count": 33,
+      "ok": 33,
+      "failed": 0,
+      "errorRate": 0,
+      "bytes": 3248323,
+      "rps": 2.2,
+      "p50Ms": 5079.2,
+      "p95Ms": 6507.7,
+      "p99Ms": 6537.1,
+      "maxMs": 6537.1,
+      "statuses": {
+        "200": 33
+      }
+    },
+    "auth-me": {
+      "count": 7,
+      "ok": 7,
+      "failed": 0,
+      "errorRate": 0,
+      "bytes": 17680,
+      "rps": 0.47,
+      "p50Ms": 3615.7,
+      "p95Ms": 6553.7,
+      "p99Ms": 6553.7,
+      "maxMs": 6553.7,
+      "statuses": {
+        "200": 7
+      }
+    },
+    "notifications": {
+      "count": 6,
+      "ok": 6,
+      "failed": 0,
+      "errorRate": 0,
+      "bytes": 7304,
+      "rps": 0.4,
+      "p50Ms": 5686.7,
+      "p95Ms": 6195.8,
+      "p99Ms": 6195.8,
+      "maxMs": 6195.8,
+      "statuses": {
+        "200": 6
+      }
+    },
+    "report-details": {
+      "count": 13,
+      "ok": 13,
+      "failed": 0,
+      "errorRate": 0,
+      "bytes": 714873,
+      "rps": 0.87,
+      "p50Ms": 5985.5,
+      "p95Ms": 6863.8,
+      "p99Ms": 6863.8,
+      "maxMs": 6863.8,
+      "statuses": {
+        "200": 13
+      }
+    }
+  },
+  "failures": []
+}

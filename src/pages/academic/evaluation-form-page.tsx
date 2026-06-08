@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { CalendarClock, ClipboardCheck, GraduationCap, Send } from 'lucide-react'
+import { ClipboardCheck, Send } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import {
   Controller,
@@ -14,6 +14,7 @@ import { z } from 'zod'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { FormContentSkeleton } from '@/components/layout/loading-skeletons'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -40,48 +41,15 @@ import type {
   SaveConsultantEvaluationPayload,
   SaveResidentEvaluationPayload,
 } from '@/lib/api/types'
+import {
+  CONCERN_OPTIONS,
+  CONSULTANT_SCORE_ITEMS,
+  MDT_PARTICIPANT_OPTIONS,
+  OVERALL_RATING_OPTIONS,
+  RESIDENT_COMPETENCIES,
+  SYSTEM_ISSUE_OPTIONS,
+} from '@/config/academic-evaluation-fields'
 import { cn } from '@/lib/utils'
-
-// --- option metadata (must mirror the backend allowed-value lists) -----------
-
-const MDT_PARTICIPANT_OPTIONS = [
-  { value: 'consultant', label: 'Consultant' },
-  { value: 'fellow', label: 'Fellow' },
-  { value: 'internist', label: 'Internist' },
-  { value: 'residents', label: 'Residents' },
-  { value: 'interns', label: 'Interns' },
-  { value: 'nurse', label: 'Nurse' },
-  { value: 'clinical_pharmacy', label: 'Clinical pharmacy' },
-] as const
-
-const SYSTEM_ISSUE_OPTIONS = [
-  { value: 'lab_delay', label: 'Lab delay' },
-  { value: 'imaging_delay', label: 'Imaging delay' },
-  { value: 'staff_shortage', label: 'Staff shortage' },
-  { value: 'bed_issue', label: 'Bed issue' },
-  { value: 'emr_interruption', label: 'EMR interruption' },
-  { value: 'communication_issue', label: 'Communication issue' },
-] as const
-
-const CONCERN_OPTIONS = [
-  { value: 'punctuality', label: 'Punctuality' },
-  { value: 'preparation', label: 'Preparation' },
-  { value: 'medical_knowledge', label: 'Medical knowledge' },
-  { value: 'clinical_reasoning', label: 'Clinical reasoning' },
-  { value: 'documentation', label: 'Documentation' },
-  { value: 'communication', label: 'Communication' },
-  { value: 'professionalism', label: 'Professionalism' },
-  { value: 'follow_through', label: 'Follow-through' },
-  { value: 'time_management', label: 'Time management' },
-] as const
-
-const OVERALL_RATING_OPTIONS = [
-  { value: '1', label: '1 · Well below expectations' },
-  { value: '2', label: '2 · Below expectations' },
-  { value: '3', label: '3 · Meets expectations' },
-  { value: '4', label: '4 · Above expectations' },
-  { value: '5', label: '5 · Excellent' },
-]
 
 // --- schemas -----------------------------------------------------------------
 
@@ -189,60 +157,10 @@ const residentDefaults: ResidentFormValues = {
   comment: '',
 }
 
-const CONSULTANT_SCORE_ITEMS: { name: FieldPath<ConsultantFormValues>; label: string }[] = [
-  { name: 'allPatientsReviewed', label: 'All patients reviewed' },
-  { name: 'mgmtPlanDocumented', label: 'Management plan documented' },
-  { name: 'vteAssessed', label: 'VTE risk assessed' },
-  { name: 'dischargeDiscussed', label: 'Discharge discussed' },
-  { name: 'medReviewDone', label: 'Medication review done' },
-  { name: 'criticalLabsReviewed', label: 'Critical labs reviewed' },
-]
-
-const RESIDENT_COMPETENCIES: {
-  group: string
-  items: { name: FieldPath<ResidentFormValues>; label: string }[]
-}[] = [
-  {
-    group: 'Attendance & professionalism',
-    items: [
-      { name: 'onTime', label: 'Present & on time' },
-      { name: 'professional', label: 'Professional conduct' },
-    ],
-  },
-  {
-    group: 'Preparation & patient care',
-    items: [
-      { name: 'prepared', label: 'Knew patients; list & overnight events updated' },
-      { name: 'managementPlan', label: 'Appropriate, prioritized plan' },
-    ],
-  },
-  {
-    group: 'Medical knowledge',
-    items: [{ name: 'clinicalReasoning', label: 'Sound assessment & differential' }],
-  },
-  {
-    group: 'Communication',
-    items: [
-      { name: 'presentationClear', label: 'Case presentation clear & concise' },
-      { name: 'communication', label: 'Effective with team / nursing / patient' },
-    ],
-  },
-  {
-    group: 'Documentation & systems',
-    items: [
-      { name: 'documentationTimely', label: 'Notes & orders complete and timely' },
-      { name: 'followThrough', label: 'Completed tasks; chased results & referrals' },
-    ],
-  },
-  {
-    group: 'Practice-based learning',
-    items: [{ name: 'responsiveFeedback', label: 'Receptive to feedback & teaching' }],
-  },
-]
-
 // --- shared styling ----------------------------------------------------------
 
-const panelClass = 'rounded-[0.35rem] bg-[#eef2f6] px-5 py-6 md:px-6'
+const panelClass =
+  'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
 const eyebrowClass = 'text-[11px] font-semibold uppercase tracking-[0.22em] text-[#005db6]'
 const labelClass = 'text-[11px] font-bold uppercase tracking-[0.14em] text-[#000a1e]'
 const fieldInputClass = 'bg-[#ffffff] shadow-none'
@@ -421,25 +339,25 @@ function PickerField<T extends FieldValues>({
   )
 }
 
+// The concise category label (passed as `eyebrow`) is the section heading. The
+// older verbose `title`/`description` props are accepted but intentionally not
+// rendered — they were filler on top of an already-clear label.
 function SectionPanel({
   eyebrow,
-  title,
-  description,
   children,
 }: {
   eyebrow: string
-  title: string
+  title?: string
   description?: string
   children: ReactNode
 }) {
   return (
     <section className={panelClass}>
-      <div className="space-y-1.5">
-        <p className={eyebrowClass}>{eyebrow}</p>
-        <h2 className="font-display text-[1.4rem] leading-tight tracking-[-0.02em] text-[#000a1e]">
-          {title}
+      <div className="flex items-center gap-2">
+        <span aria-hidden="true" className="h-3.5 w-[3px] rounded-full bg-[#f0b429]" />
+        <h2 className="font-display text-[1.25rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.4rem]">
+          {eyebrow}
         </h2>
-        {description ? <p className="text-sm leading-6 text-[#5b6169]">{description}</p> : null}
       </div>
       <div className="mt-5">{children}</div>
     </section>
@@ -744,7 +662,7 @@ function ResidentEvaluationForm({
         </div>
       </SectionPanel>
 
-      <SectionPanel eyebrow="Overall" title="Overall rating">
+      <SectionPanel eyebrow="Overall rating" title="Overall rating">
         <FieldShell label="Overall rating" error={errors.overallRating?.message}>
           <PickerField
             control={form.control}
@@ -893,36 +811,30 @@ export function AcademicEvaluationFormPage() {
   const description = !canSubmit
     ? 'Submit clinical evaluations after MDT rounds.'
     : direction === 'consultant'
-      ? 'File your MDT daily round evaluation of the senior who led the round.'
-      : 'File your performance evaluation of a resident after the round.'
+      ? "Rate the senior who led today's MDT round."
+      : "Rate a resident's performance on today's round."
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 px-4 py-6 md:px-6 md:py-8">
       <section className={panelClass}>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-2">
-            <p className={eyebrowClass}>Academic</p>
-            <h1 className="font-display text-[2rem] leading-[1.02] tracking-[-0.03em] text-[#000a1e] md:text-[2.35rem]">
-              {heading}
-            </h1>
-            <p className="max-w-2xl text-sm leading-7 text-[#5b6169]">{description}</p>
-          </div>
-          <div className="flex h-12 w-12 items-center justify-center rounded-[0.35rem] bg-[#005db6] text-white">
-            <GraduationCap className="h-6 w-6" />
-          </div>
+        <div className="flex items-center gap-2">
+          <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
+          <p className={eyebrowClass}>New evaluation</p>
         </div>
+        <h1 className="mt-1.5 font-display text-[1.5rem] font-bold leading-tight tracking-[-0.02em] text-[#000a1e] md:text-[1.7rem]">
+          {heading}
+        </h1>
+        <p className="mt-1.5 max-w-2xl text-sm text-[#74777f]">{description}</p>
       </section>
 
       {isLoading ? (
-        <div className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-12 text-center text-sm text-[#5b6169]">
-          Loading the evaluation form…
-        </div>
+        <FormContentSkeleton />
       ) : loadError ? (
         <div className="rounded-[0.35rem] border border-[#f1d1d1] bg-[#fff1f1] px-5 py-10 text-center text-sm font-medium text-[#b42318]">
           {loadError}
         </div>
       ) : !client || !options ? null : role !== 'resident' && role !== 'consultant' ? (
-        <div className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-10 text-center text-sm text-[#5b6169]">
+        <div className={`${panelClass} text-center text-sm text-[#5b6169]`}>
           Only residents and consultants can submit academic evaluations.
         </div>
       ) : (
@@ -943,23 +855,15 @@ export function AcademicEvaluationFormPage() {
             )}
           </div>
 
-          <aside className="space-y-4 2xl:sticky 2xl:top-6">
+          <aside className="2xl:sticky 2xl:top-6">
             <section className={panelClass}>
               <div className="flex items-center gap-2">
                 <ClipboardCheck className="h-4 w-4 text-[#005db6]" />
-                <p className={eyebrowClass}>My recent submissions</p>
+                <p className={eyebrowClass}>Recent submissions</p>
               </div>
               <div className="mt-4">
                 <RecentSubmissions submissions={submissions} />
               </div>
-            </section>
-
-            <section className={cn(panelClass, 'flex items-start gap-3')}>
-              <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[#005db6]" />
-              <p className="text-sm leading-6 text-[#5b6169]">
-                Evaluations are submit-and-done. Reach out to an administrator if a correction is
-                needed.
-              </p>
             </section>
           </aside>
         </div>

@@ -41,6 +41,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
 
     Route::get('/reports', [ReportWorkflowController::class, 'index']);
     Route::post('/reports', [ReportWorkflowController::class, 'store']);
+    Route::get('/reports/details', [ReportWorkflowController::class, 'details']);
     Route::get('/reports/{report}', [ReportWorkflowController::class, 'show']);
     Route::put('/reports/{report}', [ReportWorkflowController::class, 'update']);
     Route::post('/reports/{report}/submit', [ReportWorkflowController::class, 'submit']);
@@ -57,11 +58,14 @@ Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
         ->middleware('permission:analytics.view')
         ->group(function (): void {
             Route::get('/overview', [AnalyticsController::class, 'overview']);
+            Route::get('/dashboard', [AnalyticsController::class, 'dashboard']);
             Route::get('/inpatient', [AnalyticsController::class, 'inpatient']);
             Route::get('/outpatient', [AnalyticsController::class, 'outpatient']);
             Route::get('/procedures', [AnalyticsController::class, 'procedures']);
             Route::get('/weekly', [AnalyticsController::class, 'weekly']);
             Route::get('/monthly', [AnalyticsController::class, 'monthly']);
+            Route::get('/quarterly', [AnalyticsController::class, 'quarterly']);
+            Route::get('/yearly', [AnalyticsController::class, 'yearly']);
             Route::get('/departments', [AnalyticsController::class, 'departments']);
             Route::get('/wards', [AnalyticsController::class, 'wards']);
             Route::get('/export', [AnalyticsController::class, 'export']);
@@ -102,6 +106,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
         Route::get('/templates/{template}', [ReferenceDataController::class, 'showTemplate'])->middleware('permission:templates.manage');
         Route::patch('/templates/{template}', [ReferenceDataController::class, 'updateTemplate'])->middleware('permission:templates.manage');
         Route::patch('/templates/{template}/active', [ReferenceDataController::class, 'setTemplateActive'])->middleware('permission:templates.manage');
+        Route::patch('/templates/{template}/fields/{field}/active', [ReferenceDataController::class, 'setFieldActive'])->middleware('permission:templates.manage');
         Route::delete('/templates/{template}', [ReferenceDataController::class, 'destroyTemplate'])->middleware('permission:templates.manage');
 
         Route::get('/departments', [ReferenceDataController::class, 'departments'])->middleware('permission:departments.manage');
@@ -126,5 +131,6 @@ Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
         Route::get('/admin-audit-logs', [AuditLogController::class, 'adminActions'])->middleware('permission:audit.view');
 
         Route::get('/academic/evaluations', [AdminAcademicEvaluationController::class, 'index'])->middleware('permission:academic.view');
+        Route::get('/academic/audit', [AdminAcademicEvaluationController::class, 'audit'])->middleware('permission:academic.view');
     });
 });

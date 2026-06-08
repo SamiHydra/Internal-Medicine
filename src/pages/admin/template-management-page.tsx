@@ -1,323 +1,840 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import {
+  ArrowDown,
+  ArrowUp,
   CalendarDays,
-  ChevronRight,
-  LayoutTemplate,
-  Rows3,
-  Sparkles,
+  ChevronDown,
+  Gauge,
+  Info,
+  LayoutGrid,
+  ListChecks,
+  Loader2,
+  Save,
+  Settings2,
+  TriangleAlert,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  HeaderChip,
+  SectionEmptyState,
+  SectionHeader,
+  panelClass,
+} from '@/components/dashboard/section-panel'
+import { TemplateEditorSkeleton } from '@/components/layout/loading-skeletons'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { getAllTemplatesByFamily } from '@/data/selectors'
-import { formatCompactNumber } from '@/lib/utils'
+import { Textarea } from '@/components/ui/textarea'
+import { useAppData } from '@/context/app-data-context'
+import {
+  fetchAdminTemplates,
+  setTemplateFieldActive,
+  updateTemplateContent,
+} from '@/lib/api'
+import { getApiBrowserClient } from '@/lib/api/client'
+import type { ApiTemplateConfig, ApiTemplateField } from '@/lib/api/types'
+import { cn } from '@/lib/utils'
+import type {
+  ChangeWatchRule,
+  SummaryCardConfig,
+  TemplateSection,
+} from '@/types/domain'
 
 const serviceLineOptions = [
-  {
-    value: 'inpatient' as const,
-    label: 'Inpatient',
-    eyebrow: 'Ward templates',
-    note: 'Weekly ward reporting models.',
-  },
-  {
-    value: 'outpatient' as const,
-    label: 'Outpatient',
-    eyebrow: 'Clinic templates',
-    note: 'Clinic volume and access models.',
-  },
-  {
-    value: 'procedure' as const,
-    label: 'Procedures',
-    eyebrow: 'Procedure templates',
-    note: 'Service throughput and turnaround models.',
-  },
+  { value: 'inpatient' as const, label: 'Inpatient' },
+  { value: 'outpatient' as const, label: 'Outpatient' },
+  { value: 'procedure' as const, label: 'Procedures' },
 ] as const
 
-function formatDayLabel(day: string) {
-  return day.slice(0, 3)
+const weekdays = [
+  { key: 'monday', label: 'Mon' },
+  { key: 'tuesday', label: 'Tue' },
+  { key: 'wednesday', label: 'Wed' },
+  { key: 'thursday', label: 'Thu' },
+  { key: 'friday', label: 'Fri' },
+  { key: 'saturday', label: 'Sat' },
+  { key: 'sunday', label: 'Sun' },
+] as const
+
+// Plain-language labels for the roll-up behaviour. Values stay on the API contract.
+const aggregateOptions = [
+  { value: 'sum', label: 'Add up into a total' },
+  { value: 'average', label: 'Show the average' },
+  { value: 'latest', label: 'Keep the latest value' },
+  { value: 'none', label: 'Do not combine' },
+] as const
+
+// Engineer-facing field kinds translated to words a coordinator understands.
+const fieldTypeLabels: Record<string, string> = {
+  integer: 'Whole number',
+  decimal: 'Decimal number',
+  number: 'Number',
+  float: 'Decimal number',
+  text: 'Text',
+  string: 'Text',
+  choice: 'Pick from a list',
+  single_choice: 'Pick from a list',
+  multi_choice: 'Pick several',
+  select: 'Pick from a list',
+  boolean: 'Yes / no',
+  time: 'Time',
+  date: 'Date',
+}
+
+function prettyFieldType(kind: string) {
+  return fieldTypeLabels[kind] ?? kind.replace(/_/g, ' ')
+}
+
+type PresentationSection = TemplateSection
+type PresentationCard = SummaryCardConfig
+type PresentationRule = ChangeWatchRule
+
+/** Small uppercase caption that sits above a single control. */
+function Caption({ children }: { children: ReactNode }) {
+  return (
+    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9aa7b8]">
+      {children}
+    </span>
+  )
+}
+
+/** A titled block inside the open template: icon + title (+ optional count). */
+function FieldGroup({
+  icon,
+  title,
+  count,
+  children,
+}: {
+  icon: ReactNode
+  title: string
+  count?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <section className="space-y-3.5">
+      <div className="flex items-center gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[0.3rem] bg-[#edf4fb] text-[#005db6]">
+          {icon}
+        </span>
+        <h3 className="flex items-center gap-2 text-sm font-bold text-[#000a1e]">
+          {title}
+          {count != null ? (
+            <span className="text-[13px] font-semibold text-[#9aa7b8]">{count}</span>
+          ) : null}
+        </h3>
+      </div>
+      {children}
+    </section>
+  )
 }
 
 export function TemplateManagementPage() {
-  const templatesByFamily = getAllTemplatesByFamily()
-  const [activeServiceLine, setActiveServiceLine] =
+  const { refreshData } = useAppData()
+  const client = getApiBrowserClient()
+  const [templates, setTemplates] = useState<ApiTemplateConfig[] | null>(null)
+  const [loadError, setLoadError] = useState(false)
+  const [dirty, setDirty] = useState<Record<string, boolean>>({})
+  const [savingSlug, setSavingSlug] = useState<string | null>(null)
+  const [activeFamily, setActiveFamily] =
     useState<(typeof serviceLineOptions)[number]['value']>('inpatient')
+  // Single-open accordion: only one report is editable at a time so the page stays calm.
+  const [openSlug, setOpenSlug] = useState<string | null>(null)
+  // Single-open per-field advanced settings, keyed `${slug}:${fieldKey}`.
+  const [openFieldKey, setOpenFieldKey] = useState<string | null>(null)
 
-  const activeTemplates = templatesByFamily[activeServiceLine]
-  const activeMeta = serviceLineOptions.find((option) => option.value === activeServiceLine)!
-  const totalTemplates = activeTemplates.length
-  const totalFields = activeTemplates.reduce((sum, template) => sum + template.fields.length, 0)
-  const totalSections = activeTemplates.reduce((sum, template) => sum + template.sections.length, 0)
-  const totalSignals = activeTemplates.reduce((sum, template) => sum + template.changeRules.length, 0)
-  const averageFields = totalTemplates ? Math.round(totalFields / totalTemplates) : 0
-  const averageSections = totalTemplates ? Math.round(totalSections / totalTemplates) : 0
-  const summaryItems = [
-    {
-      label: 'Templates',
-      value: formatCompactNumber(totalTemplates),
-      note: activeMeta.label,
-      icon: LayoutTemplate,
-      tone: 'text-[#005db6] bg-[#edf4fb] outline-[#cfe0f4]/75',
-    },
-    {
-      label: 'Fields',
-      value: formatCompactNumber(totalFields),
-      note: `${averageFields} avg per template`,
-      icon: Rows3,
-      tone: 'text-[#00468c] bg-[#edf4fb] outline-[#cfe0f4]/75',
-    },
-    {
-      label: 'Sections',
-      value: formatCompactNumber(totalSections),
-      note: `${averageSections} avg per template`,
-      icon: CalendarDays,
-      tone: 'text-[#1d3047] bg-[#edf1f5] outline-[#d4dde8]/75',
-    },
-    {
-      label: 'Signals',
-      value: formatCompactNumber(totalSignals),
-      note: 'Configured change rules',
-      icon: Sparkles,
-      tone: 'text-[#8a5a00] bg-[#fcf5e8] outline-[#edd9b0]/75',
-    },
-  ] as const
+  useEffect(() => {
+    if (!client) {
+      setLoadError(true)
+      return
+    }
+
+    let active = true
+    fetchAdminTemplates(client)
+      .then((data) => {
+        if (active) {
+          setTemplates(data)
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setLoadError(true)
+          toast.error('Unable to load report templates.')
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [client])
+
+  const markDirty = (slug: string) => setDirty((prev) => ({ ...prev, [slug]: true }))
+
+  const mutateTemplate = (slug: string, updater: (template: ApiTemplateConfig) => ApiTemplateConfig) => {
+    setTemplates((prev) =>
+      prev ? prev.map((template) => (template.slug === slug ? updater(template) : template)) : prev,
+    )
+    markDirty(slug)
+  }
+
+  const getPresentation = (template: ApiTemplateConfig) => template.metadata?.presentation ?? {}
+
+  const setPresentation = (
+    template: ApiTemplateConfig,
+    next: NonNullable<ApiTemplateConfig['metadata']>['presentation'],
+  ): ApiTemplateConfig => ({
+    ...template,
+    metadata: { ...(template.metadata ?? {}), presentation: { ...getPresentation(template), ...next } },
+  })
+
+  const save = async (template: ApiTemplateConfig) => {
+    if (!client) {
+      return
+    }
+
+    setSavingSlug(template.slug)
+    const payload = {
+      name: template.name,
+      description: template.description,
+      activeDays: template.activeDays,
+      metadata: { presentation: getPresentation(template) },
+      // Snake_case: the backend validation requires `section_key`/`label` per field
+      // (required_with:fields), and syncFields reads snake keys.
+      fields: template.fields.map((field, index) => ({
+        field_key: field.fieldKey,
+        section_key: field.sectionKey,
+        label: field.label,
+        field_kind: field.fieldKind,
+        aggregate_type: field.aggregateType,
+        display_order: (index + 1) * 10,
+        metadata: field.metadata ?? {},
+      })),
+    }
+
+    try {
+      await updateTemplateContent(client, template.slug, payload)
+      await refreshData()
+      setDirty((prev) => ({ ...prev, [template.slug]: false }))
+      toast.success(`${template.name} saved.`)
+    } catch {
+      toast.error('Unable to save the template. Structural changes need Maintenance.')
+    } finally {
+      setSavingSlug(null)
+    }
+  }
+
+  const toggleFieldActive = async (template: ApiTemplateConfig, field: ApiTemplateField) => {
+    if (!client) {
+      return
+    }
+
+    const nextActive = field.active === false
+    // Optimistic local update.
+    setTemplates((prev) =>
+      prev
+        ? prev.map((entry) =>
+            entry.slug === template.slug
+              ? {
+                  ...entry,
+                  fields: entry.fields.map((item) =>
+                    item.fieldKey === field.fieldKey ? { ...item, active: nextActive } : item,
+                  ),
+                }
+              : entry,
+          )
+        : prev,
+    )
+
+    try {
+      await setTemplateFieldActive(client, template.slug, field.fieldKey, nextActive)
+      await refreshData()
+    } catch {
+      toast.error('Unable to change the field status.')
+    }
+  }
+
+  const moveField = (template: ApiTemplateConfig, index: number, direction: -1 | 1) => {
+    const target = index + direction
+    if (target < 0 || target >= template.fields.length) {
+      return
+    }
+    mutateTemplate(template.slug, (entry) => {
+      const fields = [...entry.fields]
+      const [moved] = fields.splice(index, 1)
+      fields.splice(target, 0, moved)
+      return { ...entry, fields }
+    })
+  }
+
+  const familyTemplates = useMemo(
+    () => (templates ?? []).filter((template) => template.family === activeFamily),
+    [templates, activeFamily],
+  )
+
+  // Open the first report of a service line automatically so the page is never a wall of closed rows.
+  useEffect(() => {
+    if (!familyTemplates.length) {
+      return
+    }
+    setOpenSlug((current) =>
+      current && familyTemplates.some((template) => template.slug === current)
+        ? current
+        : familyTemplates[0].slug,
+    )
+  }, [familyTemplates])
+
+  const toggleOpen = (slug: string) => {
+    setOpenFieldKey(null)
+    setOpenSlug((current) => (current === slug ? null : slug))
+  }
 
   return (
     <Tabs
-      value={activeServiceLine}
+      value={activeFamily}
       onValueChange={(value) =>
-        setActiveServiceLine(value as (typeof serviceLineOptions)[number]['value'])
+        setActiveFamily(value as (typeof serviceLineOptions)[number]['value'])
       }
-      className="space-y-8"
+      className="space-y-6 px-4 py-5 md:px-6 md:py-8"
     >
-      <section className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5 md:px-6">
-        <div className="space-y-5">
-          <div className="space-y-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
-                Templates
-              </p>
-              <h1 className="font-display text-[2rem] leading-[0.96] tracking-[-0.03em] text-[#000a1e] md:text-[2.35rem]">
-                Reporting models
-              </h1>
-          </div>
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, ease: 'easeOut' }}
+        className={panelClass}
+      >
+        <SectionHeader
+          eyebrow="Report templates"
+          title="Shape what staff fill in"
+          actions={
+            <TabsList className="h-auto flex-wrap gap-2 rounded-[0.35rem] bg-[#f4f7fb] p-1.5 outline outline-1 outline-[#e3e9f1]">
+              {serviceLineOptions.map((option) => (
+                <TabsTrigger
+                  key={option.value}
+                  value={option.value}
+                  className="rounded-[0.25rem] px-4 py-2 text-sm font-semibold text-[#44474e] data-[state=active]:bg-[#000a1e] data-[state=active]:text-white data-[state=active]:shadow-none"
+                >
+                  {option.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          }
+        />
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {summaryItems.map((item) => {
-              const Icon = item.icon
+        <div className="mt-5 flex items-start gap-2.5 rounded-[0.4rem] border border-[#cfe0f4] bg-[#f6fbff] px-4 py-3">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#005db6]" />
+          <p className="text-[13px] leading-5 text-[#1d3047]">
+            Question types and internal names are locked to protect submitted reports.
+          </p>
+        </div>
+
+        {templates === null && !loadError ? (
+          <div className="mt-6 grid gap-3 sm:grid-cols-3">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : null}
+        {loadError ? (
+          <p className="mt-6 text-sm text-[#ba1a1a]">Unable to load templates.</p>
+        ) : null}
+      </motion.section>
+
+      {serviceLineOptions.map((option) => (
+        <TabsContent key={option.value} value={option.value} className="mt-0 space-y-4">
+          {templates === null && !loadError ? (
+            <TemplateEditorSkeleton />
+          ) : familyTemplates.length === 0 ? (
+            <div className={panelClass}>
+              <SectionEmptyState
+                icon={<ListChecks className="h-6 w-6" />}
+                title="No reports here yet"
+                description={`There are no ${option.label.toLowerCase()} report templates to customize right now.`}
+              />
+            </div>
+          ) : (
+            familyTemplates.map((template, index) => {
+              const presentation = getPresentation(template)
+              const sections = (presentation.sections as PresentationSection[] | undefined) ?? []
+              const cards = (presentation.summaryCards as PresentationCard[] | undefined) ?? []
+              const rules = (presentation.changeRules as PresentationRule[] | undefined) ?? []
+              const sectionTitleByKey = new Map(sections.map((section) => [section.id, section.title]))
+              const fieldLabelByKey = new Map(template.fields.map((field) => [field.fieldKey, field.label]))
+              const isDirty = Boolean(dirty[template.slug])
+              const isSaving = savingSlug === template.slug
+              const isOpen = openSlug === template.slug
+              const offCount = template.fields.filter((field) => field.active === false).length
 
               return (
-                <div
-                  key={item.label}
-                  className={`rounded-[0.35rem] px-3.5 py-3 outline outline-1 ${item.tone}`}
+                <motion.section
+                  key={template.slug}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.26, ease: 'easeOut', delay: index * 0.02 }}
+                  className={cn(
+                    'overflow-hidden rounded-[0.35rem] bg-white outline outline-1 shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] transition-colors',
+                    isOpen ? 'outline-[#bcd0ea]' : 'outline-[#d4dde8]',
+                  )}
                 >
-                  <div className="flex items-center gap-2">
-                    <Icon className="h-3.5 w-3.5" />
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">
-                      {item.label}
-                    </p>
-                  </div>
-                  <p className="mt-3 font-display text-[1.45rem] leading-none tracking-[-0.03em]">
-                    {item.value}
-                  </p>
-                  <p className="mt-1 text-xs leading-5 text-current/75">{item.note}</p>
-                </div>
-              )
-            })}
-          </div>
-
-          <div className="border-t border-[#d9e0e7] pt-4">
-            <div className="space-y-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
-                Service line
-              </p>
-              <TabsList className="h-auto flex-wrap gap-2 rounded-[0.35rem] bg-[#f8fafc] p-1.5 outline outline-1 outline-[#d9e0e7]/75 shadow-none">
-                {serviceLineOptions.map((option) => (
-                  <TabsTrigger
-                    key={option.value}
-                    value={option.value}
-                    className="rounded-[0.25rem] px-4 py-2.5 text-sm font-semibold text-[#44474e] data-[state=active]:bg-[#000a1e] data-[state=active]:text-white data-[state=active]:shadow-none"
+                  {/* Collapsed/expanded header — the whole bar toggles the editor open. */}
+                  <button
+                    type="button"
+                    onClick={() => toggleOpen(template.slug)}
+                    aria-expanded={isOpen}
+                    className="flex w-full items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-[#f8fafc] md:px-6"
                   >
-                    {option.label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </div>
-          </div>
-        </div>
-      </section>
+                    <span
+                      className={cn(
+                        'flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.3rem] transition-colors',
+                        isOpen ? 'bg-[#005db6] text-white' : 'bg-[#edf4fb] text-[#005db6]',
+                      )}
+                    >
+                      <ListChecks className="h-4 w-4" />
+                    </span>
 
-      {serviceLineOptions.map((serviceLine) => (
-        <TabsContent key={serviceLine.value} value={serviceLine.value} className="mt-0">
-          <div className="space-y-5">
-            {templatesByFamily[serviceLine.value].map((template, index) => (
-              <motion.section
-                key={template.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.26, ease: 'easeOut', delay: index * 0.02 }}
-                className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5"
-              >
-                <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)] xl:items-start">
-                  <div className="space-y-5">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="space-y-2">
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#005db6]">
-                          {serviceLine.label}
-                        </p>
-                        <h2 className="font-display text-[1.85rem] text-[#000a1e] md:text-[2.1rem]">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                        <span className="truncate font-display text-[1.05rem] font-bold tracking-[-0.01em] text-[#000a1e]">
                           {template.name}
-                        </h2>
-                        <p className="text-sm text-[#44474e]">
-                          {template.fields.length} fields / {template.sections.length} sections / {template.changeRules.length} signals
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        <span className="rounded-[0.25rem] border border-[#d4dde8] bg-[#ffffff] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#44474e]">
-                          {template.activeDays.length} days
                         </span>
-                        <span className="rounded-[0.25rem] border border-[#d4dde8] bg-[#ffffff] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#44474e]">
-                          {template.summaryCards.length} summaries
-                        </span>
+                        {isDirty ? (
+                          <Badge variant="warning">Unsaved</Badge>
+                        ) : null}
                       </div>
+                      <p className="mt-0.5 hidden truncate text-[13px] text-[#74777f] sm:block">
+                        {template.description}
+                      </p>
                     </div>
 
-                    <div className="flex flex-wrap gap-2">
-                      {template.activeDays.map((day) => (
-                        <span
-                          key={day}
-                          className="inline-flex items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-[#f3f4f5] px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-[#44474e]"
+                    <div className="hidden items-center gap-2 lg:flex">
+                      <HeaderChip>{template.fields.length} questions</HeaderChip>
+                      <HeaderChip>{template.activeDays.length} days/wk</HeaderChip>
+                      {offCount ? <HeaderChip>{offCount} off</HeaderChip> : null}
+                    </div>
+
+                    <ChevronDown
+                      className={cn(
+                        'h-5 w-5 shrink-0 text-[#9aa7b8] transition-transform duration-200',
+                        isOpen && 'rotate-180 text-[#005db6]',
+                      )}
+                    />
+                  </button>
+
+                  {isOpen ? (
+                    <motion.div
+                      initial={{ opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                      className="border-t border-[#eef2f6] px-5 pb-6 pt-5 md:px-6"
+                    >
+                      {/* Basics: name + description + save */}
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                        <div className="min-w-0 flex-1 space-y-3">
+                          <div className="space-y-1.5">
+                            <Caption>Report name</Caption>
+                            <Input
+                              value={template.name}
+                              onChange={(event) =>
+                                mutateTemplate(template.slug, (entry) => ({
+                                  ...entry,
+                                  name: event.target.value,
+                                }))
+                              }
+                              className="h-11 max-w-xl font-display text-lg font-bold text-[#000a1e]"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Caption>Description</Caption>
+                            <Textarea
+                              value={template.description}
+                              onChange={(event) =>
+                                mutateTemplate(template.slug, (entry) => ({
+                                  ...entry,
+                                  description: event.target.value,
+                                }))
+                              }
+                              rows={2}
+                              className="min-h-[4.5rem] max-w-2xl text-sm"
+                            />
+                          </div>
+                        </div>
+                        <Button
+                          onClick={() => void save(template)}
+                          disabled={!isDirty || isSaving}
+                          className="w-full shrink-0 lg:w-auto"
                         >
-                          <CalendarDays className="h-3.5 w-3.5 text-[#005db6]" />
-                          {formatDayLabel(day)}
-                        </span>
-                      ))}
-                    </div>
-
-                    <div className="grid gap-5 lg:grid-cols-2">
-                      <div className="space-y-3 rounded-[0.35rem] bg-[#ffffff] p-4 outline outline-1 outline-[#d4dde8]/65">
-                        <div className="flex items-center gap-2">
-                          <Rows3 className="h-4 w-4 text-[#005db6]" />
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
-                            Sections
-                          </p>
-                        </div>
-                        <div className="space-y-2">
-                          {template.sections.map((section) => (
-                            <div
-                              key={section.id}
-                              className="flex items-center justify-between rounded-[0.25rem] border border-[#d4dde8] bg-[#f3f4f5] px-3 py-2 text-sm"
-                            >
-                              <span className="font-medium text-[#44474e]">{section.title}</span>
-                              <ChevronRight className="h-4 w-4 text-[#74777f]" />
-                            </div>
-                          ))}
-                        </div>
+                          {isSaving ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Save className="h-4 w-4" />
+                          )}
+                          {isSaving ? 'Saving…' : isDirty ? 'Save changes' : 'All saved'}
+                        </Button>
                       </div>
 
-                      <div className="space-y-3 rounded-[0.35rem] bg-[#ffffff] p-4 outline outline-1 outline-[#d4dde8]/65">
-                        <div className="flex items-center gap-2">
-                          <LayoutTemplate className="h-4 w-4 text-[#005db6]" />
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
-                            Summary metrics
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {template.summaryCards.map((card) => (
-                            <Badge key={card.id} variant="success">
-                              {card.label}
-                            </Badge>
-                          ))}
-                        </div>
+                      {/* Collection days */}
+                      <div className="mt-7 border-t border-[#eef2f6] pt-6">
+                        <FieldGroup
+                          icon={<CalendarDays className="h-4 w-4" />}
+                          title="Collection days"
+                        >
+                          <div className="flex flex-wrap gap-2">
+                            {weekdays.map((day) => {
+                              const on = template.activeDays.includes(day.key)
+                              return (
+                                <button
+                                  key={day.key}
+                                  type="button"
+                                  onClick={() =>
+                                    mutateTemplate(template.slug, (entry) => ({
+                                      ...entry,
+                                      activeDays: on
+                                        ? entry.activeDays.filter((value) => value !== day.key)
+                                        : [...entry.activeDays, day.key],
+                                    }))
+                                  }
+                                  aria-pressed={on}
+                                  className={cn(
+                                    'rounded-full px-3.5 py-1.5 text-xs font-semibold uppercase tracking-[0.1em] outline outline-1 transition-[background-color,color,outline-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-safe:active:scale-[0.97]',
+                                    on
+                                      ? 'bg-[#005db6] text-white outline-[#005db6]'
+                                      : 'bg-white text-[#74777f] outline-[#d4dde8] hover:outline-[#bcd0ea]',
+                                  )}
+                                >
+                                  {day.label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </FieldGroup>
                       </div>
-                    </div>
-                  </div>
 
-                  <div className="rounded-[0.35rem] bg-[#f8fafc] p-5 outline outline-1 outline-[#d9e0e7]/75">
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-3">
-                        <div className="rounded-[0.35rem] bg-[#edf4fb] p-3 outline outline-1 outline-[#cfe0f4]/75">
-                          <Sparkles className="h-4 w-4 text-[#f0b429]" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#005db6]">
-                            Signal rules
-                          </p>
-                          <p className="mt-1 text-sm text-[#44474e]">
-                            Triggered by weekly changes.
-                          </p>
-                        </div>
-                      </div>
+                      {/* Questions */}
+                      <div className="mt-7 border-t border-[#eef2f6] pt-6">
+                        <FieldGroup
+                          icon={<ListChecks className="h-4 w-4" />}
+                          title="Questions"
+                          count={template.fields.length}
+                        >
+                          <div className="divide-y divide-[#eef2f6] overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
+                            {template.fields.map((field, fieldIndex) => {
+                              const inactive = field.active === false
+                              const isDecimal = field.fieldKind === 'decimal'
+                              const fieldStateKey = `${template.slug}:${field.fieldKey}`
+                              const settingsOpen = openFieldKey === fieldStateKey
 
-                      <div className="space-y-3">
-                        {template.changeRules.length ? (
-                          template.changeRules.map((rule, index) => {
-                            const fieldLabel =
-                              template.fields.find((field) => field.id === rule.fieldId)?.label ??
-                              rule.metricId ??
-                              rule.fieldId ??
-                              'Signal'
+                              return (
+                                <div
+                                  key={field.fieldKey}
+                                  className={cn(
+                                    'transition-colors',
+                                    settingsOpen ? 'bg-[#f8fafc]' : 'hover:bg-[#f8fafc]',
+                                  )}
+                                >
+                                  {/* Primary row: reorder · question · type · settings · on/off */}
+                                  <div
+                                    className={cn(
+                                      'flex items-center gap-3 px-3 py-2.5',
+                                      inactive && 'opacity-55',
+                                    )}
+                                  >
+                                    <div className="flex shrink-0 flex-col">
+                                      <button
+                                        type="button"
+                                        aria-label="Move question up"
+                                        onClick={() => moveField(template, fieldIndex, -1)}
+                                        disabled={fieldIndex === 0}
+                                        className="rounded-[0.25rem] p-0.5 text-[#9aa7b8] hover:text-[#005db6] disabled:opacity-30"
+                                      >
+                                        <ArrowUp className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        aria-label="Move question down"
+                                        onClick={() => moveField(template, fieldIndex, 1)}
+                                        disabled={fieldIndex === template.fields.length - 1}
+                                        className="rounded-[0.25rem] p-0.5 text-[#9aa7b8] hover:text-[#005db6] disabled:opacity-30"
+                                      >
+                                        <ArrowDown className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
 
-                            return (
-                              <div
-                                key={`${template.id}-${index}`}
-                                className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] p-4"
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <p className="text-sm font-medium leading-6 text-[#44474e]">
-                                    {fieldLabel}
-                                  </p>
-                                  <span className="rounded-[0.25rem] border border-[#edd9b0] bg-[#fcf5e8] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8a5a00]">
-                                    {rule.percentThreshold}%
-                                  </span>
+                                    <Input
+                                      value={field.label}
+                                      onChange={(event) =>
+                                        mutateTemplate(template.slug, (entry) => ({
+                                          ...entry,
+                                          fields: entry.fields.map((item) =>
+                                            item.fieldKey === field.fieldKey
+                                              ? { ...item, label: event.target.value }
+                                              : item,
+                                          ),
+                                        }))
+                                      }
+                                      className="h-9 min-w-0 flex-1 border-transparent bg-transparent px-2 text-sm font-medium hover:border-[#d4dde8] hover:bg-white focus:border-[#bcd0ea] focus:bg-white"
+                                    />
+
+                                    <span className="hidden shrink-0 rounded-full border border-[#e3e9f1] bg-[#f4f7fb] px-2.5 py-0.5 text-[11px] font-semibold text-[#5b6169] sm:inline">
+                                      {prettyFieldType(field.fieldKind)}
+                                    </span>
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setOpenFieldKey((current) =>
+                                          current === fieldStateKey ? null : fieldStateKey,
+                                        )
+                                      }
+                                      aria-expanded={settingsOpen}
+                                      className={cn(
+                                        'inline-flex shrink-0 items-center gap-1.5 rounded-[0.25rem] px-2 py-1.5 text-xs font-semibold transition-colors',
+                                        settingsOpen
+                                          ? 'bg-[#edf4fb] text-[#005db6]'
+                                          : 'text-[#74777f] hover:bg-[#edf1f5] hover:text-[#005db6]',
+                                      )}
+                                    >
+                                      <Settings2 className="h-3.5 w-3.5" />
+                                      <span className="hidden md:inline">Settings</span>
+                                    </button>
+
+                                    <Switch
+                                      checked={!inactive}
+                                      onCheckedChange={() => void toggleFieldActive(template, field)}
+                                      aria-label={inactive ? 'Question hidden' : 'Question shown'}
+                                      className="shrink-0"
+                                    />
+                                  </div>
+
+                                  {/* Advanced per-field settings, revealed on demand. */}
+                                  {settingsOpen ? (
+                                    <div className="border-t border-[#e6ecf3] px-3 py-4">
+                                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                        {sections.length ? (
+                                          <label className="space-y-1.5">
+                                            <Caption>Appears under</Caption>
+                                            <Select
+                                              value={field.sectionKey}
+                                              onValueChange={(value) =>
+                                                mutateTemplate(template.slug, (entry) => ({
+                                                  ...entry,
+                                                  fields: entry.fields.map((item) =>
+                                                    item.fieldKey === field.fieldKey
+                                                      ? { ...item, sectionKey: value }
+                                                      : item,
+                                                  ),
+                                                }))
+                                              }
+                                            >
+                                              <SelectTrigger className="h-9 text-sm">
+                                                <SelectValue placeholder="Choose a group" />
+                                              </SelectTrigger>
+                                              <SelectContent>
+                                                {sections.map((section) => (
+                                                  <SelectItem key={section.id} value={section.id}>
+                                                    {sectionTitleByKey.get(section.id) ?? section.id}
+                                                  </SelectItem>
+                                                ))}
+                                              </SelectContent>
+                                            </Select>
+                                          </label>
+                                        ) : null}
+
+                                        <label className="space-y-1.5">
+                                          <Caption>Totals as</Caption>
+                                          <Select
+                                            value={field.aggregateType}
+                                            onValueChange={(value) =>
+                                              mutateTemplate(template.slug, (entry) => ({
+                                                ...entry,
+                                                fields: entry.fields.map((item) =>
+                                                  item.fieldKey === field.fieldKey
+                                                    ? {
+                                                        ...item,
+                                                        aggregateType:
+                                                          value as ApiTemplateField['aggregateType'],
+                                                      }
+                                                    : item,
+                                                ),
+                                              }))
+                                            }
+                                          >
+                                            <SelectTrigger className="h-9 text-sm">
+                                              <SelectValue placeholder="How to total" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              {aggregateOptions.map((aggregate) => (
+                                                <SelectItem key={aggregate.value} value={aggregate.value}>
+                                                  {aggregate.label}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        </label>
+
+                                        {isDecimal ? (
+                                          <label className="space-y-1.5">
+                                            <Caption>Unit (optional)</Caption>
+                                            <Input
+                                              value={field.metadata?.unit ?? ''}
+                                              placeholder="e.g. mg, %, hrs"
+                                              onChange={(event) =>
+                                                mutateTemplate(template.slug, (entry) => ({
+                                                  ...entry,
+                                                  fields: entry.fields.map((item) =>
+                                                    item.fieldKey === field.fieldKey
+                                                      ? {
+                                                          ...item,
+                                                          metadata: {
+                                                            ...(item.metadata ?? {}),
+                                                            unit: event.target.value || undefined,
+                                                          },
+                                                        }
+                                                      : item,
+                                                  ),
+                                                }))
+                                              }
+                                              className="h-9 text-sm"
+                                            />
+                                          </label>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  ) : null}
                                 </div>
-                              </div>
-                            )
-                          })
-                        ) : (
-                          <div className="rounded-[0.35rem] border border-dashed border-[#d4dde8] bg-[#ffffff] p-4 text-sm text-[#74777f]">
-                            No signal rules.
+                              )
+                            })}
                           </div>
-                        )}
+                        </FieldGroup>
                       </div>
 
-                      <div className="border-t border-[#d9e0e7] pt-4">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
-                          Coverage
-                        </p>
-                        <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                          <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] px-3 py-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
-                              Fields
-                            </p>
-                            <p className="mt-2 text-xl font-semibold text-[#000a1e]">
-                              {template.fields.length}
-                            </p>
-                          </div>
-                          <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] px-3 py-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
-                              Sections
-                            </p>
-                            <p className="mt-2 text-xl font-semibold text-[#000a1e]">
-                              {template.sections.length}
-                            </p>
-                          </div>
-                          <div className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] px-3 py-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
-                              Metrics
-                            </p>
-                            <p className="mt-2 text-xl font-semibold text-[#000a1e]">
-                              {template.summaryCards.length}
-                            </p>
-                          </div>
+                      {/* Advanced presentation: groups, dashboard tiles, change alerts. */}
+                      {sections.length || cards.length || rules.length ? (
+                        <div className="mt-7 space-y-7 border-t border-[#eef2f6] pt-6">
+                          {sections.length ? (
+                            <FieldGroup
+                              icon={<LayoutGrid className="h-4 w-4" />}
+                              title="Question groups"
+                            >
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                {sections.map((section, sectionIndex) => (
+                                  <label key={section.id} className="space-y-1.5">
+                                    <Caption>Group {sectionIndex + 1}</Caption>
+                                    <Input
+                                      value={section.title}
+                                      onChange={(event) =>
+                                        mutateTemplate(template.slug, (entry) => {
+                                          const nextSections = [...sections]
+                                          nextSections[sectionIndex] = {
+                                            ...section,
+                                            title: event.target.value,
+                                          }
+                                          return setPresentation(entry, { sections: nextSections })
+                                        })
+                                      }
+                                      className="h-10 text-sm"
+                                    />
+                                  </label>
+                                ))}
+                              </div>
+                            </FieldGroup>
+                          ) : null}
+
+                          {cards.length ? (
+                            <FieldGroup
+                              icon={<Gauge className="h-4 w-4" />}
+                              title="Dashboard tiles"
+                            >
+                              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                {cards.map((card, cardIndex) => (
+                                  <label key={card.id} className="space-y-1.5">
+                                    <Caption>Tile {cardIndex + 1}</Caption>
+                                    <Input
+                                      value={card.label}
+                                      onChange={(event) =>
+                                        mutateTemplate(template.slug, (entry) => {
+                                          const nextCards = [...cards]
+                                          nextCards[cardIndex] = { ...card, label: event.target.value }
+                                          return setPresentation(entry, { summaryCards: nextCards })
+                                        })
+                                      }
+                                      className="h-10 text-sm"
+                                    />
+                                  </label>
+                                ))}
+                              </div>
+                            </FieldGroup>
+                          ) : null}
+
+                          {rules.length ? (
+                            <FieldGroup
+                              icon={<TriangleAlert className="h-4 w-4" />}
+                              title="Change alerts"
+                            >
+                              <div className="divide-y divide-[#eef2f6] overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
+                                {rules.map((rule, ruleIndex) => {
+                                  const ruleName =
+                                    (rule.fieldId ? fieldLabelByKey.get(rule.fieldId) : undefined) ??
+                                    rule.fieldId ??
+                                    rule.metricId ??
+                                    'Signal'
+                                  return (
+                                    <div
+                                      key={`${rule.fieldId ?? rule.metricId ?? 'rule'}-${ruleIndex}`}
+                                      className="flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+                                    >
+                                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-[#000a1e]">
+                                        {ruleName}
+                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-medium text-[#74777f]">
+                                          Flag a change over
+                                        </span>
+                                        <div className="relative">
+                                          <Input
+                                            type="number"
+                                            value={rule.percentThreshold}
+                                            onChange={(event) =>
+                                              mutateTemplate(template.slug, (entry) => {
+                                                const nextRules = [...rules]
+                                                nextRules[ruleIndex] = {
+                                                  ...rule,
+                                                  percentThreshold: Number(event.target.value),
+                                                }
+                                                return setPresentation(entry, { changeRules: nextRules })
+                                              })
+                                            }
+                                            className="h-9 w-24 pr-7 text-sm"
+                                          />
+                                          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm font-semibold text-[#9aa7b8]">
+                                            %
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </FieldGroup>
+                          ) : null}
                         </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </motion.section>
-            ))}
-          </div>
+                      ) : null}
+                    </motion.div>
+                  ) : null}
+                </motion.section>
+              )
+            })
+          )}
         </TabsContent>
       ))}
     </Tabs>

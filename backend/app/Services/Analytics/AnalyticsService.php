@@ -98,6 +98,11 @@ class AnalyticsService
      */
     private array $reportsMemo = [];
 
+    public function flushMemo(): void
+    {
+        $this->reportsMemo = [];
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -176,6 +181,77 @@ class AnalyticsService
                 ];
             })
             ->sortBy('month')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function quarterly(AnalyticsFilters $filters, ?string $family = null): array
+    {
+        $reports = $this->reports($filters, $family);
+
+        return $this->rollupPeriods($reports, $filters)
+            ->groupBy(fn (ReportingPeriod $period): string => sprintf(
+                '%d-Q%d',
+                $period->year_num ?? (int) $period->week_start?->year,
+                $period->week_start?->quarter ?? 0,
+            ))
+            ->map(function (Collection $periods, string $key) use ($reports, $filters, $family): array {
+                $periods = $periods->sortBy('week_start')->values();
+                $periodIds = $periods->pluck('id')->all();
+                $bucketReports = $reports
+                    ->filter(fn (Report $report): bool => in_array($report->reporting_period_id, $periodIds, true))
+                    ->values();
+                $firstPeriod = $periods->first();
+                $quarter = (int) ($firstPeriod?->week_start?->quarter ?? 0);
+                $year = (int) ($firstPeriod?->year_num ?? $firstPeriod?->week_start?->year ?? 0);
+
+                return [
+                    'key' => $key,
+                    'quarter' => $quarter > 0 ? sprintf('Q%d', $quarter) : null,
+                    'quarterLabel' => $firstPeriod?->quarter_label ?? ($quarter > 0 && $year > 0 ? sprintf('Q%d %d', $quarter, $year) : $key),
+                    'year' => $year,
+                    'weekStart' => $periods->first()?->week_start?->toDateString(),
+                    'weekEnd' => $periods->last()?->week_end?->toDateString(),
+                    'periodIds' => $periodIds,
+                    'periodCount' => $periods->count(),
+                    'summary' => $this->summary($bucketReports, $periods, $filters, $family),
+                ];
+            })
+            ->sortBy('key')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function yearly(AnalyticsFilters $filters, ?string $family = null): array
+    {
+        $reports = $this->reports($filters, $family);
+
+        return $this->rollupPeriods($reports, $filters)
+            ->groupBy(fn (ReportingPeriod $period): int => $period->year_num ?? (int) $period->week_start?->year)
+            ->map(function (Collection $periods, int|string $year) use ($reports, $filters, $family): array {
+                $periods = $periods->sortBy('week_start')->values();
+                $periodIds = $periods->pluck('id')->all();
+                $bucketReports = $reports
+                    ->filter(fn (Report $report): bool => in_array($report->reporting_period_id, $periodIds, true))
+                    ->values();
+
+                return [
+                    'year' => (int) $year,
+                    'label' => (string) $year,
+                    'weekStart' => $periods->first()?->week_start?->toDateString(),
+                    'weekEnd' => $periods->last()?->week_end?->toDateString(),
+                    'periodIds' => $periodIds,
+                    'periodCount' => $periods->count(),
+                    'summary' => $this->summary($bucketReports, $periods, $filters, $family),
+                ];
+            })
+            ->sortBy('year')
             ->values()
             ->all();
     }
@@ -613,6 +689,27 @@ class AnalyticsService
 
         if (! $filters->hasTemporalFilter()) {
             return collect();
+        }
+
+        return ReportingPeriod::query()
+            ->where(fn (Builder $query) => $this->applyPeriodFilters($query, $filters))
+            ->orderBy('week_start')
+            ->get();
+    }
+
+    /**
+     * @param  Collection<int, Report>  $reports
+     * @return Collection<int, ReportingPeriod>
+     */
+    private function rollupPeriods(Collection $reports, AnalyticsFilters $filters): Collection
+    {
+        if (! $filters->hasTemporalFilter()) {
+            return $reports
+                ->pluck('reportingPeriod')
+                ->filter()
+                ->unique('id')
+                ->sortBy('week_start')
+                ->values();
         }
 
         return ReportingPeriod::query()

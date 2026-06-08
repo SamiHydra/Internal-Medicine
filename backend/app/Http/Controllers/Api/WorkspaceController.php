@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Api\Concerns\SerializesAdminResources;
 use App\Http\Controllers\Controller;
 use App\Models\AccessRequest;
 use App\Models\AuditLog;
@@ -14,14 +15,14 @@ use App\Models\ReportTemplate;
 use App\Models\User;
 use App\Services\Admin\AppSettingsService;
 use App\Support\Authorization\Permissions;
+use App\Support\Reports\ReportPeriodWindow;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Carbon;
 
 class WorkspaceController extends Controller
 {
-    private const LIVE_REPORTING_START = '2026-03-02';
+    use SerializesAdminResources;
 
     public function show(Request $request): JsonResponse
     {
@@ -32,6 +33,8 @@ class WorkspaceController extends Controller
             'includeAccessRequests' => ['sometimes', 'boolean'],
             'include_history' => ['sometimes', 'boolean'],
             'includeHistory' => ['sometimes', 'boolean'],
+            'report_period_window' => ['sometimes', 'string', 'in:default,all'],
+            'reportPeriodWindow' => ['sometimes', 'string', 'in:default,all'],
         ]);
 
         $user = $request->user();
@@ -39,11 +42,20 @@ class WorkspaceController extends Controller
         $includeProfiles = $this->booleanOption($validated, 'include_profiles', 'includeProfiles');
         $includeAccessRequests = $this->booleanOption($validated, 'include_access_requests', 'includeAccessRequests');
         $includeHistory = $this->booleanOption($validated, 'include_history', 'includeHistory');
+        $reportPeriodWindow = $this->stringOption($validated, 'report_period_window', 'reportPeriodWindow', ReportPeriodWindow::DEFAULT_WINDOW);
 
-        $templates = ReportTemplate::query()->orderBy('name')->get();
+        // Nurses only receive ACTIVE field definitions, so soft-disabled fields
+        // drop out of their entry forms. Admins still receive every field so
+        // historical values stay visible and the template editor can manage them.
+        $templates = ReportTemplate::query()
+            ->with(['fieldDefinitions' => fn ($query) => $query
+                ->when(! $isAdmin, fn ($activeQuery) => $activeQuery->active())
+                ->orderBy('display_order')])
+            ->orderBy('name')
+            ->get();
         $departments = Department::query()->orderBy('name')->get();
         $periods = ReportingPeriod::query()->orderBy('week_start')->get();
-        $visiblePeriodIds = $this->visibleReportingPeriodIds($periods);
+        $visiblePeriodIds = ReportPeriodWindow::ids($periods, $reportPeriodWindow);
 
         $profiles = $includeProfiles && $isAdmin
             ? User::query()->orderBy('full_name')->get()
@@ -65,6 +77,11 @@ class WorkspaceController extends Controller
                 ->where('nurse_id', $user->id)
                 ->where('active', true)))
             ->latest('updated_at')
+            // The period window already bounds this set; the limit is a memory
+            // backstop so a pathological dataset can never overrun PHP's
+            // memory_limit on shared hosting. Field values are loaded lazily
+            // (values => {}) so each row here is lightweight.
+            ->limit(10000)
             ->get();
 
         $reportIds = $reports->pluck('id')->all();
@@ -103,6 +120,10 @@ class WorkspaceController extends Controller
 
         $state = [
             'currentUserId' => $user->id,
+            // Hydrated template definitions (incl. metadata.presentation + per-field
+            // metadata/active) so the SPA can render and edit from the DB. The static
+            // config remains the runtime floor; this overlays edits on top.
+            'templates' => $templates->map(fn (ReportTemplate $template) => $this->serializeTemplate($template))->values(),
             'profiles' => $profiles->map(fn (User $profile) => $this->profile($profile))->values(),
             'assignments' => $assignments->map(fn (ReportAssignment $assignment) => [
                 'id' => $assignment->id,
@@ -219,6 +240,11 @@ class WorkspaceController extends Controller
         return (bool) ($validated[$snakeKey] ?? $validated[$camelKey] ?? false);
     }
 
+    private function stringOption(array $validated, string $snakeKey, string $camelKey, string $default): string
+    {
+        return (string) ($validated[$snakeKey] ?? $validated[$camelKey] ?? $default);
+    }
+
     private function profile(User $user): array
     {
         return [
@@ -249,25 +275,6 @@ class WorkspaceController extends Controller
             $period->week_start?->format('M j'),
             $period->week_end?->format('M j, Y'),
         );
-    }
-
-    private function visibleReportingPeriodIds($periods): array
-    {
-        if ($periods->isEmpty()) {
-            return [];
-        }
-
-        $today = Carbon::today();
-        $currentPeriod = $periods
-            ->filter(fn (ReportingPeriod $period) => $period->week_start?->lte($today))
-            ->last() ?? $periods->first();
-        $currentStart = $currentPeriod->week_start;
-        $liveStart = Carbon::parse(self::LIVE_REPORTING_START);
-
-        return $periods
-            ->filter(fn (ReportingPeriod $period) => $period->week_start?->betweenIncluded($liveStart, $currentStart))
-            ->pluck('id')
-            ->all();
     }
 
     private function nullableFloat(mixed $value): ?float

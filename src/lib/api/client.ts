@@ -151,6 +151,10 @@ export class LaravelApiClient {
     return this.request<T>(path, { ...options, method: 'DELETE', body })
   }
 
+  async primeCsrfCookie() {
+    await this.ensureCsrfCookie()
+  }
+
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const method = options.method ?? 'GET'
 
