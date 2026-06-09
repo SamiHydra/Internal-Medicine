@@ -1,4 +1,4 @@
-import type { LaravelApiClient } from '@/lib/api/client'
+import { ApiError, type LaravelApiClient } from '@/lib/api/client'
 import { resolveAssignmentReference } from '@/lib/api/helpers'
 import type {
   ActionItem,
@@ -120,6 +120,43 @@ export async function createActionItem(
   payload: { title: string; description?: string; severity?: 'low' | 'medium' | 'high' },
 ): Promise<ActionItem> {
   return client.post<ActionItem>('/api/admin/action-items', payload)
+}
+
+export type ReportImportResult = {
+  imported: number
+  skipped: number
+  reports: number
+  errors: string[]
+}
+
+/**
+ * Upload a filled import template (CSV or .xlsx). A "total failure" comes back as
+ * a 422 whose body is still the result; surface it as a result, not a throw, so
+ * the UI can show per-row errors. Real failures (403/500/network) still throw.
+ */
+export async function importReports(
+  client: LaravelApiClient,
+  file: File,
+  submit: boolean,
+): Promise<ReportImportResult> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('submit', submit ? '1' : '0')
+
+  try {
+    return await client.post<ReportImportResult>('/api/admin/reports/import', form)
+  } catch (error) {
+    if (
+      error instanceof ApiError &&
+      error.details &&
+      typeof error.details === 'object' &&
+      'errors' in error.details
+    ) {
+      return error.details as ReportImportResult
+    }
+
+    throw error
+  }
 }
 
 /** Cross-cutting account & access actions (approvals, role/assignment changes) for the Audit Log. */

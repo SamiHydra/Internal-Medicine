@@ -46,6 +46,11 @@ const ActionItemsPage = lazy(() =>
     default: module.ActionItemsPage,
   })),
 )
+const DataImportPage = lazy(() =>
+  import('@/pages/admin/data-import-page').then((module) => ({
+    default: module.DataImportPage,
+  })),
+)
 const SettingsPage = lazy(() =>
   import('@/pages/admin/settings-page').then((module) => ({
     default: module.SettingsPage,
@@ -285,6 +290,10 @@ function App() {
               <Route
                 path="/admin/action-items"
                 element={renderLazyRoute(<ActionItemsPage />, 'inline')}
+              />
+              <Route
+                path="/admin/import"
+                element={renderLazyRoute(<DataImportPage />, 'inline')}
               />
               <Route
                 path="/admin/audit"

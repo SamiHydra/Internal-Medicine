@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LockKeyhole,
+  Upload,
   Settings,
   ShieldCheck,
   Users,
@@ -39,6 +40,7 @@ export const adminWorkspaceNav: Record<Workspace, NavigationItem[]> = {
     { label: 'Submissions', href: '/admin/submissions', icon: ClipboardList },
     { label: 'Action items', shortLabel: 'Actions', href: '/admin/action-items', icon: ListChecks },
     { label: 'Templates', href: '/admin/templates', icon: FilePenLine },
+    { label: 'Import', href: '/admin/import', icon: Upload },
     ...adminSystemNav,
   ],
   academic: [
@@ -94,6 +96,7 @@ export function workspaceForPath(pathname: string): Workspace | null {
     pathname === '/admin' ||
     pathname.startsWith('/admin/submissions') ||
     pathname.startsWith('/admin/action-items') ||
+    pathname.startsWith('/admin/import') ||
     pathname.startsWith('/admin/templates') ||
     pathname.startsWith('/admin/departments')
   ) {
