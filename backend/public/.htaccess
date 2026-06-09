@@ -1,3 +1,10 @@
+# Compress JSON/text responses (the workspace + analytics payloads are sizable
+# and are polled). Most cPanel/Apache hosts enable mod_deflate globally, but make
+# it explicit so the ~100KB admin payloads are gzipped regardless.
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE application/json application/javascript text/css text/html text/plain application/xml application/xml+rss
+</IfModule>
+
 <IfModule mod_rewrite.c>
     <IfModule mod_negotiation.c>
         Options -MultiViews -Indexes

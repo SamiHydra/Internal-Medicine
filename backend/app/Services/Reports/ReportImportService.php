@@ -7,6 +7,7 @@ use App\Models\ReportAssignment;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportingPeriod;
 use App\Models\User;
+use App\Services\Analytics\DashboardAnalyticsService;
 use App\Support\Export\SpreadsheetSafe;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
@@ -28,6 +29,7 @@ class ReportImportService
 
     public function __construct(
         private readonly ReportSubmissionService $submissionService,
+        private readonly DashboardAnalyticsService $dashboardAnalytics,
     ) {}
 
     /**
@@ -117,6 +119,12 @@ class ReportImportService
             }
         }
 
+        // Invalidate the analytics cache once for the whole import rather than
+        // once per saved group (each save deferred its own invalidation).
+        if ($imported > 0) {
+            $this->dashboardAnalytics->invalidate();
+        }
+
         return [
             'imported' => $imported,
             'skipped' => $skipped,
@@ -188,7 +196,7 @@ class ReportImportService
         }
 
         try {
-            $this->submissionService->save($actor, $assignment, $period, $values, $submit);
+            $this->submissionService->save($actor, $assignment, $period, $values, $submit, invalidateAnalytics: false);
 
             return true;
         } catch (ValidationException $exception) {

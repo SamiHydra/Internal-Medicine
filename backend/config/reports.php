@@ -39,4 +39,18 @@ return [
             'min_baseline' => (float) env('REPORT_OUTLIER_MIN_BASELINE', 5),
         ],
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Notification retention
+    |--------------------------------------------------------------------------
+    |
+    | Read notifications older than this many days are pruned by the weekly
+    | reports:prune-notifications command so the table does not grow without
+    | bound. Unread notifications are never pruned.
+    |
+    */
+    'notifications' => [
+        'read_retention_days' => (int) env('NOTIFICATION_READ_RETENTION_DAYS', 90),
+    ],
 ];

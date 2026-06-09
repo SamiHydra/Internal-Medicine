@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Mail\PasswordResetMail;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -27,10 +28,7 @@ class PasswordResetController extends Controller
             $resetUrl = rtrim((string) config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:5173')), '/')
                 .'/reset-password?token='.urlencode($token).'&email='.urlencode($email);
 
-            Mail::raw(
-                "Use this link to reset your St Paul reporting password:\n\n{$resetUrl}",
-                fn ($message) => $message->to($email)->subject('St Paul reporting password reset'),
-            );
+            Mail::to($email)->queue(new PasswordResetMail($resetUrl));
         }
 
         return response()->json([

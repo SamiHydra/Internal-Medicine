@@ -175,13 +175,16 @@ class ReportQualityService
             return collect();
         }
 
+        // Order by the reporting period's chronology (not reports.updated_at) so a
+        // late edit to an old report cannot reorder which weeks form the baseline.
         $historyIds = Report::query()
-            ->where('assignment_id', $report->assignment_id)
-            ->where('id', '!=', $report->id)
-            ->whereNotNull('submitted_at')
-            ->orderByDesc('updated_at')
+            ->where('reports.assignment_id', $report->assignment_id)
+            ->where('reports.id', '!=', $report->id)
+            ->whereNotNull('reports.submitted_at')
+            ->join('reporting_periods', 'reporting_periods.id', '=', 'reports.reporting_period_id')
+            ->orderByDesc('reporting_periods.week_start')
             ->limit($lookback)
-            ->pluck('id');
+            ->pluck('reports.id');
 
         if ($historyIds->count() < $minPeriods) {
             return collect();

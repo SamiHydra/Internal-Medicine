@@ -99,7 +99,15 @@ class ReportCommentController extends Controller
                 ->where('active', true)
                 ->pluck('id');
 
+        // Also notify everyone who has already participated in the thread (the
+        // parent author and any prior commenter) so a reply never silently skips
+        // a participant who falls outside the role bucket above.
+        $priorParticipantIds = ReportComment::query()
+            ->where('report_id', $report->id)
+            ->pluck('author_id');
+
         $recipientIds = $recipientIds
+            ->merge($priorParticipantIds)
             ->filter(fn (?string $id): bool => $id !== null && $id !== $author->id)
             ->unique()
             ->values();

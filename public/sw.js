@@ -4,7 +4,11 @@
 // in-app offline save queue (IndexedDB). After the first online visit, a nurse
 // can reopen the installed app offline and the form will render.
 
-const CACHE = 'stpaul-shell-v1'
+// __SW_VERSION__ is replaced at build time with a hash of the built asset names
+// (see the stamp-service-worker plugin in vite.config.ts) so a deploy changes
+// the cache name and 'activate' purges the stale shell. In dev the literal token
+// is harmless (it is just part of the cache key string).
+const CACHE = 'stpaul-shell-__SW_VERSION__'
 const OFFLINE_URL = '/index.html'
 
 self.addEventListener('install', (event) => {

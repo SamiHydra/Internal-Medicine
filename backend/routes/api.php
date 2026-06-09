@@ -39,7 +39,10 @@ Route::post('/access-requests', [AccessRequestSubmissionController::class, 'stor
 Route::post('/academic-access-requests', [AcademicRegistrationController::class, 'store'])->middleware('throttle:10,1');
 Route::post('/admin-access-requests', [AdminRegistrationController::class, 'store'])->middleware('throttle:10,1');
 
-Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
+// A generous per-user ceiling (300/min) — far above any legitimate session
+// (the admin dashboard's burst + 20s poll is a fraction of this) — so a single
+// compromised or runaway client cannot hammer the read/analytics endpoints.
+Route::middleware(['auth:sanctum', 'active', 'throttle:300,1'])->group(function (): void {
     Route::get('/workspace', [WorkspaceController::class, 'show']);
 
     Route::get('/reports', [ReportWorkflowController::class, 'index']);

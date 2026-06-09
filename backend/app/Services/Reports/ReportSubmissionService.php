@@ -40,7 +40,7 @@ class ReportSubmissionService
      * @throws AuthorizationException
      * @throws ValidationException
      */
-    public function save(User $actor, ReportAssignment $assignment, ReportingPeriod $period, array $values, bool $submit = false): Report
+    public function save(User $actor, ReportAssignment $assignment, ReportingPeriod $period, array $values, bool $submit = false, bool $invalidateAnalytics = true): Report
     {
         $report = DB::transaction(function () use ($actor, $assignment, $period, $values, $submit): Report {
             $assignment->loadMissing(['department', 'template.fieldDefinitions']);
@@ -141,7 +141,11 @@ class ReportSubmissionService
             ]);
         });
 
-        $this->dashboardAnalytics->invalidate();
+        // A bulk import defers this and invalidates once after all groups, so a
+        // multi-week/department import does not flush the cache N times.
+        if ($invalidateAnalytics) {
+            $this->dashboardAnalytics->invalidate();
+        }
 
         return $report;
     }

@@ -31,6 +31,12 @@ return Application::configure(basePath: dirname(__DIR__))
             );
         }
 
+        // API-only app: there is no web "login" route. Returning null for the
+        // guest redirect stops the auth middleware from eagerly resolving
+        // route('login') (which 500s); combined with shouldRenderJsonWhen below,
+        // an unauthenticated request gets a clean 401 JSON response.
+        $middleware->redirectGuestsTo(fn () => null);
+
         $middleware->append(SecurityHeaders::class);
         $middleware->statefulApi();
         $middleware->api(prepend: [
@@ -43,5 +49,10 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // This is an API-only app with no web "login" route. Force JSON rendering
+        // for /api/* so an unauthenticated request returns a clean 401 instead of
+        // attempting a redirect to the non-existent login route (which 500s).
+        $exceptions->shouldRenderJsonWhen(
+            fn ($request, $throwable): bool => $request->is('api/*') || $request->expectsJson(),
+        );
     })->create();

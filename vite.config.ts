@@ -1,12 +1,36 @@
+import { createHash } from 'node:crypto'
+import fs from 'node:fs'
 import path from 'node:path'
 
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
+// Replace __SW_VERSION__ in the built service worker with a hash of the emitted
+// asset filenames. Those names are content-hashed, so any code change yields a
+// new SW cache key and the SW's 'activate' step purges the stale shell — closing
+// the "offline user keeps an old index.html referencing dead assets" gap.
+function stampServiceWorker() {
+  return {
+    name: 'stamp-service-worker',
+    apply: 'build' as const,
+    closeBundle() {
+      const swPath = path.resolve(__dirname, 'dist/sw.js')
+      const assetsDir = path.resolve(__dirname, 'dist/assets')
+      if (!fs.existsSync(swPath)) {
+        return
+      }
+      const seed = fs.existsSync(assetsDir) ? fs.readdirSync(assetsDir).sort().join('|') : ''
+      const version = createHash('sha256').update(seed).digest('hex').slice(0, 12)
+      const stamped = fs.readFileSync(swPath, 'utf8').replaceAll('__SW_VERSION__', version)
+      fs.writeFileSync(swPath, stamped)
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), stampServiceWorker()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

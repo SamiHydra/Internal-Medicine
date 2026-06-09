@@ -193,21 +193,25 @@ class OverdueReportService
     private function deleteStaleNotifications(array $activePairs): int
     {
         $activePairs = array_flip(array_unique($activePairs));
-        $deleted = 0;
 
-        Notification::query()
+        // Select only the key columns (not full models), filter the composite
+        // recipient|entity pair in PHP (it has no portable SQL form), then delete
+        // the stale rows in a single query instead of one DELETE per row.
+        $staleIds = Notification::query()
             ->where('type', 'overdue_report')
-            ->get()
-            ->each(function (Notification $notification) use ($activePairs, &$deleted): void {
-                if (isset($activePairs[$this->pairKey($notification->recipient_id, (string) $notification->related_entity)])) {
-                    return;
-                }
+            ->get(['id', 'recipient_id', 'related_entity'])
+            ->reject(fn (Notification $notification): bool => isset(
+                $activePairs[$this->pairKey($notification->recipient_id, (string) $notification->related_entity)]
+            ))
+            ->pluck('id');
 
-                $notification->delete();
-                $deleted++;
-            });
+        if ($staleIds->isEmpty()) {
+            return 0;
+        }
 
-        return $deleted;
+        Notification::query()->whereIn('id', $staleIds->all())->delete();
+
+        return $staleIds->count();
     }
 
     private function pairKey(string $recipientId, string $eventKey): string
