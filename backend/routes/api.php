@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\Admin\ActionItemController;
 use App\Http\Controllers\Api\Admin\AdminAccessRequestController;
 use App\Http\Controllers\Api\Admin\AuditLogController;
 use App\Http\Controllers\Api\Admin\ReferenceDataController;
+use App\Http\Controllers\Api\Admin\ReportImportController;
 use App\Http\Controllers\Api\Admin\ReportAssignmentController;
 use App\Http\Controllers\Api\Admin\SettingsController;
 use App\Http\Controllers\Api\Admin\UserController;
@@ -135,6 +136,9 @@ Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
 
         Route::get('/audit-logs', [AuditLogController::class, 'cellEdits'])->middleware('permission:audit.view');
         Route::get('/admin-audit-logs', [AuditLogController::class, 'adminActions'])->middleware('permission:audit.view');
+
+        Route::get('/reports/import-template', [ReportImportController::class, 'template'])->middleware('permission:reports.import');
+        Route::post('/reports/import', [ReportImportController::class, 'import'])->middleware('permission:reports.import');
 
         Route::get('/action-items', [ActionItemController::class, 'index'])->middleware('permission:actionItems.view');
         Route::post('/action-items', [ActionItemController::class, 'store'])->middleware('permission:actionItems.manage');

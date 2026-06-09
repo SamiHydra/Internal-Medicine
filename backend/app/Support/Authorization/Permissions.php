@@ -40,6 +40,8 @@ final class Permissions
 
     public const REPORTS_LOCK = 'reports.lock';
 
+    public const REPORTS_IMPORT = 'reports.import';
+
     public const ANALYTICS_VIEW = 'analytics.view';
 
     public const AUDIT_VIEW = 'audit.view';
@@ -76,6 +78,7 @@ final class Permissions
             self::REPORTS_VIEW_ANY,
             self::REPORTS_SUBMIT,
             self::REPORTS_LOCK,
+            self::REPORTS_IMPORT,
             self::ANALYTICS_VIEW,
             self::AUDIT_VIEW,
             self::SETTINGS_MANAGE,
@@ -98,6 +101,7 @@ final class Permissions
             self::REPORTS_VIEW_ANY,
             self::REPORTS_SUBMIT,
             self::REPORTS_LOCK,
+            self::REPORTS_IMPORT,
             self::ANALYTICS_VIEW,
             self::AUDIT_VIEW,
             self::SETTINGS_MANAGE,
