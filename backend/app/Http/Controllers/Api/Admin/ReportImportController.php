@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ReportingPeriod;
 use App\Services\Reports\ReportImportService;
 use App\Services\Reports\ReportImportTemplateService;
+use App\Support\Export\SpreadsheetSafe;
 use App\Support\Export\XlsxWriter;
 use App\Support\Import\XlsxReader;
 use Illuminate\Http\JsonResponse;
@@ -36,7 +37,7 @@ class ReportImportController extends Controller
                 $handle = fopen('php://output', 'w');
                 fputcsv($handle, $built['header']);
                 foreach ($built['rows'] as $row) {
-                    fputcsv($handle, $row);
+                    fputcsv($handle, array_map(SpreadsheetSafe::sanitize(...), $row));
                 }
                 fclose($handle);
             }, "st-paul-import-template-{$label}.csv", ['Content-Type' => 'text/csv; charset=UTF-8']);
@@ -84,7 +85,14 @@ class ReportImportController extends Controller
 
         $rows = [];
         $handle = fopen($path, 'r');
-        while (($row = fgetcsv($handle)) !== false) {
+
+        // Skip a leading UTF-8 BOM (Excel's "CSV UTF-8" save prepends one, which
+        // would otherwise hide the first header column).
+        if (fread($handle, 3) !== "\xEF\xBB\xBF") {
+            rewind($handle);
+        }
+
+        while (($row = fgetcsv($handle, escape: '')) !== false) {
             $rows[] = array_map(fn ($cell): string => (string) ($cell ?? ''), $row);
         }
         fclose($handle);

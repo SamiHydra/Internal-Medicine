@@ -10,9 +10,15 @@ use ZipArchive;
  * Minimal, dependency-free .xlsx reader. Parses the first worksheet into rows of
  * string cells, resolving the shared-strings table that Excel uses when it saves
  * a workbook. Pairs with {@see \App\Support\Export\XlsxWriter}.
+ *
+ * Hardened against hostile uploads: per-part uncompressed-size cap (zip bomb),
+ * DTD rejection (billion-laughs entity expansion), and no external entities.
  */
 class XlsxReader
 {
+    /** Reject any single XML part that decompresses beyond this (zip-bomb guard). */
+    private const MAX_PART_BYTES = 64 * 1024 * 1024;
+
     /**
      * @return array<int, array<int, string>>  rows of string cells (header first)
      */
@@ -43,14 +49,10 @@ class XlsxReader
      */
     private function sharedStrings(ZipArchive $zip): array
     {
-        $xml = $zip->getFromName('xl/sharedStrings.xml');
+        $xml = $this->readPart($zip, 'xl/sharedStrings.xml');
+        $doc = $xml === null ? null : $this->loadXml($xml);
 
-        if ($xml === false || $xml === '') {
-            return [];
-        }
-
-        $doc = @simplexml_load_string($xml);
-        if ($doc === false) {
+        if ($doc === null) {
             return [];
         }
 
@@ -79,16 +81,16 @@ class XlsxReader
 
     private function firstSheetXml(ZipArchive $zip): ?string
     {
-        $direct = $zip->getFromName('xl/worksheets/sheet1.xml');
-        if ($direct !== false && $direct !== '') {
+        $direct = $this->readPart($zip, 'xl/worksheets/sheet1.xml');
+        if ($direct !== null && $direct !== '') {
             return $direct;
         }
 
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $name = $zip->getNameIndex($i);
             if (is_string($name) && preg_match('#^xl/worksheets/[^/]+\.xml$#', $name)) {
-                $xml = $zip->getFromIndex($i);
-                if ($xml !== false && $xml !== '') {
+                $xml = $this->readPart($zip, $name);
+                if ($xml !== null && $xml !== '') {
                     return $xml;
                 }
             }
@@ -98,13 +100,46 @@ class XlsxReader
     }
 
     /**
+     * Read a zip part, rejecting an oversized uncompressed payload before it is
+     * pulled into memory.
+     */
+    private function readPart(ZipArchive $zip, string $name): ?string
+    {
+        $stat = $zip->statName($name);
+        if ($stat === false) {
+            return null;
+        }
+
+        if (($stat['size'] ?? 0) > self::MAX_PART_BYTES) {
+            throw new RuntimeException('The spreadsheet is too large to import.');
+        }
+
+        $data = $zip->getFromName($name);
+
+        return $data === false ? null : $data;
+    }
+
+    private function loadXml(string $xml): ?SimpleXMLElement
+    {
+        // OOXML parts must not carry a DTD; reject one to block entity-expansion
+        // (billion laughs). LIBXML_NONET also disables any network/external fetch.
+        if (stripos($xml, '<!DOCTYPE') !== false) {
+            return null;
+        }
+
+        $doc = @simplexml_load_string($xml, SimpleXMLElement::class, LIBXML_NONET);
+
+        return $doc === false ? null : $doc;
+    }
+
+    /**
      * @param  list<string>  $shared
      * @return array<int, array<int, string>>
      */
     private function parseSheet(string $xml, array $shared): array
     {
-        $doc = @simplexml_load_string($xml);
-        if ($doc === false || ! isset($doc->sheetData)) {
+        $doc = $this->loadXml($xml);
+        if ($doc === null || ! isset($doc->sheetData)) {
             return [];
         }
 
@@ -112,9 +147,15 @@ class XlsxReader
         foreach ($doc->sheetData->row as $row) {
             $cells = [];
             $maxColumn = -1;
+            $cursor = 0;
 
             foreach ($row->c as $cell) {
-                $column = $this->columnIndex((string) ($cell['r'] ?? ''));
+                $reference = (string) ($cell['r'] ?? '');
+                // Positional cells (no `r`, as some non-Excel writers emit) advance
+                // a cursor instead of all collapsing to column 0.
+                $column = $reference !== '' ? $this->columnIndex($reference) : $cursor;
+                $cursor = $column + 1;
+
                 $cells[$column] = $this->cellValue($cell, (string) ($cell['t'] ?? ''), $shared);
                 $maxColumn = max($maxColumn, $column);
             }

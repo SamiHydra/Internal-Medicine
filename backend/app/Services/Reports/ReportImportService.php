@@ -4,8 +4,10 @@ namespace App\Services\Reports;
 
 use App\Models\Department;
 use App\Models\ReportAssignment;
+use App\Models\ReportFieldDefinition;
 use App\Models\ReportingPeriod;
 use App\Models\User;
+use App\Support\Export\SpreadsheetSafe;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
@@ -14,7 +16,11 @@ use Illuminate\Validation\ValidationException;
  * import-template layout) back into the system — the "roll forward" half of the
  * outage-continuity loop. Every imported report goes through the same
  * ReportSubmissionService validation as a live submission, so offline edits can
- * never bypass the cross-field/quality rules.
+ * never bypass the coercion/cross-field/quality rules.
+ *
+ * A present-but-blank cell for an active day is treated as an intentional clear
+ * (so an offline deletion round-trips), inactive fields/days are ignored, and a
+ * bad group degrades to a reported skip rather than aborting the whole import.
  */
 class ReportImportService
 {
@@ -36,7 +42,12 @@ class ReportImportService
             return [...$empty, 'errors' => ['The file has no data rows.']];
         }
 
-        $header = array_map(fn ($value): string => strtolower(trim((string) $value)), array_shift($cellRows));
+        // strtolower + trim + strip a leading UTF-8 BOM (Excel's "CSV UTF-8" save
+        // prepends one, which would otherwise hide the first header).
+        $header = array_map(
+            fn ($value): string => strtolower(trim(ltrim((string) $value, "\u{FEFF}"))),
+            array_shift($cellRows),
+        );
         $columnFor = function (array $aliases) use ($header): ?int {
             foreach ($header as $index => $name) {
                 if (in_array($name, $aliases, true)) {
@@ -51,8 +62,13 @@ class ReportImportService
         $departmentColumn = $columnFor(['department_slug', 'department slug']);
         $fieldColumn = $columnFor(['field_key', 'field key']);
         $dayColumns = [];
+        $presentDays = [];
         foreach (self::WEEKDAYS as $day) {
-            $dayColumns[$day] = $columnFor([$day]);
+            $column = $columnFor([$day]);
+            $dayColumns[$day] = $column;
+            if ($column !== null) {
+                $presentDays[] = $day;
+            }
         }
 
         $missing = array_keys(array_filter([
@@ -79,18 +95,10 @@ class ReportImportService
             $groups[$key]['week'] = $week;
             $groups[$key]['department'] = $departmentSlug;
 
-            foreach (self::WEEKDAYS as $day) {
-                $column = $dayColumns[$day];
-                if ($column === null) {
-                    continue;
-                }
-
-                $value = trim($row[$column] ?? '');
-                if ($value === '') {
-                    continue;
-                }
-
-                $groups[$key]['values'][$fieldKey]['dailyValues'][$day] = $value;
+            // Record EVERY present day cell (including blanks) so a cleared cell
+            // can be erased on import, matching the live web form.
+            foreach ($presentDays as $day) {
+                $groups[$key]['fields'][$fieldKey][$day] = trim($row[$dayColumns[$day]] ?? '');
             }
         }
 
@@ -126,6 +134,11 @@ class ReportImportService
         $week = (string) $group['week'];
         $departmentSlug = (string) $group['department'];
 
+        // An Excel date serial arrives as a number; never silently coerce it.
+        if (is_numeric($week)) {
+            return "Week start '{$week}' is not a date — format the column as text/date in Excel.";
+        }
+
         $period = ReportingPeriod::query()
             ->whereDate('week_start', $this->normalizeDate($week))
             ->first();
@@ -147,14 +160,45 @@ class ReportImportService
             return "No active assignment for department '{$departmentSlug}'.";
         }
 
+        $assignment->loadMissing('template.fieldDefinitions');
+        $activeDays = $assignment->template?->active_days ?? [];
+        $inactiveFieldKeys = ($assignment->template?->fieldDefinitions ?? collect())
+            ->reject(fn (ReportFieldDefinition $definition): bool => (bool) $definition->active)
+            ->pluck('field_key')
+            ->all();
+
+        $values = [];
+        foreach (($group['fields'] ?? []) as $fieldKey => $days) {
+            // Never write to soft-disabled fields (the live form hides them).
+            if (in_array($fieldKey, $inactiveFieldKeys, true)) {
+                continue;
+            }
+
+            foreach ($days as $day => $raw) {
+                // Ignore stray values in inactive-day columns instead of failing
+                // the whole group on one cell.
+                if (! in_array($day, $activeDays, true)) {
+                    continue;
+                }
+
+                // Blank '' flows through coerceValue -> null -> delete, so a
+                // cleared offline cell erases the stored value.
+                $values[$fieldKey]['dailyValues'][$day] = SpreadsheetSafe::unsanitize($raw);
+            }
+        }
+
         try {
-            $this->submissionService->save($actor, $assignment, $period, $group['values'] ?? [], $submit);
+            $this->submissionService->save($actor, $assignment, $period, $values, $submit);
 
             return true;
         } catch (ValidationException $exception) {
             $messages = collect($exception->errors())->flatten()->implode(' ');
 
             return "Department '{$departmentSlug}', week {$week}: {$messages}";
+        } catch (\Throwable $exception) {
+            // A non-validation failure must degrade to a skip, not abort the whole
+            // import (which would leave earlier groups committed and a 500).
+            return "Department '{$departmentSlug}', week {$week}: {$exception->getMessage()}";
         }
     }
 

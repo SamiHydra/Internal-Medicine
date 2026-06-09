@@ -72,7 +72,9 @@ class XlsxWriter
                 continue;
             }
 
-            fwrite($handle, '<c r="'.$ref.'" t="inlineStr"><is><t xml:space="preserve">'.$this->escape($value).'</t></is></c>');
+            // Data cells are formula-injection-guarded; headers are app-controlled.
+            $rendered = $isHeader ? $value : SpreadsheetSafe::sanitize($value);
+            fwrite($handle, '<c r="'.$ref.'" t="inlineStr"><is><t xml:space="preserve">'.$this->escape($rendered).'</t></is></c>');
         }
 
         fwrite($handle, '</row>');

@@ -53,4 +53,47 @@ class XlsxReaderTest extends TestCase
         $this->assertSame(['Field key', '', '42'], $rows[0]);
         $this->assertSame(['gi_neuro_inpatient'], $rows[1]);
     }
+
+    public function test_reads_positional_cells_without_a_reference_attribute(): void
+    {
+        // Some non-Excel writers emit cells with no `r`; they must not all collapse
+        // to column 0 (which would silently mis-map columns).
+        $path = tempnam(sys_get_temp_dir(), 'xlsxr');
+        $zip = new ZipArchive();
+        $zip->open($path, ZipArchive::OVERWRITE);
+        $zip->addFromString(
+            'xl/worksheets/sheet1.xml',
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            .'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+            .'<row r="1"><c t="inlineStr"><is><t>a</t></is></c><c t="inlineStr"><is><t>b</t></is></c><c><v>3</v></c></row>'
+            .'</sheetData></worksheet>',
+        );
+        $zip->close();
+
+        $rows = (new XlsxReader())->rows($path);
+        @unlink($path);
+
+        $this->assertSame(['a', 'b', '3'], $rows[0]);
+    }
+
+    public function test_rejects_a_doctype_to_block_entity_expansion(): void
+    {
+        // A DTD in an OOXML part (billion-laughs vector) must be refused, not expanded.
+        $path = tempnam(sys_get_temp_dir(), 'xlsxr');
+        $zip = new ZipArchive();
+        $zip->open($path, ZipArchive::OVERWRITE);
+        $zip->addFromString(
+            'xl/worksheets/sheet1.xml',
+            '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "boom">]>'
+            .'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+            .'<row r="1"><c t="inlineStr"><is><t>&a;</t></is></c></row></sheetData></worksheet>',
+        );
+        $zip->close();
+
+        // loadXml refuses the DTD, so the sheet yields no rows rather than expanding.
+        $rows = (new XlsxReader())->rows($path);
+        @unlink($path);
+
+        $this->assertSame([], $rows);
+    }
 }

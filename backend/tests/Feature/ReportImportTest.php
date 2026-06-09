@@ -68,7 +68,7 @@ class ReportImportTest extends TestCase
     /**
      * @param  list<array<int, string>>  $rows
      */
-    private function csvFile(array $rows): UploadedFile
+    private function csvContent(array $rows): string
     {
         $handle = fopen('php://temp', 'r+');
         fputcsv($handle, ReportImportTemplateService::HEADER);
@@ -79,7 +79,30 @@ class ReportImportTest extends TestCase
         $content = stream_get_contents($handle);
         fclose($handle);
 
-        return UploadedFile::fake()->createWithContent('import.csv', $content);
+        return $content;
+    }
+
+    /**
+     * @param  list<array<int, string>>  $rows
+     */
+    private function csvFile(array $rows): UploadedFile
+    {
+        return UploadedFile::fake()->createWithContent('import.csv', $this->csvContent($rows));
+    }
+
+    /**
+     * A full template row with explicit day values; blanks where not given.
+     *
+     * @param  array<string, string>  $days
+     */
+    private function fieldRow(string $section, string $fieldKey, array $days = []): array
+    {
+        $row = ['2026-05-25', 'GI/Neurology', $this->departmentSlug, $section, $fieldKey, $fieldKey];
+        foreach (['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as $day) {
+            $row[] = $days[$day] ?? '';
+        }
+
+        return $row;
     }
 
     /**
@@ -192,6 +215,69 @@ class ReportImportTest extends TestCase
         $sheet = (string) $zip->getFromName('xl/worksheets/sheet1.xml');
         $zip->close();
         $this->assertStringContainsString('total_admitted_patients', $sheet);
+    }
+
+    public function test_import_clears_a_value_when_the_cell_is_blanked(): void
+    {
+        // Seed Monday = 5, then re-import the same field row with Monday blank.
+        $this->actingAs($this->admin)->post('/api/admin/reports/import', [
+            'file' => $this->csvFile([$this->fieldRow('patient_flow', 'total_admitted_patients', ['monday' => '5'])]),
+        ])->assertOk();
+        $this->assertDatabaseHas('report_field_values', ['day_name' => 'monday', 'value_number' => 5]);
+
+        $this->actingAs($this->admin)->post('/api/admin/reports/import', [
+            'file' => $this->csvFile([$this->fieldRow('patient_flow', 'total_admitted_patients', [])]),
+        ])->assertOk();
+
+        // The cleared offline cell erased the stored value (parity with the web form).
+        $this->assertDatabaseMissing('report_field_values', ['day_name' => 'monday', 'value_number' => 5]);
+    }
+
+    public function test_import_rejects_an_out_of_range_value_without_a_500(): void
+    {
+        $this->actingAs($this->admin)
+            ->post('/api/admin/reports/import', [
+                'file' => $this->csvFile([$this->fieldRow('patient_flow', 'total_admitted_patients', ['monday' => '99999999999'])]),
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('imported', 0);
+
+        $this->assertSame(0, \App\Models\ReportFieldValue::query()->count());
+    }
+
+    public function test_import_handles_a_utf8_bom_csv(): void
+    {
+        $content = "\xEF\xBB\xBF".$this->csvContent([$this->fieldRow('patient_flow', 'total_admitted_patients', ['monday' => '4'])]);
+        $file = UploadedFile::fake()->createWithContent('import.csv', $content);
+
+        $this->actingAs($this->admin)
+            ->post('/api/admin/reports/import', ['file' => $file])
+            ->assertOk()
+            ->assertJsonPath('imported', 1);
+    }
+
+    public function test_template_export_neutralizes_formula_injection(): void
+    {
+        // A nurse-entered text value starting with '=' must not execute in Excel.
+        $this->actingAs($this->admin)->post('/api/admin/reports/import', [
+            'file' => $this->csvFile([$this->fieldRow('staffing', 'nurse_in_charge', ['monday' => '=HACK()'])]),
+        ])->assertOk();
+
+        $csv = $this->actingAs($this->admin)
+            ->get('/api/admin/reports/import-template?format=csv&period='.$this->period->id)
+            ->streamedContent();
+
+        $this->assertStringContainsString("'=HACK()", $csv);
+    }
+
+    public function test_import_unsanitizes_a_guarded_formula_value_on_round_trip(): void
+    {
+        // A downloaded template carries the guard apostrophe; import must strip it.
+        $this->actingAs($this->admin)->post('/api/admin/reports/import', [
+            'file' => $this->csvFile([$this->fieldRow('staffing', 'nurse_in_charge', ['monday' => "'=HACK()"])]),
+        ])->assertOk();
+
+        $this->assertDatabaseHas('report_field_values', ['day_name' => 'monday', 'value_text' => '=HACK()']);
     }
 
     public function test_nurses_cannot_import_or_download_templates(): void

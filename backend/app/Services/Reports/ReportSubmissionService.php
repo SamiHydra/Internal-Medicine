@@ -22,6 +22,10 @@ class ReportSubmissionService
 {
     private const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
+    // Fits the decimal(14,4) value_number column (10 integer digits). Guards
+    // against e.g. an imported "1e18" overflowing the DB into a raw 500.
+    private const MAX_FIELD_VALUE = 9_999_999_999;
+
     public function __construct(
         private readonly ReportCalculationService $calculationService,
         private readonly CriticalEventAlertService $criticalEventAlertService,
@@ -305,6 +309,12 @@ class ReportSubmissionService
             ]);
         }
 
+        if ($number > self::MAX_FIELD_VALUE) {
+            throw ValidationException::withMessages([
+                "values.$fieldKey" => "Field $fieldKey value is out of range.",
+            ]);
+        }
+
         return (int) $number;
     }
 
@@ -313,6 +323,12 @@ class ReportSubmissionService
         if (! is_numeric($value) || (float) $value < 0) {
             throw ValidationException::withMessages([
                 "values.$fieldKey" => "Field $fieldKey expects a non-negative decimal value.",
+            ]);
+        }
+
+        if ((float) $value > self::MAX_FIELD_VALUE) {
+            throw ValidationException::withMessages([
+                "values.$fieldKey" => "Field $fieldKey value is out of range.",
             ]);
         }
 
