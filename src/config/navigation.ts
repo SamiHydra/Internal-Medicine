@@ -98,7 +98,12 @@ export function workspaceForPath(pathname: string): Workspace | null {
     pathname.startsWith('/admin/action-items') ||
     pathname.startsWith('/admin/import') ||
     pathname.startsWith('/admin/templates') ||
-    pathname.startsWith('/admin/departments')
+    pathname.startsWith('/admin/departments') ||
+    // Clinical weekly reports (the admin opens these from the clinical Submission
+    // board) are a clinical-domain route. Pin the workspace so an admin who was
+    // last in Academic doesn't see the report under an "Academic operations" shell.
+    pathname === '/reports' ||
+    pathname.startsWith('/reports/')
   ) {
     return 'clinical'
   }

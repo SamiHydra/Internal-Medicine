@@ -196,11 +196,13 @@ export class LaravelApiClient {
     const payload = await this.parseResponse(response)
 
     if (!response.ok) {
-      // A mid-session 401 on a non-auth endpoint means the Sanctum session
-      // expired. Proactively sign out so the app redirects to /login instead of
-      // stranding the user on an authenticated shell where every action 401s.
-      // Auth endpoints (/api/auth/me, /login) handle their own 401s.
-      if (response.status === 401 && !path.startsWith('/api/auth/')) {
+      // A mid-session 401 (session expired) or 419 (CSRF/session token mismatch)
+      // on a non-auth endpoint means the Sanctum session is no longer valid.
+      // markSignedOut() drops the cached CSRF readiness (so the next unsafe
+      // request re-primes /sanctum/csrf-cookie) and redirects to /login, instead
+      // of stranding the user on an authenticated shell where every write 401/419s.
+      // Auth endpoints (/api/auth/me, /login) handle their own statuses.
+      if ((response.status === 401 || response.status === 419) && !path.startsWith('/api/auth/')) {
         this.markSignedOut()
       }
 

@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Loader2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { panelClass, SectionEyebrow } from '@/components/dashboard/section-panel'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -13,19 +14,18 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useAppData } from '@/context/app-data-context'
+import { getCurrentPeriod, getVisibleReportingPeriods } from '@/data/selectors'
 import { importReports, type ReportImportResult } from '@/lib/api/admin'
 import { getApiBrowserClient } from '@/lib/api/client'
-import { apiEnv } from '@/lib/api/env'
-import { apiEnvSetupHint } from '@/lib/api/env'
+import { apiEnv, apiEnvSetupHint } from '@/lib/api/env'
 
-const sectionClass =
-  'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
-
-function SectionEyebrow({ label }: { label: string }) {
+function StepHeading({ step, label }: { step: number; label: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <span aria-hidden className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">{label}</p>
+    <div className="flex items-center gap-2.5">
+      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#edf1f5] text-xs font-bold text-[#1d3047]">
+        {step}
+      </span>
+      <h2 className="font-display text-sm font-bold uppercase tracking-[0.16em] text-[#44474e]">{label}</h2>
     </div>
   )
 }
@@ -35,11 +35,17 @@ export function DataImportPage() {
   const client = getApiBrowserClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Offer the same non-future periods the rest of the app shows (newest first),
+  // and default to the current reporting period — not the latest future period —
+  // so the selector matches the header instead of jumping ~6 months ahead.
   const periods = useMemo(
-    () => [...state.reportingPeriods].sort((a, b) => b.weekStart.localeCompare(a.weekStart)),
-    [state.reportingPeriods],
+    () =>
+      [...getVisibleReportingPeriods(state)].sort((a, b) =>
+        b.weekStart.localeCompare(a.weekStart),
+      ),
+    [state],
   )
-  const [periodId, setPeriodId] = useState<string>(periods[0]?.id ?? '')
+  const [periodId, setPeriodId] = useState<string>(() => getCurrentPeriod(state)?.id ?? '')
   const [file, setFile] = useState<File | null>(null)
   const [submitOnImport, setSubmitOnImport] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
@@ -73,35 +79,28 @@ export function DataImportPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <motion.section
-        initial={{ opacity: 0, y: 10 }}
+    <div className="space-y-6 px-4 py-5 md:px-6 md:py-8">
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, ease: 'easeOut' }}
-        className={sectionClass}
+        className="flex items-center justify-between gap-4"
       >
         <SectionEyebrow label="Offline continuity" />
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-[#5b6169]">
-          Download a pre-filled template, fill it in Excel during an internet outage, then upload it back
-          when you reconnect. Imported rows pass through the same validation as a live submission, so bad
-          offline data is still caught.
-        </p>
         {!apiEnv.baseUrl ? (
-          <p className="mt-3 text-sm text-[#8a5a00]">The Laravel API is not configured. {apiEnvSetupHint}</p>
+          <span className="text-sm text-[#8a5a00]">API not configured · {apiEnvSetupHint}</span>
         ) : null}
-      </motion.section>
+      </motion.div>
 
-      <section className={sectionClass}>
-        <h2 className="font-display text-sm font-bold uppercase tracking-[0.16em] text-[#44474e]">
-          1 · Download template
-        </h2>
+      <section className={panelClass}>
+        <StepHeading step={1} label="Download template" />
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="space-y-1.5">
             <label className="text-xs font-semibold uppercase tracking-[0.12em] text-[#74777f]">
               Reporting period
             </label>
             <Select value={periodId} onValueChange={setPeriodId}>
-              <SelectTrigger className="w-[240px]">
+              <SelectTrigger className="w-full sm:w-[240px]" aria-label="Reporting period">
                 <SelectValue placeholder="Select a period" />
               </SelectTrigger>
               <SelectContent>
@@ -128,36 +127,32 @@ export function DataImportPage() {
             </Button>
           </div>
         </div>
-      </section>
 
-      <section className={sectionClass}>
-        <h2 className="font-display text-sm font-bold uppercase tracking-[0.16em] text-[#44474e]">
-          2 · Upload filled file
-        </h2>
-        <div className="mt-4 space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.xlsx"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-              className="block w-full text-sm text-[#44474e] file:mr-3 file:rounded-[0.3rem] file:border-0 file:bg-[#edf1f5] file:px-3.5 file:py-2 file:text-sm file:font-semibold file:text-[#1d3047] hover:file:bg-[#e2e8f0] sm:w-auto"
-            />
-            {file ? (
-              <span className="inline-flex items-center gap-1.5 text-sm text-[#5b6169]">
-                <FileSpreadsheet className="h-4 w-4 text-[#005db6]" />
-                {file.name}
-              </span>
-            ) : null}
-          </div>
+        <div className="mt-6 border-t border-[#eef2f6] pt-6">
+          <StepHeading step={2} label="Upload filled file" />
+          <div className="mt-4 space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xlsx"
+                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                className="block w-full text-sm text-[#44474e] file:mr-3 file:rounded-[0.3rem] file:border-0 file:bg-[#edf1f5] file:px-3.5 file:py-2 file:text-sm file:font-semibold file:text-[#1d3047] hover:file:bg-[#e2e8f0] sm:w-auto"
+              />
+              {file ? (
+                <span className="inline-flex items-center gap-1.5 text-sm text-[#5b6169]">
+                  <FileSpreadsheet className="h-4 w-4 text-[#005db6]" />
+                  {file.name}
+                </span>
+              ) : null}
+            </div>
 
-          <label className="flex items-center gap-3 text-sm text-[#44474e]">
-            <Switch checked={submitOnImport} onCheckedChange={setSubmitOnImport} />
-            Mark imported reports as submitted (otherwise they land as drafts to review)
-          </label>
+            <label className="flex items-center gap-3 text-sm text-[#44474e]">
+              <Switch checked={submitOnImport} onCheckedChange={setSubmitOnImport} />
+              Submit on import (otherwise saved as drafts)
+            </label>
 
-          <div>
-            <Button onClick={() => void runImport()} disabled={!file || isImporting}>
+            <Button onClick={() => void runImport()} disabled={!file || isImporting} className="w-full sm:w-auto">
               {isImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {isImporting ? 'Importing…' : 'Import'}
             </Button>
@@ -169,7 +164,7 @@ export function DataImportPage() {
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className={sectionClass}
+          className={panelClass}
         >
           <div className="flex flex-wrap items-center gap-4">
             <span className="inline-flex items-center gap-2 text-sm font-semibold text-[#1f6b3b]">
@@ -177,7 +172,6 @@ export function DataImportPage() {
               {result.imported} imported
             </span>
             <span className="text-sm text-[#74777f]">{result.skipped} skipped</span>
-            <span className="text-sm text-[#74777f]">{result.reports} report group(s) found</span>
           </div>
 
           {result.errors.length > 0 ? (
@@ -192,9 +186,9 @@ export function DataImportPage() {
                 </li>
               ))}
             </ul>
-          ) : (
-            <p className="mt-3 text-sm text-[#5b6169]">Every row imported cleanly.</p>
-          )}
+          ) : result.imported === 0 ? (
+            <p className="mt-3 text-sm text-[#5b6169]">No rows found — check the file uses the downloaded template.</p>
+          ) : null}
         </motion.section>
       ) : null}
     </div>

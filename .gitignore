@@ -34,7 +34,22 @@ design-reference/
 
 # Binary brief archive + generated screenshots (not source)
 files.zip
+PROJECT_CONTEXT_BRIEF.md
 tools/shots/
 
 # Local Playwright dashboard screenshots (dev verification only)
 artifacts/dashboard-shots/
+
+# Local agent/browser automation state
+.claude/
+.playwright-cli/
+
+# Generated QA/audit evidence and ad-hoc build copies
+artifacts/audit-*/
+artifacts/e2e/
+artifacts/load-tests/*.json
+artifacts/walkthrough/
+artifacts/pre-deployment-qa/_raw/
+artifacts/pre-deployment-qa/evidence/
+artifacts/pre-deployment-qa/PLAYWRIGHT_TESTS/.auth/
+dist-*/

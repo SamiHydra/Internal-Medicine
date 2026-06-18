@@ -169,7 +169,10 @@ return [
     |
     */
 
-    'secure' => env('SESSION_SECURE_COOKIE'),
+    // Default to Secure in production so the session cookie is never sent over
+    // plaintext, while staying false for local HTTP development. An explicit
+    // SESSION_SECURE_COOKIE env value still wins.
+    'secure' => env('SESSION_SECURE_COOKIE', env('APP_ENV') === 'production'),
 
     /*
     |--------------------------------------------------------------------------

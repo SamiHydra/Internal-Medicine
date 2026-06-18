@@ -115,6 +115,7 @@ export function ReportingScopePanel({
             </p>
             <Select value={field.value} onValueChange={field.onValueChange}>
               <SelectTrigger
+                aria-label={field.label}
                 className={cn(
                   'mt-2 h-10 min-w-0 rounded-[0.25rem] border-[#d9e0e7] bg-[#ffffff] px-3.5 text-left text-[#000a1e] shadow-none focus:ring-0 hover:border-[#c9d4e2]',
                   field.triggerClassName,

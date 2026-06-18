@@ -53,6 +53,31 @@ class AuthController extends Controller
         return response()->json($this->sessionPayload($request->user()));
     }
 
+    public function changePassword(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::defaults(), 'confirmed', 'different:current_password'],
+        ]);
+
+        $user = $request->user();
+
+        if (! Hash::check($validated['current_password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => 'Your current password is incorrect.',
+            ]);
+        }
+
+        // The 'password' cast hashes the value; clearing the flag releases the user
+        // from the EnsurePasswordChanged gate on the next request.
+        $user->forceFill([
+            'password' => $validated['password'],
+            'password_change_required' => false,
+        ])->save();
+
+        return response()->json($this->sessionPayload($user->refresh()));
+    }
+
     public function logout(Request $request): JsonResponse
     {
         Auth::guard('web')->logout();

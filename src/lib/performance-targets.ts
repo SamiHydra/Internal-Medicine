@@ -8,9 +8,6 @@ export const performanceTargetDefinitions: Array<{
   unit: '%' | 'count'
 }> = [
   { key: 'deliveryRate', label: 'Delivery rate', unit: '%' },
-  { key: 'inpatientSafetyEvents', label: 'Safety events', unit: 'count' },
-  { key: 'outpatientSameDayRate', label: 'Same-day outpatient', unit: '%' },
-  { key: 'procedureThroughput', label: 'Procedure throughput', unit: 'count' },
 ]
 
 export const defaultMetricTargets: Record<PerformanceTargetKey, PerformanceTarget> = {

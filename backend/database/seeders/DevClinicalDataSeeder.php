@@ -8,18 +8,27 @@ use App\Models\ReportAssignment;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportFieldValue;
 use App\Models\ReportingPeriod;
+use App\Models\ReportTemplate;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Str;
 
 /**
- * Dev-only: populate the clinical dashboard with realistic submitted reports so
- * every chart renders. Idempotent. Never runs in production or testing.
+ * Dev-only: populate every clinical ward, clinic and procedure unit with
+ * realistic, internally-consistent submitted reports so the whole dashboard
+ * (clinical, departmental and analytics) renders with believable shape.
+ *
+ * The numbers are not pure noise: each day's record is built so it satisfies
+ * the template's own validation rules (HAI subtypes <= total HAI, new pressure
+ * ulcers <= total, new + follow-up <= total seen, reports received <= done,
+ * deaths/discharges <= census, ...) and is scaled to the ward's bed count and
+ * service type. Text fields carry real staff names rather than placeholders.
+ *
+ * Idempotent (clean-slate delete then rebuild). Never runs in production or
+ * testing.
  */
 class DevClinicalDataSeeder extends Seeder
 {
-    private const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
-
     /** Stored statuses only (not_started / overdue are derived from missing reports). */
     private const STATUS_CYCLE = [
         'submitted',
@@ -29,6 +38,28 @@ class DevClinicalDataSeeder extends Seeder
         'submitted',
         'draft',
         'locked',
+    ];
+
+    /** Nurse-in-charge / reporting staff pool (stable per ward across the window). */
+    private const NURSES = [
+        'Abel Gemechu', 'Hana Abera', 'Sara Tadesse', 'Yonas Kebede', 'Marta Hailu',
+        'Bethlehem Tesfaye', 'Dawit Mekonnen', 'Selamawit Girma', 'Kalkidan Wolde',
+        'Eyob Assefa', 'Liya Bekele', 'Naod Fikru', 'Tigist Alemu', 'Robel Desta',
+        'Meron Tsegaye', 'Hewan Negash', 'Biruk Lemma', 'Saron Habte', 'Nahom Getachew',
+        'Rahel Solomon', 'Fitsum Ayele', 'Genet Worku', 'Helen Tamiru', 'Amanuel Birhanu',
+        'Lydia Demissie', 'Tewodros Kassa', 'Eden Mulugeta',
+    ];
+
+    private const RESIDENTS = [
+        'Dr. Rediet Bekele', 'Dr. Samuel Alemu', 'Dr. Nardos Haile', 'Dr. Kirubel Tadesse',
+        'Dr. Eden Solomon', 'Dr. Abenezer Girma', 'Dr. Mahlet Wolde', 'Dr. Daniel Tesfaye',
+        'Dr. Feven Kassa', 'Dr. Bisrat Negash',
+    ];
+
+    private const PHYSICIANS = [
+        'Dr. Mesfin Girma', 'Dr. Chaltu Tesfaye', 'Dr. Aster Kebede', 'Dr. Solomon Tadesse',
+        'Dr. Bereket Alemu', 'Dr. Helina Desta', 'Dr. Yared Mengistu', 'Dr. Senait Berhanu',
+        'Dr. Tesfaye Gebre', 'Dr. Meklit Assefa',
     ];
 
     public function run(): void
@@ -56,19 +87,22 @@ class DevClinicalDataSeeder extends Seeder
         Report::query()->delete();
         ReportAssignment::query()->delete();
 
-        // A representative subset per service line keeps the dashboard fast (it loads
-        // full details for every report in range) while every chart still populates.
-        $departmentSlugs = [
-            'gi_neuro_inpatient', 'cardiac_inpatient', 'nephrology_inpatient', 'chest_inpatient',
-            'outpatient_main', 'gi_outpatient', 'cardiac_outpatient',
-            'eeg_lab', 'dialysis_unit', 'endoscopy_lab',
-        ];
+        // Cover EVERY active department/ward/section so no part of the dashboard
+        // is empty. Realistic at hospital scale (this is the real department list).
         $departments = Department::query()
             ->where('active', true)
-            ->whereIn('slug', $departmentSlugs)
+            ->orderBy('family')
+            ->orderBy('name')
             ->get();
-        $fieldsByTemplate = ReportFieldDefinition::query()->get()->groupBy('template_id');
-        // The 8 most recent periods that have already started (the visible "last 8 weeks").
+
+        $templateSlugs = ReportTemplate::query()->pluck('slug', 'id');
+        $templateDays = ReportTemplate::query()->pluck('active_days', 'id');
+        $fieldsByTemplate = ReportFieldDefinition::query()
+            ->where('active', true)
+            ->get()
+            ->groupBy('template_id');
+
+        // The 8 most recent periods that have already started (the visible window).
         $periods = ReportingPeriod::query()
             ->whereDate('week_start', '<=', now())
             ->orderByDesc('week_start')
@@ -89,6 +123,9 @@ class DevClinicalDataSeeder extends Seeder
 
         foreach ($departments as $deptIndex => $department) {
             $nurse = $nurses[$deptIndex % $nurses->count()];
+            $templateSlug = $templateSlugs[$department->template_id] ?? 'inpatient_weekly';
+            $days = $this->daysFor($templateDays[$department->template_id] ?? null);
+            $staff = $this->staffFor($deptIndex);
 
             $assignment = ReportAssignment::query()->updateOrCreate(
                 [
@@ -127,9 +164,14 @@ class DevClinicalDataSeeder extends Seeder
 
                 ReportFieldValue::query()->where('report_id', $report->id)->delete();
 
-                foreach ($defs as $def) {
-                    foreach (self::DAYS as $day) {
-                        $valueRows[] = $this->valueRow($report->id, $def, $day, $now);
+                // A gentle week-over-week trend so charts have shape, not flat noise.
+                $trend = 0.9 + 0.025 * $periodIndex;
+
+                foreach ($days as $day) {
+                    $map = $this->dailyValues($templateSlug, $department, $staff, $trend);
+
+                    foreach ($defs as $def) {
+                        $valueRows[] = $this->valueRow($report->id, $def, $day, $map, $staff, $now);
                     }
                 }
             }
@@ -140,7 +182,7 @@ class DevClinicalDataSeeder extends Seeder
         }
 
         $this->command?->info(sprintf(
-            'Seeded %d reports and %d field values across %d departments x %d periods.',
+            'Seeded %d reports and %d field values across %d departments x up to %d periods.',
             $reportCount,
             count($valueRows),
             $departments->count(),
@@ -149,9 +191,229 @@ class DevClinicalDataSeeder extends Seeder
     }
 
     /**
+     * Active reporting days for a template (clinics/procedures = weekdays, inpatient
+     * wards = full week). Falls back to the working week.
+     *
+     * @param  array<int, string>|null  $activeDays
+     * @return array<int, string>
+     */
+    private function daysFor(?array $activeDays): array
+    {
+        $days = $activeDays ?: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+
+        return array_values($days);
+    }
+
+    /**
+     * Stable named staff for a department, so the "latest" text aggregates read like
+     * a real ward roster instead of changing every week.
+     *
+     * @return array{nurse: string, resident: string, physician: string}
+     */
+    private function staffFor(int $deptIndex): array
+    {
+        return [
+            'nurse' => self::NURSES[$deptIndex % count(self::NURSES)],
+            'resident' => self::RESIDENTS[$deptIndex % count(self::RESIDENTS)],
+            'physician' => self::PHYSICIANS[$deptIndex % count(self::PHYSICIANS)],
+        ];
+    }
+
+    /**
+     * Build one coherent day of values for a template, keyed by field_key. Values
+     * respect the template's validation invariants so the seed is never self-
+     * contradictory.
+     *
+     * @param  array{nurse: string, resident: string, physician: string}  $staff
+     * @return array<string, int|float|string>
+     */
+    private function dailyValues(string $templateSlug, Department $department, array $staff, float $trend): array
+    {
+        return match ($templateSlug) {
+            'outpatient_weekly' => $this->outpatientDay($staff, $trend),
+            'inpatient_weekly' => $this->inpatientDay($department, $staff, $trend),
+            default => $this->procedureDay($templateSlug, $staff, $trend),
+        };
+    }
+
+    /**
+     * @param  array{nurse: string, resident: string, physician: string}  $staff
+     * @return array<string, int|float|string>
+     */
+    private function inpatientDay(Department $department, array $staff, float $trend): array
+    {
+        $beds = $department->bed_count ?: 18;
+        $census = max(4, (int) round($beds * mt_rand(70, 95) / 100 * $trend));
+        $census = min($census, $beds);
+        $admitted = max(4, (int) round($census * mt_rand(90, 110) / 100));
+
+        $newPressureUlcer = $this->chance(10) ? 1 : 0;
+        $totalHai = $this->chance(20) ? mt_rand(1, 2) : 0;
+
+        // Spread the HAI total across subtypes so the parts never exceed the whole.
+        $haiKeys = ['hai_clabsi', 'hai_cauti', 'hai_pneumonia', 'hai_vap', 'hai_cdi'];
+        $hai = array_fill_keys($haiKeys, 0);
+        for ($i = 0; $i < $totalHai; $i++) {
+            $hai[$haiKeys[array_rand($haiKeys)]]++;
+        }
+
+        $dischargedHome = mt_rand(1, max(2, (int) round($admitted * 0.25)));
+
+        return array_merge([
+            'total_admitted_patients' => $admitted,
+            'new_admitted_patients' => mt_rand(1, max(2, (int) round($admitted * 0.2))),
+            'readmitted_30d' => $this->chance(30) ? 1 : 0,
+            'new_deaths' => $this->chance(12) ? 1 : 0,
+            'new_pressure_ulcer' => $newPressureUlcer,
+            'total_pressure_ulcer' => $newPressureUlcer + mt_rand(0, 2),
+            'total_hai' => $totalHai,
+            'urinary_catheter' => mt_rand(0, 3),
+            'transferred_icu' => $this->chance(15) ? 1 : 0,
+            'transferred_hdu' => $this->chance(18) ? 1 : 0,
+            'transferred_ward' => mt_rand(0, 2),
+            'discharged_home' => $dischargedHome,
+            'discharged_ama' => $this->chance(10) ? 1 : 0,
+            'free_beds' => max(0, $beds - $census + mt_rand(0, 2)),
+            'median_los_days' => round(mt_rand(30, 80) / 10, 1),
+            'total_patient_days' => $census,
+            'mdt_round_start_day' => $this->time(8, [0, 15, 30, 45]),
+            'mdt_round_start_duty' => $this->time(mt_rand(20, 21), [0, 15, 30, 45]),
+            'duty_resident' => $staff['resident'],
+            'duty_senior_physician' => $staff['physician'],
+            'nurse_in_charge' => $staff['nurse'],
+        ], $hai);
+    }
+
+    /**
+     * @param  array{nurse: string, resident: string, physician: string}  $staff
+     * @return array<string, int|float|string>
+     */
+    private function outpatientDay(array $staff, float $trend): array
+    {
+        $total = max(8, (int) round(mt_rand(25, 55) * $trend * mt_rand(85, 115) / 100));
+        $followUp = (int) round($total * mt_rand(55, 70) / 100);
+        $newSeen = (int) round($total * mt_rand(20, 32) / 100);
+        if ($followUp + $newSeen > $total) {
+            $newSeen = max(0, $total - $followUp);
+        }
+
+        return [
+            'total_patients_seen' => $total,
+            'follow_up_patients' => $followUp,
+            'new_patients_seen' => $newSeen,
+            'not_seen_same_day' => mt_rand(0, (int) round($total * 0.08)),
+            'wait_time_new_days' => round(mt_rand(70, 300) / 10, 1),
+            'wait_time_followup_months' => round(mt_rand(10, 40) / 10, 1),
+            'failed_to_come' => mt_rand(2, 8),
+            'not_seen_appointment' => mt_rand(0, 4),
+            'clinic_start_time' => $this->time(8, [0, 15, 30, 45]),
+            'senior_physician_availability' => $this->availability(),
+            'nurse_in_charge' => $staff['nurse'],
+        ];
+    }
+
+    /**
+     * @param  array{nurse: string, resident: string, physician: string}  $staff
+     * @return array<string, int|float|string>
+     */
+    private function procedureDay(string $templateSlug, array $staff, float $trend): array
+    {
+        $staffName = $staff['nurse'];
+
+        return match ($templateSlug) {
+            'eeg_weekly' => $this->withReportReceived('eeg', (int) round(mt_rand(2, 8) * $trend), [
+                'ncs_done' => mt_rand(0, 4),
+                'emg_done' => mt_rand(0, 3),
+                'ep_done' => mt_rand(0, 2),
+                'eeg_wait_tests' => round(mt_rand(10, 70) / 10, 1),
+                'eeg_wait_reports' => round(mt_rand(10, 90) / 10, 1),
+                'reporting_staff' => $staffName,
+            ]),
+            'echocardiography_weekly' => $this->withReportReceived('echo', (int) round(mt_rand(3, 12) * $trend), [
+                'echo_wait_tests' => round(mt_rand(10, 60) / 10, 1),
+                'echo_wait_reports' => round(mt_rand(10, 80) / 10, 1),
+                'stress_echo' => mt_rand(0, 3),
+                'tee' => mt_rand(0, 2),
+                'ecg_done' => mt_rand(5, 18),
+                'stress_ecg' => mt_rand(0, 4),
+                'ambulatory_ecg' => mt_rand(0, 3),
+                'angiography_screening' => mt_rand(0, 2),
+                'valvotomy_screening' => mt_rand(0, 1),
+                'reporting_staff' => $staffName,
+            ]),
+            'endoscopy_weekly' => $this->endoscopyDay((int) round(mt_rand(2, 8) * $trend), $staffName),
+            'hematology_procedures_weekly' => [
+                'bone_marrow_biopsy' => mt_rand(0, 4),
+                'bone_marrow_wait' => round(mt_rand(10, 120) / 10, 1),
+                'reporting_staff' => $staffName,
+            ],
+            'bronchoscopy_weekly' => [
+                'bronchoscopy_done' => mt_rand(0, 4),
+                'bronchoscopy_wait' => round(mt_rand(10, 70) / 10, 1),
+                'reporting_staff' => $staffName,
+            ],
+            'renal_procedures_weekly' => [
+                'elective_renal_biopsy' => mt_rand(0, 3),
+                'central_venous_catheter_insertion' => mt_rand(0, 4),
+                'elective_renal_biopsy_wait' => round(mt_rand(10, 100) / 10, 1),
+                'reporting_staff' => $staffName,
+            ],
+            'dialysis_weekly' => [
+                'dialysis_acute' => (int) round(mt_rand(2, 8) * $trend),
+                'dialysis_chronic' => (int) round(mt_rand(8, 20) * $trend),
+                'reporting_staff' => $staffName,
+            ],
+            default => ['reporting_staff' => $staffName],
+        };
+    }
+
+    /**
+     * EEG/echo share the "done -> report received (<= done)" shape.
+     *
+     * @param  array<string, int|float|string>  $extra
+     * @return array<string, int|float|string>
+     */
+    private function withReportReceived(string $prefix, int $done, array $extra): array
+    {
+        return array_merge([
+            "{$prefix}_done" => $done,
+            "{$prefix}_report_received" => max(0, $done - mt_rand(0, 2)),
+        ], $extra);
+    }
+
+    /**
+     * @return array<string, int|float|string>
+     */
+    private function endoscopyDay(int $elective, string $staffName): array
+    {
+        return [
+            'upper_gi_elective' => $elective,
+            'upper_gi_report_received' => max(0, $elective - mt_rand(0, 2)),
+            'upper_gi_wait' => round(mt_rand(10, 80) / 10, 1),
+            'upper_gi_report_wait' => round(mt_rand(10, 90) / 10, 1),
+            'upper_gi_emergency' => mt_rand(0, 3),
+            'ercp' => mt_rand(0, 2),
+            'colonoscopy' => mt_rand(1, 5),
+            'proctoscopy' => mt_rand(0, 3),
+            'bronchoscopy' => mt_rand(0, 2),
+            'therapeutic_upper_gi' => mt_rand(0, 3),
+            'esophageal_dilation' => mt_rand(0, 2),
+            'variceal_ligation' => mt_rand(0, 2),
+            'stenting' => mt_rand(0, 1),
+            'liver_biopsy' => mt_rand(0, 2),
+            'reporting_staff' => $staffName,
+        ];
+    }
+
+    /**
+     * Resolve one field's typed value from the day map and place it in the right
+     * column. Falls back to sensible defaults if a field is not in the map.
+     *
+     * @param  array<string, int|float|string>  $map
+     * @param  array{nurse: string, resident: string, physician: string}  $staff
      * @return array<string, mixed>
      */
-    private function valueRow(string $reportId, ReportFieldDefinition $def, string $day, \Illuminate\Support\Carbon $now): array
+    private function valueRow(string $reportId, ReportFieldDefinition $def, string $day, array $map, array $staff, \Illuminate\Support\Carbon $now): array
     {
         $row = [
             'id' => (string) Str::uuid(),
@@ -166,42 +428,50 @@ class DevClinicalDataSeeder extends Seeder
             'updated_at' => $now,
         ];
 
+        $raw = $map[$def->field_key] ?? null;
+
         switch ($def->field_kind) {
             case 'integer':
-                $row['value_number'] = $this->intFor($def->field_key);
+                $row['value_number'] = $raw !== null ? (int) $raw : mt_rand(1, 10);
                 break;
             case 'decimal':
-                $row['value_number'] = round(mt_rand(20, 90) / 10, 1);
+                $row['value_number'] = $raw !== null ? (float) $raw : round(mt_rand(20, 90) / 10, 1);
                 break;
             case 'time':
-                $row['value_time'] = sprintf('%02d:%02d', mt_rand(8, 10), [0, 15, 30, 45][mt_rand(0, 3)]);
+                $row['value_time'] = is_string($raw) ? $raw : $this->time(8, [0, 15, 30, 45]);
                 break;
             case 'choice':
-                $options = $def->metadata['options'] ?? ['Full day', 'Partial day', 'Unavailable'];
-                $row['value_text'] = $options[array_rand($options)];
+                $row['value_text'] = is_string($raw) ? $raw : $this->availability();
                 break;
             default:
-                $row['value_text'] = 'Auto entry';
+                $row['value_text'] = is_string($raw) ? $raw : $staff['nurse'];
                 break;
         }
 
         return $row;
     }
 
-    private function intFor(string $key): int
+    private function chance(int $percent): bool
     {
+        return mt_rand(1, 100) <= $percent;
+    }
+
+    /**
+     * @param  array<int, int>  $minutes
+     */
+    private function time(int $hour, array $minutes): string
+    {
+        return sprintf('%02d:%02d', $hour, $minutes[array_rand($minutes)]);
+    }
+
+    private function availability(): string
+    {
+        $roll = mt_rand(1, 100);
+
         return match (true) {
-            str_contains($key, 'patient_days') => mt_rand(12, 26),
-            str_contains($key, 'total_admitted') => mt_rand(8, 20),
-            str_contains($key, 'total_patients_seen') => mt_rand(20, 60),
-            str_contains($key, 'follow_up') || str_contains($key, 'new_patients') => mt_rand(8, 28),
-            str_contains($key, 'free_beds') => mt_rand(0, 9),
-            str_contains($key, 'death') || str_contains($key, 'ulcer') || str_contains($key, 'hai')
-                || str_contains($key, 'cdi') || str_contains($key, 'vap') || str_contains($key, 'clabsi')
-                || str_contains($key, 'cauti') || str_contains($key, 'pneumonia') => mt_rand(0, 3),
-            str_contains($key, 'done') || str_contains($key, 'dialysis') || str_contains($key, 'biopsy')
-                || str_contains($key, 'scopy') || str_contains($key, 'catheter') => mt_rand(2, 16),
-            default => mt_rand(1, 12),
+            $roll <= 70 => 'Full day',
+            $roll <= 92 => 'Partial day',
+            default => 'Unavailable',
         };
     }
 }

@@ -9,6 +9,7 @@ import { getUnreadNotificationCount } from '@/data/selectors'
 import { useAppData, useAppSync, useCurrentReportingPeriod } from '@/context/app-data-context'
 import { useWorkspace } from '@/context/workspace-context'
 import { formatWeekLabel } from '@/lib/dates'
+import { prefetchRoute } from '@/routes/route-prefetch'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
@@ -81,6 +82,8 @@ function SidebarNav({ onNavigate, collapsed = false }: { onNavigate?: () => void
             to={item.href}
             end={item.end}
             onClick={onNavigate}
+            onMouseEnter={() => prefetchRoute(item.href)}
+            onFocus={() => prefetchRoute(item.href)}
             title={collapsed ? item.label : undefined}
             className={({ isActive }) =>
               cn(
@@ -133,8 +136,19 @@ function WorkspaceSwitcher({
   }
 
   const options = [
-    { value: 'clinical' as const, label: 'Clinical', icon: Stethoscope },
-    { value: 'academic' as const, label: 'Academic', icon: GraduationCap },
+    {
+      value: 'clinical' as const,
+      label: 'Clinical',
+      icon: Stethoscope,
+      iconClassName: collapsed ? 'h-5 w-5 shrink-0' : 'h-4 w-4 shrink-0',
+    },
+    {
+      value: 'academic' as const,
+      label: 'Academic',
+      icon: GraduationCap,
+      iconClassName: collapsed ? 'h-[1.35rem] w-[1.35rem] shrink-0' : 'h-6 w-6 shrink-0',
+      strokeWidth: collapsed ? 2 : 2.35,
+    },
   ]
 
   const select = (next: Workspace) => {
@@ -181,7 +195,7 @@ function WorkspaceSwitcher({
                 : 'text-[#92a3ba] hover:bg-white/[0.06] hover:text-white',
             )}
           >
-            <Icon className={collapsed ? 'h-5 w-5' : 'h-4 w-4'} />
+            <Icon className={option.iconClassName} strokeWidth={option.strokeWidth ?? 2} />
             {!collapsed && option.label}
           </button>
         )
@@ -230,7 +244,9 @@ export function AppShell({ children }: PropsWithChildren) {
   // "Dashboard". Resolve those known auxiliary routes explicitly.
   const pageTitle = location.pathname.endsWith('/notifications')
     ? 'Notifications'
-    : activeNavItem?.label ?? 'Workspace'
+    : location.pathname.startsWith('/reports/') || location.pathname === '/reports'
+      ? 'Weekly report'
+      : activeNavItem?.label ?? 'Workspace'
   const sectionEyebrow =
     currentUser.role === 'nurse'
       ? 'Weekly reporting'
@@ -300,7 +316,7 @@ export function AppShell({ children }: PropsWithChildren) {
                       {sectionEyebrow}
                     </p>
                   </div>
-                  <h1 className="mt-1 truncate font-display text-[1.3rem] font-bold leading-none tracking-[-0.03em] text-[#000a1e] md:text-[1.5rem]">
+                  <h1 className="mt-1 truncate pb-0.5 font-display text-[1.3rem] font-bold leading-tight tracking-[-0.03em] text-[#000a1e] md:text-[1.5rem]">
                     {pageTitle}
                   </h1>
                 </div>

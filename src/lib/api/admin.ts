@@ -146,11 +146,21 @@ export async function importReports(
   try {
     return await client.post<ReportImportResult>('/api/admin/reports/import', form)
   } catch (error) {
+    // A "total failure" import (e.g. every row rejected) comes back as a 422 whose
+    // body is still the {imported, skipped, reports, errors[]} result envelope —
+    // surface that as a result so per-row errors render. A *validation* 422 (bad
+    // file type, missing file) carries Laravel's {message, errors:{field:[...]}}
+    // shape instead (no numeric `imported`, `errors` is an object): that must
+    // re-throw so the page shows the real error message, not a false "imported"
+    // summary alongside "No reports were imported".
     if (
       error instanceof ApiError &&
       error.details &&
       typeof error.details === 'object' &&
-      'errors' in error.details
+      'imported' in error.details &&
+      typeof (error.details as { imported: unknown }).imported === 'number' &&
+      'errors' in error.details &&
+      Array.isArray((error.details as { errors: unknown }).errors)
     ) {
       return error.details as ReportImportResult
     }

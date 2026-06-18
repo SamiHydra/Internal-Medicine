@@ -42,6 +42,18 @@ function formatAuditValue(value: string | number | null) {
   return String(value)
 }
 
+function formatAuditDetailValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '—'
+  }
+
+  if (typeof value === 'object') {
+    return JSON.stringify(value)
+  }
+
+  return String(value)
+}
+
 function SectionEyebrow({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-2">
@@ -250,6 +262,18 @@ function AdminActionsStream() {
   const [error, setError] = useState<string | null>(
     client ? null : `The Laravel API is not configured. ${apiEnvSetupHint}`,
   )
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
+
+  const toggleExpanded = (id: string) =>
+    setExpandedIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
 
   useEffect(() => {
     if (!client) {
@@ -314,23 +338,119 @@ function AdminActionsStream() {
           <ListSkeleton rows={4} />
         ) : entries.length ? (
           <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
-            {entries.map((entry) => (
-              <div
-                key={entry.id}
-                className="flex flex-wrap items-center gap-3 border-b border-[#eef2f6] px-4 py-2.5 last:border-b-0"
-              >
-                <ActionChip action={entry.action} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold capitalize text-[#000a1e]">
-                    {entry.entityType.replace(/_/g, ' ')}
-                  </span>
-                  <span className="block truncate text-xs text-[#74777f]">{entry.userName ?? 'System'}</span>
-                </span>
-                <span className="shrink-0 text-[11px] text-[#74777f]">
-                  {entry.createdAt ? formatTimestamp(entry.createdAt) : '—'}
-                </span>
-              </div>
-            ))}
+            {entries.map((entry) => {
+              const changedKeys = [
+                ...new Set([
+                  ...Object.keys(entry.oldValues ?? {}),
+                  ...Object.keys(entry.newValues ?? {}),
+                ]),
+              ]
+              const hasDetail = changedKeys.length > 0 || Boolean(entry.entityId)
+              const expanded = expandedIds.has(entry.id)
+
+              return (
+                <div key={entry.id} className="border-b border-[#eef2f6] last:border-b-0">
+                  <div
+                    onClick={() => {
+                      if (hasDetail) {
+                        toggleExpanded(entry.id)
+                      }
+                    }}
+                    className={cn(
+                      'flex flex-wrap items-center gap-3 px-4 py-2.5 transition-colors duration-200',
+                      hasDetail && 'cursor-pointer hover:bg-[#f7f9fc]',
+                    )}
+                  >
+                    {hasDetail ? (
+                      <button
+                        type="button"
+                        aria-expanded={expanded}
+                        aria-label={`${expanded ? 'Hide' : 'Show'} action detail`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          toggleExpanded(entry.id)
+                        }}
+                        className="shrink-0 rounded-[0.25rem] p-0.5 text-[#9aa7b8] outline-none transition-colors hover:text-[#005db6] focus-visible:text-[#005db6]"
+                      >
+                        <ChevronDown
+                          className={cn(
+                            'h-4 w-4 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
+                            expanded && 'rotate-180',
+                          )}
+                        />
+                      </button>
+                    ) : (
+                      <span aria-hidden className="w-5 shrink-0" />
+                    )}
+                    <ActionChip action={entry.action} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold capitalize text-[#000a1e]">
+                        {entry.entityType.replace(/_/g, ' ')}
+                      </span>
+                      <span className="block truncate text-xs text-[#74777f]">{entry.userName ?? 'System'}</span>
+                    </span>
+                    <span className="shrink-0 text-[11px] text-[#74777f]">
+                      {entry.createdAt ? formatTimestamp(entry.createdAt) : '—'}
+                    </span>
+                  </div>
+
+                  {expanded && hasDetail ? (
+                    <div className="space-y-3 border-t border-[#eef2f6] bg-[#f7f9fc] px-4 py-3.5">
+                      {changedKeys.length ? (
+                        <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3] bg-white">
+                          <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-[#eef2f6] bg-[#f7f9fc] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f]">
+                            <span>Field</span>
+                            <span>Before</span>
+                            <span>After</span>
+                          </div>
+                          {changedKeys.map((key) => (
+                            <div
+                              key={key}
+                              className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-[#f1f4f8] px-3 py-2 text-xs last:border-b-0"
+                            >
+                              <span className="truncate font-medium capitalize text-[#1d3047]">
+                                {key.replace(/_/g, ' ')}
+                              </span>
+                              <span className="break-words text-[#74777f]">
+                                {formatAuditDetailValue(entry.oldValues?.[key])}
+                              </span>
+                              <span className="break-words font-semibold text-[#000a1e]">
+                                {formatAuditDetailValue(entry.newValues?.[key])}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-[#74777f]">
+                          No field-level changes were recorded for this action.
+                        </p>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-[#74777f]">
+                        <span>By {entry.userName ?? 'System'}</span>
+                        {entry.entityId ? (
+                          <>
+                            <span className="text-[#9aa7b8]">·</span>
+                            <span>Target ID {entry.entityId}</span>
+                          </>
+                        ) : null}
+                        {entry.ipAddress ? (
+                          <>
+                            <span className="text-[#9aa7b8]">·</span>
+                            <span>{entry.ipAddress}</span>
+                          </>
+                        ) : null}
+                        {entry.createdAt ? (
+                          <>
+                            <span className="text-[#9aa7b8]">·</span>
+                            <span>{formatTimestamp(entry.createdAt)}</span>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
           </div>
         ) : (
           <div className="rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-6 py-8 text-center text-sm text-[#74777f]">
@@ -419,7 +539,7 @@ export function AuditLogPage() {
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
-              <SelectTrigger className="h-10 w-full text-sm sm:w-[260px]">
+              <SelectTrigger className="h-10 w-full text-sm sm:w-[260px]" aria-label="Filter by department">
                 <SelectValue placeholder="All departments" />
               </SelectTrigger>
               <SelectContent>

@@ -256,6 +256,7 @@ class WorkspaceController extends Controller
             'title' => $user->title ?? $this->defaultTitle($user->role_key),
             'active' => (bool) $user->active,
             'phone' => $user->phone,
+            'passwordChangeRequired' => (bool) $user->password_change_required,
         ];
     }
 

@@ -147,6 +147,69 @@ class AuthApiTest extends TestCase
         $this->getJson('/api/auth/me')->assertUnauthorized();
     }
 
+    public function test_self_submitted_access_request_user_is_inactive_until_approved(): void
+    {
+        $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
+        $template = ReportTemplate::query()->whereKey($department->template_id)->firstOrFail();
+
+        $submission = $this->postJson('/api/access-requests', [
+            'fullName' => 'Pending Applicant',
+            'email' => 'pending@example.test',
+            'password' => 'StPaul2026!',
+            'requestedAssignments' => [
+                ['departmentId' => $department->slug, 'templateId' => $template->slug],
+            ],
+        ])->assertCreated();
+
+        // The applicant account exists but is inactive — it cannot authenticate yet.
+        $this->assertDatabaseHas('users', ['email' => 'pending@example.test', 'active' => false]);
+        $this->postJson('/api/auth/login', [
+            'identifier' => 'pending@example.test',
+            'password' => 'StPaul2026!',
+        ])->assertForbidden()->assertJsonPath('message', 'This account is inactive.');
+
+        // After an admin approves, the applicant is activated and can sign in.
+        $admin = User::factory()->role('admin', 'Administrator')->create();
+        $this->actingAs($admin)
+            ->postJson("/api/admin/access-requests/{$submission->json('data.id')}/approve")
+            ->assertOk()
+            ->assertJsonPath('status', 'approved');
+
+        $this->assertDatabaseHas('users', ['email' => 'pending@example.test', 'active' => true]);
+        $this->postJson('/api/auth/login', [
+            'identifier' => 'pending@example.test',
+            'password' => 'StPaul2026!',
+        ])->assertOk()->assertJsonPath('user.active', true);
+    }
+
+    public function test_password_change_required_gates_the_app_until_changed(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'temp@example.test',
+            'username' => 'temp.user',
+            'password' => Hash::make('Temp2026!'),
+            'password_change_required' => true,
+        ]);
+
+        // Workspace bootstrap stays reachable so the SPA can render the gate...
+        $this->actingAs($user)->getJson('/api/workspace')->assertOk();
+        // ...but every other data route is blocked until the password is changed.
+        $this->actingAs($user)->getJson('/api/reports')
+            ->assertForbidden()
+            ->assertJsonPath('passwordChangeRequired', true);
+
+        // Changing the password clears the flag and releases the gate.
+        $this->actingAs($user)->postJson('/api/auth/change-password', [
+            'current_password' => 'Temp2026!',
+            'password' => 'BrandNew2026!',
+            'password_confirmation' => 'BrandNew2026!',
+        ])->assertOk()->assertJsonPath('user.passwordChangeRequired', false);
+
+        $this->assertFalse($user->fresh()->password_change_required);
+        $this->assertTrue(Hash::check('BrandNew2026!', $user->fresh()->password));
+        $this->actingAs($user->fresh())->getJson('/api/reports')->assertOk();
+    }
+
     public function test_logout_clears_authenticated_session(): void
     {
         User::factory()->create([

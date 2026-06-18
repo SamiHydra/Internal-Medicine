@@ -60,6 +60,7 @@ export interface UserProfile {
   active: boolean
   phone?: string
   avatar?: string
+  passwordChangeRequired?: boolean
 }
 
 export interface Department {

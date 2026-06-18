@@ -307,7 +307,7 @@ export function AccessRequestPage() {
     setSuccessMessage(
       currentUser
         ? 'Additional access request submitted for review.'
-        : 'Access request submitted. Confirm your email before signing in if email confirmation is enabled.',
+        : 'Access request submitted. An administrator will review it before your account can sign in.',
     )
     clinicalForm.reset({
       fullName: currentUser?.fullName ?? '',

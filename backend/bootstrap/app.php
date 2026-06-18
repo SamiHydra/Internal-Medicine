@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\EnsureActiveUser;
+use App\Http\Middleware\EnsurePasswordChanged;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\EnsureRole;
 use App\Http\Middleware\SecurityHeaders;
@@ -44,6 +45,7 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
         $middleware->alias([
             'active' => EnsureActiveUser::class,
+            'password-changed' => EnsurePasswordChanged::class,
             'permission' => EnsurePermission::class,
             'role' => EnsureRole::class,
         ]);

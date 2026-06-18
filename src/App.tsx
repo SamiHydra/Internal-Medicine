@@ -91,6 +91,11 @@ const ResetPasswordPage = lazy(() =>
     default: module.ResetPasswordPage,
   })),
 )
+const ForcePasswordChangePage = lazy(() =>
+  import('@/pages/auth/force-password-change-page').then((module) => ({
+    default: module.ForcePasswordChangePage,
+  })),
+)
 const NotFoundPage = lazy(() =>
   import('@/pages/not-found-page').then((module) => ({
     default: module.NotFoundPage,
@@ -199,6 +204,10 @@ function HomeRedirect() {
     return <Navigate to="/login" replace />
   }
 
+  if (currentUser.passwordChangeRequired) {
+    return <Navigate to="/change-password" replace />
+  }
+
   return <Navigate to={landingPathForRole(currentUser.role)} replace />
 }
 
@@ -215,6 +224,10 @@ function App() {
         <Route path="/register" element={renderLazyRoute(<AccessRequestPage />)} />
 
         <Route element={<ProtectedRoute />}>
+          <Route
+            path="/change-password"
+            element={renderLazyRoute(<ForcePasswordChangePage />)}
+          />
           <Route element={<ProtectedShell />}>
             <Route
               path="/notifications"

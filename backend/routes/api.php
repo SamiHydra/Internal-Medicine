@@ -32,6 +32,9 @@ Route::prefix('auth')->group(function (): void {
     Route::middleware('auth:sanctum')->group(function (): void {
         Route::get('/me', [AuthController::class, 'me'])->middleware('active');
         Route::post('/logout', [AuthController::class, 'logout']);
+        // Reachable while password_change_required is set (no 'password-changed'
+        // gate here) so a user can clear a temporary/new-account password.
+        Route::post('/change-password', [AuthController::class, 'changePassword'])->middleware('active');
     });
 });
 
@@ -42,8 +45,11 @@ Route::post('/admin-access-requests', [AdminRegistrationController::class, 'stor
 // A generous per-user ceiling (300/min) — far above any legitimate session
 // (the admin dashboard's burst + 20s poll is a fraction of this) — so a single
 // compromised or runaway client cannot hammer the read/analytics endpoints.
-Route::middleware(['auth:sanctum', 'active', 'throttle:300,1'])->group(function (): void {
-    Route::get('/workspace', [WorkspaceController::class, 'show']);
+Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1'])->group(function (): void {
+    // Workspace bootstrap stays reachable even with password_change_required set,
+    // so the SPA can resolve currentUser (incl. passwordChangeRequired) and render
+    // the forced change-password gate. Every other endpoint stays behind the gate.
+    Route::get('/workspace', [WorkspaceController::class, 'show'])->withoutMiddleware('password-changed');
 
     Route::get('/reports', [ReportWorkflowController::class, 'index']);
     Route::post('/reports', [ReportWorkflowController::class, 'store']);

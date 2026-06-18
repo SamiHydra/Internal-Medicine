@@ -31,6 +31,7 @@ import {
   fetchAdminAccessRequests as fetchAdminAccessRequestsQuery,
   fetchCurrentUserProfile,
   fetchReportDetails,
+  changePassword as changePasswordMutation,
   fetchLiveAppState,
   isAdminRole,
   loginWithPassword,
@@ -132,6 +133,7 @@ type AppDataContextValue = {
     options?: EnsureReportDetailsOptions,
   ) => Promise<Record<string, ReportDetailRecord>>
   refreshData: (options?: LiveAppStateLoadOptions) => Promise<void>
+  changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>
 }
 
 const AppDataContext = createContext<AppDataContextValue | null>(null)
@@ -1023,8 +1025,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
     // Reverb is disabled on shared hosting and the data client's realtime
     // channel is a no-op shim, so live updates come from refreshing on focus /
-    // tab visibility. Every role gets that; admins additionally poll on a 20s
-    // interval because they drive the live submission board.
+    // tab visibility. Every role gets that; admins additionally poll on a 60s
+    // fallback interval because they drive the live submission board. (Reduced
+    // from 20s: each poll rebuilds + re-transfers the full workspace payload, so
+    // the tighter cadence multiplied admin DB/transfer load for little UX gain;
+    // focus/visibilitychange refreshes still update near-instantly on tab return.)
     const isAdmin = isAdminRole(signedInUserRole)
 
     const refreshWhenVisible = () => {
@@ -1036,7 +1041,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     window.addEventListener('focus', refreshWhenVisible)
     document.addEventListener('visibilitychange', refreshWhenVisible)
     const fallbackPollId = isAdmin
-      ? window.setInterval(refreshWhenVisible, 20_000)
+      ? window.setInterval(refreshWhenVisible, 60_000)
       : null
 
     return () => {
@@ -1177,6 +1182,74 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [client, refreshDataWithOptions, applySavedReportDetails],
   )
 
+  // Batched variant of applyServerSavedReport for flushing the offline queue: one
+  // workspace refresh and one detail fetch for the whole batch, instead of a full
+  // refresh per queued save (which was O(N) refreshes on a slow reconnect — the
+  // exact scenario the offline queue is built for).
+  const applyServerSavedReports = useCallback(
+    async (saves: Array<{ payload: SaveReportPayload; reportId: string | null }>) => {
+      if (!client || !saves.length) {
+        return
+      }
+
+      historyDataLoadedRef.current = false
+      await refreshDataWithOptions()
+
+      const resolved = saves
+        .map(({ payload, reportId }) => {
+          const savedReport =
+            (reportId
+              ? currentStateRef.current.reports.find((report) => report.id === reportId)
+              : null) ??
+            currentStateRef.current.reports.find(
+              (report) =>
+                report.assignmentId === payload.assignmentId &&
+                report.reportingPeriodId === payload.reportingPeriodId,
+            )
+          const savedReportId = reportId ?? savedReport?.id ?? null
+
+          return savedReportId ? { payload, savedReport, savedReportId } : null
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+
+      if (!resolved.length) {
+        return
+      }
+
+      let detailsById: Record<string, ReportDetailRecord> = {}
+      try {
+        detailsById = await fetchReportDetails(
+          client,
+          resolved.map((entry) => entry.savedReportId),
+        )
+      } catch (detailError) {
+        toast.error(
+          getMessage(
+            detailError,
+            'Reports saved, but the saved cell values could not be refreshed.',
+          ),
+        )
+      }
+
+      for (const { payload, savedReport, savedReportId } of resolved) {
+        const reportDetails = detailsById[savedReportId]
+        const savedValues =
+          reportDetails && Object.keys(reportDetails.values).length
+            ? reportDetails.values
+            : payload.values
+
+        applySavedReportDetails(
+          savedReportId,
+          payload,
+          savedValues,
+          reportDetails?.calculatedMetrics ?? savedReport?.calculatedMetrics,
+          reportDetails?.quality ?? savedReport?.quality,
+        )
+      }
+    },
+    [client, refreshDataWithOptions, applySavedReportDetails],
+  )
+
   const flushQueuedReportSaves = useCallback(
     async (options?: { silent?: boolean }) => {
       const userId = currentUserIdRef.current
@@ -1205,12 +1278,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         beginBackgroundSync()
         shouldEndBackgroundSync = true
 
+        const syncedSaves: Array<{ payload: SaveReportPayload; reportId: string | null }> = []
+
         for (const queuedSave of queuedSaves) {
           try {
             const reportId = await saveReportMutation(client, queuedSave.payload)
             await removeQueuedReportSave(queuedSave.id)
             syncedCount += 1
-            await applyServerSavedReport(queuedSave.payload, reportId)
+            syncedSaves.push({ payload: queuedSave.payload, reportId })
           } catch (syncError) {
             if (isLikelyOfflineError(syncError)) {
               await recordQueuedReportSaveFailure(
@@ -1233,6 +1308,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               discardedCount += 1
             }
           }
+        }
+
+        if (syncedSaves.length) {
+          await applyServerSavedReports(syncedSaves)
         }
 
         await refreshQueuedReportSaveState(userId)
@@ -1260,7 +1339,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
     },
     [
-      applyServerSavedReport,
+      applyServerSavedReports,
       beginBackgroundSync,
       client,
       endBackgroundSync,
@@ -1357,6 +1436,34 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       toast.error(getMessage(logoutError, 'Unable to sign out.'))
     }
   }, [client, clearSignedOutState])
+
+  const changePassword = useCallback(
+    async (currentPassword: string, newPassword: string): Promise<boolean> => {
+      if (!client) {
+        toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
+        return false
+      }
+
+      try {
+        const payload = await changePasswordMutation(client, currentPassword, newPassword)
+        // The returned session has passwordChangeRequired cleared; re-seat the
+        // profile so the forced-change gate releases, then load the workspace
+        // (now reachable again past the password-changed gate).
+        applyAuthenticatedProfile(payload.user)
+        await loadUserState(
+          payload.user.id,
+          'Unable to load the workspace after the password change.',
+          { showBootstrapping: true },
+        )
+        toast.success('Password updated.')
+        return true
+      } catch (changeError) {
+        toast.error(getMessage(changeError, 'Unable to change your password.'))
+        return false
+      }
+    },
+    [client, applyAuthenticatedProfile, loadUserState],
+  )
 
   const markNotificationsRead = useCallback(
     async (userId: string, notificationIds: string[]): Promise<void> => {
@@ -1888,6 +1995,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       ensureHistoryData,
       ensureReportDetails,
       refreshData: refreshDataWithOptions,
+      changePassword,
     }),
     [
       state,
@@ -1896,6 +2004,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       error,
       login,
       logout,
+      changePassword,
       markNotificationsRead,
       clearNotifications,
       restoreNotifications,

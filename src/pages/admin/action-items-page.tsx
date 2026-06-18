@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { CheckCircle2, ClipboardList, Loader2, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { panelClass, SectionEmptyState, SectionEyebrow } from '@/components/dashboard/section-panel'
 import { Button } from '@/components/ui/button'
 import { ListSkeleton } from '@/components/layout/loading-skeletons'
 import {
@@ -18,9 +19,6 @@ import { apiEnvSetupHint } from '@/lib/api/env'
 import type { ActionItem, ActionItemStatus } from '@/lib/api/types'
 import { formatTimestamp } from '@/lib/dates'
 import { cn } from '@/lib/utils'
-
-const sectionClass =
-  'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
 
 const statusStyles: Record<ActionItemStatus, string> = {
   open: 'bg-[#fdecec] text-[#ba1a1a] outline-[#f4cfcf]',
@@ -38,6 +36,12 @@ const severityStyles: Record<string, string> = {
   high: 'bg-[#fdecec] text-[#ba1a1a]',
   medium: 'bg-[#fcf5e8] text-[#8a5a00]',
   low: 'bg-[#eef2f6] text-[#44474e]',
+}
+
+const severityLabel: Record<string, string> = {
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
 }
 
 const filterOptions: { value: ActionItemStatus | 'all'; label: string }[] = [
@@ -99,8 +103,22 @@ export function ActionItemsPage() {
     setPendingId(item.id)
     try {
       await updateActionItem(client, item.id, { status: next })
-      toast.success(next === 'resolved' ? 'Action item resolved.' : 'Action item updated.')
-      load()
+      const message =
+        next === 'resolved'
+          ? 'Action item resolved.'
+          : next === 'in_progress'
+            ? 'Moved to In progress.'
+            : 'Action item reopened.'
+      toast.success(message)
+      // The item just changed status, so under a status-specific filter it would
+      // drop out of the list and look like it vanished. Follow it to its new
+      // filter so it stays on screen (the filter change reloads via `load`);
+      // otherwise just refresh the current view.
+      if (status !== 'all' && status !== next) {
+        setStatus(next)
+      } else {
+        load()
+      }
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : 'Unable to update the action item.')
     } finally {
@@ -108,58 +126,56 @@ export function ActionItemsPage() {
     }
   }
 
+  const emptyDescription =
+    status === 'all'
+      ? 'No action items right now.'
+      : `No ${statusLabel[status].toLowerCase()} action items right now.`
+
   return (
-    <div className="space-y-6">
-      <motion.section
-        initial={{ opacity: 0, y: 10 }}
+    <div className="space-y-6 px-4 py-5 md:px-6 md:py-8">
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, ease: 'easeOut' }}
-        className={sectionClass}
+        className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
       >
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span aria-hidden className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">Follow-up</p>
-            </div>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-[#5b6169]">
-              Critical events automatically open a tracked follow-up here. Drive each one to resolution —
-              something a spreadsheet can never do.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Pill className="bg-[#fdecec] text-[#ba1a1a]">{openCount} open</Pill>
-            <Select value={status} onValueChange={(value) => setStatus(value as ActionItemStatus | 'all')}>
-              <SelectTrigger className="w-[160px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {filterOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <SectionEyebrow label="Follow-up" />
+          <span className="inline-flex items-center gap-2 rounded-full bg-[#f4f7fb] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#44474e] outline outline-1 outline-[#e3e9f1]">
+            <span
+              aria-hidden
+              className={cn('h-1.5 w-1.5 rounded-full', openCount > 0 ? 'bg-[#ba1a1a]' : 'bg-[#1f6b3b]')}
+            />
+            {openCount} open
+          </span>
         </div>
-      </motion.section>
+
+        <Select value={status} onValueChange={(value) => setStatus(value as ActionItemStatus | 'all')}>
+          <SelectTrigger className="h-10 w-full text-sm sm:w-[160px]" aria-label="Filter by status">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {filterOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </motion.div>
 
       {error ? (
-        <div className={cn(sectionClass, 'text-sm text-[#ba1a1a]')}>{error}</div>
+        <div className={cn(panelClass, 'text-sm text-[#ba1a1a]')}>{error}</div>
       ) : isLoading ? (
-        <div className={sectionClass}>
+        <div className={panelClass}>
           <ListSkeleton rows={4} />
         </div>
       ) : items.length === 0 ? (
-        <div className={cn(sectionClass, 'flex flex-col items-center gap-3 py-12 text-center')}>
-          <CheckCircle2 className="h-8 w-8 text-[#1f6b3b]" />
-          <p className="text-sm font-semibold text-[#000a1e]">Nothing outstanding</p>
-          <p className="max-w-sm text-sm text-[#74777f]">
-            No {status === 'all' ? '' : statusLabel[status as ActionItemStatus].toLowerCase()} action items right now.
-          </p>
-        </div>
+        <SectionEmptyState
+          icon={<CheckCircle2 className="h-7 w-7" />}
+          title="Nothing outstanding"
+          description={emptyDescription}
+        />
       ) : (
         <div className="space-y-3">
           {items.map((item) => (
@@ -168,18 +184,18 @@ export function ActionItemsPage() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.25, ease: 'easeOut' }}
-              className={cn(sectionClass, 'flex flex-col gap-4')}
+              className={cn(panelClass, 'flex flex-col gap-4')}
             >
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <Pill className={statusStyles[item.status]}>{statusLabel[item.status]}</Pill>
-                    <Pill className={severityStyles[item.severity] ?? severityStyles.low}>{item.severity}</Pill>
-                    {item.source === 'critical_event' ? (
-                      <Pill className="bg-[#edf1f5] text-[#1d3047]">Critical event</Pill>
-                    ) : (
-                      <Pill className="bg-[#edf1f5] text-[#1d3047]">Manual</Pill>
-                    )}
+                    <Pill className={severityStyles[item.severity] ?? severityStyles.low}>
+                      {severityLabel[item.severity] ?? item.severity}
+                    </Pill>
+                    <Pill className="bg-[#edf1f5] text-[#1d3047]">
+                      {item.source === 'critical_event' ? 'Critical event' : 'Manual'}
+                    </Pill>
                   </div>
                   <h2 className="flex items-center gap-2 font-display text-base font-bold text-[#000a1e]">
                     <ClipboardList className="h-4 w-4 shrink-0 text-[#005db6]" />

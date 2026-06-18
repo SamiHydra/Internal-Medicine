@@ -41,7 +41,7 @@ class PasswordResetController extends Controller
         $validated = $request->validate([
             'email' => ['required', 'email', 'max:255'],
             'token' => ['required', 'string'],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::defaults(), 'confirmed'],
         ]);
         $email = Str::lower(trim($validated['email']));
         $user = User::query()->whereRaw('lower(email) = ?', [$email])->first();

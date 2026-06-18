@@ -11,6 +11,7 @@ use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportingPeriod;
+use App\Models\ReportTemplate;
 use App\Models\User;
 use Database\Seeders\AppSettingSeeder;
 use Database\Seeders\DepartmentSeeder;
@@ -317,6 +318,47 @@ class AdminApiTest extends TestCase
             ->assertOk()
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.action', 'update');
+    }
+
+    public function test_settings_save_without_deadline_change_does_not_recalculate_deadlines(): void
+    {
+        $period = ReportingPeriod::query()->orderBy('week_start')->firstOrFail();
+        // A deadline that does NOT match the week_start+offset formula, so any
+        // recalculation would visibly change it.
+        $sentinel = Carbon::parse($period->week_start)->addDays(3)->setTime(15, 30);
+        $period->forceFill(['deadline_at' => $sentinel])->save();
+
+        // Save settings WITHOUT touching the deadline day/time (only an unrelated
+        // insight threshold). The deadline must be left exactly as-is.
+        $this->actingAs($this->admin)
+            ->patchJson('/api/admin/settings', ['notableRiseThresholdPercent' => 20])
+            ->assertOk();
+
+        $this->assertSame(
+            $sentinel->toDateTimeString(),
+            $period->fresh()->deadline_at->toDateTimeString(),
+        );
+    }
+
+    public function test_template_content_update_preserves_sibling_metadata(): void
+    {
+        $template = ReportTemplate::query()->where('slug', 'inpatient_weekly')->firstOrFail();
+        $this->assertArrayHasKey('validation_rules', $template->metadata ?? []);
+        $this->assertArrayHasKey('ui_family', $template->metadata ?? []);
+
+        // A plain content save only sends metadata.presentation. The sibling keys
+        // (validation_rules drives quality scoring; ui_family drives grouping) must
+        // survive rather than being wiped by a full-column overwrite.
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/templates/{$template->slug}", [
+                'metadata' => ['presentation' => ['accent' => 'blue']],
+            ])
+            ->assertOk();
+
+        $fresh = $template->fresh();
+        $this->assertSame(['accent' => 'blue'], $fresh->metadata['presentation']);
+        $this->assertArrayHasKey('validation_rules', $fresh->metadata);
+        $this->assertArrayHasKey('ui_family', $fresh->metadata);
     }
 
     private function createAccessRequest(User $user, string $departmentSlug): AccessRequest

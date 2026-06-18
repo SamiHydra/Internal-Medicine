@@ -6,6 +6,7 @@ import { Controller, useForm, useWatch } from 'react-hook-form'
 import { Clock3, Gauge, Lock, PhoneCall, Save } from 'lucide-react'
 import { z } from 'zod'
 
+import { panelClass, SectionHeader } from '@/components/dashboard/section-panel'
 import { Button } from '@/components/ui/button'
 import { technicalSupport } from '@/config/support'
 import { Input } from '@/components/ui/input'
@@ -25,19 +26,8 @@ import { performanceTargetDefinitions } from '@/lib/performance-targets'
 import { cn, formatCompactNumber } from '@/lib/utils'
 import type { Weekday } from '@/types/domain'
 
-const sectionClass =
-  'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
 const countChipClass =
   'inline-flex items-center gap-2 self-start rounded-full bg-[#f4f7fb] px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] outline outline-1 outline-[#e3e9f1]'
-
-function SectionEyebrow({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">{label}</p>
-    </div>
-  )
-}
 
 const settingsSchema = z.object({
   deadlineEnforced: z.boolean(),
@@ -112,39 +102,38 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6 px-4 py-5 md:px-6 md:py-8">
-      <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: 'easeOut' }}
-          className={sectionClass}
+          className={panelClass}
         >
           <div className="space-y-5">
-            <div className="flex flex-col gap-4 border-b border-[#eef2f6] pb-5 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <SectionEyebrow label="Workflow" />
-                <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
-                  Rule settings
-                </h2>
-                <p className="mt-1 text-sm text-[#74777f]">Deadlines, auto-lock, and alert thresholds.</p>
-              </div>
-              <span
-                className={cn(
-                  countChipClass,
-                  form.formState.isDirty ? 'text-[#8a5a00]' : 'text-[#44474e]',
-                )}
-              >
-                {form.formState.isDirty ? 'Unsaved changes' : 'Saved'}
-              </span>
-            </div>
+            <SectionHeader
+              eyebrow="Workflow"
+              title="Rule settings"
+              description="Deadlines, auto-lock, and alert thresholds."
+              className="sm:items-center"
+              actions={
+                <span
+                  className={cn(
+                    countChipClass,
+                    form.formState.isDirty ? 'text-[#8a5a00]' : 'text-[#44474e]',
+                  )}
+                >
+                  {form.formState.isDirty ? 'Unsaved changes' : 'Saved'}
+                </span>
+              }
+            />
 
             <form className="space-y-6" onSubmit={onSubmit}>
               <div className="rounded-[0.35rem] border border-[#e6ecf3] bg-[#f7f9fc] px-4 py-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="space-y-1">
                     <Label htmlFor="deadline-enforced">Enforce weekly deadlines</Label>
-                    <p className="text-sm text-[#44474e]">
-                      When off, reports stay editable and submittable until an admin manually locks them.
+                    <p className="text-sm text-[#74777f]">
+                      When off, reports stay open until an admin locks them.
                     </p>
                   </div>
                   <Controller
@@ -172,7 +161,7 @@ export function SettingsPage() {
                         value={field.value}
                         onValueChange={(value) => field.onChange(value as Weekday)}
                       >
-                        <SelectTrigger className="bg-white/84">
+                        <SelectTrigger className="bg-white/84" aria-label="Weekly deadline day">
                           <SelectValue placeholder="Deadline day" />
                         </SelectTrigger>
                         <SelectContent>
@@ -189,41 +178,38 @@ export function SettingsPage() {
 
                 <div className="space-y-2">
                   <Label>Deadline time</Label>
-                  <Input type="time" className="h-12 px-4" {...form.register('weeklyDeadlineTime')} />
+                  <Input type="time" aria-label="Deadline time" className="h-12 px-4" {...form.register('weeklyDeadlineTime')} />
                 </div>
 
                 <div className="space-y-2">
                   <Label>Auto-lock hours after deadline</Label>
-                  <Input type="number" className="h-12 px-4" {...form.register('autoLockHoursAfterDeadline')} />
+                  <Input type="number" aria-label="Auto-lock hours after deadline" className="h-12 px-4" {...form.register('autoLockHoursAfterDeadline')} />
                 </div>
 
                 <div className="space-y-2">
                   <Label>Notable rise threshold (%)</Label>
-                  <Input type="number" className="h-12 px-4" {...form.register('notableRiseThresholdPercent')} />
+                  <Input type="number" aria-label="Notable rise threshold percent" className="h-12 px-4" {...form.register('notableRiseThresholdPercent')} />
                 </div>
 
                 <div className="space-y-2 md:col-span-2">
                   <Label>Notable drop threshold (%)</Label>
-                  <Input type="number" className="h-12 px-4" {...form.register('notableDropThresholdPercent')} />
+                  <Input type="number" aria-label="Notable drop threshold percent" className="h-12 px-4" {...form.register('notableDropThresholdPercent')} />
                 </div>
               </div>
 
-              <div className="rounded-[0.35rem] border border-[#e6ecf3] bg-white px-4 py-4">
+              <div className="rounded-[0.35rem] border border-[#e6ecf3] bg-[#f7f9fc] px-4 py-4">
                 <div className="mb-4 flex items-center gap-2">
                   <Gauge className="h-4 w-4 text-[#005db6]" />
                   <Label>Performance targets</Label>
                 </div>
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-5">
                   {performanceTargetDefinitions.map((target) => {
                     const targetPath = `metricTargets.${target.key}` as const
 
                     return (
-                      <div key={target.key} className="rounded-[0.35rem] border border-[#eef2f6] bg-[#f8fafc] p-3">
-                        <div className="mb-3 flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold text-[#1d3047]">{target.label}</p>
-                            <p className="text-xs text-[#74777f]">{target.unit === '%' ? 'Percentage target' : 'Count target'}</p>
-                          </div>
+                      <div key={target.key} className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-[#1d3047]">{target.label}</p>
                           <Controller
                             control={form.control}
                             name={`${targetPath}.enabled`}
@@ -244,7 +230,7 @@ export function SettingsPage() {
                               name={`${targetPath}.direction`}
                               render={({ field }) => (
                                 <Select value={field.value} onValueChange={field.onChange}>
-                                  <SelectTrigger className="h-10 bg-white">
+                                  <SelectTrigger className="h-10 w-full bg-white" aria-label={`${target.label} direction`}>
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -257,11 +243,11 @@ export function SettingsPage() {
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs">Amber</Label>
-                            <Input type="number" className="h-10 bg-white px-3" {...form.register(`${targetPath}.amber`)} />
+                            <Input type="number" aria-label={`${target.label} amber threshold`} className="h-10 bg-white px-3" {...form.register(`${targetPath}.amber`)} />
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs">Green</Label>
-                            <Input type="number" className="h-10 bg-white px-3" {...form.register(`${targetPath}.green`)} />
+                            <Input type="number" aria-label={`${target.label} green threshold`} className="h-10 bg-white px-3" {...form.register(`${targetPath}.green`)} />
                           </div>
                         </div>
                       </div>
@@ -270,24 +256,7 @@ export function SettingsPage() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-4 border-t border-[#eef2f6] pt-5 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-[#44474e]">
-                  {deadlineEnforced ? (
-                    previewDeadline ? (
-                      <>
-                        Closes{' '}
-                        <span className="font-medium tabular-nums text-[#000a1e]">
-                          {format(previewDeadline, 'EEE, MMM d · HH:mm')}
-                        </span>
-                      </>
-                    ) : (
-                      'Rules apply once a reporting week is active.'
-                    )
-                  ) : (
-                    'Deadlines off — reports stay open until manually locked.'
-                  )}
-                </p>
-
+              <div className="flex border-t border-[#eef2f6] pt-5 sm:justify-end">
                 <Button type="submit" disabled={form.formState.isSubmitting} className="w-full sm:w-auto">
                   <Save className="h-4 w-4" />
                   {form.formState.isSubmitting ? 'Saving…' : 'Save settings'}
@@ -301,19 +270,17 @@ export function SettingsPage() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: 'easeOut' }}
-          className={cn(sectionClass, 'flex flex-col')}
+          className={panelClass}
         >
-          <div className="border-b border-[#eef2f6] pb-5">
-            <SectionEyebrow label="This week's schedule" />
-            <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
-              This week
-            </h2>
-            <p className="mt-1 text-sm text-[#74777f]">
-              {deadlineEnforced
+          <SectionHeader
+            eyebrow="Schedule"
+            title="This week"
+            description={
+              deadlineEnforced
                 ? `Auto-locks ${autoLockHours}h after the deadline.`
-                : 'Manual lock only — no auto-lock scheduled.'}
-            </p>
-          </div>
+                : 'Manual lock only.'
+            }
+          />
 
           {/* Deadline → auto-lock timeline: two deliberately distinct nodes on a rail. */}
           <div className="relative mt-6">
@@ -389,15 +356,15 @@ export function SettingsPage() {
             </motion.div>
           </div>
 
-          <div className="mt-auto">
-            <div className="mt-6 flex items-center justify-between border-t border-[#eef2f6] pt-4">
+          <div className="mt-6 space-y-4">
+            <div className="flex items-center justify-between border-t border-[#eef2f6] pt-4">
               <p className="text-sm text-[#74777f]">Coverage</p>
               <p className="text-sm font-semibold tabular-nums text-[#000a1e]">
                 {formatCompactNumber(criticalFieldCount)} critical fields
               </p>
             </div>
 
-            <div className="mt-4 flex items-center gap-3 border-t border-[#eef2f6] pt-4">
+            <div className="flex items-center gap-3 border-t border-[#eef2f6] pt-4">
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[0.35rem] bg-[#edf4fb] outline outline-1 outline-[#cfe0f4]/75">
                 <PhoneCall className="h-4 w-4 text-[#005db6]" />
               </span>

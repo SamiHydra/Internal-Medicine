@@ -50,6 +50,12 @@ export function ProtectedRoute({ roles }: { roles?: UserRole[] }) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />
   }
 
+  // A user with a temporary/new-account password must rotate it before reaching
+  // any app route. The backend mirrors this with the EnsurePasswordChanged gate.
+  if (currentUser.passwordChangeRequired && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />
+  }
+
   if (roles && !roles.includes(currentUser.role)) {
     return <Navigate to={landingPathForRole(currentUser.role)} replace />
   }

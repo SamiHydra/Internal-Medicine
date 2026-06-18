@@ -30,7 +30,7 @@ class AccessRequestSubmissionController extends Controller
             'full_name' => [$isAuthenticated ? 'sometimes' : 'required_without:fullName', 'string', 'max:255'],
             'fullName' => [$isAuthenticated ? 'sometimes' : 'required_without:full_name', 'string', 'max:255'],
             'email' => [$isAuthenticated ? 'sometimes' : 'required', 'email', 'max:255'],
-            'password' => [$isAuthenticated ? 'sometimes' : 'required', 'string', 'min:8'],
+            'password' => [$isAuthenticated ? 'sometimes' : 'required', 'string', \Illuminate\Validation\Rules\Password::defaults()],
             'requested_assignments' => ['required_without:requestedAssignments', 'array', 'min:1'],
             'requestedAssignments' => ['required_without:requested_assignments', 'array', 'min:1'],
             'requested_assignments.*.department_id' => ['sometimes', 'string', 'max:80'],
@@ -83,6 +83,11 @@ class AccessRequestSubmissionController extends Controller
             ]);
         }
 
+        // Create the applicant INACTIVE: a self-submitted access request is an
+        // unvetted, unapproved person. Keeping active=false means login is blocked
+        // by AuthController/EnsureActiveUser until an admin approves the request
+        // (AccessRequestReviewService flips active=true on approval). A rejected
+        // request simply leaves the account inactive — never authenticatable.
         return User::query()->create([
             'full_name' => trim(preg_replace('/\s+/', ' ', $validated['full_name'] ?? $validated['fullName'])),
             'email' => $email,
@@ -90,7 +95,7 @@ class AccessRequestSubmissionController extends Controller
             'password' => $validated['password'],
             'role_key' => 'nurse',
             'title' => 'Applicant Nurse',
-            'active' => true,
+            'active' => false,
             'password_change_required' => false,
         ]);
     }

@@ -431,7 +431,7 @@ export function UserManagementPage() {
                 Nurse
               </p>
               <Select value={selectedUserId} onValueChange={setSelectedUserId}>
-                <SelectTrigger className="shadow-none">
+                <SelectTrigger className="shadow-none" aria-label="Nurse">
                   <SelectValue placeholder="Choose nurse" />
                 </SelectTrigger>
                 <SelectContent>
@@ -449,7 +449,7 @@ export function UserManagementPage() {
                 Department
               </p>
               <Select value={selectedDepartmentId} onValueChange={setSelectedDepartmentId}>
-                <SelectTrigger className="shadow-none">
+                <SelectTrigger className="shadow-none" aria-label="Department">
                   <SelectValue placeholder="Choose department" />
                 </SelectTrigger>
                 <SelectContent>

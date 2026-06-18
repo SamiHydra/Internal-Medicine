@@ -66,6 +66,7 @@ export async function fetchReportDetails(
       {
         values: report.values ?? {},
         calculatedMetrics: report.calculatedMetrics ?? {},
+        quality: report.quality,
       },
     ]),
   ) as Record<string, ReportDetailRecord>

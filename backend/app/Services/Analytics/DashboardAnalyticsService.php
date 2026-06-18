@@ -12,7 +12,11 @@ class DashboardAnalyticsService
 {
     private const CACHE_VERSION_KEY = 'analytics:dashboard:version';
     private const CACHE_REGISTRY_KEY = 'analytics:dashboard:keys';
-    private const CACHE_TTL_SECONDS = 300;
+    // Freshness is driven by dataFingerprint() in the cache key (counts + max
+    // updated_at) and an explicit invalidate() on every write, so the TTL is only
+    // a time-based backstop. A longer TTL means the expensive cold rebuild happens
+    // on real data changes, not every 5 minutes of idle viewing.
+    private const CACHE_TTL_SECONDS = 1800;
 
     public function __construct(
         private readonly AnalyticsService $analytics,

@@ -101,7 +101,19 @@ class AppSettingsService
             'sms_hours_before_deadline' => $next['reportReminderThresholds']['smsHoursBeforeDeadline'],
             'overdue_hours_after_deadline' => $next['reportReminderThresholds']['overdueHoursAfterDeadline'],
         ], $actor);
-        $this->recalculateDeadlines($next['weeklyDeadlineDay'], $next['weeklyDeadlineTime']);
+
+        // Only rewrite every period's deadline when the deadline policy (day or time)
+        // actually changed. A no-op save (e.g. an admin tweaks an unrelated metric
+        // target) must not silently shift existing deadlines — that previously moved
+        // the visible close date a week and could mark current reports overdue early.
+        $deadlinePolicyChanged =
+            strtolower((string) $current['weeklyDeadlineDay']) !== $next['weeklyDeadlineDay']
+            || (string) $current['weeklyDeadlineTime'] !== $next['weeklyDeadlineTime'];
+
+        if ($deadlinePolicyChanged) {
+            $this->recalculateDeadlines($next['weeklyDeadlineDay'], $next['weeklyDeadlineTime']);
+        }
+
         Cache::forget(self::CACHE_KEY);
 
         return $this->structured();

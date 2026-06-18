@@ -26,7 +26,7 @@ class AdminRegistrationController extends Controller
         $validated = Validator::make($this->normalize($request), [
             'full_name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255'],
-            'password' => ['required', 'string', 'min:8'],
+            'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::defaults()],
             'notes' => ['nullable', 'string', 'max:1000'],
         ])->validate();
 

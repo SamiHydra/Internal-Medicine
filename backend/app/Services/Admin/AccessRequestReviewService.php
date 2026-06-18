@@ -39,6 +39,14 @@ class AccessRequestReviewService
             ])->save();
 
             if ($decision === 'approved') {
+                // Activate the applicant on approval. Self-submitted applicants are
+                // created inactive (AccessRequestSubmissionController), so this is the
+                // step that first lets them authenticate. Existing active nurses
+                // requesting more access are unaffected (already active).
+                if ($lockedRequest->user && ! $lockedRequest->user->active) {
+                    $lockedRequest->user->forceFill(['active' => true])->save();
+                }
+
                 foreach ($lockedRequest->items as $item) {
                     ReportAssignment::query()->updateOrCreate(
                         [

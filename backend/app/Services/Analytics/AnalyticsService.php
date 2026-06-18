@@ -129,9 +129,24 @@ class AnalyticsService
      */
     private array $reportsMemo = [];
 
+    /**
+     * Request-scoped memos for the two helper queries that summary() re-runs for
+     * every weekly/monthly/department bucket across all families. Keyed by the
+     * filter dimensions each one actually reads, so a full dashboard build issues
+     * a handful of Department/ReportAssignment queries instead of hundreds.
+     *
+     * @var array<string, Collection<int, Department>>
+     */
+    private array $scopedDepartmentsMemo = [];
+
+    /** @var array<string, int> */
+    private array $assignmentCountMemo = [];
+
     public function flushMemo(): void
     {
         $this->reportsMemo = [];
+        $this->scopedDepartmentsMemo = [];
+        $this->assignmentCountMemo = [];
     }
 
     /**
@@ -809,8 +824,18 @@ class AnalyticsService
      */
     private function scopedDepartments(AnalyticsFilters $filters, ?string $family = null): Collection
     {
-        $query = Department::query()->where('active', true);
         $effectiveFamily = $this->effectiveFamily($filters, $family);
+        $memoKey = md5(serialize([
+            $effectiveFamily,
+            $filters->departmentFilter(),
+            $filters->procedureCategory,
+        ]));
+
+        if (isset($this->scopedDepartmentsMemo[$memoKey])) {
+            return $this->scopedDepartmentsMemo[$memoKey];
+        }
+
+        $query = Department::query()->where('active', true);
 
         if ($effectiveFamily) {
             $query->where('family', $effectiveFamily);
@@ -824,7 +849,7 @@ class AnalyticsService
             $query->where('slug', $slug);
         }
 
-        return $query->get();
+        return $this->scopedDepartmentsMemo[$memoKey] = $query->get();
     }
 
     /**
@@ -836,6 +861,22 @@ class AnalyticsService
             return 0;
         }
 
+        // The active-assignment count depends only on the scoped departments, not
+        // on the bucket's periods, so memoize it per (family, department, category)
+        // and multiply by the period count. summary() runs this for every bucket.
+        $memoKey = md5(serialize([
+            $this->effectiveFamily($filters, $family),
+            $filters->departmentFilter(),
+            $filters->procedureCategory,
+        ]));
+
+        $perPeriod = $this->assignmentCountMemo[$memoKey] ??= $this->countActiveAssignments($filters, $family);
+
+        return $perPeriod * $periods->count();
+    }
+
+    private function countActiveAssignments(AnalyticsFilters $filters, ?string $family = null): int
+    {
         $departmentIds = $this->scopedDepartments($filters, $family)->pluck('id');
 
         if ($departmentIds->isEmpty()) {
@@ -845,7 +886,7 @@ class AnalyticsService
         return ReportAssignment::query()
             ->where('active', true)
             ->whereIn('department_id', $departmentIds)
-            ->count() * $periods->count();
+            ->count();
     }
 
     /**

@@ -82,5 +82,9 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
+    // Vitest runs the frontend unit tests under src/ only. The Playwright e2e
+    // specs live in artifacts/pre-deployment-qa/PLAYWRIGHT_TESTS and use
+    // @playwright/test's runner — they must not be collected by Vitest.
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
 })

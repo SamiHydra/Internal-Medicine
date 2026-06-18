@@ -26,6 +26,18 @@ export async function fetchSession(client: LaravelApiClient) {
   return client.get<SessionPayload>('/api/auth/me')
 }
 
+export async function changePassword(
+  client: LaravelApiClient,
+  currentPassword: string,
+  newPassword: string,
+) {
+  return client.post<SessionPayload>('/api/auth/change-password', {
+    current_password: currentPassword,
+    password: newPassword,
+    password_confirmation: newPassword,
+  })
+}
+
 export function sessionUserId(session: ApiSession | null) {
   return session?.user.id ?? null
 }

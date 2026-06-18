@@ -130,6 +130,54 @@ export type AnalyticsRollupPayload = {
   data: AnalyticsRollupRow[]
 }
 
+const DASHBOARD_ANALYTICS_CACHE_TTL_MS = 5 * 60 * 1000
+
+type DashboardAnalyticsCacheEntry = {
+  payload: DashboardAnalyticsPayload
+  cachedAt: number
+}
+
+const dashboardAnalyticsCache = new Map<string, DashboardAnalyticsCacheEntry>()
+const dashboardAnalyticsRequests = new Map<string, Promise<DashboardAnalyticsPayload>>()
+
+function normalizedQueryEntries(query?: AnalyticsQuery) {
+  return Object.entries(query ?? {})
+    .filter(([, value]) => value !== null && value !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+}
+
+export function getDashboardAnalyticsCacheKey(query?: AnalyticsQuery) {
+  return `dashboard:${JSON.stringify(normalizedQueryEntries(query))}`
+}
+
+export function readCachedDashboardAnalytics(query?: AnalyticsQuery) {
+  const cacheKey = getDashboardAnalyticsCacheKey(query)
+  const cachedEntry = dashboardAnalyticsCache.get(cacheKey)
+
+  if (!cachedEntry) {
+    return null
+  }
+
+  if (Date.now() - cachedEntry.cachedAt > DASHBOARD_ANALYTICS_CACHE_TTL_MS) {
+    dashboardAnalyticsCache.delete(cacheKey)
+    return null
+  }
+
+  return cachedEntry.payload
+}
+
+function writeDashboardAnalyticsCache(query: AnalyticsQuery | undefined, payload: DashboardAnalyticsPayload) {
+  dashboardAnalyticsCache.set(getDashboardAnalyticsCacheKey(query), {
+    payload,
+    cachedAt: Date.now(),
+  })
+}
+
+export function clearDashboardAnalyticsCache() {
+  dashboardAnalyticsCache.clear()
+  dashboardAnalyticsRequests.clear()
+}
+
 export function fetchAnalytics<T>(
   client: LaravelApiClient,
   endpoint:
@@ -154,6 +202,30 @@ export function fetchDashboardAnalytics(
   query?: AnalyticsQuery,
 ) {
   return fetchAnalytics<DashboardAnalyticsPayload>(client, 'dashboard', query)
+}
+
+export function fetchAndCacheDashboardAnalytics(
+  client: LaravelApiClient,
+  query?: AnalyticsQuery,
+) {
+  const cacheKey = getDashboardAnalyticsCacheKey(query)
+  const inFlightRequest = dashboardAnalyticsRequests.get(cacheKey)
+
+  if (inFlightRequest) {
+    return inFlightRequest
+  }
+
+  const request = fetchDashboardAnalytics(client, query)
+    .then((payload) => {
+      writeDashboardAnalyticsCache(query, payload)
+      return payload
+    })
+    .finally(() => {
+      dashboardAnalyticsRequests.delete(cacheKey)
+    })
+
+  dashboardAnalyticsRequests.set(cacheKey, request)
+  return request
 }
 
 export function fetchQuarterlyAnalytics(

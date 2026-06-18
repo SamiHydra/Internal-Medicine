@@ -102,7 +102,9 @@ class AdminAccessRequestReviewService
             'title' => 'Admin access approved',
             'message' => sprintf('%s approved your admin account. You can now sign in.', $actor->full_name),
             'related_route' => '/admin',
-            'related_entity' => 'admin_access_request',
+            // related_id is the new admin's USER id, so the entity must be 'user'
+            // (not 'admin_access_request') to keep the (entity, id) pair consistent.
+            'related_entity' => 'user',
             'related_id' => $newAdmin->id,
             'created_at' => now(),
         ]);

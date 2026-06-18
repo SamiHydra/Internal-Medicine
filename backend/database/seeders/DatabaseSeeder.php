@@ -26,6 +26,10 @@ class DatabaseSeeder extends Seeder
             ReportingPeriodSeeder::class,
             // Local-dev login accounts. Self-guards against production/testing.
             DevUserSeeder::class,
+            // Realistic, validation-consistent clinical data for every ward/clinic/
+            // procedure unit so the dashboards render with believable shape.
+            // Self-guards against production/testing.
+            DevClinicalDataSeeder::class,
         ]);
     }
 }

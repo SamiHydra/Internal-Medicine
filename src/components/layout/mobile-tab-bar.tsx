@@ -2,6 +2,7 @@ import { MoreHorizontal } from 'lucide-react'
 import { NavLink, useLocation } from 'react-router-dom'
 
 import type { NavigationItem } from '@/config/navigation'
+import { prefetchRoute } from '@/routes/route-prefetch'
 import { cn } from '@/lib/utils'
 
 // Index routes ("Home"/"Dashboard") must match exactly so they don't stay lit
@@ -61,6 +62,8 @@ export function MobileTabBar({
               <NavLink
                 to={item.href}
                 end={HOME_HREFS.has(item.href)}
+                onPointerDown={() => prefetchRoute(item.href)}
+                onFocus={() => prefetchRoute(item.href)}
                 className={({ isActive }) =>
                   cn(tabClass, isActive ? 'text-[#005db6]' : 'text-[#74777f]')
                 }

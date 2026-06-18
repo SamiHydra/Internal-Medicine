@@ -323,7 +323,7 @@ function PickerField<T extends FieldValues>({
           onValueChange={field.onChange}
           disabled={disabled}
         >
-          <SelectTrigger className={fieldInputClass}>
+          <SelectTrigger aria-label={placeholder} className={fieldInputClass}>
             <SelectValue placeholder={placeholder} />
           </SelectTrigger>
           <SelectContent className="border-[#d4dde8] bg-[#ffffff] shadow-[0_16px_30px_rgba(0,33,71,0.08)]">

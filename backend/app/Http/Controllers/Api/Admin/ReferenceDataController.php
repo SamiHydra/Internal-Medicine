@@ -84,7 +84,22 @@ class ReferenceDataController extends Controller
 
         return DB::transaction(function () use ($request, $resolvedTemplate, $validated): JsonResponse {
             $oldValues = $this->templateAuditValues($resolvedTemplate->load('fieldDefinitions'));
-            $resolvedTemplate->forceFill($this->templatePayload($validated, partial: true))->save();
+            $payload = $this->templatePayload($validated, partial: true);
+
+            // Preserve sibling metadata keys the editor never sends. The template form
+            // only submits metadata.presentation, so a plain content save must merge
+            // over the stored metadata — otherwise it wipes metadata.validation_rules
+            // (drives clinical quality scoring) and metadata.ui_family. Top-level
+            // array_merge replaces `presentation` wholesale (the form owns it) while
+            // keeping untouched siblings, mirroring the field-level merge in syncFields.
+            if (array_key_exists('metadata', $payload)) {
+                $payload['metadata'] = array_merge(
+                    $resolvedTemplate->metadata ?? [],
+                    is_array($payload['metadata']) ? $payload['metadata'] : [],
+                );
+            }
+
+            $resolvedTemplate->forceFill($payload)->save();
 
             if (array_key_exists('fields', $validated)) {
                 $this->syncFields($resolvedTemplate, $validated['fields']);

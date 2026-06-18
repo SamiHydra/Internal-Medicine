@@ -42,6 +42,7 @@ use App\Policies\UserPolicy;
 use App\Support\Authorization\Permissions;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Validation\Rules\Password;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -63,6 +64,15 @@ class AppServiceProvider extends ServiceProvider
         if ($this->app->environment('production') && (bool) config('app.debug') === true) {
             throw new \RuntimeException('APP_DEBUG must be false in production.');
         }
+
+        // Baseline password policy applied wherever a password is set (register,
+        // reset, change, admin create/reset). min(8)+mixedCase+numbers rejects the
+        // weak/known passwords plain min:8 allowed. Production can additionally
+        // enable ->uncompromised() (HIBP breach check) — left off here so the test
+        // suite stays offline-deterministic.
+        Password::defaults(fn () => $this->app->isProduction()
+            ? Password::min(12)->mixedCase()->numbers()->uncompromised()
+            : Password::min(8)->mixedCase()->numbers());
 
         Gate::before(fn (User $user) => $user->active ? null : false);
 

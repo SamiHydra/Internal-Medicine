@@ -63,7 +63,7 @@ class UserController extends Controller
             'fullName' => ['required_without:full_name', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'username' => ['nullable', 'string', 'min:3', 'max:64', 'regex:/^[a-zA-Z0-9._-]+$/', 'unique:users,username'],
-            'password' => ['required', 'string', 'min:8'],
+            'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::defaults()],
             'role_key' => ['required_without:role', Rule::in(['admin', 'nurse'])],
             'role' => ['required_without:role_key', Rule::in(['admin', 'nurse'])],
             'title' => ['nullable', 'string', 'max:255'],
@@ -179,7 +179,7 @@ class UserController extends Controller
         Gate::authorize('update', $user);
 
         $validated = $request->validate([
-            'password' => ['required', 'string', 'min:8'],
+            'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::defaults()],
             'password_change_required' => ['sometimes', 'boolean'],
             'passwordChangeRequired' => ['sometimes', 'boolean'],
         ]);

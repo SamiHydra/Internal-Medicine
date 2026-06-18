@@ -113,9 +113,10 @@ export function ReportComments({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-[#000a1e]">
-                    {comment.authorName}
+                    <span>{comment.authorName}</span>
                     {comment.authorRole ? (
                       <span className="ml-2 text-[11px] font-medium uppercase tracking-[0.1em] text-[#74777f]">
+                        <span aria-hidden className="mr-1.5 text-[#c2c8d0]">·</span>
                         {comment.authorRole}
                       </span>
                     ) : null}

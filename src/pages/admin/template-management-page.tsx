@@ -209,7 +209,10 @@ export function TemplateManagementPage() {
       name: template.name,
       description: template.description,
       activeDays: template.activeDays,
-      metadata: { presentation: getPresentation(template) },
+      // Spread the full existing metadata so non-presentation keys (validation_rules,
+      // ui_family) are echoed back rather than dropped. The backend also merges over
+      // stored metadata, but sending the whole object keeps client and server aligned.
+      metadata: { ...(template.metadata ?? {}), presentation: getPresentation(template) },
       // Snake_case: the backend validation requires `section_key`/`label` per field
       // (required_with:fields), and syncFields reads snake keys.
       fields: template.fields.map((field, index) => ({
@@ -636,7 +639,7 @@ export function TemplateManagementPage() {
                                                 }))
                                               }
                                             >
-                                              <SelectTrigger className="h-9 text-sm">
+                                              <SelectTrigger className="h-9 text-sm" aria-label="Field group">
                                                 <SelectValue placeholder="Choose a group" />
                                               </SelectTrigger>
                                               <SelectContent>
@@ -669,7 +672,7 @@ export function TemplateManagementPage() {
                                               }))
                                             }
                                           >
-                                            <SelectTrigger className="h-9 text-sm">
+                                            <SelectTrigger className="h-9 text-sm" aria-label="Totals as">
                                               <SelectValue placeholder="How to total" />
                                             </SelectTrigger>
                                             <SelectContent>

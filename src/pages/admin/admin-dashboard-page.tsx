@@ -32,7 +32,10 @@ import { KpiCard, KpiGrid } from '@/components/dashboard/kpi-card'
 import { PageSkeleton } from '@/components/layout/loading-skeletons'
 import { Button } from '@/components/ui/button'
 import {
-  fetchDashboardAnalytics,
+  fetchAndCacheDashboardAnalytics,
+  getDashboardAnalyticsCacheKey,
+  readCachedDashboardAnalytics,
+  type AnalyticsQuery,
   type AnalyticsChartMetrics,
   type AnalyticsSummary,
   type AnalyticsWeeklyRow,
@@ -40,12 +43,7 @@ import {
 } from '@/lib/api/analytics'
 import { getApiBrowserClient } from '@/lib/api/client'
 import { apiEnv } from '@/lib/api/env'
-import {
-  evaluateMetricTarget,
-  formatTargetThreshold,
-  performanceTargetDefinitions,
-  type RagStatus,
-} from '@/lib/performance-targets'
+import { evaluateMetricTarget, type RagStatus } from '@/lib/performance-targets'
 import {
   Select,
   SelectContent,
@@ -95,7 +93,7 @@ import { useAppData } from '@/context/app-data-context'
 import { departments, departmentMap, templateMap } from '@/config/templates'
 import { computeWeeklyValue } from '@/lib/metrics'
 import { cn, formatCompactNumber } from '@/lib/utils'
-import type { PerformanceTargetKey, ReportFamily, ReportRecord, ReportingPeriod } from '@/types/domain'
+import type { ReportFamily, ReportRecord, ReportingPeriod } from '@/types/domain'
 
 type FamilyFilter = 'all' | 'inpatient' | 'outpatient' | 'procedure'
 type StatusFilter =
@@ -107,27 +105,13 @@ type StatusFilter =
   | 'not_started'
   | 'overdue'
 type TrendScale = DashboardTrendScale
+type DashboardAnalyticsRequestStatus = 'idle' | 'loading' | 'success' | 'error'
 
 type TrendBucket = {
   key: string
   label: string
   periods: ReportingPeriod[]
   periodIds: Set<string>
-}
-
-type TargetStatusItem = {
-  key: string
-  label: string
-  displayValue: string
-  threshold: string
-  tone: RagStatus
-}
-
-const targetStatusClass: Record<RagStatus, string> = {
-  green: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-  amber: 'border-amber-200 bg-amber-50 text-amber-800',
-  red: 'border-rose-200 bg-rose-50 text-rose-800',
-  neutral: 'border-slate-200 bg-slate-50 text-slate-600',
 }
 
 const targetStatusLabel: Record<RagStatus, string> = {
@@ -159,6 +143,46 @@ function ChartEmptyState({
   )
 }
 
+function ChartLoadingState({
+  message = 'Loading chart data...',
+  tone = 'light',
+}: {
+  message?: string
+  tone?: 'light' | 'dark'
+}) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={cn(
+        'flex h-full flex-col items-center justify-center gap-3 rounded-[0.5rem] border border-dashed px-6 text-center shadow-inner',
+        tone === 'dark'
+          ? 'border-white/12 bg-white/6 text-[#c6d3e4]'
+          : 'border-[#d4dde8]/80 bg-[linear-gradient(180deg,#ffffff_0%,#f4f7fb_100%)] text-[#64748b]',
+      )}
+    >
+      <Activity className={cn('h-5 w-5 animate-pulse', tone === 'dark' ? 'text-[#f0b429]' : 'text-[#005db6]')} />
+      <p className="max-w-xs text-sm leading-6">{message}</p>
+    </div>
+  )
+}
+
+function ChartFallback({
+  emptyMessage,
+  isLoading,
+  loadingMessage,
+}: {
+  emptyMessage: string
+  isLoading: boolean
+  loadingMessage?: string
+}) {
+  return isLoading ? (
+    <ChartLoadingState message={loadingMessage} />
+  ) : (
+    <ChartEmptyState message={emptyMessage} />
+  )
+}
+
 function ChartLegend({
   items,
   className,
@@ -178,34 +202,6 @@ function ChartLegend({
             }}
           />
           <span>{item.label}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function TargetStatusStrip({ items }: { items: TargetStatusItem[] }) {
-  return (
-    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-      {items.map((item) => (
-        <div
-          key={item.key}
-          className="rounded-[0.35rem] border border-[#e6ecf3] bg-[#f8fafc] px-3 py-2"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <p className="truncate text-[11px] font-semibold uppercase tracking-[0.16em] text-[#5b6169]">
-              {item.label}
-            </p>
-            <span className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]', targetStatusClass[item.tone])}>
-              {targetStatusLabel[item.tone]}
-            </span>
-          </div>
-          <div className="mt-2 flex items-end justify-between gap-3">
-            <p className="font-display text-xl font-bold leading-none text-[#000a1e]">
-              {item.displayValue}
-            </p>
-            <p className="text-right text-[11px] font-medium text-[#74777f]">{item.threshold}</p>
-          </div>
         </div>
       ))}
     </div>
@@ -725,7 +721,13 @@ function buildAnalyticsProcedureMixData(
 }
 
 export function AdminDashboardPage() {
-  const { state, ensureReportDetails, refreshData } = useAppData()
+  const {
+    state,
+    ensureReportDetails,
+    refreshData,
+    getReportDetailLoadState,
+    isReportDetailLoaded,
+  } = useAppData()
   const reduceMotion = useReducedMotion()
   const fadeIn = {
     initial: reduceMotion ? false : { opacity: 0, y: 10 },
@@ -749,8 +751,6 @@ export function AdminDashboardPage() {
   const [procedureComparisonMonthKey, setProcedureComparisonMonthKey] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const requestedReportWindowRef = useRef<'default' | 'all' | null>(null)
-  const [dashboardAnalytics, setDashboardAnalytics] =
-    useState<DashboardAnalyticsPayload | null>(null)
   const availablePeriods = getVisibleReportingPeriods(state)
   const visibleReportingPeriods = [...availablePeriods].reverse()
   const reportingPeriodOptions = visibleReportingPeriods.map((period) => ({
@@ -828,11 +828,45 @@ export function AdminDashboardPage() {
       : analyticsDateFrom && analyticsDateTo
         ? `range:${analyticsDateFrom}:${analyticsDateTo}`
         : ''
+  const dashboardAnalyticsQuery: AnalyticsQuery | null = dashboardQueryKey
+    ? timeRange === 'current'
+      ? { periodId: effectivePeriodId }
+      : { dateFrom: analyticsDateFrom, dateTo: analyticsDateTo }
+    : null
+  const dashboardAnalyticsCacheKey = dashboardAnalyticsQuery
+    ? getDashboardAnalyticsCacheKey(dashboardAnalyticsQuery)
+    : ''
+  const [dashboardAnalyticsState, setDashboardAnalyticsState] = useState<{
+    cacheKey: string
+    payload: DashboardAnalyticsPayload | null
+  }>(() => ({
+    cacheKey: dashboardAnalyticsCacheKey,
+    payload: dashboardAnalyticsQuery
+      ? readCachedDashboardAnalytics(dashboardAnalyticsQuery)
+      : null,
+  }))
+  const [dashboardAnalyticsRequestState, setDashboardAnalyticsRequestState] = useState<{
+    cacheKey: string
+    status: DashboardAnalyticsRequestStatus
+  }>(() => ({
+    cacheKey: dashboardAnalyticsCacheKey,
+    status: dashboardAnalyticsQuery
+      ? dashboardAnalyticsState.payload
+        ? 'success'
+        : 'loading'
+      : 'idle',
+  }))
+  const dashboardAnalytics =
+    dashboardAnalyticsState.cacheKey === dashboardAnalyticsCacheKey
+      ? dashboardAnalyticsState.payload
+      : dashboardAnalyticsQuery
+        ? readCachedDashboardAnalytics(dashboardAnalyticsQuery)
+        : null
   const detailReportingPeriodIds = new Set(trendPeriods.map((period) => period.id))
-  const detailReportIdsKey = state.reports
+  const detailReportIds = state.reports
     .filter((report) => detailReportingPeriodIds.has(report.reportingPeriodId))
     .map((report) => report.id)
-    .join('|')
+  const detailReportIdsKey = detailReportIds.join('|')
 
   useEffect(() => {
     if (trendScale !== 'monthly') {
@@ -863,27 +897,45 @@ export function AdminDashboardPage() {
     }
 
     let cancelled = false
-    const query =
+    const query: AnalyticsQuery =
       timeRange === 'current'
         ? { periodId: effectivePeriodId }
         : { dateFrom: analyticsDateFrom, dateTo: analyticsDateTo }
+    const cacheKey = getDashboardAnalyticsCacheKey(query)
 
-    void fetchDashboardAnalytics(client, query)
+    void fetchAndCacheDashboardAnalytics(client, query)
       .then((payload) => {
         if (!cancelled) {
-          setDashboardAnalytics(payload)
+          setDashboardAnalyticsState({
+            cacheKey,
+            payload,
+          })
+          setDashboardAnalyticsRequestState({
+            cacheKey,
+            status: 'success',
+          })
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setDashboardAnalytics(null)
+          setDashboardAnalyticsRequestState({
+            cacheKey,
+            status: 'error',
+          })
         }
       })
 
     return () => {
       cancelled = true
     }
-  }, [analyticsDateFrom, analyticsDateTo, dashboardQueryKey, effectivePeriodId, timeRange])
+  }, [
+    analyticsDateFrom,
+    analyticsDateTo,
+    dashboardAnalyticsCacheKey,
+    dashboardQueryKey,
+    effectivePeriodId,
+    timeRange,
+  ])
 
   const rangeSummary = getReportingRangeSummary(
     state,
@@ -1441,6 +1493,27 @@ export function AdminDashboardPage() {
   const hasProcedureSignal = procedureMainSeries.some((item) => item.total > 0)
   const hasEndoscopyMixSignal = resolvedEndoscopyMix.some((item) => item.value > 0)
   const hasDialysisMixSignal = resolvedDialysisMix.some((item) => item.value > 0)
+  const dashboardAnalyticsRequestStatus =
+    dashboardAnalyticsRequestState.cacheKey === dashboardAnalyticsCacheKey
+      ? dashboardAnalyticsRequestState.status
+      : dashboardAnalytics
+        ? 'success'
+        : dashboardAnalyticsQuery
+          ? 'loading'
+          : 'idle'
+  const isDashboardAnalyticsPending =
+    trendScale === 'weekly' &&
+    Boolean(dashboardAnalyticsQuery) &&
+    !dashboardAnalytics &&
+    dashboardAnalyticsRequestStatus === 'loading'
+  const areTrendReportDetailsPending =
+    trendScale === 'monthly' &&
+    detailReportIds.some((reportId) => {
+      const detailState = getReportDetailLoadState(reportId).status
+
+      return detailState === 'loading' || (detailState === 'idle' && !isReportDetailLoaded(reportId))
+    })
+  const areOperationalChartsLoading = isDashboardAnalyticsPending || areTrendReportDetailsPending
   const occupancyScopeDepartment =
     inpatientOccupancyScope === ALL_INPATIENT_POOLED
       ? null
@@ -1607,61 +1680,7 @@ export function AdminDashboardPage() {
     ligation: grayscalePalette.cloud,
   } as const
   const metricTargets = state.settings.metricTargets ?? {}
-  const inpatientTotals = dashboardAnalytics?.families.inpatient.summary.totals
-  const outpatientTotals = dashboardAnalytics?.families.outpatient.summary.totals
-  const inpatientSafetyEventCount =
-    (inpatientTotals?.deaths ?? sumFieldTotalsForRange('inpatient', ['new_deaths'])) +
-    (inpatientTotals?.newPressureUlcers ?? sumFieldTotalsForRange('inpatient', ['new_pressure_ulcer'])) +
-    (inpatientTotals?.haiCount ?? sumFieldTotalsForRange('inpatient', ['total_hai']))
-  const outpatientNotSeenSameDayTotal =
-    outpatientTotals?.notSeenSameDay ?? sumFieldTotalsForRange('outpatient', ['not_seen_same_day'])
-  const outpatientSameDayRate = outpatientSeenTotal
-    ? Math.max(0, Math.round(((outpatientSeenTotal - outpatientNotSeenSameDayTotal) / outpatientSeenTotal) * 100))
-    : null
-  const targetStatusValues: Array<{
-    key: PerformanceTargetKey
-    label: string
-    value: number | null
-    displayValue: string
-  }> = [
-    {
-      key: 'deliveryRate',
-      label: 'Delivery rate',
-      value: deliveryRate,
-      displayValue: `${deliveryRate}%`,
-    },
-    {
-      key: 'inpatientSafetyEvents',
-      label: 'Safety events',
-      value: inpatientSafetyEventCount,
-      displayValue: formatCompactNumber(inpatientSafetyEventCount),
-    },
-    {
-      key: 'outpatientSameDayRate',
-      label: 'Same-day outpatient',
-      value: outpatientSameDayRate,
-      displayValue: outpatientSameDayRate === null ? '-' : `${outpatientSameDayRate}%`,
-    },
-    {
-      key: 'procedureThroughput',
-      label: 'Procedure throughput',
-      value: procedureHeaderTotal,
-      displayValue: formatCompactNumber(procedureHeaderTotal),
-    },
-  ]
-  const targetStatusItems = targetStatusValues.map((item): TargetStatusItem => {
-    const target = metricTargets[item.key]
-    const definition = performanceTargetDefinitions.find((candidate) => candidate.key === item.key)
-
-    return {
-      key: item.key,
-      label: item.label,
-      displayValue: item.displayValue,
-      threshold: formatTargetThreshold(target, definition?.unit ?? 'count'),
-      tone: evaluateMetricTarget(item.value, target),
-    }
-  })
-  const deliveryTargetStatus = targetStatusItems.find((item) => item.key === 'deliveryRate')
+  const deliveryTargetTone = evaluateMetricTarget(deliveryRate, metricTargets.deliveryRate)
 
   return (
     <div className="space-y-6 px-4 py-5 text-[#000a1e] md:space-y-8 md:px-6 md:py-8">
@@ -1697,7 +1716,7 @@ export function AdminDashboardPage() {
               </div>
             </div>
             <div className="space-y-4">
-              <KpiGrid columns={3} className="grid-cols-3">
+              <KpiGrid columns={3}>
                 <KpiCard
                   label="Delivered"
                   value={<AnimatedMetric value={deliveredCount} variant="number" />}
@@ -1719,15 +1738,12 @@ export function AdminDashboardPage() {
                   deltaSuffix="pts"
                   hint="vs range start"
                   accent="steel"
-                  status={deliveryTargetStatus
-                    ? {
-                        tone: deliveryTargetStatus.tone,
-                        label: targetStatusLabel[deliveryTargetStatus.tone],
-                      }
-                    : undefined}
+                  status={{
+                    tone: deliveryTargetTone,
+                    label: targetStatusLabel[deliveryTargetTone],
+                  }}
                 />
               </KpiGrid>
-              <TargetStatusStrip items={targetStatusItems} />
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                 <Button asChild variant="secondary" className="w-full sm:w-fit">
                   <a
@@ -1899,7 +1915,7 @@ export function AdminDashboardPage() {
             <div className="relative mt-4 h-[176px]">
               {totalExpected ? (
                 <>
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                     <PieChart>
                       <Pie
                         data={statusDistribution}
@@ -2012,7 +2028,7 @@ export function AdminDashboardPage() {
             />
             <div className="h-[210px]">
               {hasReportingTrendSignal ? (
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                   {trendScale === 'monthly' ? (
                     <BarChart
                       data={reportingTrendSeries}
@@ -2178,7 +2194,7 @@ export function AdminDashboardPage() {
                 <div>
                   <div className={trendScale === 'monthly' ? 'h-[430px]' : 'h-[250px]'}>
                     {hasInpatientFlowSignal ? (
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                       {trendScale === 'monthly' ? (
                         renderMonthlyComparison({
                           data: inpatientFlowSeries,
@@ -2216,7 +2232,11 @@ export function AdminDashboardPage() {
                       )}
                       </ResponsiveContainer>
                     ) : (
-                      <ChartEmptyState message="No inpatient admissions or discharges in this view." />
+                      <ChartFallback
+                        isLoading={areOperationalChartsLoading}
+                        loadingMessage="Loading inpatient trend data..."
+                        emptyMessage="No inpatient admissions or discharges in this view."
+                      />
                     )}
                   </div>
                 </div>
@@ -2236,7 +2256,7 @@ export function AdminDashboardPage() {
                 <div>
                   <div className={trendScale === 'monthly' ? 'h-[430px]' : 'h-[250px]'}>
                     {hasInpatientSafetySignal ? (
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                       {trendScale === 'monthly' ? (
                         renderMonthlyComparison({
                           data: inpatientSafetySeries,
@@ -2265,7 +2285,11 @@ export function AdminDashboardPage() {
                       )}
                       </ResponsiveContainer>
                     ) : (
-                      <ChartEmptyState message="No inpatient safety events in this view." />
+                      <ChartFallback
+                        isLoading={areOperationalChartsLoading}
+                        loadingMessage="Loading inpatient safety data..."
+                        emptyMessage="No inpatient safety events in this view."
+                      />
                     )}
                   </div>
                 </div>
@@ -2288,7 +2312,7 @@ export function AdminDashboardPage() {
                         value={inpatientOccupancyScope}
                         onValueChange={setInpatientOccupancyScope}
                       >
-                        <SelectTrigger className="mt-2 h-10 min-w-0 rounded-[0.25rem] border-[#d9e0e7] bg-[#ffffff] px-3.5 text-left text-[#000a1e] shadow-none focus:ring-0 hover:border-[#c9d4e2]">
+                        <SelectTrigger aria-label="Inpatient occupancy metric scope" className="mt-2 h-10 min-w-0 rounded-[0.25rem] border-[#d9e0e7] bg-[#ffffff] px-3.5 text-left text-[#000a1e] shadow-none focus:ring-0 hover:border-[#c9d4e2]">
                           <SelectValue
                             placeholder="BOR/BTR/ALOS scope"
                             className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
@@ -2313,7 +2337,7 @@ export function AdminDashboardPage() {
                   />
                   <div className="h-[360px]">
                     {hasInpatientOccupancySignal ? (
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                         <AreaChart
                           data={inpatientOccupancySeries}
                           margin={{ top: 18, right: 24, left: 0, bottom: 12 }}
@@ -2341,7 +2365,11 @@ export function AdminDashboardPage() {
                         </AreaChart>
                       </ResponsiveContainer>
                     ) : (
-                      <ChartEmptyState message={occupancyEmptyMessage} />
+                      <ChartFallback
+                        isLoading={areOperationalChartsLoading}
+                        loadingMessage="Loading inpatient occupancy data..."
+                        emptyMessage={occupancyEmptyMessage}
+                      />
                     )}
                   </div>
                 </div>
@@ -2423,7 +2451,7 @@ export function AdminDashboardPage() {
                 <div>
                   <div className={trendScale === 'monthly' ? 'h-[460px]' : 'h-[240px]'}>
                     {hasOutpatientSeenSignal ? (
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                         {trendScale === 'monthly' ? (
                           renderMonthlyComparison({
                             data: outpatientSeenSeries,
@@ -2447,7 +2475,11 @@ export function AdminDashboardPage() {
                       )}
                       </ResponsiveContainer>
                     ) : (
-                      <ChartEmptyState message="No outpatient same-day data in this view." />
+                      <ChartFallback
+                        isLoading={areOperationalChartsLoading}
+                        loadingMessage="Loading outpatient trend data..."
+                        emptyMessage="No outpatient same-day data in this view."
+                      />
                     )}
                   </div>
                 </div>
@@ -2467,7 +2499,7 @@ export function AdminDashboardPage() {
                 <div>
                   <div className={trendScale === 'monthly' ? 'h-[460px]' : 'h-[240px]'}>
                     {hasOutpatientMixSignal ? (
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                         {trendScale === 'monthly' ? (
                           renderMonthlyComparison({
                             data: outpatientVolumeMix,
@@ -2493,7 +2525,11 @@ export function AdminDashboardPage() {
                         )}
                       </ResponsiveContainer>
                     ) : (
-                      <ChartEmptyState message="No outpatient clinic volume in this view." />
+                      <ChartFallback
+                        isLoading={areOperationalChartsLoading}
+                        loadingMessage="Loading outpatient volume data..."
+                        emptyMessage="No outpatient clinic volume in this view."
+                      />
                     )}
                   </div>
                 </div>
@@ -2508,7 +2544,7 @@ export function AdminDashboardPage() {
                 <div>
                   <div className={trendScale === 'monthly' ? 'h-[430px]' : 'h-[230px]'}>
                     {hasFollowUpWaitSignal ? (
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                         {trendScale === 'monthly' ? (
                           renderMonthlyComparison({
                             data: outpatientFollowUpWaitSeries,
@@ -2529,7 +2565,11 @@ export function AdminDashboardPage() {
                       )}
                       </ResponsiveContainer>
                     ) : (
-                      <ChartEmptyState message="No follow-up wait data in this view." />
+                      <ChartFallback
+                        isLoading={areOperationalChartsLoading}
+                        loadingMessage="Loading outpatient wait data..."
+                        emptyMessage="No follow-up wait data in this view."
+                      />
                     )}
                   </div>
                 </div>
@@ -2542,7 +2582,7 @@ export function AdminDashboardPage() {
                 <div>
                   <div className={trendScale === 'monthly' ? 'h-[430px]' : 'h-[230px]'}>
                     {hasClinicStartSignal ? (
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                         {trendScale === 'monthly' ? (
                           renderMonthlyComparison({
                             data: outpatientClinicStartSeries,
@@ -2565,7 +2605,11 @@ export function AdminDashboardPage() {
                       )}
                       </ResponsiveContainer>
                     ) : (
-                      <ChartEmptyState message="No clinic start time data in this view." />
+                      <ChartFallback
+                        isLoading={areOperationalChartsLoading}
+                        loadingMessage="Loading clinic start data..."
+                        emptyMessage="No clinic start time data in this view."
+                      />
                     )}
                   </div>
                 </div>
@@ -2584,7 +2628,7 @@ export function AdminDashboardPage() {
               <div>
                 <div className={trendScale === 'monthly' ? 'h-[430px]' : 'h-[240px]'}>
                   {hasAvailabilitySignal ? (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                       {trendScale === 'monthly' ? (
                         renderMonthlyComparison({
                           data: outpatientAvailabilitySeries,
@@ -2641,7 +2685,11 @@ export function AdminDashboardPage() {
                       )}
                     </ResponsiveContainer>
                   ) : (
-                    <ChartEmptyState message="No physician availability data in this view." />
+                    <ChartFallback
+                      isLoading={areOperationalChartsLoading}
+                      loadingMessage="Loading physician availability data..."
+                      emptyMessage="No physician availability data in this view."
+                    />
                   )}
                 </div>
               </div>
@@ -2724,7 +2772,7 @@ export function AdminDashboardPage() {
               <div>
                 <div className={trendScale === 'monthly' ? 'h-[460px]' : 'h-[250px]'}>
                   {hasProcedureSignal ? (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                       {trendScale === 'monthly' ? (
                         renderMonthlyComparison({
                           data: procedureMainSeries,
@@ -2770,7 +2818,11 @@ export function AdminDashboardPage() {
                       )}
                     </ResponsiveContainer>
                   ) : (
-                    <ChartEmptyState message="No procedure throughput in this view." />
+                    <ChartFallback
+                      isLoading={areOperationalChartsLoading}
+                      loadingMessage="Loading procedure throughput data..."
+                      emptyMessage="No procedure throughput in this view."
+                    />
                   )}
                 </div>
               </div>
@@ -2798,7 +2850,7 @@ export function AdminDashboardPage() {
                 />
                 <div className="h-[300px]">
                   {hasDialysisMixSignal ? (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                       <BarChart data={resolvedDialysisMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
@@ -2815,7 +2867,11 @@ export function AdminDashboardPage() {
                       </BarChart>
                     </ResponsiveContainer>
                   ) : (
-                    <ChartEmptyState message="No dialysis data in this selected range." />
+                    <ChartFallback
+                      isLoading={areOperationalChartsLoading}
+                      loadingMessage="Loading dialysis data..."
+                      emptyMessage="No dialysis data in this selected range."
+                    />
                   )}
                 </div>
               </div>
@@ -2834,7 +2890,7 @@ export function AdminDashboardPage() {
                 />
                 <div className="h-[300px]">
                   {hasEndoscopyMixSignal ? (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                       <BarChart data={resolvedEndoscopyMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
@@ -2851,7 +2907,11 @@ export function AdminDashboardPage() {
                       </BarChart>
                     </ResponsiveContainer>
                   ) : (
-                    <ChartEmptyState message="No endoscopy mix in this view." />
+                    <ChartFallback
+                      isLoading={areOperationalChartsLoading}
+                      loadingMessage="Loading endoscopy data..."
+                      emptyMessage="No endoscopy mix in this view."
+                    />
                   )}
                 </div>
               </div>
