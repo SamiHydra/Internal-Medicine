@@ -122,6 +122,11 @@ class UserController extends Controller
             'role' => ['sometimes', Rule::in(['admin', 'nurse'])],
             'title' => ['sometimes', 'nullable', 'string', 'max:255'],
             'phone' => ['sometimes', 'nullable', 'string', 'max:32'],
+            // Academic placement attributes (V2): residents carry a training
+            // year and a Year 3 rotation group; consultants carry a section.
+            'trainingYear' => ['sometimes', 'nullable', 'integer', 'between:1,3'],
+            'rotationGroup' => ['sometimes', 'nullable', 'string', 'max:8'],
+            'sectionId' => ['sometimes', 'nullable', 'string', Rule::exists('sections', 'id')],
         ]);
 
         $oldValues = $this->auditUserValues($user);
@@ -148,6 +153,16 @@ class UserController extends Controller
         if ($nextRole !== null) {
             $updates['role_key'] = $nextRole;
             $updates['title'] ??= $this->defaultTitle($nextRole);
+        }
+
+        foreach ([
+            'training_year' => 'trainingYear',
+            'rotation_group' => 'rotationGroup',
+            'section_id' => 'sectionId',
+        ] as $snakeKey => $camelKey) {
+            if (array_key_exists($camelKey, $validated)) {
+                $updates[$snakeKey] = $validated[$camelKey];
+            }
         }
 
         if (isset($updates['email'])) {

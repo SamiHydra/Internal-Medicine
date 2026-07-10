@@ -165,6 +165,44 @@ class AcademicStructureController extends Controller
         return response()->json($this->serializeSection($section));
     }
 
+    /**
+     * Direct admin section change, no transfer request. The transfer workflow
+     * (request -> head approval -> boundary application) remains the
+     * consultant-initiated path; this is the administrative override.
+     */
+    public function setSectionConsultant(Request $request, Section $section): JsonResponse
+    {
+        Gate::authorize('update', $section);
+
+        $validated = $request->validate([
+            'userId' => ['required', 'string', Rule::exists('users', 'id')],
+        ]);
+
+        $consultant = User::query()->findOrFail($validated['userId']);
+
+        if ($consultant->role_key !== 'consultant' || ! $consultant->active) {
+            throw ValidationException::withMessages([
+                'userId' => ['Only an active consultant can be assigned to a section.'],
+            ]);
+        }
+
+        $oldSectionId = $consultant->section_id;
+        $consultant->forceFill(['section_id' => $section->id])->save();
+
+        $this->auditService->record($request->user(), 'set_consultant_section', 'section', $section->id, [
+            'userId' => $consultant->id,
+            'sectionId' => $oldSectionId,
+        ], [
+            'userId' => $consultant->id,
+            'sectionId' => $section->id,
+        ], $request);
+
+        return response()->json([
+            'userId' => $consultant->id,
+            'sectionId' => $section->id,
+        ]);
+    }
+
     public function destroySection(Request $request, Section $section): JsonResponse
     {
         Gate::authorize('delete', $section);

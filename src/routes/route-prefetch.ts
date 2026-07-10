@@ -21,6 +21,8 @@ const routeLoaders: Record<string, () => Promise<unknown>> = {
   '/admin/academic': () => import('@/pages/admin/academic-dashboard-page'),
   '/admin/academic/submissions': () => import('@/pages/admin/academic-submissions-page'),
   '/admin/academic/structure': () => import('@/pages/admin/academic-structure-page'),
+  '/admin/academic/roster': () => import('@/pages/admin/duty-roster-page'),
+  '/admin/academic/rotations': () => import('@/pages/admin/rotation-planner-page'),
   // Shared admin system
   '/admin/users': () => import('@/pages/admin/user-management-page'),
   '/admin/audit': () => import('@/pages/admin/audit-log-page'),

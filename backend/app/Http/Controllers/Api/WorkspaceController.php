@@ -14,6 +14,7 @@ use App\Models\ReportStatusHistory;
 use App\Models\ReportTemplate;
 use App\Models\RotationCalendar;
 use App\Models\Section;
+use App\Models\TransferRequest;
 use App\Models\User;
 use App\Services\Academic\RosterService;
 use App\Services\Admin\AppSettingsService;
@@ -268,6 +269,17 @@ class WorkspaceController extends Controller
             ? Section::query()->where('head_user_id', $user->id)->pluck('id')->values()->all()
             : [];
 
+        $pendingTransferCount = 0;
+
+        if ($isAdmin) {
+            $pendingTransferCount = TransferRequest::query()->where('status', 'pending')->count();
+        } elseif ($headsSections !== []) {
+            $pendingTransferCount = TransferRequest::query()
+                ->where('status', 'pending')
+                ->whereIn('to_section_id', $headsSections)
+                ->count();
+        }
+
         $academicSetup = null;
 
         if ($isAdmin) {
@@ -303,7 +315,7 @@ class WorkspaceController extends Controller
             'isMorningRecorder' => false,
             'headsSections' => $headsSections,
             'repScope' => null,
-            'pendingTransferCount' => 0,
+            'pendingTransferCount' => $pendingTransferCount,
             'academicSetup' => $academicSetup,
         ];
     }

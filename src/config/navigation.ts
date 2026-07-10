@@ -1,5 +1,7 @@
 import {
   Activity,
+  CalendarDays,
+  CalendarRange,
   ClipboardCheck,
   ClipboardList,
   FilePenLine,
@@ -47,6 +49,8 @@ export const adminWorkspaceNav: Record<Workspace, NavigationItem[]> = {
   academic: [
     { label: 'Dashboard', href: '/admin/academic', icon: LayoutDashboard, end: true },
     { label: 'Submissions', href: '/admin/academic/submissions', icon: ClipboardCheck },
+    { label: 'Duty roster', shortLabel: 'Roster', href: '/admin/academic/roster', icon: CalendarDays },
+    { label: 'Rotations', href: '/admin/academic/rotations', icon: CalendarRange },
     { label: 'Structure', href: '/admin/academic/structure', icon: Network },
     ...adminSystemNav,
   ],

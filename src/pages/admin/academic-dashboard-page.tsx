@@ -16,6 +16,7 @@ import {
 } from 'recharts'
 
 import { AcademicSetupBanner } from '@/components/admin/academic-setup-banner'
+import { TransferReviewPanel } from '@/components/academic/transfer-review-panel'
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { ChartCard } from '@/components/dashboard/chart-card'
 import { AnalyticsContentSkeleton } from '@/components/layout/loading-skeletons'
@@ -700,6 +701,8 @@ export function AcademicDashboardPage() {
           </motion.section>
         </>
       )}
+
+      <TransferReviewPanel allowImmediate />
     </div>
   )
 }

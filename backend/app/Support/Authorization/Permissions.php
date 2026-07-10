@@ -69,6 +69,12 @@ final class Permissions
     /** Rotation calendars and the resident rotation planner. */
     public const ROTATIONS_MANAGE = 'rotations.manage';
 
+    /** File or cancel one's own section-transfer request (consultants). */
+    public const TRANSFERS_CREATE = 'transfers.create';
+
+    /** Review transfer requests; the policy narrows consultants to destination-section heads. */
+    public const TRANSFERS_REVIEW = 'transfers.review';
+
     private const ADMIN_ROLES = ['superadmin', 'admin'];
 
     private const ROLE_PERMISSIONS = [
@@ -99,6 +105,7 @@ final class Permissions
             self::ACADEMIC_STRUCTURE_MANAGE,
             self::ROSTER_MANAGE,
             self::ROTATIONS_MANAGE,
+            self::TRANSFERS_REVIEW,
         ],
         'admin' => [
             self::AUTH_VIEW_SELF,
@@ -125,6 +132,7 @@ final class Permissions
             self::ACADEMIC_STRUCTURE_MANAGE,
             self::ROSTER_MANAGE,
             self::ROTATIONS_MANAGE,
+            self::TRANSFERS_REVIEW,
         ],
         'nurse' => [
             self::AUTH_VIEW_SELF,
@@ -140,6 +148,8 @@ final class Permissions
         'consultant' => [
             self::AUTH_VIEW_SELF,
             self::ACADEMIC_SUBMIT,
+            self::TRANSFERS_CREATE,
+            self::TRANSFERS_REVIEW,
         ],
     ];
 

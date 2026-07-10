@@ -10,6 +10,8 @@ import {
   panelClass,
 } from '@/components/dashboard/section-panel'
 import { DashboardContentSkeleton } from '@/components/layout/loading-skeletons'
+import { TransferRequestCard } from '@/components/academic/transfer-request-card'
+import { TransferReviewPanel } from '@/components/academic/transfer-review-panel'
 import { Button } from '@/components/ui/button'
 import { useAppData } from '@/context/app-data-context'
 import { fetchMyAcademicPerformance, fetchMySubmissions } from '@/lib/api/academic'
@@ -37,7 +39,7 @@ function toDateLabel(value: string | null | undefined) {
 }
 
 export function AcademicHomePage() {
-  const { currentUser } = useAppData()
+  const { currentUser, academic } = useAppData()
   const client = getApiBrowserClient()
 
   const [performance, setPerformance] = useState<AcademicPerformance | null>(null)
@@ -112,6 +114,13 @@ export function AcademicHomePage() {
         <SectionHeader
           eyebrow="Overview"
           title={greetingName ? `Welcome back, ${greetingName}` : 'Your academic overview'}
+          description={
+            academic?.currentPlacement
+              ? `Current placement: ${academic.currentPlacement.dutyTypeName}${
+                  academic.currentPlacement.wardName ? ` · ${academic.currentPlacement.wardName}` : ''
+                }${academic.currentPlacement.endsOn ? ` · until ${toDateLabel(academic.currentPlacement.endsOn)}` : ''}`
+              : undefined
+          }
           actions={
             <>
               <Button asChild size="sm">
@@ -241,6 +250,9 @@ export function AcademicHomePage() {
           </motion.section>
         </section>
       )}
+
+      {(academic?.headsSections.length ?? 0) > 0 ? <TransferReviewPanel /> : null}
+      {currentUser.role === 'consultant' ? <TransferRequestCard /> : null}
     </div>
   )
 }

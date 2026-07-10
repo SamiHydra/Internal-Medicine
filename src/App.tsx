@@ -41,6 +41,16 @@ const AcademicStructurePage = lazy(() =>
     default: module.AcademicStructurePage,
   })),
 )
+const DutyRosterPage = lazy(() =>
+  import('@/pages/admin/duty-roster-page').then((module) => ({
+    default: module.DutyRosterPage,
+  })),
+)
+const RotationPlannerPage = lazy(() =>
+  import('@/pages/admin/rotation-planner-page').then((module) => ({
+    default: module.RotationPlannerPage,
+  })),
+)
 const AuditLogPage = lazy(() =>
   import('@/pages/admin/audit-log-page').then((module) => ({
     default: module.AuditLogPage,
@@ -284,6 +294,14 @@ function App() {
               <Route
                 path="/admin/academic/structure"
                 element={renderLazyRoute(<AcademicStructurePage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/roster"
+                element={renderLazyRoute(<DutyRosterPage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/rotations"
+                element={renderLazyRoute(<RotationPlannerPage />, 'inline')}
               />
               <Route
                 path="/admin/academic/people/:userId"

@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\Admin\ReportImportController;
 use App\Http\Controllers\Api\Admin\ReportAssignmentController;
 use App\Http\Controllers\Api\Admin\RotationController;
 use App\Http\Controllers\Api\Admin\SettingsController;
+use App\Http\Controllers\Api\Admin\TransferRequestController as AdminTransferRequestController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\AuthController;
@@ -24,6 +25,7 @@ use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PasswordResetController;
 use App\Http\Controllers\Api\ReportCommentController;
 use App\Http\Controllers\Api\ReportWorkflowController;
+use App\Http\Controllers\Api\TransferRequestController;
 use App\Http\Controllers\Api\WorkspaceController;
 use Illuminate\Support\Facades\Route;
 
@@ -100,6 +102,12 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::get('/analytics/summary', [AcademicAnalyticsController::class, 'summary'])->middleware('permission:academic.view');
         Route::get('/analytics/trend', [AcademicAnalyticsController::class, 'trend'])->middleware('permission:academic.view');
         Route::get('/analytics/people', [AcademicAnalyticsController::class, 'people'])->middleware('permission:academic.view');
+
+        // Section transfers, consultant side (V2 Phase 2).
+        Route::get('/transfer-requests/options', [TransferRequestController::class, 'formOptions'])->middleware('permission:transfers.create');
+        Route::post('/transfer-requests', [TransferRequestController::class, 'store'])->middleware('permission:transfers.create');
+        Route::get('/transfer-requests/mine', [TransferRequestController::class, 'mine'])->middleware('permission:transfers.create');
+        Route::post('/transfer-requests/{transferRequest}/cancel', [TransferRequestController::class, 'cancel'])->middleware('permission:transfers.create');
     });
 
     Route::prefix('admin')->group(function (): void {
@@ -171,6 +179,8 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::patch('/academic/sections/{section}', [AcademicStructureController::class, 'updateSection'])->middleware('permission:academicStructure.manage');
         Route::delete('/academic/sections/{section}', [AcademicStructureController::class, 'destroySection'])->middleware('permission:academicStructure.manage');
 
+        Route::post('/academic/sections/{section}/set-consultant', [AcademicStructureController::class, 'setSectionConsultant'])->middleware('permission:roster.manage');
+
         Route::get('/academic/duty-types', [AcademicStructureController::class, 'dutyTypes'])->middleware('permission:academicStructure.manage');
         Route::post('/academic/duty-types', [AcademicStructureController::class, 'storeDutyType'])->middleware('permission:academicStructure.manage');
         Route::patch('/academic/duty-types/{dutyType}', [AcademicStructureController::class, 'updateDutyType'])->middleware('permission:academicStructure.manage');
@@ -179,6 +189,14 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::get('/rotations/calendars', [RotationController::class, 'calendars'])->middleware('permission:rotations.manage');
         Route::post('/rotations/calendars', [RotationController::class, 'storeCalendar'])->middleware('permission:rotations.manage');
         Route::patch('/rotations/calendars/{calendar}/active', [RotationController::class, 'setCalendarActive'])->middleware('permission:rotations.manage');
+        Route::get('/rotations/{calendar}/plan', [RotationController::class, 'plan'])->middleware('permission:rotations.manage');
+        Route::post('/rotations/{calendar}/plan', [RotationController::class, 'savePlan'])->middleware('permission:rotations.manage');
+
+        // Transfer review: permission is coarse; the policy narrows consultants
+        // to the head of the destination section.
+        Route::get('/transfer-requests', [AdminTransferRequestController::class, 'index'])->middleware('permission:transfers.review');
+        Route::post('/transfer-requests/{transferRequest}/approve', [AdminTransferRequestController::class, 'approve'])->middleware('permission:transfers.review');
+        Route::post('/transfer-requests/{transferRequest}/reject', [AdminTransferRequestController::class, 'reject'])->middleware('permission:transfers.review');
 
         Route::get('/roster/{year}/{month}', [DutyRosterController::class, 'month'])->whereNumber('year')->whereNumber('month')->middleware('permission:roster.manage');
         Route::put('/roster/{year}/{month}', [DutyRosterController::class, 'saveMonth'])->whereNumber('year')->whereNumber('month')->middleware('permission:roster.manage');

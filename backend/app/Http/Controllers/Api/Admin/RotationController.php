@@ -3,10 +3,15 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\DutyAssignment;
+use App\Models\DutyType;
 use App\Models\RotationBlock;
 use App\Models\RotationCalendar;
+use App\Models\User;
+use App\Services\Academic\RosterService;
 use App\Services\Academic\RotationCalendarService;
 use App\Services\Admin\AdminAuditService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -15,13 +20,14 @@ use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Rotation calendars and their generated blocks. The planner matrix endpoints
- * (plan/savePlan) arrive with the Phase 2 planner screen.
+ * Rotation calendars, their generated blocks, and the planner matrix that
+ * writes a training year's rotations into duty_assignments.
  */
 class RotationController extends Controller
 {
     public function __construct(
         private readonly RotationCalendarService $calendarService,
+        private readonly RosterService $rosterService,
         private readonly AdminAuditService $auditService,
     ) {}
 
@@ -89,6 +95,181 @@ class RotationController extends Controller
         $this->auditService->record($request->user(), 'set_active', 'rotation_calendar', $calendar->id, $oldValues, $this->serializeCalendar($calendar), $request);
 
         return response()->json($this->serializeCalendar($calendar));
+    }
+
+    /**
+     * The planner matrix: the calendar's residents down one axis, its blocks
+     * across the other, the current monthly assignment in each cell, and the
+     * monthly duty-type catalog for the pickers.
+     */
+    public function plan(RotationCalendar $calendar): JsonResponse
+    {
+        Gate::authorize('view', $calendar);
+
+        $calendar->load('blocks');
+
+        $residents = User::query()
+            ->where('role_key', 'resident')
+            ->where('active', true)
+            ->where('training_year', $calendar->training_year)
+            ->orderBy('full_name')
+            ->get();
+
+        $blockRange = [
+            $calendar->blocks->min('starts_on'),
+            $calendar->blocks->max('ends_on'),
+        ];
+
+        $assignments = DutyAssignment::query()
+            ->whereIn('user_id', $residents->pluck('id'))
+            ->whereDate('starts_on', '<=', $blockRange[1])
+            ->whereDate('ends_on', '>=', $blockRange[0])
+            ->whereHas('dutyType', fn (Builder $query) => $query->where('granularity', 'monthly'))
+            ->get();
+
+        $cells = [];
+
+        foreach ($calendar->blocks as $block) {
+            foreach ($residents as $resident) {
+                $match = $assignments->first(fn (DutyAssignment $assignment) => $assignment->user_id === $resident->id
+                    && $assignment->starts_on->lessThanOrEqualTo($block->ends_on)
+                    && $assignment->ends_on->greaterThanOrEqualTo($block->starts_on));
+
+                if ($match !== null) {
+                    $cells[] = [
+                        'userId' => $resident->id,
+                        'blockId' => $block->id,
+                        'dutyTypeId' => $match->duty_type_id,
+                    ];
+                }
+            }
+        }
+
+        return response()->json([
+            'calendar' => $this->serializeCalendar($calendar),
+            'residents' => $residents->map(fn (User $resident) => [
+                'id' => $resident->id,
+                'fullName' => $resident->full_name,
+                'rotationGroup' => $resident->rotation_group,
+            ])->values(),
+            'dutyTypes' => DutyType::query()
+                ->where('granularity', 'monthly')
+                ->where('active', true)
+                ->orderBy('name')
+                ->get()
+                ->map(fn (DutyType $dutyType) => [
+                    'id' => $dutyType->id,
+                    'name' => $dutyType->name,
+                    'category' => $dutyType->category,
+                ])->values(),
+            'assignments' => $cells,
+        ]);
+    }
+
+    public function savePlan(Request $request, RotationCalendar $calendar): JsonResponse
+    {
+        Gate::authorize('update', $calendar);
+
+        $validated = $request->validate([
+            'assignments' => ['sometimes', 'array', 'max:2000'],
+            'assignments.*.userId' => ['required_with:assignments', 'string', Rule::exists('users', 'id')],
+            'assignments.*.blockId' => ['required_with:assignments', 'string', Rule::exists('rotation_blocks', 'id')],
+            'assignments.*.dutyTypeId' => ['present', 'nullable', 'string', Rule::exists('duty_types', 'id')],
+            // Year 3 convenience: plan whole groups; expanded to members server-side.
+            'groupPlan' => ['sometimes', 'array', 'max:200'],
+            'groupPlan.*.rotationGroup' => ['required_with:groupPlan', 'string', 'max:8'],
+            'groupPlan.*.blockId' => ['required_with:groupPlan', 'string', Rule::exists('rotation_blocks', 'id')],
+            'groupPlan.*.dutyTypeId' => ['required_with:groupPlan', 'string', Rule::exists('duty_types', 'id')],
+        ]);
+
+        $blocks = $calendar->blocks()->get()->keyBy('id');
+
+        $entries = collect($validated['assignments'] ?? []);
+
+        foreach ($validated['groupPlan'] ?? [] as $groupEntry) {
+            $memberIds = User::query()
+                ->where('role_key', 'resident')
+                ->where('active', true)
+                ->where('training_year', $calendar->training_year)
+                ->where('rotation_group', $groupEntry['rotationGroup'])
+                ->pluck('id');
+
+            foreach ($memberIds as $memberId) {
+                $entries->push([
+                    'userId' => $memberId,
+                    'blockId' => $groupEntry['blockId'],
+                    'dutyTypeId' => $groupEntry['dutyTypeId'],
+                ]);
+            }
+        }
+
+        $rows = [];
+        $cleared = 0;
+
+        foreach ($entries as $entry) {
+            $block = $blocks[$entry['blockId']] ?? null;
+
+            if ($block === null) {
+                throw ValidationException::withMessages([
+                    'assignments' => ['Every block must belong to the calendar being planned.'],
+                ]);
+            }
+
+            if ($entry['dutyTypeId'] === null) {
+                DutyAssignment::query()
+                    ->where('user_id', $entry['userId'])
+                    ->whereDate('starts_on', '<=', $block->ends_on->toDateString())
+                    ->whereDate('ends_on', '>=', $block->starts_on->toDateString())
+                    ->whereHas('dutyType', fn (Builder $query) => $query->where('granularity', 'monthly'))
+                    ->delete();
+                $cleared++;
+
+                continue;
+            }
+
+            $rows[] = [
+                'user_id' => $entry['userId'],
+                'duty_type_id' => $entry['dutyTypeId'],
+                'starts_on' => $block->starts_on->toDateString(),
+                'ends_on' => $block->ends_on->toDateString(),
+            ];
+        }
+
+        $this->assertMonthlyTypes(array_column($rows, 'duty_type_id'));
+        $this->rosterService->bulkAssign($rows, 'rotation_planner', $request->user());
+
+        $this->auditService->record(
+            $request->user(),
+            'save_rotation_plan',
+            'rotation_calendar',
+            $calendar->id,
+            null,
+            ['assigned' => count($rows), 'cleared' => $cleared],
+            $request,
+        );
+
+        return $this->plan($calendar);
+    }
+
+    /**
+     * @param  list<string>  $dutyTypeIds
+     */
+    private function assertMonthlyTypes(array $dutyTypeIds): void
+    {
+        if ($dutyTypeIds === []) {
+            return;
+        }
+
+        $nonMonthly = DutyType::query()
+            ->whereIn('id', array_unique($dutyTypeIds))
+            ->where('granularity', '!=', 'monthly')
+            ->exists();
+
+        if ($nonMonthly) {
+            throw ValidationException::withMessages([
+                'assignments' => ['The rotation planner only writes monthly duty types.'],
+            ]);
+        }
     }
 
     private function serializeCalendar(RotationCalendar $calendar): array
