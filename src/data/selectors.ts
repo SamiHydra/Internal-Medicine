@@ -279,13 +279,11 @@ export function getReportForAssignmentPeriod(
   assignmentId: string,
   reportingPeriodId: string,
 ) {
-  return (
-    state.reports.find(
-      (report) =>
-        report.assignmentId === assignmentId &&
-        report.reportingPeriodId === reportingPeriodId,
-    ) ?? null
-  )
+  // O(1) lookup via the per-reports-array index instead of an O(reports) scan.
+  // This selector is called once per assignment×period inside the submission
+  // board and dashboard trend loops, so the linear find made those renders
+  // quadratic in (assignments × periods × reports) at seeded scale.
+  return getReportLookup(state.reports).get(`${assignmentId}:${reportingPeriodId}`) ?? null
 }
 
 function deriveReportStatusForPeriod(
@@ -354,13 +352,31 @@ function createReportLookup(reports: ReportRecord[]) {
   return reportsByAssignmentPeriod
 }
 
+// Cache the assignment×period index per `state.reports` array identity. The
+// context replaces `state.reports` with a new array only when report data
+// changes, so the index is built once per data change and reused across every
+// getReportForAssignmentPeriod call in that render. Keyed weakly so superseded
+// report arrays are garbage-collected.
+const reportLookupCache = new WeakMap<ReportRecord[], Map<string, ReportRecord>>()
+
+function getReportLookup(reports: ReportRecord[]) {
+  let lookup = reportLookupCache.get(reports)
+
+  if (!lookup) {
+    lookup = createReportLookup(reports)
+    reportLookupCache.set(reports, lookup)
+  }
+
+  return lookup
+}
+
 function getRangeStatusEntries(
   state: AppState,
   periods: ReportingPeriod[],
   family?: ReportFamily,
 ) {
   const scopedAssignments = getScopedAssignments(state, family)
-  const reportsByAssignmentPeriod = createReportLookup(state.reports)
+  const reportsByAssignmentPeriod = getReportLookup(state.reports)
 
   return scopedAssignments.flatMap((assignment) =>
     periods.map((period) => {

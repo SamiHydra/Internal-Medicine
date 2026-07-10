@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 
@@ -38,7 +38,7 @@ const statusOptions = [
 const timeRangeValues: ReportingTimeRange[] = ['current', 'last4', 'last8', 'all']
 
 export function SubmissionBoardPage() {
-  const { state, ensureProfileDirectoryData, refreshData } = useAppData()
+  const { state, ensureProfileDirectoryData, reportPeriodWindow, refreshData } = useAppData()
   const currentPeriod = getCurrentPeriod(state)
   const currentPeriodId = currentPeriod?.id ?? ''
   // Honor deep-links from the dashboard (e.g. the Outstanding-reports card) so the
@@ -77,63 +77,94 @@ export function SubmissionBoardPage() {
   useEffect(() => {
     const nextReportWindow = timeRange === 'all' ? 'all' : 'default'
 
+    if (reportPeriodWindow === nextReportWindow) {
+      requestedReportWindowRef.current = null
+      return
+    }
+
     if (requestedReportWindowRef.current === nextReportWindow) {
       return
     }
 
     requestedReportWindowRef.current = nextReportWindow
     void refreshData({ reportPeriodWindow: nextReportWindow })
-  }, [refreshData, timeRange])
+  }, [refreshData, reportPeriodWindow, timeRange])
 
-  const visibleReportingPeriods = [...getVisibleReportingPeriods(state)].reverse()
-  const reportingPeriodOptions = visibleReportingPeriods.map((period) => ({
-    label: period.label,
-    value: period.id,
-  }))
+  // All board derivations are memoized on their real inputs so a poll-driven
+  // re-render (or an unrelated state change) does not rebuild the grid; only a
+  // change to the data or the active filters recomputes. Every useMemo is
+  // declared before the `if (!rangeSummary)` early return to satisfy the Rules
+  // of Hooks (hook count must be stable across renders).
+  const visibleReportingPeriods = useMemo(
+    () => [...getVisibleReportingPeriods(state)].reverse(),
+    [state],
+  )
+  const reportingPeriodOptions = useMemo(
+    () =>
+      visibleReportingPeriods.map((period) => ({
+        label: period.label,
+        value: period.id,
+      })),
+    [visibleReportingPeriods],
+  )
   const effectivePeriodId = visibleReportingPeriods.some((period) => period.id === periodId)
     ? periodId
     : currentPeriodId
-  const rangeSummary = getReportingRangeSummary(
-    state,
-    timeRange,
-    effectivePeriodId,
-    serviceLineFilter === 'all' ? undefined : serviceLineFilter,
+  const rangeSummary = useMemo(
+    () =>
+      getReportingRangeSummary(
+        state,
+        timeRange,
+        effectivePeriodId,
+        serviceLineFilter === 'all' ? undefined : serviceLineFilter,
+      ),
+    [state, timeRange, effectivePeriodId, serviceLineFilter],
   )
+
+  // Index nurse names once instead of a state.profiles.find() per board row.
+  const profileNameById = useMemo(() => {
+    const names = new Map<string, string>()
+    state.profiles.forEach((profile) => names.set(profile.id, profile.fullName))
+    return names
+  }, [state.profiles])
+
+  const rows = useMemo(() => {
+    if (!rangeSummary) {
+      return []
+    }
+
+    return getSubmissionBoard(state, rangeSummary.periods.length, effectivePeriodId)
+      .filter((row) =>
+        serviceLineFilter === 'all' ? true : row.department.family === serviceLineFilter,
+      )
+      .filter((row) =>
+        statusFilter === 'all'
+          ? true
+          : row.statuses.some((status) => status.status === statusFilter),
+      )
+      .map((row) => ({
+        id: row.assignment.id,
+        departmentName: row.department.name,
+        templateName: row.template.name,
+        assigneeName: profileNameById.get(row.assignment.nurseId) ?? 'Assigned nurse',
+        statuses: row.statuses.map((status) => ({
+          label: status.period.label.split(' - ')[0],
+          status: status.status,
+          href: `/reports/${row.assignment.id}/${status.period.id}`,
+        })),
+      }))
+  }, [
+    rangeSummary,
+    state,
+    effectivePeriodId,
+    serviceLineFilter,
+    statusFilter,
+    profileNameById,
+  ])
 
   if (!rangeSummary) {
     return null
   }
-
-  const scopedBoardRows = getSubmissionBoard(
-    state,
-    rangeSummary.periods.length,
-    effectivePeriodId,
-  ).filter(
-    (row) =>
-      serviceLineFilter === 'all'
-        ? true
-        : row.department.family === serviceLineFilter,
-  )
-
-  const filteredBoardRows = scopedBoardRows.filter((row) =>
-    statusFilter === 'all'
-      ? true
-      : row.statuses.some((status) => status.status === statusFilter),
-  )
-
-  const rows = filteredBoardRows.map((row) => ({
-    id: row.assignment.id,
-    departmentName: row.department.name,
-    templateName: row.template.name,
-    assigneeName:
-      state.profiles.find((profile) => profile.id === row.assignment.nurseId)?.fullName ??
-      'Assigned nurse',
-    statuses: row.statuses.map((status) => ({
-      label: status.period.label.split(' - ')[0],
-      status: status.status,
-      href: `/reports/${row.assignment.id}/${status.period.id}`,
-    })),
-  }))
 
   const scopeLabel =
     serviceLineOptions.find((option) => option.value === serviceLineFilter)?.label ??

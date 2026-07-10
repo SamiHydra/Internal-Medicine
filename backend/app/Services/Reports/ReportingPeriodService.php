@@ -38,9 +38,10 @@ class ReportingPeriodService
         $updated = 0;
 
         for ($weekStart = $firstWeek; $weekStart->lessThanOrEqualTo($lastWeek); $weekStart = $weekStart->addWeek()) {
-            $period = ReportingPeriod::query()->firstOrNew([
-                'week_start' => $weekStart->toDateString(),
-            ]);
+            $weekStartDate = $weekStart->toDateString();
+            $period = ReportingPeriod::query()
+                ->whereDate('week_start', $weekStartDate)
+                ->first() ?? new ReportingPeriod(['week_start' => $weekStartDate]);
             $wasNew = ! $period->exists;
 
             $period->fill($this->periodPayload($weekStart, $deadlineDay, $deadlineTime));

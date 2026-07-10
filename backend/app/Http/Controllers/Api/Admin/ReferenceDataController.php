@@ -8,6 +8,7 @@ use App\Models\Department;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportTemplate;
 use App\Services\Admin\AdminAuditService;
+use App\Services\Analytics\DashboardAnalyticsService;
 use App\Support\Authorization\Permissions;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -23,6 +24,7 @@ class ReferenceDataController extends Controller
 
     public function __construct(
         private readonly AdminAuditService $auditService,
+        private readonly DashboardAnalyticsService $dashboardAnalytics,
     ) {}
 
     public function templates(Request $request): JsonResponse
@@ -56,7 +58,7 @@ class ReferenceDataController extends Controller
 
         $validated = $this->validateTemplate($request);
 
-        return DB::transaction(function () use ($request, $validated): JsonResponse {
+        $response = DB::transaction(function () use ($request, $validated): JsonResponse {
             $template = ReportTemplate::query()->create($this->templatePayload($validated));
             $this->syncFields($template, $validated['fields'] ?? []);
             $template->load(['fieldDefinitions' => fn ($query) => $query->orderBy('display_order')]);
@@ -64,6 +66,10 @@ class ReferenceDataController extends Controller
 
             return response()->json($this->serializeTemplate($template), 201);
         });
+
+        $this->dashboardAnalytics->invalidate();
+
+        return $response;
     }
 
     public function showTemplate(string $template): JsonResponse
@@ -82,7 +88,7 @@ class ReferenceDataController extends Controller
         $validated = $this->validateTemplate($request, $resolvedTemplate);
         $this->guardStructuralChanges($request, $resolvedTemplate, $validated);
 
-        return DB::transaction(function () use ($request, $resolvedTemplate, $validated): JsonResponse {
+        $response = DB::transaction(function () use ($request, $resolvedTemplate, $validated): JsonResponse {
             $oldValues = $this->templateAuditValues($resolvedTemplate->load('fieldDefinitions'));
             $payload = $this->templatePayload($validated, partial: true);
 
@@ -110,6 +116,10 @@ class ReferenceDataController extends Controller
 
             return response()->json($this->serializeTemplate($resolvedTemplate));
         });
+
+        $this->dashboardAnalytics->invalidate();
+
+        return $response;
     }
 
     public function setTemplateActive(Request $request, string $template): JsonResponse
@@ -124,6 +134,7 @@ class ReferenceDataController extends Controller
         $resolvedTemplate->refresh();
 
         $this->auditService->record($request->user(), 'set_active', 'report_template', $resolvedTemplate->id, $oldValues, $this->templateAuditValues($resolvedTemplate), $request);
+        $this->dashboardAnalytics->invalidate();
 
         return response()->json($this->serializeTemplate($resolvedTemplate));
     }
@@ -141,6 +152,7 @@ class ReferenceDataController extends Controller
 
         $resolvedTemplate->refresh()->load(['fieldDefinitions' => fn ($query) => $query->orderBy('display_order')]);
         $this->auditService->record($request->user(), 'set_field_active', 'report_template', $resolvedTemplate->id, $oldValues, $definition->only(['field_key', 'active']), $request);
+        $this->dashboardAnalytics->invalidate();
 
         return response()->json($this->serializeTemplate($resolvedTemplate));
     }
@@ -154,6 +166,7 @@ class ReferenceDataController extends Controller
         $oldValues = $this->templateAuditValues($resolvedTemplate->load('fieldDefinitions'));
         $resolvedTemplate->delete();
         $this->auditService->record($request->user(), 'delete', 'report_template', $resolvedTemplate->id, $oldValues, null, $request);
+        $this->dashboardAnalytics->invalidate();
 
         return response()->json(null, 204);
     }
@@ -203,6 +216,7 @@ class ReferenceDataController extends Controller
         $department->load('template');
 
         $this->auditService->record($request->user(), 'create', 'department', $department->id, null, $this->departmentAuditValues($department), $request);
+        $this->dashboardAnalytics->invalidate();
 
         return response()->json($this->serializeDepartment($department), 201);
     }
@@ -234,6 +248,7 @@ class ReferenceDataController extends Controller
         $resolvedDepartment->refresh()->load('template');
 
         $this->auditService->record($request->user(), 'update', 'department', $resolvedDepartment->id, $oldValues, $this->departmentAuditValues($resolvedDepartment), $request);
+        $this->dashboardAnalytics->invalidate();
 
         return response()->json($this->serializeDepartment($resolvedDepartment));
     }
@@ -250,6 +265,7 @@ class ReferenceDataController extends Controller
         $resolvedDepartment->refresh()->load('template');
 
         $this->auditService->record($request->user(), 'set_active', 'department', $resolvedDepartment->id, $oldValues, $this->departmentAuditValues($resolvedDepartment), $request);
+        $this->dashboardAnalytics->invalidate();
 
         return response()->json($this->serializeDepartment($resolvedDepartment));
     }
@@ -263,6 +279,7 @@ class ReferenceDataController extends Controller
         $oldValues = $this->departmentAuditValues($resolvedDepartment);
         $resolvedDepartment->delete();
         $this->auditService->record($request->user(), 'delete', 'department', $resolvedDepartment->id, $oldValues, null, $request);
+        $this->dashboardAnalytics->invalidate();
 
         return response()->json(null, 204);
     }

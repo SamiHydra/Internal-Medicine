@@ -135,7 +135,7 @@ export function LoginPage() {
                     className="text-[1.55rem] font-extrabold leading-none tracking-[-0.03em] text-white"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
-                    St Paul
+                    St Paul's
                   </p>
                   <p className="mt-1 text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
                     Internal Medicine
@@ -173,7 +173,7 @@ export function LoginPage() {
                     className="text-base font-extrabold leading-none tracking-[-0.03em] text-[#000a1e]"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
-                    St Paul
+                    St Paul's
                   </p>
                   <p className="mt-1 text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
                     Internal Medicine
@@ -213,7 +213,7 @@ export function LoginPage() {
                       autoComplete="username"
                       aria-invalid={identifierError ? 'true' : 'false'}
                       className="h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 pr-11 text-[0.95rem] font-medium text-[#191c1d] outline-none transition placeholder:text-[#8c929b] focus:border-[#005db6] focus:bg-[#fbfdff]"
-                      disabled={!isConfigured || isBootstrapping || isSigningIn}
+                      disabled={!isConfigured || isSigningIn}
                       {...form.register('identifier')}
                     />
                     <User className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#c4c6cf]" />
@@ -260,7 +260,7 @@ export function LoginPage() {
                       autoComplete="current-password"
                       aria-invalid={passwordError ? 'true' : 'false'}
                       className="h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 pr-11 text-[0.95rem] font-medium text-[#191c1d] outline-none transition placeholder:text-[#8c929b] focus:border-[#005db6] focus:bg-[#fbfdff]"
-                      disabled={!isConfigured || isBootstrapping || isSigningIn}
+                      disabled={!isConfigured || isSigningIn}
                       {...form.register('password')}
                     />
                     <button
@@ -268,7 +268,7 @@ export function LoginPage() {
                       className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#c4c6cf] transition hover:text-[#000a1e]"
                       onClick={() => setShowPassword((current) => !current)}
                       aria-label={showPassword ? 'Hide password' : 'Show password'}
-                      disabled={!isConfigured || isBootstrapping || isSigningIn}
+                      disabled={!isConfigured || isSigningIn}
                     >
                       {showPassword ? (
                         <EyeOff className="h-4 w-4" />
@@ -302,7 +302,11 @@ export function LoginPage() {
                   disabled={!isConfigured || isBootstrapping || isSigningIn}
                   style={{ fontFamily: 'Manrope, sans-serif' }}
                 >
-                  {isBootstrapping || isSigningIn ? 'Signing in...' : 'Sign In to Reporting Portal'}
+                  {isBootstrapping
+                    ? 'Checking session...'
+                    : isSigningIn
+                      ? 'Signing in...'
+                      : 'Sign In to Reporting Portal'}
                 </button>
 
                 <div className="border-t border-[#edeeef] pt-7">

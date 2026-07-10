@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, useEffect, useState } from 'react'
+import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   CheckCheck,
@@ -75,8 +75,7 @@ export function UserManagementPage() {
     toggleAssignmentActive,
     assignUserToDepartment,
     currentUser,
-    ensureProfileDirectoryData,
-    ensureAccessRequestData,
+    ensureUserManagementData,
     adminAccessRequests,
     refreshAdminAccessRequests,
     approveAdminAccessRequest,
@@ -89,6 +88,7 @@ export function UserManagementPage() {
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(() => new Set())
 
   const [expandedRequests, setExpandedRequests] = useState<Set<string>>(() => new Set())
+  const adminRequestsLoadedRef = useRef(false)
 
   const toggleFromSet =
     (setter: Dispatch<SetStateAction<Set<string>>>) => (id: string) =>
@@ -113,16 +113,15 @@ export function UserManagementPage() {
       return
     }
 
-    void ensureProfileDirectoryData()
-    void ensureAccessRequestData()
-    if (canApproveAdmins) {
+    void ensureUserManagementData()
+    if (canApproveAdmins && !adminRequestsLoadedRef.current) {
+      adminRequestsLoadedRef.current = true
       void refreshAdminAccessRequests()
     }
   }, [
     currentUser,
     canApproveAdmins,
-    ensureAccessRequestData,
-    ensureProfileDirectoryData,
+    ensureUserManagementData,
     refreshAdminAccessRequests,
   ])
 

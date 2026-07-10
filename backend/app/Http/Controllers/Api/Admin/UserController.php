@@ -31,7 +31,12 @@ class UserController extends Controller
         ]);
 
         $query = User::query()
-            ->with(['assignments.department', 'assignments.template'])
+            ->with([
+                'assignments.department',
+                'assignments.template',
+                'assignments.nurse',
+                'assignments.approver',
+            ])
             ->orderBy('full_name');
 
         if (isset($validated['role'])) {

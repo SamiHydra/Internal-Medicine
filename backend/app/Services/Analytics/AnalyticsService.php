@@ -142,52 +142,73 @@ class AnalyticsService
     /** @var array<string, int> */
     private array $assignmentCountMemo = [];
 
+    /**
+     * Numeric field totals indexed once per report. Dashboard generation asks
+     * for the same fields across the overview, family, week, month, and
+     * department summaries; rescanning every hydrated field value for each
+     * metric made cold requests grow into tens of seconds.
+     *
+     * @var array<string, array<string, float>>
+     */
+    private array $reportFieldSumsMemo = [];
+
+    /** @var array<string, array<string, mixed>> */
+    private array $weeklyFieldValueMemo = [];
+
     public function flushMemo(): void
     {
         $this->reportsMemo = [];
         $this->scopedDepartmentsMemo = [];
         $this->assignmentCountMemo = [];
+        $this->reportFieldSumsMemo = [];
+        $this->weeklyFieldValueMemo = [];
     }
 
     /**
      * @return array<string, mixed>
      */
-    public function overview(AnalyticsFilters $filters): array
+    public function overview(AnalyticsFilters $filters, ?Collection $reports = null): array
     {
-        $reports = $this->reports($filters);
+        $reports ??= $this->reports($filters);
         $periods = $this->periodsForReports($reports, $filters);
 
         return [
             'scope' => $this->scope($filters),
             'summary' => $this->summary($reports, $periods, $filters),
-            'weekly' => $this->weekly($filters),
-            'monthly' => $this->monthly($filters),
+            'weekly' => $this->weekly($filters, reports: $reports),
+            'monthly' => $this->monthly($filters, reports: $reports),
         ];
     }
 
     /**
      * @return array<string, mixed>
      */
-    public function familySummary(string $family, AnalyticsFilters $filters): array
-    {
-        $reports = $this->reports($filters, $family);
+    public function familySummary(
+        string $family,
+        AnalyticsFilters $filters,
+        ?Collection $reports = null,
+    ): array {
+        $reports ??= $this->reports($filters, $family);
         $periods = $this->periodsForReports($reports, $filters);
 
         return [
             'scope' => $this->scope($filters, $family),
             'summary' => $this->summary($reports, $periods, $filters, $family),
-            'departments' => $this->departmentSummaries($filters, $family),
-            'weekly' => $this->weekly($filters, $family),
-            'monthly' => $this->monthly($filters, $family),
+            'departments' => $this->departmentSummaries($filters, $family, $reports),
+            'weekly' => $this->weekly($filters, $family, $reports),
+            'monthly' => $this->monthly($filters, $family, $reports),
         ];
     }
 
     /**
      * @return list<array<string, mixed>>
      */
-    public function weekly(AnalyticsFilters $filters, ?string $family = null): array
-    {
-        $reports = $this->reports($filters, $family);
+    public function weekly(
+        AnalyticsFilters $filters,
+        ?string $family = null,
+        ?Collection $reports = null,
+    ): array {
+        $reports ??= $this->reports($filters, $family);
 
         return $reports
             ->groupBy('reporting_period_id')
@@ -212,9 +233,12 @@ class AnalyticsService
     /**
      * @return list<array<string, mixed>>
      */
-    public function monthly(AnalyticsFilters $filters, ?string $family = null): array
-    {
-        $reports = $this->reports($filters, $family);
+    public function monthly(
+        AnalyticsFilters $filters,
+        ?string $family = null,
+        ?Collection $reports = null,
+    ): array {
+        $reports ??= $this->reports($filters, $family);
 
         return $reports
             ->groupBy(fn (Report $report) => $report->reportingPeriod->week_start?->format('Y-m'))
@@ -307,17 +331,34 @@ class AnalyticsService
     /**
      * @return list<array<string, mixed>>
      */
-    public function departmentSummaries(AnalyticsFilters $filters, ?string $family = null): array
-    {
-        $reports = $this->reports($filters, $family);
+    public function departmentSummaries(
+        AnalyticsFilters $filters,
+        ?string $family = null,
+        ?Collection $reports = null,
+    ): array {
+        $reports ??= $this->reports($filters, $family);
+        $departmentIds = $reports->pluck('department_id')->filter()->unique()->values();
+        $activeAssignmentCounts = $departmentIds->isEmpty()
+            ? collect()
+            : ReportAssignment::query()
+                ->where('active', true)
+                ->whereIn('department_id', $departmentIds->all())
+                ->selectRaw('department_id, COUNT(*) as aggregate')
+                ->groupBy('department_id')
+                ->pluck('aggregate', 'department_id');
 
         return $reports
             ->groupBy('department_id')
-            ->map(function (Collection $bucket) use ($filters): array {
+            ->map(function (Collection $bucket) use ($activeAssignmentCounts, $filters): array {
                 $department = $bucket->first()->department;
                 $departmentFilters = $department
                     ? $filters->withDepartment($department->slug)
                     : $filters;
+                $periods = $bucket->pluck('reportingPeriod')->unique('id')->values();
+                $expectedReports = (int) $activeAssignmentCounts->get(
+                    $bucket->first()->department_id,
+                    0,
+                ) * $periods->count();
 
                 return [
                     'departmentId' => $bucket->first()->department_id,
@@ -326,9 +367,11 @@ class AnalyticsService
                     'family' => $department?->family,
                     'summary' => $this->summary(
                         $bucket,
-                        $bucket->pluck('reportingPeriod')->unique('id')->values(),
+                        $periods,
                         $departmentFilters,
                         $department?->family,
+                        $department ? collect([$department]) : collect(),
+                        $expectedReports,
                     ),
                 ];
             })
@@ -348,8 +391,37 @@ class AnalyticsService
             return $this->reportsMemo[$memoKey];
         }
 
+        $analyticsFieldKeys = $this->analyticsFieldKeys();
         $query = Report::query()
-            ->with(['department', 'template', 'reportingPeriod', 'fieldValues.fieldDefinition', 'calculatedMetric', 'assignment'])
+            ->select([
+                'id',
+                'assignment_id',
+                'department_id',
+                'template_id',
+                'reporting_period_id',
+                'status',
+            ])
+            ->with([
+                'department:id,slug,name,family,bed_count,active',
+                'reportingPeriod:id,week_start,week_end,month_label,quarter_label,year_num',
+                'fieldValues' => fn ($fieldValueQuery) => $fieldValueQuery
+                    ->select([
+                        'id',
+                        'report_id',
+                        'field_definition_id',
+                        'day_name',
+                        'value_number',
+                        'value_text',
+                        'value_time',
+                        'value_json',
+                    ])
+                    ->whereHas(
+                        'fieldDefinition',
+                        fn (Builder $definitionQuery) => $definitionQuery
+                            ->whereIn('field_key', $analyticsFieldKeys),
+                    ),
+                'fieldValues.fieldDefinition:id,field_key,aggregate_type',
+            ])
             ->whereHas('department', function (Builder $departmentQuery) use ($filters, $family): void {
                 $effectiveFamily = $this->effectiveFamily($filters, $family);
 
@@ -395,6 +467,57 @@ class AnalyticsService
     }
 
     /**
+     * Only hydrate values consumed by analytics. Report forms contain many
+     * narrative/display-only fields; loading those for a year-long dashboard can
+     * otherwise exhaust PHP memory even though no graph reads them.
+     *
+     * @return list<string>
+     */
+    private function analyticsFieldKeys(): array
+    {
+        $keys = [
+            'total_patient_days',
+            'discharged_home',
+            'discharged_ama',
+            'total_patients_seen',
+            'failed_to_come',
+            'total_admitted_patients',
+            'new_admitted_patients',
+            'follow_up_patients',
+            'new_patients_seen',
+            'not_seen_same_day',
+            'not_seen_appointment',
+            'total_hai',
+            'new_deaths',
+            'new_pressure_ulcer',
+            'wait_time_new_days',
+            'wait_time_followup_months',
+            'clinic_start_time',
+            'senior_physician_availability',
+        ];
+
+        foreach (self::INPATIENT_CHART_METRICS as $fieldKeys) {
+            array_push($keys, ...$fieldKeys);
+        }
+
+        foreach (self::OUTPATIENT_CHART_METRICS as $metric) {
+            $keys[] = $metric['fieldKey'];
+        }
+
+        foreach (self::PROCEDURE_SERVICES as $service) {
+            array_push($keys, ...$service['fieldKeys']);
+        }
+
+        foreach ([self::PROCEDURE_DIALYSIS_MIX, self::PROCEDURE_ENDOSCOPY_MIX] as $mix) {
+            foreach ($mix as $definition) {
+                array_push($keys, ...$definition['fieldKeys']);
+            }
+        }
+
+        return array_values(array_unique($keys));
+    }
+
+    /**
      * Stable cache key covering every filter dimension reports() reads.
      */
     private function reportsMemoKey(AnalyticsFilters $filters, ?string $family): string
@@ -419,10 +542,16 @@ class AnalyticsService
      * @param  Collection<int, ReportingPeriod>  $periods
      * @return array<string, mixed>
      */
-    public function summary(Collection $reports, Collection $periods, AnalyticsFilters $filters, ?string $family = null): array
-    {
-        $departments = $this->scopedDepartments($filters, $family);
-        $expectedReports = $this->expectedReportCount($filters, $periods, $family);
+    public function summary(
+        Collection $reports,
+        Collection $periods,
+        AnalyticsFilters $filters,
+        ?string $family = null,
+        ?Collection $departments = null,
+        ?int $expectedReports = null,
+    ): array {
+        $departments ??= $this->scopedDepartments($filters, $family);
+        $expectedReports ??= $this->expectedReportCount($filters, $periods, $family);
         $totalPatientDays = $this->sumFields($reports, ['total_patient_days']);
         $totalDischarges = $this->sumFields($reports, ['discharged_home', 'discharged_ama']);
         $totalOutpatientVisits = $this->sumFields($reports, ['total_patients_seen']);
@@ -653,9 +782,40 @@ class AnalyticsService
      */
     public function sumFields(Collection $reports, array $fieldKeys): float
     {
-        return (float) $reports->sum(fn (Report $report) => $report->fieldValues
-            ->filter(fn ($value) => in_array($value->fieldDefinition?->field_key, $fieldKeys, true))
-            ->sum(fn ($value) => (float) ($value->value_number ?? 0)));
+        return (float) $reports->sum(function (Report $report) use ($fieldKeys): float {
+            $fieldSums = $this->reportFieldSums($report);
+            $total = 0.0;
+
+            foreach ($fieldKeys as $fieldKey) {
+                $total += $fieldSums[$fieldKey] ?? 0.0;
+            }
+
+            return $total;
+        });
+    }
+
+    /**
+     * @return array<string, float>
+     */
+    private function reportFieldSums(Report $report): array
+    {
+        if (isset($this->reportFieldSumsMemo[$report->id])) {
+            return $this->reportFieldSumsMemo[$report->id];
+        }
+
+        $sums = [];
+
+        foreach ($report->fieldValues as $value) {
+            $fieldKey = $value->fieldDefinition?->field_key;
+
+            if ($fieldKey === null || $value->value_number === null) {
+                continue;
+            }
+
+            $sums[$fieldKey] = ($sums[$fieldKey] ?? 0.0) + (float) $value->value_number;
+        }
+
+        return $this->reportFieldSumsMemo[$report->id] = $sums;
     }
 
     /**
@@ -700,6 +860,10 @@ class AnalyticsService
 
     private function weeklyFieldValue(Report $report, string $fieldKey): mixed
     {
+        if (array_key_exists($fieldKey, $this->weeklyFieldValueMemo[$report->id] ?? [])) {
+            return $this->weeklyFieldValueMemo[$report->id][$fieldKey];
+        }
+
         $values = $report->fieldValues
             ->filter(fn ($value) => $value->fieldDefinition?->field_key === $fieldKey)
             ->sortBy(fn ($value) => self::WEEKDAY_ORDER[$value->day_name] ?? 99)
@@ -707,11 +871,12 @@ class AnalyticsService
         $definition = $values->first()?->fieldDefinition;
 
         if (! $definition) {
-            return null;
+            return $this->weeklyFieldValueMemo[$report->id][$fieldKey] = null;
         }
 
         if ($definition->aggregate_type === 'sum') {
-            return (float) $values->sum(fn ($value) => (float) ($value->value_number ?? 0));
+            return $this->weeklyFieldValueMemo[$report->id][$fieldKey] =
+                (float) $values->sum(fn ($value) => (float) ($value->value_number ?? 0));
         }
 
         if ($definition->aggregate_type === 'average') {
@@ -719,14 +884,16 @@ class AnalyticsService
                 ->filter(fn ($value) => $value->value_number !== null)
                 ->map(fn ($value) => (float) $value->value_number);
 
-            return $numbers->isEmpty() ? null : (float) $numbers->average();
+            return $this->weeklyFieldValueMemo[$report->id][$fieldKey] =
+                $numbers->isEmpty() ? null : (float) $numbers->average();
         }
 
         $latest = $values
             ->reverse()
             ->first(fn ($value) => $value->value_number !== null || $value->value_text !== null || $value->value_time !== null || $value->value_json !== null);
 
-        return $latest ? $this->valueToScalar($latest) : null;
+        return $this->weeklyFieldValueMemo[$report->id][$fieldKey] =
+            $latest ? $this->valueToScalar($latest) : null;
     }
 
     private function valueToScalar(mixed $value): mixed

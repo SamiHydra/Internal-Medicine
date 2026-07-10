@@ -21,6 +21,7 @@ use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
@@ -122,6 +123,40 @@ class AdminApiTest extends TestCase
         $this->assertTrue(Hash::check('NewPassword123!', $managedNurse->password));
         $this->assertTrue((bool) $managedNurse->password_change_required);
         $this->assertGreaterThanOrEqual(4, AdminAuditLog::query()->where('entity_type', 'user')->count());
+    }
+
+    public function test_user_directory_query_count_does_not_grow_per_assignment(): void
+    {
+        $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
+
+        foreach (range(1, 8) as $index) {
+            $nurse = User::factory()->create([
+                'email' => "directory.nurse{$index}@example.test",
+                'username' => "directory.nurse{$index}",
+            ]);
+
+            ReportAssignment::query()->create([
+                'nurse_id' => $nurse->id,
+                'department_id' => $department->id,
+                'template_id' => $department->template_id,
+                'active' => true,
+                'approved_at' => now(),
+                'approved_by' => $this->admin->id,
+            ]);
+        }
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/users')
+            ->assertOk()
+            ->assertJsonCount(11, 'data');
+
+        $queryCount = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $this->assertLessThanOrEqual(10, $queryCount, "User directory executed {$queryCount} queries.");
     }
 
     public function test_access_request_review_and_assignment_admin_endpoints(): void

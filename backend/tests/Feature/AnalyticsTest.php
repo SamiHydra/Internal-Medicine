@@ -7,12 +7,15 @@ use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportingPeriod;
 use App\Models\User;
+use App\Services\Analytics\AnalyticsFilters;
+use App\Services\Analytics\DashboardAnalyticsService;
 use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportFieldDefinitionSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class AnalyticsTest extends TestCase
@@ -105,6 +108,102 @@ class AnalyticsTest extends TestCase
         } finally {
             Carbon::setTestNow();
         }
+    }
+
+    public function test_warm_rebuilds_recently_requested_dashboard_with_fresh_data(): void
+    {
+        $this->createSampleReports();
+        $service = app(DashboardAnalyticsService::class);
+        $filters = new AnalyticsFilters(periodId: $this->period->id);
+
+        // A viewer requests this dashboard, registering it as "recently viewed".
+        $this->assertEquals(
+            12,
+            $service->summary($filters)['overview']['summary']['totals']['totalAdmissions'],
+        );
+
+        // A write rotates the version, so the slice is now a cold miss again.
+        $report = Report::query()
+            ->whereHas('department', fn ($query) => $query->where('slug', 'gi_neuro_inpatient'))
+            ->firstOrFail();
+        $this->actingAs($this->nurse)
+            ->putJson("/api/reports/{$report->id}", [
+                'values' => [
+                    'total_admitted_patients' => $this->dailyValue('total_admitted_patients', 10),
+                ],
+            ])
+            ->assertOk();
+
+        // warm() (what the after-response hook calls) rebuilds the slice ahead of
+        // the next viewer, and it must reflect the post-write data — never stale.
+        $service->warm();
+
+        $sourceQueries = [];
+        DB::listen(function ($query) use (&$sourceQueries): void {
+            $sql = strtolower($query->sql);
+
+            if (
+                str_contains($sql, 'from "reports"')
+                || str_contains($sql, 'from "report_field_values"')
+                || str_contains($sql, 'from "report_assignments"')
+            ) {
+                $sourceQueries[] = $sql;
+            }
+        });
+
+        $warmed = $service->summary($filters);
+
+        $this->assertSame([], $sourceQueries, 'After warm(), the next viewer must hit a warm cache, not rescan source tables.');
+        $this->assertEquals(17, $warmed['overview']['summary']['totals']['totalAdmissions']);
+    }
+
+    public function test_cached_dashboard_does_not_rescan_source_tables(): void
+    {
+        $this->createSampleReports();
+        $service = app(DashboardAnalyticsService::class);
+        $filters = new AnalyticsFilters(periodId: $this->period->id);
+
+        $service->invalidate();
+        $service->summary($filters);
+
+        $sourceQueries = [];
+        DB::listen(function ($query) use (&$sourceQueries): void {
+            $sql = strtolower($query->sql);
+
+            if (
+                str_contains($sql, 'from "reports"')
+                || str_contains($sql, 'from "report_field_values"')
+                || str_contains($sql, 'from "report_assignments"')
+            ) {
+                $sourceQueries[] = $sql;
+            }
+        });
+
+        $service->summary($filters);
+
+        $this->assertSame([], $sourceQueries, 'A dashboard cache hit must not fingerprint source tables.');
+    }
+
+    public function test_assignment_changes_invalidate_cached_dashboard_expectations(): void
+    {
+        $assignments = $this->createSampleReports();
+
+        $this->actingAs($this->admin)
+            ->getJson("/api/analytics/dashboard?period_id={$this->period->id}")
+            ->assertOk()
+            ->assertJsonPath('overview.summary.expectedReports', 3);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/assignments/{$assignments['inpatient']->id}", [
+                'active' => false,
+            ])
+            ->assertOk();
+
+        $this->actingAs($this->admin)
+            ->getJson("/api/analytics/dashboard?period_id={$this->period->id}")
+            ->assertOk()
+            ->assertJsonPath('overview.summary.expectedReports', 2)
+            ->assertJsonPath('families.inpatient.summary.expectedReports', 0);
     }
 
     public function test_dashboard_weekly_rows_include_chart_metrics_for_client_charts(): void

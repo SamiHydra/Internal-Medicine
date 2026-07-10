@@ -36,7 +36,7 @@ import { formatTimestamp } from '@/lib/dates'
 
 export function DepartmentDetailPage() {
   const { departmentId = '' } = useParams()
-  const { state, ensureHistoryData, ensureReportDetails, refreshData } = useAppData()
+  const { state, ensureHistoryData, ensureReportDetails, reportPeriodWindow, refreshData } = useAppData()
   const [timeRange, setTimeRange] = useState<ReportingTimeRange>('last8')
   const [selectedPeriodId, setSelectedPeriodId] = useState('')
   const requestedReportWindowRef = useRef<'default' | 'all' | null>(null)
@@ -67,13 +67,18 @@ export function DepartmentDetailPage() {
   useEffect(() => {
     const nextReportWindow = timeRange === 'all' ? 'all' : 'default'
 
+    if (reportPeriodWindow === nextReportWindow) {
+      requestedReportWindowRef.current = null
+      return
+    }
+
     if (requestedReportWindowRef.current === nextReportWindow) {
       return
     }
 
     requestedReportWindowRef.current = nextReportWindow
     void refreshData({ reportPeriodWindow: nextReportWindow })
-  }, [refreshData, timeRange])
+  }, [refreshData, reportPeriodWindow, timeRange])
 
   useEffect(() => {
     const departmentReportIds = departmentReportIdsKey

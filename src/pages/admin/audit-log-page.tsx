@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowRight, ChevronDown, History, Search, ShieldCheck } from 'lucide-react'
 
@@ -462,6 +462,8 @@ function AdminActionsStream() {
   )
 }
 
+const AUDIT_LOG_PAGE_SIZE = 100
+
 export function AuditLogPage() {
   const { state, ensureHistoryData } = useAppData()
   const { workspace } = useWorkspace()
@@ -488,23 +490,55 @@ export function AuditLogPage() {
       return next
     })
 
-  const orderedEntries = [...state.auditLogs].sort((left, right) =>
-    right.changedAt.localeCompare(left.changedAt),
-  )
-  const scopedEntries = orderedEntries.filter((entry) =>
-    departmentFilter === 'all' ? true : entry.departmentId === departmentFilter,
-  )
+  // audit_logs is the fastest-growing table; sorting/filtering it inline re-ran
+  // on every poll-driven re-render and every search keystroke. Memoize each
+  // stage on its real inputs so typing only re-runs the final filter.
   const query = auditSearch.trim().toLowerCase()
-  const entries = query
-    ? scopedEntries.filter((entry) =>
-        [
-          entry.fieldLabel,
-          entry.changedByName,
-          formatAuditValue(entry.oldValue),
-          formatAuditValue(entry.newValue),
-        ].some((value) => String(value).toLowerCase().includes(query)),
-      )
-    : scopedEntries
+  const orderedEntries = useMemo(
+    () =>
+      [...state.auditLogs].sort((left, right) =>
+        right.changedAt.localeCompare(left.changedAt),
+      ),
+    [state.auditLogs],
+  )
+  const scopedEntries = useMemo(
+    () =>
+      orderedEntries.filter((entry) =>
+        departmentFilter === 'all' ? true : entry.departmentId === departmentFilter,
+      ),
+    [orderedEntries, departmentFilter],
+  )
+  const entries = useMemo(
+    () =>
+      query
+        ? scopedEntries.filter((entry) =>
+            [
+              entry.fieldLabel,
+              entry.changedByName,
+              formatAuditValue(entry.oldValue),
+              formatAuditValue(entry.newValue),
+            ].some((value) => String(value).toLowerCase().includes(query)),
+          )
+        : scopedEntries,
+    [scopedEntries, query],
+  )
+
+  // Render a bounded window of rows. The full filtered set still drives the
+  // count chip and the search; "Show more" reveals additional pages so a large
+  // history never mounts thousands of expandable rows at once.
+  const [visibleCount, setVisibleCount] = useState(AUDIT_LOG_PAGE_SIZE)
+  // Collapse back to the first page whenever the filter/search changes, using
+  // the during-render reset pattern (no effect, so no cascading-render churn).
+  const filterKey = `${departmentFilter}:${query}`
+  const [lastFilterKey, setLastFilterKey] = useState(filterKey)
+  if (filterKey !== lastFilterKey) {
+    setLastFilterKey(filterKey)
+    setVisibleCount(AUDIT_LOG_PAGE_SIZE)
+  }
+  const visibleEntries = useMemo(
+    () => entries.slice(0, visibleCount),
+    [entries, visibleCount],
+  )
 
   const departmentOptions = [
     { value: 'all', label: 'All departments' },
@@ -570,7 +604,7 @@ export function AuditLogPage() {
                 <span className="w-40 shrink-0 text-right">By · When</span>
               </div>
 
-              {entries.map((entry) => {
+              {visibleEntries.map((entry) => {
                 const department =
                   departments.find((candidate) => candidate.id === entry.departmentId) ?? null
                 const templateName = templateMap[entry.templateId]?.name ?? 'Template'
@@ -664,6 +698,18 @@ export function AuditLogPage() {
                   </div>
                 )
               })}
+
+              {entries.length > visibleEntries.length ? (
+                <div className="flex items-center justify-center border-t border-[#eef2f6] bg-[#f7f9fc] px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount((count) => count + AUDIT_LOG_PAGE_SIZE)}
+                    className="rounded-[0.3rem] px-3 py-1.5 text-xs font-semibold text-[#005db6] outline-none transition-colors hover:bg-[#edf4fb] focus-visible:bg-[#edf4fb]"
+                  >
+                    Show more ({formatCompactNumber(entries.length - visibleEntries.length)} older)
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-6 text-center">

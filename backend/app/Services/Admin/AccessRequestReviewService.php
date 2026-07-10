@@ -6,6 +6,7 @@ use App\Models\AccessRequest;
 use App\Models\Notification;
 use App\Models\ReportAssignment;
 use App\Models\User;
+use App\Services\Analytics\DashboardAnalyticsService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -13,6 +14,7 @@ class AccessRequestReviewService
 {
     public function __construct(
         private readonly AdminAuditService $auditService,
+        private readonly DashboardAnalyticsService $dashboardAnalytics,
     ) {}
 
     public function review(User $actor, AccessRequest $accessRequest, string $decision): AccessRequest
@@ -25,7 +27,7 @@ class AccessRequestReviewService
             ]);
         }
 
-        return DB::transaction(function () use ($actor, $accessRequest, $decision): AccessRequest {
+        $reviewedRequest = DB::transaction(function () use ($actor, $accessRequest, $decision): AccessRequest {
             $lockedRequest = AccessRequest::query()
                 ->with(['user', 'items.department', 'items.template'])
                 ->lockForUpdate()
@@ -76,6 +78,12 @@ class AccessRequestReviewService
 
             return $lockedRequest->refresh()->load(['user', 'reviewer', 'items.department', 'items.template']);
         });
+
+        if ($decision === 'approved') {
+            $this->dashboardAnalytics->invalidate();
+        }
+
+        return $reviewedRequest;
     }
 
     private function notifyRequester(User $actor, AccessRequest $accessRequest, string $decision): void

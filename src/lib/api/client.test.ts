@@ -58,4 +58,38 @@ describe('LaravelApiClient query serialization', () => {
     expect(requestedUrl).not.toContain('skip')
     expect(requestedUrl).not.toContain('cursor')
   })
+
+  it('retries a transient GET failure once', async () => {
+    fetchMock
+      .mockReset()
+      .mockResolvedValueOnce({
+        status: 503,
+        ok: false,
+        text: async () => JSON.stringify({ message: 'Temporarily unavailable' }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        text: async () => JSON.stringify({ ok: true }),
+      })
+
+    const client = new LaravelApiClient('http://127.0.0.1:8000')
+
+    await expect(client.get('/api/analytics/dashboard')).resolves.toEqual({ ok: true })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not retry an unsafe request', async () => {
+    fetchMock
+      .mockReset()
+      .mockResolvedValueOnce({ status: 204, ok: true })
+      .mockRejectedValueOnce(new TypeError('Network unavailable'))
+
+    const client = new LaravelApiClient('http://127.0.0.1:8000')
+
+    await expect(client.post('/api/reports', { values: {} })).rejects.toThrow('Network unavailable')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/sanctum/csrf-cookie')
+    expect(String(fetchMock.mock.calls[1][0])).toContain('/api/reports')
+  })
 })

@@ -10,7 +10,9 @@ use App\Models\ReportFieldValue;
 use App\Models\ReportingPeriod;
 use App\Models\ReportTemplate;
 use App\Models\User;
+use App\Services\Analytics\DashboardAnalyticsService;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
 /**
@@ -29,6 +31,10 @@ use Illuminate\Support\Str;
  */
 class DevClinicalDataSeeder extends Seeder
 {
+    private const HISTORY_PERIOD_COUNT = 26;
+
+    private const INSERT_BATCH_SIZE = 1000;
+
     /** Stored statuses only (not_started / overdue are derived from missing reports). */
     private const STATUS_CYCLE = [
         'submitted',
@@ -102,11 +108,12 @@ class DevClinicalDataSeeder extends Seeder
             ->get()
             ->groupBy('template_id');
 
-        // The 8 most recent periods that have already started (the visible window).
+        // Six months gives weekly, monthly and quarterly charts realistic depth
+        // while remaining safe under the 128 MB PHP limit used in local dev.
         $periods = ReportingPeriod::query()
             ->whereDate('week_start', '<=', now())
             ->orderByDesc('week_start')
-            ->limit(8)
+            ->limit(self::HISTORY_PERIOD_COUNT)
             ->get()
             ->reverse()
             ->values();
@@ -118,6 +125,7 @@ class DevClinicalDataSeeder extends Seeder
         }
 
         $valueRows = [];
+        $valueCount = 0;
         $reportCount = 0;
         $now = now();
 
@@ -164,27 +172,36 @@ class DevClinicalDataSeeder extends Seeder
 
                 ReportFieldValue::query()->where('report_id', $report->id)->delete();
 
-                // A gentle week-over-week trend so charts have shape, not flat noise.
-                $trend = 0.9 + 0.025 * $periodIndex;
+                // A gentle year-long trend so charts have shape without doubling
+                // volumes simply because the configured history window is larger.
+                $trend = 0.88 + (0.24 * $periodIndex / max($periods->count() - 1, 1));
 
                 foreach ($days as $day) {
                     $map = $this->dailyValues($templateSlug, $department, $staff, $trend);
 
                     foreach ($defs as $def) {
                         $valueRows[] = $this->valueRow($report->id, $def, $day, $map, $staff, $now);
+                        $valueCount++;
+
+                        if (count($valueRows) >= self::INSERT_BATCH_SIZE) {
+                            ReportFieldValue::query()->insert($valueRows);
+                            $valueRows = [];
+                        }
                     }
                 }
             }
         }
 
-        foreach (array_chunk($valueRows, 1000) as $chunk) {
-            ReportFieldValue::query()->insert($chunk);
+        if ($valueRows !== []) {
+            ReportFieldValue::query()->insert($valueRows);
         }
+
+        app(DashboardAnalyticsService::class)->invalidate();
 
         $this->command?->info(sprintf(
             'Seeded %d reports and %d field values across %d departments x up to %d periods.',
             $reportCount,
-            count($valueRows),
+            $valueCount,
             $departments->count(),
             $periods->count(),
         ));
@@ -413,7 +430,7 @@ class DevClinicalDataSeeder extends Seeder
      * @param  array{nurse: string, resident: string, physician: string}  $staff
      * @return array<string, mixed>
      */
-    private function valueRow(string $reportId, ReportFieldDefinition $def, string $day, array $map, array $staff, \Illuminate\Support\Carbon $now): array
+    private function valueRow(string $reportId, ReportFieldDefinition $def, string $day, array $map, array $staff, Carbon $now): array
     {
         $row = [
             'id' => (string) Str::uuid(),

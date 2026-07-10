@@ -13,7 +13,11 @@ type AuthListener = (event: AuthEvent, session: ApiSession | null) => void
 type RequestOptions = Omit<RequestInit, 'body'> & {
   body?: unknown
   query?: Record<string, string | number | boolean | null | undefined>
+  timeoutMs?: number
 }
+
+const DEFAULT_GET_TIMEOUT_MS = 15_000
+const TRANSIENT_GET_STATUSES = new Set([502, 503, 504])
 
 export class ApiError extends Error {
   readonly status: number
@@ -181,35 +185,83 @@ export class LaravelApiClient {
       }
     }
 
-    const response = await fetch(this.url(path, options.query), {
-      ...options,
-      method,
-      headers,
-      body,
-      credentials: 'include',
-    })
+    const {
+      query,
+      timeoutMs = method.toUpperCase() === 'GET' ? DEFAULT_GET_TIMEOUT_MS : 0,
+      ...requestInit
+    } = options
+    const isRetryableGet = method.toUpperCase() === 'GET'
+    const maxAttempts = isRetryableGet ? 2 : 1
 
-    if (response.status === 204) {
-      return null as T
-    }
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const timeoutController = !requestInit.signal && timeoutMs > 0 ? new AbortController() : null
+      const timeoutId = timeoutController
+        ? window.setTimeout(() => timeoutController.abort(), timeoutMs)
+        : null
 
-    const payload = await this.parseResponse(response)
+      try {
+        const response = await fetch(this.url(path, query), {
+          ...requestInit,
+          method,
+          headers,
+          body,
+          credentials: 'include',
+          signal: requestInit.signal ?? timeoutController?.signal,
+        })
 
-    if (!response.ok) {
-      // A mid-session 401 (session expired) or 419 (CSRF/session token mismatch)
-      // on a non-auth endpoint means the Sanctum session is no longer valid.
-      // markSignedOut() drops the cached CSRF readiness (so the next unsafe
-      // request re-primes /sanctum/csrf-cookie) and redirects to /login, instead
-      // of stranding the user on an authenticated shell where every write 401/419s.
-      // Auth endpoints (/api/auth/me, /login) handle their own statuses.
-      if ((response.status === 401 || response.status === 419) && !path.startsWith('/api/auth/')) {
-        this.markSignedOut()
+        if (TRANSIENT_GET_STATUSES.has(response.status) && attempt + 1 < maxAttempts) {
+          await this.retryDelay(attempt)
+          continue
+        }
+
+        if (response.status === 204) {
+          return null as T
+        }
+
+        const payload = await this.parseResponse(response)
+
+        if (!response.ok) {
+          // A mid-session 401 (session expired) or 419 (CSRF/session token mismatch)
+          // on a non-auth endpoint means the Sanctum session is no longer valid.
+          // markSignedOut() drops the cached CSRF readiness (so the next unsafe
+          // request re-primes /sanctum/csrf-cookie) and redirects to /login, instead
+          // of stranding the user on an authenticated shell where every write 401/419s.
+          // Auth endpoints (/api/auth/me, /login) handle their own statuses.
+          if ((response.status === 401 || response.status === 419) && !path.startsWith('/api/auth/')) {
+            this.markSignedOut()
+          }
+
+          throw new ApiError(this.errorMessage(payload, response), response.status, payload)
+        }
+
+        return payload as T
+      } catch (error) {
+        if (error instanceof ApiError) {
+          throw error
+        }
+
+        if (attempt + 1 < maxAttempts) {
+          await this.retryDelay(attempt)
+          continue
+        }
+
+        if (timeoutController?.signal.aborted) {
+          throw new ApiError('The server took too long to respond. Please try again.', 408)
+        }
+
+        throw error
+      } finally {
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId)
+        }
       }
-
-      throw new ApiError(this.errorMessage(payload, response), response.status, payload)
     }
 
-    return payload as T
+    throw new ApiError('The API request failed.', 500)
+  }
+
+  private async retryDelay(attempt: number) {
+    await new Promise((resolve) => window.setTimeout(resolve, 200 * (attempt + 1)))
   }
 
   private async ensureCsrfCookie() {

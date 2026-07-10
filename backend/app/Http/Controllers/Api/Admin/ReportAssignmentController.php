@@ -9,6 +9,7 @@ use App\Models\ReportAssignment;
 use App\Models\ReportTemplate;
 use App\Models\User;
 use App\Services\Admin\AdminAuditService;
+use App\Services\Analytics\DashboardAnalyticsService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,6 +22,7 @@ class ReportAssignmentController extends Controller
 
     public function __construct(
         private readonly AdminAuditService $auditService,
+        private readonly DashboardAnalyticsService $dashboardAnalytics,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -105,6 +107,7 @@ class ReportAssignmentController extends Controller
 
         $assignment->load(['nurse', 'department', 'template', 'approver']);
         $this->auditService->record($request->user(), 'upsert', 'report_assignment', $assignment->id, null, $this->assignmentAuditValues($assignment), $request);
+        $this->dashboardAnalytics->invalidate();
 
         return response()->json($this->serializeAssignment($assignment), $assignment->wasRecentlyCreated ? 201 : 200);
     }
@@ -124,6 +127,7 @@ class ReportAssignmentController extends Controller
 
         $assignment->refresh()->load(['nurse', 'department', 'template', 'approver']);
         $this->auditService->record($request->user(), 'update', 'report_assignment', $assignment->id, $oldValues, $this->assignmentAuditValues($assignment), $request);
+        $this->dashboardAnalytics->invalidate();
 
         return response()->json($this->serializeAssignment($assignment));
     }
@@ -137,6 +141,7 @@ class ReportAssignmentController extends Controller
         $assignment->refresh()->load(['nurse', 'department', 'template', 'approver']);
 
         $this->auditService->record($request->user(), 'deactivate', 'report_assignment', $assignment->id, $oldValues, $this->assignmentAuditValues($assignment), $request);
+        $this->dashboardAnalytics->invalidate();
 
         return response()->json($this->serializeAssignment($assignment));
     }

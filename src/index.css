@@ -1,10 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 :root {
   color: #091223;
   background: #f8f9fa;
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-family: 'Segoe UI Variable', 'Segoe UI', Arial, sans-serif;
   --brand-primary: #005db6;
   --brand-primary-strong: #00468c;
   --brand-accent: #f0b429;
@@ -31,8 +30,8 @@
 }
 
 @theme {
-  --font-sans: 'Plus Jakarta Sans', sans-serif;
-  --font-display: 'Manrope', sans-serif;
+  --font-sans: 'Segoe UI Variable', 'Segoe UI', Arial, sans-serif;
+  --font-display: 'Aptos Display', 'Segoe UI Variable Display', 'Segoe UI', Arial, sans-serif;
 }
 
 * {

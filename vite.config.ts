@@ -45,6 +45,14 @@ export default defineConfig({
       '/sanctum': { target: 'http://127.0.0.1:8000', changeOrigin: false },
     },
   },
+  // `vite preview` serves the production build; mirror the dev proxy so the
+  // minified bundle can be exercised locally against the same Laravel API.
+  preview: {
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:8000', changeOrigin: false },
+      '/sanctum': { target: 'http://127.0.0.1:8000', changeOrigin: false },
+    },
+  },
   build: {
     rollupOptions: {
       output: {
