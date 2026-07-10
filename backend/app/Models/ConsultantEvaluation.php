@@ -14,6 +14,8 @@ class ConsultantEvaluation extends Model
         'author_id',
         'subject_id',
         'ward_id',
+        'ward_ref_id',
+        'placement_type',
         'evaluation_date',
         'senior_present',
         'senior_joined_at',
@@ -77,5 +79,11 @@ class ConsultantEvaluation extends Model
     public function ward(): BelongsTo
     {
         return $this->belongsTo(Department::class, 'ward_id');
+    }
+
+    /** Snapshot of the physical teaching ward the round happened on. */
+    public function wardRef(): BelongsTo
+    {
+        return $this->belongsTo(Ward::class, 'ward_ref_id');
     }
 }

@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\ConsultantEvaluation;
 use App\Models\Department;
+use App\Models\DutyAssignment;
+use App\Models\DutyType;
 use App\Models\ResidentEvaluation;
 use App\Models\User;
 use Database\Seeders\DepartmentSeeder;
@@ -36,13 +38,27 @@ class AcademicEvaluationApiTest extends TestCase
 
         $this->resident = User::factory()->role('resident', 'Resident')->create([
             'full_name' => 'Dr. R. Bekele',
-            'home_ward_id' => $this->ward->id,
         ]);
         $this->consultant = User::factory()->role('consultant', 'Consultant')->create([
             'full_name' => 'Dr. C. Tesfaye',
-            'home_ward_id' => $this->ward->id,
         ]);
         $this->admin = User::factory()->role('admin', 'Administrator')->create();
+
+        // Phase 3 eligibility: evaluations are gated by shared duty placement,
+        // not by a static home ward. Put both actors on the GI/Neurology ward
+        // service across the dates the tests submit for.
+        $wardService = DutyType::query()->where('slug', 'gastroenterology_ward_service')->firstOrFail();
+
+        foreach ([$this->resident, $this->consultant] as $user) {
+            DutyAssignment::query()->create([
+                'user_id' => $user->id,
+                'duty_type_id' => $wardService->id,
+                'starts_on' => now()->subDays(20)->toDateString(),
+                'ends_on' => now()->addDays(20)->toDateString(),
+                'source' => 'admin',
+                'created_by' => $this->admin->id,
+            ]);
+        }
     }
 
     public function test_resident_can_submit_a_consultant_evaluation_and_score_is_computed(): void
@@ -166,16 +182,29 @@ class AcademicEvaluationApiTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_form_options_returns_the_opposite_role_users(): void
+    public function test_form_options_returns_only_paired_opposite_role_users(): void
     {
-        // A resident requesting form options sees consultants as subjects.
+        // A consultant on a DIFFERENT ward must not appear as a subject.
+        $elsewhere = User::factory()->role('consultant', 'Consultant')->create();
+        DutyAssignment::query()->create([
+            'user_id' => $elsewhere->id,
+            'duty_type_id' => DutyType::query()->where('slug', 'pulmonology_ward_service')->firstOrFail()->id,
+            'starts_on' => now()->subDays(20)->toDateString(),
+            'ends_on' => now()->addDays(20)->toDateString(),
+            'source' => 'admin',
+            'created_by' => $this->admin->id,
+        ]);
+
+        // A resident requesting form options sees only the ward-mates, plus
+        // their own current placement as form context.
         $this->actingAs($this->resident)
             ->getJson('/api/academic/form-options')
             ->assertOk()
             ->assertJsonPath('subjects.0.id', $this->consultant->id)
             ->assertJsonPath('subjects.0.fullName', $this->consultant->full_name)
             ->assertJsonCount(1, 'subjects')
-            ->assertJsonPath('subjects.0.homeWardName', $this->ward->name);
+            ->assertJsonPath('currentPlacement.dutyTypeName', 'Gastroenterology Ward Service')
+            ->assertJsonPath('currentPlacement.wardName', 'Gastroenterology/Neurology Ward');
 
         // A consultant sees residents as subjects.
         $this->actingAs($this->consultant)

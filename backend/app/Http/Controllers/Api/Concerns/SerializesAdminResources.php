@@ -198,7 +198,7 @@ trait SerializesAdminResources
      */
     protected function serializeConsultantEvaluation(ConsultantEvaluation $evaluation): array
     {
-        $evaluation->loadMissing(['author', 'subject', 'ward']);
+        $evaluation->loadMissing(['author', 'subject', 'ward', 'wardRef']);
 
         return [
             'id' => $evaluation->id,
@@ -207,7 +207,10 @@ trait SerializesAdminResources
             'subjectId' => $evaluation->subject_id,
             'subjectName' => $evaluation->subject?->full_name,
             'wardId' => $evaluation->ward_id,
-            'wardName' => $evaluation->ward?->name,
+            // Snapshot ward: the department name where one resolves, else the
+            // physical teaching ward, else the placement kind (OPD etc.).
+            'wardName' => $evaluation->ward?->name ?? $evaluation->wardRef?->name,
+            'placementType' => $evaluation->placement_type,
             'evaluationDate' => $evaluation->evaluation_date?->toJSON(),
             'seniorPresent' => (bool) $evaluation->senior_present,
             'seniorJoinedAt' => $this->formatClockTime($evaluation->senior_joined_at),
@@ -234,16 +237,22 @@ trait SerializesAdminResources
      */
     protected function serializeResidentEvaluation(ResidentEvaluation $evaluation): array
     {
-        $evaluation->loadMissing(['author', 'subject', 'ward']);
+        $evaluation->loadMissing(['author', 'subject', 'ward', 'wardRef']);
 
         return [
             'id' => $evaluation->id,
             'authorId' => $evaluation->author_id,
-            'authorName' => $evaluation->author?->full_name,
+            // Externally-sourced rows have no author account; show the paper
+            // evaluator's name instead.
+            'authorName' => $evaluation->author?->full_name ?? $evaluation->external_evaluator_name,
+            'external' => $evaluation->author_id === null,
+            'externalEvaluatorName' => $evaluation->external_evaluator_name,
+            'externalEvaluatorDepartment' => $evaluation->external_evaluator_department,
             'subjectId' => $evaluation->subject_id,
             'subjectName' => $evaluation->subject?->full_name,
             'wardId' => $evaluation->ward_id,
-            'wardName' => $evaluation->ward?->name,
+            'wardName' => $evaluation->ward?->name ?? $evaluation->wardRef?->name,
+            'placementType' => $evaluation->placement_type,
             'evaluationDate' => $evaluation->evaluation_date?->toJSON(),
             'onTime' => (bool) $evaluation->on_time,
             'prepared' => (bool) $evaluation->prepared,

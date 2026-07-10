@@ -14,6 +14,11 @@ class ResidentEvaluation extends Model
         'author_id',
         'subject_id',
         'ward_id',
+        'ward_ref_id',
+        'placement_type',
+        'external_evaluator_name',
+        'external_evaluator_department',
+        'entered_by_id',
         'evaluation_date',
         'on_time',
         'prepared',
@@ -80,5 +85,22 @@ class ResidentEvaluation extends Model
     public function ward(): BelongsTo
     {
         return $this->belongsTo(Department::class, 'ward_id');
+    }
+
+    /** Snapshot of the physical teaching ward the round happened on. */
+    public function wardRef(): BelongsTo
+    {
+        return $this->belongsTo(Ward::class, 'ward_ref_id');
+    }
+
+    /** The admin who typed an externally-sourced (paper) evaluation. */
+    public function enteredBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'entered_by_id');
+    }
+
+    public function isExternal(): bool
+    {
+        return $this->author_id === null;
     }
 }

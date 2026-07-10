@@ -18,8 +18,10 @@ import type {
   SubmitAcademicRegistrationPayload,
 } from '@/lib/api/types'
 
-export function fetchAcademicFormOptions(client: LaravelApiClient) {
-  return client.get<AcademicFormOptions>('/api/academic/form-options')
+export function fetchAcademicFormOptions(client: LaravelApiClient, date?: string) {
+  return client.get<AcademicFormOptions>('/api/academic/form-options', {
+    query: date ? { date } : undefined,
+  })
 }
 
 export function submitConsultantEvaluation(
@@ -117,4 +119,49 @@ export function listAcademicEvaluations(
 /** Chronological evaluation-activity feed for the admin Audit Log (academic workspace). */
 export function fetchAcademicAuditTrail(client: LaravelApiClient) {
   return client.get<AcademicAuditResponse>('/api/admin/academic/audit')
+}
+
+/** The external duties whose host departments send paper evaluations (V2 Phase 3). */
+export const EXTERNAL_PLACEMENT_OPTIONS = [
+  { value: 'icu', label: 'ICU' },
+  { value: 'emergency', label: 'Emergency' },
+  { value: 'dermatology', label: 'Dermatology' },
+  { value: 'radiology', label: 'Radiology' },
+  { value: 'psychiatry', label: 'Psychiatry' },
+  { value: 'zewditu', label: 'Zewditu Memorial Hospital' },
+  { value: 'saint_peter', label: 'Saint Peter Specialized Hospital' },
+] as const
+
+export type SubmitExternalEvaluationPayload = {
+  subjectId: string
+  evaluationDate: string
+  placement: string
+  evaluatorName: string
+  evaluatorDepartment?: string | null
+  onTime: boolean
+  prepared: boolean
+  presentationClear: boolean
+  clinicalReasoning: boolean
+  managementPlan: boolean
+  documentationTimely: boolean
+  communication: boolean
+  professional: boolean
+  responsiveFeedback: boolean
+  followThrough: boolean
+  overallRating: number
+  comment?: string | null
+}
+
+/**
+ * Admin entry of an externally-sourced paper evaluation. The row carries the
+ * external evaluator's name instead of an author account.
+ */
+export function submitExternalEvaluation(
+  client: LaravelApiClient,
+  payload: SubmitExternalEvaluationPayload,
+) {
+  return client.post<ResidentEvaluationRecord>(
+    '/api/admin/academic/external-evaluations',
+    payload,
+  )
 }

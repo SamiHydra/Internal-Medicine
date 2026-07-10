@@ -204,22 +204,30 @@ export type AcademicRole = 'resident' | 'consultant'
 export type AcademicGranularity = 'weekly' | 'monthly'
 
 export type AcademicFormOptions = {
+  /** The date the eligibility was resolved for (defaults to today). */
+  date: string
+  // Only the people the author shares a ward or paired duty with on `date`
+  // (V2 Phase 3): the server never returns anyone else, and the client never
+  // filters.
   subjects: Array<{
     id: string
     fullName: string
-    homeWardId: string | null
-    homeWardName: string | null
   }>
   wards: Array<{
     id: string
     name: string
     slug: string
   }>
+  currentPlacement: {
+    dutyTypeName: string | null
+    wardId: string | null
+    wardName: string | null
+    endsOn: string | null
+  } | null
 }
 
 export type SaveConsultantEvaluationPayload = {
   evaluationDate: string
-  wardId: string
   subjectId: string
   seniorPresent: boolean
   seniorJoinedAt?: string | null
@@ -267,7 +275,6 @@ export type ConsultantEvaluationRecord = {
 
 export type SaveResidentEvaluationPayload = {
   evaluationDate: string
-  wardId: string
   subjectId: string
   onTime: boolean
   prepared: boolean

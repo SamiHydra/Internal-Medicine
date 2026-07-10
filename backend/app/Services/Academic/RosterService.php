@@ -2,9 +2,11 @@
 
 namespace App\Services\Academic;
 
+use App\Models\Department;
 use App\Models\DutyAssignment;
 use App\Models\DutyType;
 use App\Models\User;
+use App\Models\Ward;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -112,6 +114,53 @@ final class RosterService
             })
             ->orderBy('full_name')
             ->get();
+    }
+
+    /**
+     * The SNAPSHOT an evaluation permanently stores: the shared placement of
+     * author and subject on $date, resolved server-side (never trusted from
+     * the client) and never recomputed later, because people rotate. Ward
+     * pairings win over group pairings when both exist. `legacy_ward_id` is a
+     * best-effort department reference for the pre-Phase-4 analytics: the
+     * first active reporting unit on that physical ward (deterministic by
+     * slug), null for group placements.
+     *
+     * @return array{ward_ref_id: ?string, placement_type: string, legacy_ward_id: ?string}|null
+     */
+    public function sharedPlacementFor(User $author, User $subject, CarbonInterface $date): ?array
+    {
+        $shared = array_values(array_intersect(
+            $this->pairingKeysFor($author, $date),
+            $this->pairingKeysFor($subject, $date),
+        ));
+
+        if ($shared === []) {
+            return null;
+        }
+
+        usort($shared, fn (string $a, string $b) => (int) str_starts_with($b, 'ward:') <=> (int) str_starts_with($a, 'ward:'));
+        $key = $shared[0];
+
+        if (str_starts_with($key, 'group:')) {
+            return [
+                'ward_ref_id' => null,
+                'placement_type' => substr($key, 6),
+                'legacy_ward_id' => null,
+            ];
+        }
+
+        $wardId = substr($key, 5);
+        $ward = Ward::query()->find($wardId);
+
+        return [
+            'ward_ref_id' => $wardId,
+            'placement_type' => $ward?->slug === 'transition_ward' ? 'transition' : 'ward',
+            'legacy_ward_id' => Department::query()
+                ->where('ward_id', $wardId)
+                ->where('active', true)
+                ->orderBy('slug')
+                ->value('id'),
+        ];
     }
 
     /**

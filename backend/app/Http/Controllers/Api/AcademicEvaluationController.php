@@ -5,13 +5,15 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Api\Concerns\SerializesAdminResources;
 use App\Http\Controllers\Controller;
 use App\Models\ConsultantEvaluation;
-use App\Models\Department;
 use App\Models\ResidentEvaluation;
 use App\Models\User;
+use App\Models\Ward;
 use App\Services\Academic\AcademicAnalyticsFilters;
 use App\Services\Academic\AcademicAnalyticsService;
+use App\Services\Academic\RosterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -32,6 +34,7 @@ class AcademicEvaluationController extends Controller
 
     public function __construct(
         private readonly AcademicAnalyticsService $analytics,
+        private readonly RosterService $roster,
     ) {}
 
     public function formOptions(Request $request): JsonResponse
@@ -39,38 +42,46 @@ class AcademicEvaluationController extends Controller
         // Second authz layer (the route also enforces permission:academic.submit).
         Gate::authorize('create', ConsultantEvaluation::class);
 
+        $validated = $request->validate([
+            'date' => ['sometimes', 'date', 'before_or_equal:today'],
+        ]);
+
         $user = $request->user();
+        $date = isset($validated['date']) ? Carbon::parse($validated['date']) : now();
         $oppositeRole = $this->oppositeRole($user->role_key);
 
+        // Only the people the author actually overlaps with in a ward or
+        // paired duty on that date. Rotation changes shift this automatically.
         $subjects = $oppositeRole === null
             ? collect()
-            : User::query()
-                ->where('role_key', $oppositeRole)
-                ->where('active', true)
-                ->with('homeWard')
-                ->orderBy('full_name')
-                ->get()
+            : $this->roster->peersFor($user, $date, $oppositeRole)
                 ->map(fn (User $subject) => [
                     'id' => $subject->id,
                     'fullName' => $subject->full_name,
-                    'homeWardId' => $subject->home_ward_id,
-                    'homeWardName' => $subject->homeWard?->name,
                 ]);
 
-        $wards = Department::query()
-            ->where('family', 'inpatient')
+        $wards = Ward::query()
             ->where('active', true)
             ->orderBy('name')
             ->get()
-            ->map(fn (Department $ward) => [
+            ->map(fn (Ward $ward) => [
                 'id' => $ward->id,
                 'name' => $ward->name,
                 'slug' => $ward->slug,
             ]);
 
+        $placement = $this->roster->assignmentFor($user, $date);
+
         return response()->json([
+            'date' => $date->toDateString(),
             'subjects' => $subjects->values(),
             'wards' => $wards->values(),
+            'currentPlacement' => $placement === null ? null : [
+                'dutyTypeName' => $placement->dutyType?->name,
+                'wardId' => $placement->dutyType?->ward_id,
+                'wardName' => $placement->dutyType?->ward?->name,
+                'endsOn' => $placement->ends_on?->toDateString(),
+            ],
         ]);
     }
 
@@ -87,7 +98,9 @@ class AcademicEvaluationController extends Controller
 
         $validated = Validator::make($this->normalize($request), [
             'evaluation_date' => ['required', 'date', 'before_or_equal:today'],
-            'ward_id' => ['required', 'uuid', 'exists:departments,id'],
+            // Accepted for backwards compatibility but IGNORED: the ward is
+            // snapshotted server-side from the shared duty placement.
+            'ward_id' => ['sometimes', 'nullable', 'uuid'],
             'subject_id' => ['required', 'uuid', 'exists:users,id'],
             'senior_present' => ['required', 'boolean'],
             'senior_joined_at' => ['nullable', 'date_format:H:i'],
@@ -114,10 +127,17 @@ class AcademicEvaluationController extends Controller
             ]);
         }
 
+        $placement = $this->assertPairedPlacement($request->user(), $subject, $validated['evaluation_date']);
+
+        // Authorization in depth: the policy re-checks the same pairing rule.
+        Gate::authorize('create', [ConsultantEvaluation::class, $subject, $validated['evaluation_date']]);
+
         $evaluation = ConsultantEvaluation::query()->create([
             'author_id' => $request->user()->id,
             'subject_id' => $subject->id,
-            'ward_id' => $validated['ward_id'],
+            'ward_id' => $placement['legacy_ward_id'],
+            'ward_ref_id' => $placement['ward_ref_id'],
+            'placement_type' => $placement['placement_type'],
             'evaluation_date' => $validated['evaluation_date'],
             'senior_present' => $validated['senior_present'],
             'senior_joined_at' => $validated['senior_joined_at'] ?? null,
@@ -151,7 +171,9 @@ class AcademicEvaluationController extends Controller
 
         $validated = Validator::make($this->normalize($request), [
             'evaluation_date' => ['required', 'date', 'before_or_equal:today'],
-            'ward_id' => ['required', 'uuid', 'exists:departments,id'],
+            // Accepted for backwards compatibility but IGNORED: the ward is
+            // snapshotted server-side from the shared duty placement.
+            'ward_id' => ['sometimes', 'nullable', 'uuid'],
             'subject_id' => ['required', 'uuid', 'exists:users,id'],
             'on_time' => ['required', 'boolean'],
             'prepared' => ['required', 'boolean'],
@@ -176,10 +198,17 @@ class AcademicEvaluationController extends Controller
             ]);
         }
 
+        $placement = $this->assertPairedPlacement($request->user(), $subject, $validated['evaluation_date']);
+
+        // Authorization in depth: the policy re-checks the same pairing rule.
+        Gate::authorize('create', [ResidentEvaluation::class, $subject, $validated['evaluation_date']]);
+
         $evaluation = ResidentEvaluation::query()->create([
             'author_id' => $request->user()->id,
             'subject_id' => $subject->id,
-            'ward_id' => $validated['ward_id'],
+            'ward_id' => $placement['legacy_ward_id'],
+            'ward_ref_id' => $placement['ward_ref_id'],
+            'placement_type' => $placement['placement_type'],
             'evaluation_date' => $validated['evaluation_date'],
             'on_time' => $validated['on_time'],
             'prepared' => $validated['prepared'],
@@ -264,6 +293,26 @@ class AcademicEvaluationController extends Controller
             'summary' => $this->analytics->summary($filters),
             'trend' => $this->analytics->trend($filters),
         ]);
+    }
+
+    /**
+     * The Phase 3 eligibility rule: author and subject must share a pairing
+     * key (same ward, or same pairing group such as OPD) on the evaluation
+     * date. Returns the resolved placement snapshot to store on the row.
+     *
+     * @return array{ward_ref_id: ?string, placement_type: string, legacy_ward_id: ?string}
+     */
+    private function assertPairedPlacement(User $author, User $subject, string $date): array
+    {
+        $placement = $this->roster->sharedPlacementFor($author, $subject, Carbon::parse($date));
+
+        if ($placement === null) {
+            throw ValidationException::withMessages([
+                'subjectId' => 'You and this person were not assigned to the same ward or duty on that date.',
+            ]);
+        }
+
+        return $placement;
     }
 
     private function oppositeRole(string $roleKey): ?string

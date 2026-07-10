@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { AcademicEvaluationDetailSheet } from '@/components/admin/academic-evaluation-detail-sheet'
+import { ExternalEvaluationPanel } from '@/components/admin/external-evaluation-panel'
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { TableSkeleton } from '@/components/layout/loading-skeletons'
 import {
@@ -104,6 +105,8 @@ export function AcademicSubmissionsPage() {
   const [lastPage, setLastPage] = useState(1)
   const [, setTotal] = useState(0)
   const [selectedRecord, setSelectedRecord] = useState<AcademicEvaluationRecord | null>(null)
+  // Bumped after an external evaluation is recorded so the list reloads.
+  const [refreshKey, setRefreshKey] = useState(0)
 
   const [error, setError] = useState<string | null>(() =>
     client ? null : `The Laravel API is not configured. ${apiEnvSetupHint}`,
@@ -206,7 +209,7 @@ export function AcademicSubmissionsPage() {
     return () => {
       active = false
     }
-  }, [client, direction, wardId, person, dateRange, page])
+  }, [client, direction, wardId, person, dateRange, page, refreshKey])
 
   const wardOptions = useMemo(
     () => [{ value: ALL, label: 'All wards' }, ...wards.map((ward) => ({ value: ward.id, label: ward.name }))],
@@ -304,6 +307,14 @@ export function AcademicSubmissionsPage() {
           />
         </div>
       </motion.section>
+
+      <ExternalEvaluationPanel
+        onRecorded={() => {
+          setDirection('resident')
+          setPage(1)
+          setRefreshKey((key) => key + 1)
+        }}
+      />
 
       {error ? (
         <div className="rounded-[0.35rem] border border-[#f3cccc] bg-[#fceeee] px-5 py-10 text-center text-sm font-medium text-[#ba1a1a]">

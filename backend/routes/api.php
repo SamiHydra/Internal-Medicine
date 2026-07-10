@@ -166,6 +166,7 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
 
         Route::get('/academic/evaluations', [AdminAcademicEvaluationController::class, 'index'])->middleware('permission:academic.view');
         Route::get('/academic/audit', [AdminAcademicEvaluationController::class, 'audit'])->middleware('permission:academic.view');
+        Route::post('/academic/external-evaluations', [AdminAcademicEvaluationController::class, 'storeExternal'])->middleware('permission:academic.manage');
 
         // Academic structure (V2 Phase 1). Mounted under /academic/ because the
         // clinical pillar already aliases /admin/wards to inpatient departments.

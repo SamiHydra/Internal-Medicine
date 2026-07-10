@@ -6,15 +6,25 @@ use App\Http\Controllers\Api\Concerns\SerializesAdminResources;
 use App\Http\Controllers\Controller;
 use App\Models\ConsultantEvaluation;
 use App\Models\ResidentEvaluation;
+use App\Models\User;
+use App\Services\Admin\AdminAuditService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class AcademicEvaluationController extends Controller
 {
     use SerializesAdminResources;
+
+    /** The external duties whose host departments send paper evaluations. */
+    public const EXTERNAL_PLACEMENTS = ['icu', 'emergency', 'dermatology', 'radiology', 'psychiatry', 'zewditu', 'saint_peter'];
+
+    public function __construct(
+        private readonly AdminAuditService $auditService,
+    ) {}
 
     /**
      * Paginated raw list for tables and the per-person detail page. The
@@ -76,6 +86,81 @@ class AcademicEvaluationController extends Controller
     }
 
     /**
+     * Admin entry of an externally-sourced paper evaluation (V2 Phase 3): the
+     * host department (ICU, Emergency, an external hospital, ...) evaluated
+     * the resident on paper; an administrator types it in. The row carries the
+     * external evaluator's name and department instead of an author account,
+     * so no author_id is accepted, and no pairing check applies.
+     */
+    public function storeExternal(Request $request): JsonResponse
+    {
+        Gate::authorize('createExternal', ResidentEvaluation::class);
+
+        $validated = $request->validate([
+            'authorId' => ['prohibited'],
+            'author_id' => ['prohibited'],
+            'subjectId' => ['required', 'uuid', Rule::exists('users', 'id')],
+            'evaluationDate' => ['required', 'date', 'before_or_equal:today'],
+            'placement' => ['required', 'string', Rule::in(self::EXTERNAL_PLACEMENTS)],
+            'evaluatorName' => ['required', 'string', 'max:255'],
+            'evaluatorDepartment' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'onTime' => ['required', 'boolean'],
+            'prepared' => ['required', 'boolean'],
+            'presentationClear' => ['required', 'boolean'],
+            'clinicalReasoning' => ['required', 'boolean'],
+            'managementPlan' => ['required', 'boolean'],
+            'documentationTimely' => ['required', 'boolean'],
+            'communication' => ['required', 'boolean'],
+            'professional' => ['required', 'boolean'],
+            'responsiveFeedback' => ['required', 'boolean'],
+            'followThrough' => ['required', 'boolean'],
+            'overallRating' => ['required', 'integer', 'between:1,5'],
+            'comment' => ['sometimes', 'nullable', 'string', 'max:2000'],
+        ]);
+
+        $subject = User::query()->findOrFail($validated['subjectId']);
+
+        if ($subject->role_key !== 'resident') {
+            throw ValidationException::withMessages([
+                'subjectId' => ['External evaluations are recorded for residents.'],
+            ]);
+        }
+
+        $evaluation = ResidentEvaluation::query()->create([
+            'author_id' => null,
+            'subject_id' => $subject->id,
+            'ward_id' => null,
+            'ward_ref_id' => null,
+            'placement_type' => $validated['placement'],
+            'external_evaluator_name' => $validated['evaluatorName'],
+            'external_evaluator_department' => $validated['evaluatorDepartment'] ?? null,
+            'entered_by_id' => $request->user()->id,
+            'evaluation_date' => $validated['evaluationDate'],
+            'on_time' => $validated['onTime'],
+            'prepared' => $validated['prepared'],
+            'presentation_clear' => $validated['presentationClear'],
+            'clinical_reasoning' => $validated['clinicalReasoning'],
+            'management_plan' => $validated['managementPlan'],
+            'documentation_timely' => $validated['documentationTimely'],
+            'communication' => $validated['communication'],
+            'professional' => $validated['professional'],
+            'responsive_feedback' => $validated['responsiveFeedback'],
+            'follow_through' => $validated['followThrough'],
+            'overall_rating' => $validated['overallRating'],
+            'concerns' => [],
+            'comment' => $validated['comment'] ?? null,
+        ]);
+
+        $this->auditService->record($request->user(), 'create_external', 'resident_evaluation', $evaluation->id, null, [
+            'subjectId' => $subject->id,
+            'placement' => $validated['placement'],
+            'evaluatorName' => $validated['evaluatorName'],
+        ], $request);
+
+        return response()->json($this->serializeResidentEvaluation($evaluation), 201);
+    }
+
+    /**
      * Chronological "who evaluated whom" feed across both evaluation directions.
      * Evaluations are immutable, so this is a submission trail (no field diffs).
      * Admins see the evaluator identity — the anonymity rule only covers the
@@ -133,7 +218,7 @@ class AcademicEvaluationController extends Controller
         ResidentEvaluation|ConsultantEvaluation $evaluation,
         string $direction,
     ): array {
-        $evaluation->loadMissing(['author', 'subject', 'ward']);
+        $evaluation->loadMissing(['author', 'subject', 'ward', 'wardRef']);
 
         $scoreItems = $direction === 'resident'
             ? ResidentEvaluation::SCORE_ITEMS
@@ -146,11 +231,12 @@ class AcademicEvaluationController extends Controller
             'id' => $evaluation->id,
             'direction' => $direction,
             'authorId' => $evaluation->author_id,
-            'authorName' => $evaluation->author?->full_name,
+            'authorName' => $evaluation->author?->full_name
+                ?? ($evaluation instanceof ResidentEvaluation ? $evaluation->external_evaluator_name : null),
             'subjectId' => $evaluation->subject_id,
             'subjectName' => $evaluation->subject?->full_name,
             'wardId' => $evaluation->ward_id,
-            'wardName' => $evaluation->ward?->name,
+            'wardName' => $evaluation->ward?->name ?? $evaluation->wardRef?->name,
             'evaluationDate' => $evaluation->evaluation_date?->toJSON(),
             'createdAt' => $evaluation->created_at?->toJSON(),
             'overallRating' => $direction === 'resident' ? $evaluation->overall_rating : null,

@@ -4,7 +4,6 @@ import { useEffect, useState, type ReactNode } from 'react'
 import {
   Controller,
   useForm,
-  useWatch,
   type Control,
   type FieldPath,
   type FieldValues,
@@ -55,8 +54,6 @@ import { cn } from '@/lib/utils'
 
 const consultantSchema = z
   .object({
-    evaluationDate: z.string().min(1, 'Select the evaluation date.'),
-    wardId: z.string().min(1, 'Select a ward.'),
     subjectId: z.string().min(1, 'Select the consultant being evaluated.'),
     seniorPresent: z.boolean(),
     seniorJoinedAt: z.string(),
@@ -97,8 +94,6 @@ const consultantSchema = z
   })
 
 const residentSchema = z.object({
-  evaluationDate: z.string().min(1, 'Select the evaluation date.'),
-  wardId: z.string().min(1, 'Select a ward.'),
   subjectId: z.string().min(1, 'Select the resident being evaluated.'),
   onTime: z.boolean(),
   prepared: z.boolean(),
@@ -119,8 +114,6 @@ type ConsultantFormValues = z.infer<typeof consultantSchema>
 type ResidentFormValues = z.infer<typeof residentSchema>
 
 const consultantDefaults: ConsultantFormValues = {
-  evaluationDate: '',
-  wardId: '',
   subjectId: '',
   seniorPresent: false,
   seniorJoinedAt: '',
@@ -139,8 +132,6 @@ const consultantDefaults: ConsultantFormValues = {
 }
 
 const residentDefaults: ResidentFormValues = {
-  evaluationDate: '',
-  wardId: '',
   subjectId: '',
   onTime: false,
   prepared: false,
@@ -371,10 +362,13 @@ const todayString = new Date().toISOString().slice(0, 10)
 function ConsultantEvaluationForm({
   client,
   options,
+  date,
   onSubmitted,
 }: {
   client: LaravelApiClient
   options: AcademicFormOptions
+  /** The evaluation date, owned by the page so eligibility re-resolves with it. */
+  date: string
   onSubmitted: () => void
 }) {
   const form = useForm<ConsultantFormValues>({
@@ -383,27 +377,14 @@ function ConsultantEvaluationForm({
   })
   const errors = form.formState.errors
 
-  const subjectId = useWatch({ control: form.control, name: 'subjectId' })
-  useEffect(() => {
-    if (!subjectId) {
-      return
-    }
-    const subject = options.subjects.find((entry) => entry.id === subjectId)
-    if (subject?.homeWardId && !form.getValues('wardId')) {
-      form.setValue('wardId', subject.homeWardId, { shouldValidate: true })
-    }
-  }, [subjectId, options.subjects, form])
-
   const subjectOptions = options.subjects.map((subject) => ({
     value: subject.id,
-    label: subject.homeWardName ? `${subject.fullName} · ${subject.homeWardName}` : subject.fullName,
+    label: subject.fullName,
   }))
-  const wardOptions = options.wards.map((ward) => ({ value: ward.id, label: ward.name }))
 
   const onSubmit = form.handleSubmit(async (values) => {
     const payload: SaveConsultantEvaluationPayload = {
-      evaluationDate: values.evaluationDate,
-      wardId: values.wardId,
+      evaluationDate: date,
       subjectId: values.subjectId,
       seniorPresent: values.seniorPresent,
       seniorJoinedAt: values.seniorJoinedAt || null,
@@ -439,18 +420,6 @@ function ConsultantEvaluationForm({
         description="Log the MDT round you attended and the senior who led it."
       >
         <div className="grid gap-5 md:grid-cols-2">
-          <FieldShell label="Evaluation date" htmlFor="evaluationDate" error={errors.evaluationDate?.message}>
-            <Input
-              id="evaluationDate"
-              type="date"
-              max={todayString}
-              className={fieldInputClass}
-              {...form.register('evaluationDate')}
-            />
-          </FieldShell>
-          <FieldShell label="Ward" error={errors.wardId?.message}>
-            <PickerField control={form.control} name="wardId" placeholder="Select ward" options={wardOptions} />
-          </FieldShell>
           <FieldShell label="Consultant evaluated" error={errors.subjectId?.message}>
             <PickerField
               control={form.control}
@@ -546,10 +515,13 @@ function ConsultantEvaluationForm({
 function ResidentEvaluationForm({
   client,
   options,
+  date,
   onSubmitted,
 }: {
   client: LaravelApiClient
   options: AcademicFormOptions
+  /** The evaluation date, owned by the page so eligibility re-resolves with it. */
+  date: string
   onSubmitted: () => void
 }) {
   const form = useForm<ResidentFormValues>({
@@ -558,27 +530,14 @@ function ResidentEvaluationForm({
   })
   const errors = form.formState.errors
 
-  const subjectId = useWatch({ control: form.control, name: 'subjectId' })
-  useEffect(() => {
-    if (!subjectId) {
-      return
-    }
-    const subject = options.subjects.find((entry) => entry.id === subjectId)
-    if (subject?.homeWardId && !form.getValues('wardId')) {
-      form.setValue('wardId', subject.homeWardId, { shouldValidate: true })
-    }
-  }, [subjectId, options.subjects, form])
-
   const subjectOptions = options.subjects.map((subject) => ({
     value: subject.id,
-    label: subject.homeWardName ? `${subject.fullName} · ${subject.homeWardName}` : subject.fullName,
+    label: subject.fullName,
   }))
-  const wardOptions = options.wards.map((ward) => ({ value: ward.id, label: ward.name }))
 
   const onSubmit = form.handleSubmit(async (values) => {
     const payload: SaveResidentEvaluationPayload = {
-      evaluationDate: values.evaluationDate,
-      wardId: values.wardId,
+      evaluationDate: date,
       subjectId: values.subjectId,
       onTime: values.onTime,
       prepared: values.prepared,
@@ -612,19 +571,7 @@ function ResidentEvaluationForm({
         title="When and where"
         description="Log the round and the resident you are evaluating."
       >
-        <div className="grid gap-5 md:grid-cols-3">
-          <FieldShell label="Evaluation date" htmlFor="residentEvaluationDate" error={errors.evaluationDate?.message}>
-            <Input
-              id="residentEvaluationDate"
-              type="date"
-              max={todayString}
-              className={fieldInputClass}
-              {...form.register('evaluationDate')}
-            />
-          </FieldShell>
-          <FieldShell label="Ward" error={errors.wardId?.message}>
-            <PickerField control={form.control} name="wardId" placeholder="Select ward" options={wardOptions} />
-          </FieldShell>
+        <div className="grid gap-5 md:grid-cols-2">
           <FieldShell label="Resident evaluated" error={errors.subjectId?.message}>
             <PickerField
               control={form.control}
@@ -752,6 +699,9 @@ export function AcademicEvaluationFormPage() {
   const role = currentUser?.role
   const direction = role === 'consultant' ? 'resident' : 'consultant'
 
+  // The evaluation date drives eligibility: changing it re-resolves who the
+  // author actually shared a ward or paired duty with on that date.
+  const [date, setDate] = useState(todayString)
   const [options, setOptions] = useState<AcademicFormOptions | null>(null)
   const [submissions, setSubmissions] = useState<AcademicMySubmissions | null>(null)
   const [loadError, setLoadError] = useState<string | null>(() =>
@@ -766,7 +716,7 @@ export function AcademicEvaluationFormPage() {
 
     let active = true
 
-    Promise.all([fetchAcademicFormOptions(client), fetchMySubmissions(client)])
+    Promise.all([fetchAcademicFormOptions(client, date), fetchMySubmissions(client)])
       .then(([fetchedOptions, fetchedSubmissions]) => {
         if (!active) {
           return
@@ -789,7 +739,7 @@ export function AcademicEvaluationFormPage() {
     return () => {
       active = false
     }
-  }, [client])
+  }, [client, date])
 
   const refreshSubmissions = () => {
     if (!client) {
@@ -839,17 +789,53 @@ export function AcademicEvaluationFormPage() {
         </div>
       ) : (
         <div className="grid gap-8 2xl:grid-cols-[minmax(0,1fr)_320px] 2xl:items-start">
-          <div>
-            {direction === 'consultant' ? (
+          <div className="space-y-8">
+            {/* Date + placement context: eligibility is resolved per date, so
+                this stays visible even when there is nobody to evaluate. */}
+            <section className={panelClass}>
+              <div className="grid gap-5 md:grid-cols-2 md:items-end">
+                <FieldShell label="Evaluation date" htmlFor="evaluationDate">
+                  <Input
+                    id="evaluationDate"
+                    type="date"
+                    max={todayString}
+                    value={date}
+                    className={fieldInputClass}
+                    onChange={(event) => setDate(event.target.value || todayString)}
+                  />
+                </FieldShell>
+                <p className="text-sm leading-6 text-[#74777f]">
+                  {options.currentPlacement
+                    ? `Your placement on this date: ${options.currentPlacement.dutyTypeName}${
+                        options.currentPlacement.wardName
+                          ? ` · ${options.currentPlacement.wardName}`
+                          : ''
+                      }`
+                    : 'You have no ward or paired duty assignment covering this date.'}
+                </p>
+              </div>
+            </section>
+
+            {options.subjects.length === 0 ? (
+              <div className={`${panelClass} text-center text-sm leading-6 text-[#5b6169]`}>
+                {options.currentPlacement
+                  ? `No ${direction === 'consultant' ? 'consultants' : 'residents'} share your ward or duty on this date.`
+                  : 'You have no ward or paired duty assignment covering this date. Contact your administrator.'}
+              </div>
+            ) : direction === 'consultant' ? (
               <ConsultantEvaluationForm
+                key={date}
                 client={client}
                 options={options}
+                date={date}
                 onSubmitted={refreshSubmissions}
               />
             ) : (
               <ResidentEvaluationForm
+                key={date}
                 client={client}
                 options={options}
+                date={date}
                 onSubmitted={refreshSubmissions}
               />
             )}
