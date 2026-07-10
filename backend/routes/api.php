@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\Admin\ActionItemController;
 use App\Http\Controllers\Api\Admin\AdminAccessRequestController;
 use App\Http\Controllers\Api\Admin\AuditLogController;
 use App\Http\Controllers\Api\Admin\DutyRosterController;
+use App\Http\Controllers\Api\Admin\EvaluationFormController;
 use App\Http\Controllers\Api\Admin\ReferenceDataController;
 use App\Http\Controllers\Api\Admin\ReportImportController;
 use App\Http\Controllers\Api\Admin\ReportAssignmentController;
@@ -98,6 +99,7 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::post('/resident-evaluations', [AcademicEvaluationController::class, 'storeResidentEvaluation'])->middleware('permission:academic.submit');
         Route::get('/my-submissions', [AcademicEvaluationController::class, 'mySubmissions'])->middleware('permission:academic.submit');
         Route::get('/my-performance', [AcademicEvaluationController::class, 'myPerformance'])->middleware('permission:academic.submit');
+        Route::get('/evaluation-forms/{key}', [AcademicEvaluationController::class, 'form'])->middleware('permission:academic.submit');
 
         Route::get('/analytics/summary', [AcademicAnalyticsController::class, 'summary'])->middleware('permission:academic.view');
         Route::get('/analytics/trend', [AcademicAnalyticsController::class, 'trend'])->middleware('permission:academic.view');
@@ -167,6 +169,14 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::get('/academic/evaluations', [AdminAcademicEvaluationController::class, 'index'])->middleware('permission:academic.view');
         Route::get('/academic/audit', [AdminAcademicEvaluationController::class, 'audit'])->middleware('permission:academic.view');
         Route::post('/academic/external-evaluations', [AdminAcademicEvaluationController::class, 'storeExternal'])->middleware('permission:academic.manage');
+
+        // The evaluation form editor (V2 Phase 4). Content edits in place;
+        // structural edits (Maintenance only) via draft + publish.
+        Route::get('/academic/evaluation-forms', [EvaluationFormController::class, 'index'])->middleware('permission:evaluationForms.editContent');
+        Route::patch('/academic/evaluation-forms/{evaluationForm}/content', [EvaluationFormController::class, 'updateContent'])->middleware('permission:evaluationForms.editContent');
+        Route::post('/academic/evaluation-forms/{key}/draft', [EvaluationFormController::class, 'storeDraft'])->middleware('permission:evaluationForms.editStructure');
+        Route::put('/academic/evaluation-forms/{evaluationForm}/structure', [EvaluationFormController::class, 'updateStructure'])->middleware('permission:evaluationForms.editStructure');
+        Route::post('/academic/evaluation-forms/{evaluationForm}/publish', [EvaluationFormController::class, 'publish'])->middleware('permission:evaluationForms.editStructure');
 
         // Academic structure (V2 Phase 1). Mounted under /academic/ because the
         // clinical pillar already aliases /admin/wards to inpatient departments.

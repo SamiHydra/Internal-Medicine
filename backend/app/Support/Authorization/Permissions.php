@@ -69,6 +69,12 @@ final class Permissions
     /** Rotation calendars and the resident rotation planner. */
     public const ROTATIONS_MANAGE = 'rotations.manage';
 
+    /** Edit an evaluation form's safe content (labels, help text, order, option wording). Admins + Maintenance. */
+    public const EVALUATION_FORMS_EDIT_CONTENT = 'evaluationForms.editContent';
+
+    /** Structural evaluation-form edits (add/remove fields, change key or type) via draft + publish. Maintenance only. */
+    public const EVALUATION_FORMS_EDIT_STRUCTURE = 'evaluationForms.editStructure';
+
     /** File or cancel one's own section-transfer request (consultants). */
     public const TRANSFERS_CREATE = 'transfers.create';
 
@@ -106,6 +112,8 @@ final class Permissions
             self::ROSTER_MANAGE,
             self::ROTATIONS_MANAGE,
             self::TRANSFERS_REVIEW,
+            self::EVALUATION_FORMS_EDIT_CONTENT,
+            self::EVALUATION_FORMS_EDIT_STRUCTURE,
         ],
         'admin' => [
             self::AUTH_VIEW_SELF,
@@ -133,6 +141,7 @@ final class Permissions
             self::ROSTER_MANAGE,
             self::ROTATIONS_MANAGE,
             self::TRANSFERS_REVIEW,
+            self::EVALUATION_FORMS_EDIT_CONTENT,
         ],
         'nurse' => [
             self::AUTH_VIEW_SELF,

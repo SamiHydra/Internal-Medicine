@@ -2,12 +2,13 @@
 
 namespace Tests\Feature;
 
-use App\Models\ConsultantEvaluation;
 use App\Models\Department;
 use App\Models\DutyAssignment;
 use App\Models\DutyType;
-use App\Models\ResidentEvaluation;
+use App\Models\Evaluation;
 use App\Models\User;
+use App\Models\Ward;
+use App\Services\Academic\EvaluationFormService;
 use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
@@ -26,6 +27,8 @@ class AcademicEvaluationApiTest extends TestCase
 
     private Department $ward;
 
+    private Ward $teachingWard;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -35,6 +38,7 @@ class AcademicEvaluationApiTest extends TestCase
         }
 
         $this->ward = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
+        $this->teachingWard = Ward::query()->where('slug', 'gastro_neurology_ward')->firstOrFail();
 
         $this->resident = User::factory()->role('resident', 'Resident')->create([
             'full_name' => 'Dr. R. Bekele',
@@ -88,14 +92,15 @@ class AcademicEvaluationApiTest extends TestCase
             ->assertCreated()
             ->assertJsonPath('subjectId', $this->consultant->id)
             ->assertJsonPath('authorId', $this->resident->id)
-            ->assertJsonPath('wardName', $this->ward->name)
+            ->assertJsonPath('wardName', $this->teachingWard->name)
             ->assertJsonPath('seniorJoinedAt', '08:15')
             ->assertJsonPath('qualityScore', 83.3);
 
-        $this->assertDatabaseHas('consultant_evaluations', [
+        $this->assertDatabaseHas('evaluations', [
+            'form_key' => 'consultant_mdt',
             'author_id' => $this->resident->id,
-            'subject_id' => $this->consultant->id,
-            'ward_id' => $this->ward->id,
+            'subject_user_id' => $this->consultant->id,
+            'ward_id' => $this->teachingWard->id,
         ]);
     }
 
@@ -156,19 +161,19 @@ class AcademicEvaluationApiTest extends TestCase
             ->postJson('/api/academic/resident-evaluations', $payload)
             ->assertStatus(422);
 
-        $this->assertDatabaseCount('resident_evaluations', 1);
+        $this->assertSame(1, Evaluation::query()->forKey('resident_acgme')->count());
     }
 
     public function test_admin_can_read_academic_summary_but_resident_cannot(): void
     {
-        ConsultantEvaluation::query()->create($this->consultantRow([
+        $this->createConsultantEvaluation([
             'all_patients_reviewed' => true,
             'mgmt_plan_documented' => true,
             'vte_assessed' => true,
             'discharge_discussed' => true,
             'med_review_done' => true,
             'critical_labs_reviewed' => true,
-        ]));
+        ]);
 
         $this->actingAs($this->admin)
             ->getJson('/api/academic/analytics/summary?direction=consultant')
@@ -216,7 +221,7 @@ class AcademicEvaluationApiTest extends TestCase
 
     public function test_admin_can_list_academic_evaluations_paginated(): void
     {
-        ConsultantEvaluation::query()->create($this->consultantRow(['vte_assessed' => true]));
+        $this->createConsultantEvaluation(['vte_assessed' => true]);
 
         $this->actingAs($this->admin)
             ->getJson('/api/admin/academic/evaluations?direction=consultant')
@@ -235,18 +240,18 @@ class AcademicEvaluationApiTest extends TestCase
     {
         // Consultant evaluates the resident (resident is the subject), filed earlier.
         $this->travelTo(now()->subMinutes(5));
-        ResidentEvaluation::query()->create($this->residentRow([
+        $this->createResidentEvaluation([
             'on_time' => true,
             'prepared' => true,
             'overall_rating' => 4,
-        ]));
+        ]);
         $this->travelBack();
 
         // Resident evaluates the consultant (consultant is the subject), filed now.
-        ConsultantEvaluation::query()->create($this->consultantRow([
+        $this->createConsultantEvaluation([
             'all_patients_reviewed' => true,
             'vte_assessed' => true,
-        ]));
+        ]);
 
         $this->actingAs($this->admin)
             ->getJson('/api/admin/academic/audit')
@@ -256,7 +261,7 @@ class AcademicEvaluationApiTest extends TestCase
             ->assertJsonPath('data.0.direction', 'consultant')
             ->assertJsonPath('data.0.authorName', $this->resident->full_name)
             ->assertJsonPath('data.0.subjectName', $this->consultant->full_name)
-            ->assertJsonPath('data.0.wardName', $this->ward->name)
+            ->assertJsonPath('data.0.wardName', $this->teachingWard->name)
             ->assertJsonPath('data.0.overallRating', null)
             ->assertJsonPath('data.1.direction', 'resident')
             ->assertJsonPath('data.1.overallRating', 4);
@@ -276,10 +281,10 @@ class AcademicEvaluationApiTest extends TestCase
 
     public function test_people_and_trend_endpoints_return_aggregates(): void
     {
-        ConsultantEvaluation::query()->create($this->consultantRow([
+        $this->createConsultantEvaluation([
             'all_patients_reviewed' => true,
             'vte_assessed' => true,
-        ]));
+        ]);
 
         $this->actingAs($this->admin)
             ->getJson('/api/academic/analytics/people?direction=consultant')
@@ -297,7 +302,7 @@ class AcademicEvaluationApiTest extends TestCase
     public function test_my_performance_returns_only_the_authenticated_users_received_scores(): void
     {
         // The consultant evaluates the resident: the resident is the SUBJECT here.
-        ResidentEvaluation::query()->create($this->residentRow([
+        $this->createResidentEvaluation([
             'on_time' => true,
             'prepared' => true,
             'presentation_clear' => true,
@@ -309,11 +314,11 @@ class AcademicEvaluationApiTest extends TestCase
             'responsive_feedback' => true,
             'follow_through' => true,
             'overall_rating' => 5,
-        ]));
+        ]);
 
         // A consultant evaluation (resident is the AUTHOR, consultant the subject)
         // must NOT leak into the resident's own performance.
-        ConsultantEvaluation::query()->create($this->consultantRow(['vte_assessed' => true]));
+        $this->createConsultantEvaluation(['vte_assessed' => true]);
 
         $this->actingAs($this->resident)
             ->getJson('/api/academic/my-performance')
@@ -337,18 +342,16 @@ class AcademicEvaluationApiTest extends TestCase
     }
 
     /**
-     * Build a consultant_evaluations row, merging the given boolean overrides.
+     * Store a consultant_mdt evaluation through the form engine (resident
+     * evaluates consultant), merging the given answer overrides.
      *
      * @param  array<string, mixed>  $overrides
-     * @return array<string, mixed>
      */
-    private function consultantRow(array $overrides = []): array
+    private function createConsultantEvaluation(array $overrides = []): Evaluation
     {
-        return array_merge([
-            'author_id' => $this->resident->id,
-            'subject_id' => $this->consultant->id,
-            'ward_id' => $this->ward->id,
-            'evaluation_date' => now()->subDays(4)->toDateString(),
+        $forms = app(EvaluationFormService::class);
+
+        return $forms->store($forms->published('consultant_mdt'), array_merge([
             'senior_present' => true,
             'presence_minutes' => 40,
             'all_patients_reviewed' => false,
@@ -361,23 +364,26 @@ class AcademicEvaluationApiTest extends TestCase
             'round_delayed' => false,
             'mdt_participants' => ['consultant'],
             'system_issues' => ['lab_delay'],
-        ], $overrides);
+        ], $overrides), [
+            'author_id' => $this->resident->id,
+            'subject_user_id' => $this->consultant->id,
+            'evaluation_date' => now()->subDays(4)->toDateString(),
+            'ward_id' => $this->teachingWard->id,
+            'placement_type' => 'ward',
+        ]);
     }
 
     /**
-     * Build a resident_evaluations row (consultant evaluates resident), merging
-     * the given overrides. The resident is the subject.
+     * Store a resident_acgme evaluation through the form engine (consultant
+     * evaluates resident), merging the given answer overrides.
      *
      * @param  array<string, mixed>  $overrides
-     * @return array<string, mixed>
      */
-    private function residentRow(array $overrides = []): array
+    private function createResidentEvaluation(array $overrides = []): Evaluation
     {
-        return array_merge([
-            'author_id' => $this->consultant->id,
-            'subject_id' => $this->resident->id,
-            'ward_id' => $this->ward->id,
-            'evaluation_date' => now()->subDays(4)->toDateString(),
+        $forms = app(EvaluationFormService::class);
+
+        return $forms->store($forms->published('resident_acgme'), array_merge([
             'on_time' => false,
             'prepared' => false,
             'presentation_clear' => false,
@@ -389,7 +395,12 @@ class AcademicEvaluationApiTest extends TestCase
             'responsive_feedback' => false,
             'follow_through' => false,
             'overall_rating' => 3,
-            'concerns' => [],
-        ], $overrides);
+        ], $overrides), [
+            'author_id' => $this->consultant->id,
+            'subject_user_id' => $this->resident->id,
+            'evaluation_date' => now()->subDays(4)->toDateString(),
+            'ward_id' => $this->teachingWard->id,
+            'placement_type' => 'ward',
+        ]);
     }
 }

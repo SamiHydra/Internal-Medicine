@@ -51,6 +51,7 @@ export const adminWorkspaceNav: Record<Workspace, NavigationItem[]> = {
     { label: 'Submissions', href: '/admin/academic/submissions', icon: ClipboardCheck },
     { label: 'Duty roster', shortLabel: 'Roster', href: '/admin/academic/roster', icon: CalendarDays },
     { label: 'Rotations', href: '/admin/academic/rotations', icon: CalendarRange },
+    { label: 'Forms', href: '/admin/academic/evaluation-forms', icon: FilePenLine },
     { label: 'Structure', href: '/admin/academic/structure', icon: Network },
     ...adminSystemNav,
   ],

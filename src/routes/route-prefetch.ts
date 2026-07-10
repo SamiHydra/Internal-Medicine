@@ -23,6 +23,7 @@ const routeLoaders: Record<string, () => Promise<unknown>> = {
   '/admin/academic/structure': () => import('@/pages/admin/academic-structure-page'),
   '/admin/academic/roster': () => import('@/pages/admin/duty-roster-page'),
   '/admin/academic/rotations': () => import('@/pages/admin/rotation-planner-page'),
+  '/admin/academic/evaluation-forms': () => import('@/pages/admin/evaluation-forms-page'),
   // Shared admin system
   '/admin/users': () => import('@/pages/admin/user-management-page'),
   '/admin/audit': () => import('@/pages/admin/audit-log-page'),

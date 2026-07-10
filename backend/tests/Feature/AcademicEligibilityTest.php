@@ -2,11 +2,11 @@
 
 namespace Tests\Feature;
 
-use App\Models\ConsultantEvaluation;
-use App\Models\Department;
 use App\Models\DutyAssignment;
 use App\Models\DutyType;
+use App\Models\Evaluation;
 use App\Models\User;
+use App\Models\Ward;
 use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
@@ -89,7 +89,7 @@ class AcademicEligibilityTest extends TestCase
             ->assertStatus(422)
             ->assertJsonValidationErrors(['subjectId']);
 
-        $this->assertDatabaseCount('consultant_evaluations', 0);
+        $this->assertDatabaseCount('evaluations', 0);
     }
 
     public function test_an_opd_resident_can_evaluate_the_opd_consultant_with_an_opd_snapshot(): void
@@ -189,12 +189,12 @@ class AcademicEligibilityTest extends TestCase
         $this->assign($resident, 'nephrology_ward_service', '2026-08-01', '2026-08-31');
         $this->assign($consultant, 'nephrology_ward_service', '2026-08-01', '2026-08-31');
 
-        $nephrologyDepartment = Department::query()->where('slug', 'nephrology_inpatient')->firstOrFail();
+        $nephrologyWard = Ward::query()->where('slug', 'nephrology_ward')->firstOrFail();
 
         $evaluationId = $this->actingAs($resident)
             ->postJson('/api/academic/consultant-evaluations', $this->consultantPayload($consultant, '2026-08-14'))
             ->assertCreated()
-            ->assertJsonPath('wardName', $nephrologyDepartment->name)
+            ->assertJsonPath('wardName', $nephrologyWard->name)
             ->json('id');
 
         // September: the resident rotates to pulmonology. The August evaluation
@@ -209,11 +209,11 @@ class AcademicEligibilityTest extends TestCase
             ->json('data');
 
         $stored = collect($submissions)->firstWhere('id', $evaluationId);
-        $this->assertSame($nephrologyDepartment->name, $stored['wardName']);
+        $this->assertSame($nephrologyWard->name, $stored['wardName']);
 
-        $evaluation = ConsultantEvaluation::query()->findOrFail($evaluationId);
+        $evaluation = Evaluation::query()->findOrFail($evaluationId);
         $this->assertSame('ward', $evaluation->placement_type);
-        $this->assertNotNull($evaluation->ward_ref_id);
+        $this->assertSame($nephrologyWard->id, $evaluation->ward_id);
     }
 
     public function test_the_client_supplied_ward_is_ignored_in_favor_of_the_server_snapshot(): void
@@ -224,7 +224,7 @@ class AcademicEligibilityTest extends TestCase
         $this->assign($resident, 'oncology_ward_service', '2026-08-01', '2026-08-31');
         $this->assign($consultant, 'oncology_ward_service', '2026-08-01', '2026-08-31');
 
-        $bogusWard = Department::query()->where('slug', 'chest_inpatient')->firstOrFail();
+        $bogusWard = Ward::query()->where('slug', 'pulmonology_ward')->firstOrFail();
 
         $response = $this->actingAs($resident)
             ->postJson('/api/academic/consultant-evaluations', [
@@ -236,7 +236,7 @@ class AcademicEligibilityTest extends TestCase
         // Hematology and Oncology share one physical ward; the snapshot resolves
         // to that ward, never to the client's claim.
         $this->assertNotSame($bogusWard->id, $response->json('wardId'));
-        $this->assertSame('Hematology/Oncology Ward', ConsultantEvaluation::query()->findOrFail($response->json('id'))->wardRef?->name);
+        $this->assertSame('Hematology/Oncology Ward', Evaluation::query()->findOrFail($response->json('id'))->ward?->name);
     }
 
     // ---- External (paper) evaluations ----
@@ -279,8 +279,9 @@ class AcademicEligibilityTest extends TestCase
             ->assertJsonPath('authorName', 'Dr. Host Physician')
             ->assertJsonPath('placementType', 'icu');
 
-        $this->assertDatabaseHas('resident_evaluations', [
+        $this->assertDatabaseHas('evaluations', [
             'id' => $response->json('id'),
+            'form_key' => 'resident_acgme',
             'author_id' => null,
             'entered_by_id' => $this->admin->id,
             'placement_type' => 'icu',
@@ -324,6 +325,6 @@ class AcademicEligibilityTest extends TestCase
             ->postJson('/api/admin/academic/external-evaluations', $this->externalPayload($resident))
             ->assertForbidden();
 
-        $this->assertDatabaseCount('resident_evaluations', 0);
+        $this->assertDatabaseCount('evaluations', 0);
     }
 }

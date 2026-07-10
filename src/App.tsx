@@ -51,6 +51,11 @@ const RotationPlannerPage = lazy(() =>
     default: module.RotationPlannerPage,
   })),
 )
+const EvaluationFormsPage = lazy(() =>
+  import('@/pages/admin/evaluation-forms-page').then((module) => ({
+    default: module.EvaluationFormsPage,
+  })),
+)
 const AuditLogPage = lazy(() =>
   import('@/pages/admin/audit-log-page').then((module) => ({
     default: module.AuditLogPage,
@@ -302,6 +307,10 @@ function App() {
               <Route
                 path="/admin/academic/rotations"
                 element={renderLazyRoute(<RotationPlannerPage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/evaluation-forms"
+                element={renderLazyRoute(<EvaluationFormsPage />, 'inline')}
               />
               <Route
                 path="/admin/academic/people/:userId"

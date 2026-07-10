@@ -2,99 +2,76 @@
 
 namespace App\Services\Academic;
 
-use App\Models\ConsultantEvaluation;
-use App\Models\ResidentEvaluation;
-use Illuminate\Database\Eloquent\Model;
+use App\Models\Evaluation;
+use App\Support\Academic\EvaluationScoring;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
+/**
+ * Academic analytics over the unified evaluations tables (V2 Phase 4).
+ * Aggregation still folds in PHP (bounded by evaluation volume), but every
+ * endpoint result sits behind a short content-stamp-keyed cache: the stamp is
+ * max(updated_at)+count for the filtered window, so a new submission
+ * naturally invalidates by changing the key, and idle dashboards never
+ * re-fold the same rows. This is the one scaling-relevant work item in the
+ * V2 expansion (guide 7.3): the EAV move multiplies the PHP-side folding.
+ */
 class AcademicAnalyticsService
 {
-    private const CONSULTANT_INDICATOR_LABELS = [
-        'all_patients_reviewed' => 'All patients reviewed',
-        'mgmt_plan_documented' => 'Management plan documented',
-        'vte_assessed' => 'VTE risk assessed',
-        'discharge_discussed' => 'Discharge discussed',
-        'med_review_done' => 'Medication review done',
-        'critical_labs_reviewed' => 'Critical labs reviewed',
-    ];
-
-    private const RESIDENT_INDICATOR_LABELS = [
-        'on_time' => 'Present & on time',
-        'prepared' => 'Prepared',
-        'presentation_clear' => 'Presentation clear',
-        'clinical_reasoning' => 'Clinical reasoning',
-        'management_plan' => 'Management plan',
-        'documentation_timely' => 'Documentation timely',
-        'communication' => 'Communication',
-        'professional' => 'Professional conduct',
-        'responsive_feedback' => 'Receptive to feedback',
-        'follow_through' => 'Follow-through',
-    ];
-
-    private const SYSTEM_ISSUE_LABELS = [
-        'lab_delay' => 'Lab delay',
-        'imaging_delay' => 'Imaging delay',
-        'staff_shortage' => 'Staff shortage',
-        'bed_issue' => 'Bed issue',
-        'emr_interruption' => 'EMR interruption',
-        'communication_issue' => 'Communication issue',
-    ];
-
-    private const CONCERN_LABELS = [
-        'punctuality' => 'Punctuality',
-        'preparation' => 'Preparation',
-        'medical_knowledge' => 'Medical knowledge',
-        'clinical_reasoning' => 'Clinical reasoning',
-        'documentation' => 'Documentation',
-        'communication' => 'Communication',
-        'professionalism' => 'Professionalism',
-        'follow_through' => 'Follow-through',
-        'time_management' => 'Time management',
-    ];
+    private const CACHE_TTL_SECONDS = 300;
 
     /**
      * Request-scoped memo: a single endpoint resolves one service instance and
      * reads the same filtered rows once. Keyed by the filter signature.
      *
-     * @var array<string, Collection<int, Model>>
+     * @var array<string, Collection<int, Evaluation>>
      */
     private array $rowsMemo = [];
+
+    /** @var array<string, array<string, string>> Label maps per form key, from the published form. */
+    private array $labelsMemo = [];
+
+    public function __construct(
+        private readonly EvaluationFormService $forms,
+    ) {}
 
     /**
      * @return array<string, mixed>
      */
     public function summary(AcademicAnalyticsFilters $filters): array
     {
-        $rows = $this->rows($filters);
-        $items = $this->scoreItems($filters->direction);
-        $count = $rows->count();
+        return $this->cached('summary', $filters, function () use ($filters): array {
+            $rows = $this->rows($filters);
+            $items = EvaluationScoring::itemsForDirection($filters->direction);
+            $count = $rows->count();
 
-        $indicatorCompliance = collect($items)->map(fn (string $item) => [
-            'key' => Str::camel($item),
-            'label' => $this->indicatorLabel($filters->direction, $item),
-            'pct' => $count ? round($rows->avg(fn (Model $row) => $row->{$item} ? 100 : 0), 1) : 0.0,
-        ])->values();
+            $indicatorCompliance = collect($items)->map(fn (string $item) => [
+                'key' => Str::camel($item),
+                'label' => $this->fieldLabel($filters->direction, $item),
+                'pct' => $count ? round($rows->avg(fn (Evaluation $row) => $row->answer($item) ? 100 : 0), 1) : 0.0,
+            ])->values();
 
-        $summary = [
-            'direction' => $filters->direction,
-            'evaluationCount' => $count,
-            'averageScore' => $count ? round($rows->avg(fn (Model $row) => $this->rowScore($row, $items)), 1) : 0.0,
-            'indicatorCompliance' => $indicatorCompliance,
-        ];
+            $summary = [
+                'direction' => $filters->direction,
+                'evaluationCount' => $count,
+                'averageScore' => $count ? round($rows->avg(fn (Evaluation $row) => EvaluationScoring::score($row, $filters->direction)), 1) : 0.0,
+                'indicatorCompliance' => $indicatorCompliance,
+            ];
 
-        if ($filters->direction === 'resident') {
-            $rated = $rows->filter(fn (Model $row) => $row->overall_rating !== null);
-            $summary['avgOverallRating'] = $rated->count() ? round($rated->avg('overall_rating'), 2) : 0.0;
-            $summary['issueFrequency'] = $this->issueFrequency($rows, 'concerns', $filters->direction);
-        } else {
-            $summary['seniorPresenceRate'] = $count ? round($rows->avg(fn (Model $row) => $row->senior_present ? 1 : 0), 2) : 0.0;
-            $seen = $rows->filter(fn (Model $row) => $row->pct_patients_seen !== null);
-            $summary['avgPctSeen'] = $seen->count() ? round($seen->avg('pct_patients_seen'), 1) : 0.0;
-            $summary['issueFrequency'] = $this->issueFrequency($rows, 'system_issues', $filters->direction);
-        }
+            if ($filters->direction === 'resident') {
+                $rated = $rows->filter(fn (Evaluation $row) => $row->answer('overall_rating') !== null);
+                $summary['avgOverallRating'] = $rated->count() ? round($rated->avg(fn (Evaluation $row) => (int) $row->answer('overall_rating')), 2) : 0.0;
+                $summary['issueFrequency'] = $this->issueFrequency($rows, 'concerns', $filters->direction);
+            } else {
+                $summary['seniorPresenceRate'] = $count ? round($rows->avg(fn (Evaluation $row) => $row->answer('senior_present') ? 1 : 0), 2) : 0.0;
+                $seen = $rows->filter(fn (Evaluation $row) => $row->answer('pct_patients_seen') !== null);
+                $summary['avgPctSeen'] = $seen->count() ? round($seen->avg(fn (Evaluation $row) => (int) $row->answer('pct_patients_seen')), 1) : 0.0;
+                $summary['issueFrequency'] = $this->issueFrequency($rows, 'system_issues', $filters->direction);
+            }
 
-        return $summary;
+            return $summary;
+        });
     }
 
     /**
@@ -102,43 +79,44 @@ class AcademicAnalyticsService
      */
     public function trend(AcademicAnalyticsFilters $filters): array
     {
-        $rows = $this->rows($filters);
-        $items = $this->scoreItems($filters->direction);
-        $monthly = $filters->granularity === 'monthly';
+        return $this->cached('trend:'.$filters->granularity, $filters, function () use ($filters): array {
+            $rows = $this->rows($filters);
+            $monthly = $filters->granularity === 'monthly';
 
-        $buckets = [];
-        foreach ($rows as $row) {
-            $date = $row->evaluation_date;
+            $buckets = [];
+            foreach ($rows as $row) {
+                $date = $row->evaluation_date;
 
-            if ($monthly) {
-                $key = $date->format('Y-m');
-                $start = $date->copy()->startOfMonth()->toDateString();
-            } else {
-                $key = sprintf('%d-W%02d', $date->isoWeekYear, $date->isoWeek);
-                $start = $date->copy()->startOfWeek()->toDateString();
+                if ($monthly) {
+                    $key = $date->format('Y-m');
+                    $start = $date->copy()->startOfMonth()->toDateString();
+                } else {
+                    $key = sprintf('%d-W%02d', $date->isoWeekYear, $date->isoWeek);
+                    $start = $date->copy()->startOfWeek()->toDateString();
+                }
+
+                $buckets[$key] ??= ['bucket' => $key, 'start' => $start, 'scores' => [], 'count' => 0];
+                $buckets[$key]['scores'][] = EvaluationScoring::score($row, $filters->direction);
+                $buckets[$key]['count']++;
             }
 
-            $buckets[$key] ??= ['bucket' => $key, 'start' => $start, 'scores' => [], 'count' => 0];
-            $buckets[$key]['scores'][] = $this->rowScore($row, $items);
-            $buckets[$key]['count']++;
-        }
+            $points = collect($buckets)
+                ->sortBy('start')
+                ->map(fn (array $bucket) => [
+                    'bucket' => $bucket['bucket'],
+                    'start' => $bucket['start'],
+                    'averageScore' => $bucket['count'] ? round(array_sum($bucket['scores']) / $bucket['count'], 1) : 0.0,
+                    'count' => $bucket['count'],
+                ])
+                ->values()
+                ->all();
 
-        $points = collect($buckets)
-            ->sortBy('start')
-            ->map(fn (array $bucket) => [
-                'bucket' => $bucket['bucket'],
-                'start' => $bucket['start'],
-                'averageScore' => $bucket['count'] ? round(array_sum($bucket['scores']) / $bucket['count'], 1) : 0.0,
-                'count' => $bucket['count'],
-            ])
-            ->values()
-            ->all();
-
-        return [
-            'direction' => $filters->direction,
-            'granularity' => $filters->granularity,
-            'points' => $points,
-        ];
+            return [
+                'direction' => $filters->direction,
+                'granularity' => $filters->granularity,
+                'points' => $points,
+            ];
+        });
     }
 
     /**
@@ -146,36 +124,72 @@ class AcademicAnalyticsService
      */
     public function people(AcademicAnalyticsFilters $filters): array
     {
-        $rows = $this->rows($filters);
-        $items = $this->scoreItems($filters->direction);
+        return $this->cached('people', $filters, function () use ($filters): array {
+            $rows = $this->rows($filters);
 
-        $people = $rows
-            ->groupBy('subject_id')
-            ->map(function (Collection $subjectRows, string $subjectId) use ($items) {
-                $subject = $subjectRows->first()->subject;
-                $count = $subjectRows->count();
+            $people = $rows
+                ->filter(fn (Evaluation $row) => $row->subject_user_id !== null)
+                ->groupBy('subject_user_id')
+                ->map(function (Collection $subjectRows, string $subjectId) use ($filters) {
+                    $subject = $subjectRows->first()->subject;
+                    $count = $subjectRows->count();
 
-                return [
-                    'subjectId' => $subjectId,
-                    'subjectName' => $subject?->full_name,
-                    'homeWardName' => $subject?->homeWard?->name,
-                    'evaluationCount' => $count,
-                    'averageScore' => $count ? round($subjectRows->avg(fn (Model $row) => $this->rowScore($row, $items)), 1) : 0.0,
-                ];
-            })
-            ->values()
-            ->sortByDesc('averageScore')
-            ->values()
-            ->all();
+                    return [
+                        'subjectId' => $subjectId,
+                        'subjectName' => $subject?->full_name,
+                        'homeWardName' => $subject?->homeWard?->name,
+                        'evaluationCount' => $count,
+                        'averageScore' => $count ? round($subjectRows->avg(fn (Evaluation $row) => EvaluationScoring::score($row, $filters->direction)), 1) : 0.0,
+                    ];
+                })
+                ->values()
+                ->sortByDesc('averageScore')
+                ->values()
+                ->all();
 
-        return [
-            'direction' => $filters->direction,
-            'people' => $people,
-        ];
+            return [
+                'direction' => $filters->direction,
+                'people' => $people,
+            ];
+        });
     }
 
     /**
-     * @return Collection<int, Model>
+     * Short content-keyed cache (guide 7.3): the key carries a stamp of the
+     * filtered window (max updated_at + row count), so a write is visible on
+     * the very next read while unchanged data never re-folds. The TTL is only
+     * a backstop against unreachable stale keys.
+     *
+     * @param  callable(): array<string, mixed>  $build
+     * @return array<string, mixed>
+     */
+    private function cached(string $operation, AcademicAnalyticsFilters $filters, callable $build): array
+    {
+        $stampQuery = Evaluation::query()
+            ->forKey(EvaluationScoring::formKeyForDirection($filters->direction));
+
+        if ($filters->dateFrom) {
+            $stampQuery->whereDate('evaluation_date', '>=', $filters->dateFrom);
+        }
+        if ($filters->dateTo) {
+            $stampQuery->whereDate('evaluation_date', '<=', $filters->dateTo);
+        }
+
+        $stamp = $stampQuery
+            ->selectRaw('count(*) as row_count, max(updated_at) as latest')
+            ->first();
+
+        $key = sprintf(
+            'academic:analytics:%s:%s',
+            $operation,
+            md5($filters->memoKey().'|'.($stamp->row_count ?? 0).'|'.($stamp->latest ?? '')),
+        );
+
+        return Cache::remember($key, self::CACHE_TTL_SECONDS, $build);
+    }
+
+    /**
+     * @return Collection<int, Evaluation>
      */
     private function rows(AcademicAnalyticsFilters $filters): Collection
     {
@@ -185,16 +199,15 @@ class AcademicAnalyticsService
             return $this->rowsMemo[$key];
         }
 
-        $query = ($filters->direction === 'resident'
-            ? ResidentEvaluation::query()
-            : ConsultantEvaluation::query())
-            ->with(['subject.homeWard']);
+        $query = Evaluation::query()
+            ->forKey(EvaluationScoring::formKeyForDirection($filters->direction))
+            ->with(['subject.homeWard', 'answers']);
 
         if ($filters->wardId) {
             $query->where('ward_id', $filters->wardId);
         }
         if ($filters->subjectId) {
-            $query->where('subject_id', $filters->subjectId);
+            $query->where('subject_user_id', $filters->subjectId);
         }
         if ($filters->dateFrom) {
             $query->whereDate('evaluation_date', '>=', $filters->dateFrom);
@@ -207,48 +220,17 @@ class AcademicAnalyticsService
     }
 
     /**
-     * @return list<string>
-     */
-    private function scoreItems(string $direction): array
-    {
-        return $direction === 'resident'
-            ? ResidentEvaluation::SCORE_ITEMS
-            : ConsultantEvaluation::SCORE_ITEMS;
-    }
-
-    /**
-     * @param  list<string>  $items
-     */
-    private function rowScore(Model $row, array $items): float
-    {
-        $total = count($items);
-
-        if ($total === 0) {
-            return 0.0;
-        }
-
-        $yes = 0;
-        foreach ($items as $item) {
-            if ((bool) $row->{$item}) {
-                $yes++;
-            }
-        }
-
-        return $yes / $total * 100;
-    }
-
-    /**
-     * Expand a JSON multi-select column across all rows and count each value
+     * Expand a multi-select answer across all rows and count each value
      * (Pareto data, sorted by descending frequency).
      *
-     * @param  Collection<int, Model>  $rows
+     * @param  Collection<int, Evaluation>  $rows
      * @return list<array<string, mixed>>
      */
     private function issueFrequency(Collection $rows, string $field, string $direction): array
     {
         $counts = [];
         foreach ($rows as $row) {
-            $values = $row->{$field} ?? [];
+            $values = $row->answer($field) ?? [];
             if (! is_array($values)) {
                 continue;
             }
@@ -259,11 +241,13 @@ class AcademicAnalyticsService
 
         arsort($counts);
 
+        $choiceLabels = $this->choiceLabels($direction, $field);
+
         $result = [];
         foreach ($counts as $value => $count) {
             $result[] = [
                 'value' => $value,
-                'label' => $this->issueLabel($direction, (string) $value),
+                'label' => $choiceLabels[$value] ?? Str::headline((string) $value),
                 'count' => $count,
             ];
         }
@@ -271,17 +255,38 @@ class AcademicAnalyticsService
         return $result;
     }
 
-    private function indicatorLabel(string $direction, string $key): string
+    /** Labels come from the published form definition, not from code (guide 7.4). */
+    private function fieldLabel(string $direction, string $fieldKey): string
     {
-        $labels = $direction === 'resident' ? self::RESIDENT_INDICATOR_LABELS : self::CONSULTANT_INDICATOR_LABELS;
-
-        return $labels[$key] ?? Str::headline($key);
+        return $this->formLabels($direction)[$fieldKey] ?? Str::headline($fieldKey);
     }
 
-    private function issueLabel(string $direction, string $value): string
+    /**
+     * @return array<string, string>
+     */
+    private function formLabels(string $direction): array
     {
-        $labels = $direction === 'resident' ? self::CONCERN_LABELS : self::SYSTEM_ISSUE_LABELS;
+        $formKey = EvaluationScoring::formKeyForDirection($direction);
 
-        return $labels[$value] ?? Str::headline($value);
+        return $this->labelsMemo[$formKey] ??= $this->forms->published($formKey)
+            ->fields
+            ->pluck('label', 'key')
+            ->all();
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function choiceLabels(string $direction, string $fieldKey): array
+    {
+        $formKey = EvaluationScoring::formKeyForDirection($direction);
+        $field = $this->forms->published($formKey)->fields->firstWhere('key', $fieldKey);
+
+        $labels = [];
+        foreach ($field?->options['choices'] ?? [] as $choice) {
+            $labels[(string) $choice['value']] = (string) ($choice['label'] ?? $choice['value']);
+        }
+
+        return $labels;
     }
 }

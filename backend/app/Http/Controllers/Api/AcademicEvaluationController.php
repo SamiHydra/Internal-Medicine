@@ -5,11 +5,13 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Api\Concerns\SerializesAdminResources;
 use App\Http\Controllers\Controller;
 use App\Models\ConsultantEvaluation;
+use App\Models\Evaluation;
 use App\Models\ResidentEvaluation;
 use App\Models\User;
 use App\Models\Ward;
 use App\Services\Academic\AcademicAnalyticsFilters;
 use App\Services\Academic\AcademicAnalyticsService;
+use App\Services\Academic\EvaluationFormService;
 use App\Services\Academic\RosterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,24 +19,23 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
+/**
+ * Peer evaluations, backed by the Phase 4 form engine: validation rules come
+ * from the published form definition (admins edit forms without a developer),
+ * answers land in the unified evaluations tables, and eligibility runs
+ * through the roster (Phase 3). The legacy per-direction policy classes still
+ * carry the authorization rules.
+ */
 class AcademicEvaluationController extends Controller
 {
     use SerializesAdminResources;
 
-    /** Allowed values for the consultant-evaluation multi-selects. */
-    private const MDT_PARTICIPANTS = ['consultant', 'fellow', 'internist', 'residents', 'interns', 'nurse', 'clinical_pharmacy'];
-
-    private const SYSTEM_ISSUES = ['lab_delay', 'imaging_delay', 'staff_shortage', 'bed_issue', 'emr_interruption', 'communication_issue'];
-
-    /** Allowed values for the resident-evaluation concerns multi-select. */
-    private const CONCERNS = ['punctuality', 'preparation', 'medical_knowledge', 'clinical_reasoning', 'documentation', 'communication', 'professionalism', 'follow_through', 'time_management'];
-
     public function __construct(
         private readonly AcademicAnalyticsService $analytics,
         private readonly RosterService $roster,
+        private readonly EvaluationFormService $forms,
     ) {}
 
     public function formOptions(Request $request): JsonResponse
@@ -85,6 +86,20 @@ class AcademicEvaluationController extends Controller
         ]);
     }
 
+    /** The published form definition the submit UI renders from. */
+    public function form(Request $request, string $key): JsonResponse
+    {
+        Gate::authorize('create', ConsultantEvaluation::class);
+
+        if (! in_array($key, ['consultant_mdt', 'resident_acgme'], true)) {
+            throw ValidationException::withMessages([
+                'key' => ['Unknown evaluation form.'],
+            ]);
+        }
+
+        return response()->json($this->serializeEvaluationForm($this->forms->published($key)));
+    }
+
     public function storeConsultantEvaluation(Request $request): JsonResponse
     {
         Gate::authorize('create', ConsultantEvaluation::class);
@@ -96,66 +111,7 @@ class AcademicEvaluationController extends Controller
             ]);
         }
 
-        $validated = Validator::make($this->normalize($request), [
-            'evaluation_date' => ['required', 'date', 'before_or_equal:today'],
-            // Accepted for backwards compatibility but IGNORED: the ward is
-            // snapshotted server-side from the shared duty placement.
-            'ward_id' => ['sometimes', 'nullable', 'uuid'],
-            'subject_id' => ['required', 'uuid', 'exists:users,id'],
-            'senior_present' => ['required', 'boolean'],
-            'senior_joined_at' => ['nullable', 'date_format:H:i'],
-            'presence_minutes' => ['nullable', 'integer', 'between:0,600'],
-            'all_patients_reviewed' => ['required', 'boolean'],
-            'mgmt_plan_documented' => ['required', 'boolean'],
-            'vte_assessed' => ['required', 'boolean'],
-            'discharge_discussed' => ['required', 'boolean'],
-            'med_review_done' => ['required', 'boolean'],
-            'critical_labs_reviewed' => ['required', 'boolean'],
-            'pct_patients_seen' => ['nullable', 'integer', 'between:0,100'],
-            'round_delayed' => ['required', 'boolean'],
-            'mdt_participants' => ['nullable', 'array'],
-            'mdt_participants.*' => ['string', Rule::in(self::MDT_PARTICIPANTS)],
-            'system_issues' => ['nullable', 'array'],
-            'system_issues.*' => ['string', Rule::in(self::SYSTEM_ISSUES)],
-            'comment' => ['nullable', 'string', 'max:2000'],
-        ])->validate();
-
-        $subject = User::query()->findOrFail($validated['subject_id']);
-        if ($subject->role_key !== 'consultant') {
-            throw ValidationException::withMessages([
-                'subjectId' => 'The selected subject must be a consultant.',
-            ]);
-        }
-
-        $placement = $this->assertPairedPlacement($request->user(), $subject, $validated['evaluation_date']);
-
-        // Authorization in depth: the policy re-checks the same pairing rule.
-        Gate::authorize('create', [ConsultantEvaluation::class, $subject, $validated['evaluation_date']]);
-
-        $evaluation = ConsultantEvaluation::query()->create([
-            'author_id' => $request->user()->id,
-            'subject_id' => $subject->id,
-            'ward_id' => $placement['legacy_ward_id'],
-            'ward_ref_id' => $placement['ward_ref_id'],
-            'placement_type' => $placement['placement_type'],
-            'evaluation_date' => $validated['evaluation_date'],
-            'senior_present' => $validated['senior_present'],
-            'senior_joined_at' => $validated['senior_joined_at'] ?? null,
-            'presence_minutes' => $validated['presence_minutes'] ?? null,
-            'all_patients_reviewed' => $validated['all_patients_reviewed'],
-            'mgmt_plan_documented' => $validated['mgmt_plan_documented'],
-            'vte_assessed' => $validated['vte_assessed'],
-            'discharge_discussed' => $validated['discharge_discussed'],
-            'med_review_done' => $validated['med_review_done'],
-            'critical_labs_reviewed' => $validated['critical_labs_reviewed'],
-            'pct_patients_seen' => $validated['pct_patients_seen'] ?? null,
-            'round_delayed' => $validated['round_delayed'],
-            'mdt_participants' => $validated['mdt_participants'] ?? [],
-            'system_issues' => $validated['system_issues'] ?? [],
-            'comment' => $validated['comment'] ?? null,
-        ]);
-
-        return response()->json($this->serializeConsultantEvaluation($evaluation), 201);
+        return $this->storeThroughForm($request, 'consultant_mdt', 'consultant', ConsultantEvaluation::class);
     }
 
     public function storeResidentEvaluation(Request $request): JsonResponse
@@ -169,63 +125,7 @@ class AcademicEvaluationController extends Controller
             ]);
         }
 
-        $validated = Validator::make($this->normalize($request), [
-            'evaluation_date' => ['required', 'date', 'before_or_equal:today'],
-            // Accepted for backwards compatibility but IGNORED: the ward is
-            // snapshotted server-side from the shared duty placement.
-            'ward_id' => ['sometimes', 'nullable', 'uuid'],
-            'subject_id' => ['required', 'uuid', 'exists:users,id'],
-            'on_time' => ['required', 'boolean'],
-            'prepared' => ['required', 'boolean'],
-            'presentation_clear' => ['required', 'boolean'],
-            'clinical_reasoning' => ['required', 'boolean'],
-            'management_plan' => ['required', 'boolean'],
-            'documentation_timely' => ['required', 'boolean'],
-            'communication' => ['required', 'boolean'],
-            'professional' => ['required', 'boolean'],
-            'responsive_feedback' => ['required', 'boolean'],
-            'follow_through' => ['required', 'boolean'],
-            'overall_rating' => ['required', 'integer', 'between:1,5'],
-            'concerns' => ['nullable', 'array'],
-            'concerns.*' => ['string', Rule::in(self::CONCERNS)],
-            'comment' => ['nullable', 'string', 'max:2000'],
-        ])->validate();
-
-        $subject = User::query()->findOrFail($validated['subject_id']);
-        if ($subject->role_key !== 'resident') {
-            throw ValidationException::withMessages([
-                'subjectId' => 'The selected subject must be a resident.',
-            ]);
-        }
-
-        $placement = $this->assertPairedPlacement($request->user(), $subject, $validated['evaluation_date']);
-
-        // Authorization in depth: the policy re-checks the same pairing rule.
-        Gate::authorize('create', [ResidentEvaluation::class, $subject, $validated['evaluation_date']]);
-
-        $evaluation = ResidentEvaluation::query()->create([
-            'author_id' => $request->user()->id,
-            'subject_id' => $subject->id,
-            'ward_id' => $placement['legacy_ward_id'],
-            'ward_ref_id' => $placement['ward_ref_id'],
-            'placement_type' => $placement['placement_type'],
-            'evaluation_date' => $validated['evaluation_date'],
-            'on_time' => $validated['on_time'],
-            'prepared' => $validated['prepared'],
-            'presentation_clear' => $validated['presentation_clear'],
-            'clinical_reasoning' => $validated['clinical_reasoning'],
-            'management_plan' => $validated['management_plan'],
-            'documentation_timely' => $validated['documentation_timely'],
-            'communication' => $validated['communication'],
-            'professional' => $validated['professional'],
-            'responsive_feedback' => $validated['responsive_feedback'],
-            'follow_through' => $validated['follow_through'],
-            'overall_rating' => $validated['overall_rating'],
-            'concerns' => $validated['concerns'] ?? [],
-            'comment' => $validated['comment'] ?? null,
-        ]);
-
-        return response()->json($this->serializeResidentEvaluation($evaluation), 201);
+        return $this->storeThroughForm($request, 'resident_acgme', 'resident', ResidentEvaluation::class);
     }
 
     public function mySubmissions(Request $request): JsonResponse
@@ -235,31 +135,28 @@ class AcademicEvaluationController extends Controller
 
         $user = $request->user();
 
-        if ($user->role_key === 'resident') {
-            $data = ConsultantEvaluation::query()
-                ->where('author_id', $user->id)
-                ->with(['author', 'subject', 'ward'])
-                ->orderByDesc('evaluation_date')
-                ->orderByDesc('created_at')
-                ->get()
-                ->map(fn (ConsultantEvaluation $evaluation) => $this->serializeConsultantEvaluation($evaluation));
+        $direction = match ($user->role_key) {
+            'resident' => 'consultant',
+            'consultant' => 'resident',
+            default => null,
+        };
 
-            return response()->json(['direction' => 'consultant', 'data' => $data->values()]);
+        if ($direction === null) {
+            return response()->json(['direction' => null, 'data' => []]);
         }
 
-        if ($user->role_key === 'consultant') {
-            $data = ResidentEvaluation::query()
-                ->where('author_id', $user->id)
-                ->with(['author', 'subject', 'ward'])
-                ->orderByDesc('evaluation_date')
-                ->orderByDesc('created_at')
-                ->get()
-                ->map(fn (ResidentEvaluation $evaluation) => $this->serializeResidentEvaluation($evaluation));
+        $data = Evaluation::query()
+            ->forKey($direction === 'consultant' ? 'consultant_mdt' : 'resident_acgme')
+            ->where('author_id', $user->id)
+            ->with(['author', 'subject', 'ward', 'answers'])
+            ->orderByDesc('evaluation_date')
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(fn (Evaluation $evaluation) => $direction === 'consultant'
+                ? $this->serializeConsultantEvaluation($evaluation)
+                : $this->serializeResidentEvaluation($evaluation));
 
-            return response()->json(['direction' => 'resident', 'data' => $data->values()]);
-        }
-
-        return response()->json(['direction' => null, 'data' => []]);
+        return response()->json(['direction' => $direction, 'data' => $data->values()]);
     }
 
     /**
@@ -274,8 +171,8 @@ class AcademicEvaluationController extends Controller
 
         $user = $request->user();
 
-        // A resident is the subject of ResidentEvaluations; a consultant of
-        // ConsultantEvaluations. Anyone else has nothing to show.
+        // A resident is the subject of resident_acgme rows; a consultant of
+        // consultant_mdt rows. Anyone else has nothing to show.
         $direction = match ($user->role_key) {
             'resident' => 'resident',
             'consultant' => 'consultant',
@@ -293,6 +190,49 @@ class AcademicEvaluationController extends Controller
             'summary' => $this->analytics->summary($filters),
             'trend' => $this->analytics->trend($filters),
         ]);
+    }
+
+    private function storeThroughForm(Request $request, string $formKey, string $direction, string $policyClass): JsonResponse
+    {
+        $form = $this->forms->published($formKey);
+
+        $validated = Validator::make($this->normalize($request), [
+            'evaluation_date' => ['required', 'date', 'before_or_equal:today'],
+            // Accepted for backwards compatibility but IGNORED: the ward is
+            // snapshotted server-side from the shared duty placement.
+            'ward_id' => ['sometimes', 'nullable', 'uuid'],
+            'subject_id' => ['required', 'uuid', 'exists:users,id'],
+            ...$this->forms->validationRulesFor($form),
+        ])->validate();
+
+        $subject = User::query()->findOrFail($validated['subject_id']);
+        $expectedRole = $direction === 'consultant' ? 'consultant' : 'resident';
+
+        if ($subject->role_key !== $expectedRole) {
+            throw ValidationException::withMessages([
+                'subjectId' => "The selected subject must be a {$expectedRole}.",
+            ]);
+        }
+
+        $placement = $this->assertPairedPlacement($request->user(), $subject, $validated['evaluation_date']);
+
+        // Authorization in depth: the policy re-checks the same pairing rule.
+        Gate::authorize('create', [$policyClass, $subject, $validated['evaluation_date']]);
+
+        $evaluation = $this->forms->store($form, $validated, [
+            'author_id' => $request->user()->id,
+            'subject_user_id' => $subject->id,
+            'evaluation_date' => $validated['evaluation_date'],
+            'ward_id' => $placement['ward_ref_id'],
+            'placement_type' => $placement['placement_type'],
+        ]);
+
+        return response()->json(
+            $direction === 'consultant'
+                ? $this->serializeConsultantEvaluation($evaluation)
+                : $this->serializeResidentEvaluation($evaluation),
+            201,
+        );
     }
 
     /**
@@ -326,7 +266,7 @@ class AcademicEvaluationController extends Controller
 
     /**
      * Accept snake_case AND camelCase input by normalizing every top-level key to
-     * snake_case (the canonical column names), then validating the one form. The
+     * snake_case (the canonical field keys), then validating the one form. The
      * multi-select values are plain strings, so only keys need converting.
      *
      * @return array<string, mixed>

@@ -8,14 +8,16 @@ use App\Models\AdminAccessRequest;
 use App\Models\AdminAuditLog;
 use App\Models\AppSetting;
 use App\Models\AuditLog;
-use App\Models\ConsultantEvaluation;
 use App\Models\Department;
+use App\Models\Evaluation;
+use App\Models\EvaluationForm;
+use App\Models\EvaluationFormField;
 use App\Models\ReportAssignment;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportingPeriod;
 use App\Models\ReportTemplate;
-use App\Models\ResidentEvaluation;
 use App\Models\User;
+use App\Support\Academic\EvaluationScoring;
 use Illuminate\Database\Eloquent\Model;
 
 trait SerializesAdminResources
@@ -196,37 +198,35 @@ trait SerializesAdminResources
     /**
      * @return array<string, mixed>
      */
-    protected function serializeConsultantEvaluation(ConsultantEvaluation $evaluation): array
+    protected function serializeConsultantEvaluation(Evaluation $evaluation): array
     {
-        $evaluation->loadMissing(['author', 'subject', 'ward', 'wardRef']);
+        $evaluation->loadMissing(['author', 'subject', 'ward', 'answers']);
 
         return [
             'id' => $evaluation->id,
             'authorId' => $evaluation->author_id,
             'authorName' => $evaluation->author?->full_name,
-            'subjectId' => $evaluation->subject_id,
+            'subjectId' => $evaluation->subject_user_id,
             'subjectName' => $evaluation->subject?->full_name,
             'wardId' => $evaluation->ward_id,
-            // Snapshot ward: the department name where one resolves, else the
-            // physical teaching ward, else the placement kind (OPD etc.).
-            'wardName' => $evaluation->ward?->name ?? $evaluation->wardRef?->name,
+            'wardName' => $evaluation->ward?->name,
             'placementType' => $evaluation->placement_type,
             'evaluationDate' => $evaluation->evaluation_date?->toJSON(),
-            'seniorPresent' => (bool) $evaluation->senior_present,
-            'seniorJoinedAt' => $this->formatClockTime($evaluation->senior_joined_at),
-            'presenceMinutes' => $evaluation->presence_minutes,
-            'allPatientsReviewed' => (bool) $evaluation->all_patients_reviewed,
-            'mgmtPlanDocumented' => (bool) $evaluation->mgmt_plan_documented,
-            'vteAssessed' => (bool) $evaluation->vte_assessed,
-            'dischargeDiscussed' => (bool) $evaluation->discharge_discussed,
-            'medReviewDone' => (bool) $evaluation->med_review_done,
-            'criticalLabsReviewed' => (bool) $evaluation->critical_labs_reviewed,
-            'pctPatientsSeen' => $evaluation->pct_patients_seen,
-            'roundDelayed' => (bool) $evaluation->round_delayed,
-            'mdtParticipants' => $evaluation->mdt_participants ?? [],
-            'systemIssues' => $evaluation->system_issues ?? [],
+            'seniorPresent' => (bool) $evaluation->answer('senior_present'),
+            'seniorJoinedAt' => $this->formatClockTime($evaluation->answer('senior_joined_at')),
+            'presenceMinutes' => $evaluation->answer('presence_minutes'),
+            'allPatientsReviewed' => (bool) $evaluation->answer('all_patients_reviewed'),
+            'mgmtPlanDocumented' => (bool) $evaluation->answer('mgmt_plan_documented'),
+            'vteAssessed' => (bool) $evaluation->answer('vte_assessed'),
+            'dischargeDiscussed' => (bool) $evaluation->answer('discharge_discussed'),
+            'medReviewDone' => (bool) $evaluation->answer('med_review_done'),
+            'criticalLabsReviewed' => (bool) $evaluation->answer('critical_labs_reviewed'),
+            'pctPatientsSeen' => $evaluation->answer('pct_patients_seen'),
+            'roundDelayed' => (bool) $evaluation->answer('round_delayed'),
+            'mdtParticipants' => $evaluation->answer('mdt_participants') ?? [],
+            'systemIssues' => $evaluation->answer('system_issues') ?? [],
             'comment' => $evaluation->comment,
-            'qualityScore' => $this->evaluationScore($evaluation, ConsultantEvaluation::SCORE_ITEMS),
+            'qualityScore' => round(EvaluationScoring::score($evaluation, 'consultant'), 1),
             'createdAt' => $evaluation->created_at?->toJSON(),
             'updatedAt' => $evaluation->updated_at?->toJSON(),
         ];
@@ -235,9 +235,9 @@ trait SerializesAdminResources
     /**
      * @return array<string, mixed>
      */
-    protected function serializeResidentEvaluation(ResidentEvaluation $evaluation): array
+    protected function serializeResidentEvaluation(Evaluation $evaluation): array
     {
-        $evaluation->loadMissing(['author', 'subject', 'ward', 'wardRef']);
+        $evaluation->loadMissing(['author', 'subject', 'ward', 'answers']);
 
         return [
             'id' => $evaluation->id,
@@ -248,53 +248,60 @@ trait SerializesAdminResources
             'external' => $evaluation->author_id === null,
             'externalEvaluatorName' => $evaluation->external_evaluator_name,
             'externalEvaluatorDepartment' => $evaluation->external_evaluator_department,
-            'subjectId' => $evaluation->subject_id,
+            'subjectId' => $evaluation->subject_user_id,
             'subjectName' => $evaluation->subject?->full_name,
             'wardId' => $evaluation->ward_id,
-            'wardName' => $evaluation->ward?->name ?? $evaluation->wardRef?->name,
+            'wardName' => $evaluation->ward?->name,
             'placementType' => $evaluation->placement_type,
             'evaluationDate' => $evaluation->evaluation_date?->toJSON(),
-            'onTime' => (bool) $evaluation->on_time,
-            'prepared' => (bool) $evaluation->prepared,
-            'presentationClear' => (bool) $evaluation->presentation_clear,
-            'clinicalReasoning' => (bool) $evaluation->clinical_reasoning,
-            'managementPlan' => (bool) $evaluation->management_plan,
-            'documentationTimely' => (bool) $evaluation->documentation_timely,
-            'communication' => (bool) $evaluation->communication,
-            'professional' => (bool) $evaluation->professional,
-            'responsiveFeedback' => (bool) $evaluation->responsive_feedback,
-            'followThrough' => (bool) $evaluation->follow_through,
-            'overallRating' => $evaluation->overall_rating,
-            'concerns' => $evaluation->concerns ?? [],
+            'onTime' => (bool) $evaluation->answer('on_time'),
+            'prepared' => (bool) $evaluation->answer('prepared'),
+            'presentationClear' => (bool) $evaluation->answer('presentation_clear'),
+            'clinicalReasoning' => (bool) $evaluation->answer('clinical_reasoning'),
+            'managementPlan' => (bool) $evaluation->answer('management_plan'),
+            'documentationTimely' => (bool) $evaluation->answer('documentation_timely'),
+            'communication' => (bool) $evaluation->answer('communication'),
+            'professional' => (bool) $evaluation->answer('professional'),
+            'responsiveFeedback' => (bool) $evaluation->answer('responsive_feedback'),
+            'followThrough' => (bool) $evaluation->answer('follow_through'),
+            'overallRating' => $evaluation->answer('overall_rating'),
+            'concerns' => $evaluation->answer('concerns') ?? [],
             'comment' => $evaluation->comment,
-            'performanceScore' => $this->evaluationScore($evaluation, ResidentEvaluation::SCORE_ITEMS),
+            'performanceScore' => round(EvaluationScoring::score($evaluation, 'resident'), 1),
             'createdAt' => $evaluation->created_at?->toJSON(),
             'updatedAt' => $evaluation->updated_at?->toJSON(),
         ];
     }
 
     /**
-     * The score is the % of the row's yes/no items marked true. Computed on read,
-     * never persisted.
-     *
-     * @param  list<string>  $items
+     * @return array<string, mixed>
      */
-    protected function evaluationScore(Model $evaluation, array $items): float
+    protected function serializeEvaluationForm(EvaluationForm $form): array
     {
-        $total = count($items);
+        $form->loadMissing('fields');
 
-        if ($total === 0) {
-            return 0.0;
-        }
-
-        $yes = 0;
-        foreach ($items as $item) {
-            if ((bool) $evaluation->{$item}) {
-                $yes++;
-            }
-        }
-
-        return round($yes / $total * 100, 1);
+        return [
+            'id' => $form->id,
+            'key' => $form->key,
+            'name' => $form->name,
+            'target' => $form->target,
+            'version' => $form->version,
+            'status' => $form->status,
+            'publishedAt' => $form->published_at?->toJSON(),
+            'fields' => $form->fields->map(fn (EvaluationFormField $field) => [
+                'id' => $field->id,
+                'section' => $field->section,
+                'key' => $field->key,
+                'label' => $field->label,
+                'helpText' => $field->help_text,
+                'type' => $field->type,
+                'options' => $field->options,
+                'required' => (bool) $field->required,
+                'sortOrder' => $field->sort_order,
+                'active' => (bool) $field->active,
+                'isCore' => (bool) $field->is_core,
+            ])->values(),
+        ];
     }
 
     /**

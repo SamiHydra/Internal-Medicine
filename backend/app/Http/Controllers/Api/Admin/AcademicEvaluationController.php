@@ -5,9 +5,12 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Api\Concerns\SerializesAdminResources;
 use App\Http\Controllers\Controller;
 use App\Models\ConsultantEvaluation;
+use App\Models\Evaluation;
 use App\Models\ResidentEvaluation;
 use App\Models\User;
+use App\Services\Academic\EvaluationFormService;
 use App\Services\Admin\AdminAuditService;
+use App\Support\Academic\EvaluationScoring;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -24,11 +27,12 @@ class AcademicEvaluationController extends Controller
 
     public function __construct(
         private readonly AdminAuditService $auditService,
+        private readonly EvaluationFormService $forms,
     ) {}
 
     /**
      * Paginated raw list for tables and the per-person detail page. The
-     * `direction` filter selects which evaluation table is read.
+     * `direction` filter selects which form's responses are read.
      */
     public function index(Request $request): JsonResponse
     {
@@ -58,9 +62,10 @@ class AcademicEvaluationController extends Controller
         $dateTo = $validated['date_to'] ?? $validated['dateTo'] ?? null;
         $perPage = (int) ($validated['per_page'] ?? $validated['perPage'] ?? 25);
 
-        $query = ($isResident ? ResidentEvaluation::query() : ConsultantEvaluation::query())
-            ->with(['author', 'subject', 'ward'])
-            ->when($subjectId, fn (Builder $q) => $q->where('subject_id', $subjectId))
+        $query = Evaluation::query()
+            ->forKey(EvaluationScoring::formKeyForDirection($direction))
+            ->with(['author', 'subject', 'ward', 'answers'])
+            ->when($subjectId, fn (Builder $q) => $q->where('subject_user_id', $subjectId))
             ->when($wardId, fn (Builder $q) => $q->where('ward_id', $wardId))
             ->when($dateFrom, fn (Builder $q) => $q->whereDate('evaluation_date', '>=', $dateFrom))
             ->when($dateTo, fn (Builder $q) => $q->whereDate('evaluation_date', '<=', $dateTo))
@@ -70,8 +75,8 @@ class AcademicEvaluationController extends Controller
         $paginator = $query->paginate($perPage)->withQueryString();
 
         $serialize = $isResident
-            ? fn (ResidentEvaluation $evaluation) => $this->serializeResidentEvaluation($evaluation)
-            : fn (ConsultantEvaluation $evaluation) => $this->serializeConsultantEvaluation($evaluation);
+            ? fn (Evaluation $evaluation) => $this->serializeResidentEvaluation($evaluation)
+            : fn (Evaluation $evaluation) => $this->serializeConsultantEvaluation($evaluation);
 
         return response()->json([
             'direction' => $direction,
@@ -126,16 +131,9 @@ class AcademicEvaluationController extends Controller
             ]);
         }
 
-        $evaluation = ResidentEvaluation::query()->create([
-            'author_id' => null,
-            'subject_id' => $subject->id,
-            'ward_id' => null,
-            'ward_ref_id' => null,
-            'placement_type' => $validated['placement'],
-            'external_evaluator_name' => $validated['evaluatorName'],
-            'external_evaluator_department' => $validated['evaluatorDepartment'] ?? null,
-            'entered_by_id' => $request->user()->id,
-            'evaluation_date' => $validated['evaluationDate'],
+        $form = $this->forms->published('resident_acgme');
+
+        $evaluation = $this->forms->store($form, [
             'on_time' => $validated['onTime'],
             'prepared' => $validated['prepared'],
             'presentation_clear' => $validated['presentationClear'],
@@ -147,8 +145,14 @@ class AcademicEvaluationController extends Controller
             'responsive_feedback' => $validated['responsiveFeedback'],
             'follow_through' => $validated['followThrough'],
             'overall_rating' => $validated['overallRating'],
-            'concerns' => [],
             'comment' => $validated['comment'] ?? null,
+        ], [
+            'subject_user_id' => $subject->id,
+            'evaluation_date' => $validated['evaluationDate'],
+            'placement_type' => $validated['placement'],
+            'external_evaluator_name' => $validated['evaluatorName'],
+            'external_evaluator_department' => $validated['evaluatorDepartment'] ?? null,
+            'entered_by_id' => $request->user()->id,
         ]);
 
         $this->auditService->record($request->user(), 'create_external', 'resident_evaluation', $evaluation->id, null, [
@@ -181,25 +185,19 @@ class AcademicEvaluationController extends Controller
 
         $entries = collect();
 
-        if ($direction !== 'consultant') {
-            $entries = $entries->concat(
-                ResidentEvaluation::query()
-                    ->with(['author', 'subject', 'ward'])
-                    ->orderByDesc('created_at')
-                    ->limit($limit)
-                    ->get()
-                    ->map(fn (ResidentEvaluation $evaluation) => $this->serializeAcademicAuditEntry($evaluation, 'resident')),
-            );
-        }
+        foreach (['resident', 'consultant'] as $feedDirection) {
+            if ($direction !== null && $direction !== $feedDirection) {
+                continue;
+            }
 
-        if ($direction !== 'resident') {
             $entries = $entries->concat(
-                ConsultantEvaluation::query()
-                    ->with(['author', 'subject', 'ward'])
+                Evaluation::query()
+                    ->forKey(EvaluationScoring::formKeyForDirection($feedDirection))
+                    ->with(['author', 'subject', 'ward', 'answers'])
                     ->orderByDesc('created_at')
                     ->limit($limit)
                     ->get()
-                    ->map(fn (ConsultantEvaluation $evaluation) => $this->serializeAcademicAuditEntry($evaluation, 'consultant')),
+                    ->map(fn (Evaluation $evaluation) => $this->serializeAcademicAuditEntry($evaluation, $feedDirection)),
             );
         }
 
@@ -214,32 +212,25 @@ class AcademicEvaluationController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function serializeAcademicAuditEntry(
-        ResidentEvaluation|ConsultantEvaluation $evaluation,
-        string $direction,
-    ): array {
-        $evaluation->loadMissing(['author', 'subject', 'ward', 'wardRef']);
-
-        $scoreItems = $direction === 'resident'
-            ? ResidentEvaluation::SCORE_ITEMS
-            : ConsultantEvaluation::SCORE_ITEMS;
+    private function serializeAcademicAuditEntry(Evaluation $evaluation, string $direction): array
+    {
+        $scoreItems = EvaluationScoring::itemsForDirection($direction);
         $indicatorsMet = collect($scoreItems)
-            ->filter(fn (string $item) => (bool) $evaluation->{$item})
+            ->filter(fn (string $item) => (bool) $evaluation->answer($item))
             ->count();
 
         return [
             'id' => $evaluation->id,
             'direction' => $direction,
             'authorId' => $evaluation->author_id,
-            'authorName' => $evaluation->author?->full_name
-                ?? ($evaluation instanceof ResidentEvaluation ? $evaluation->external_evaluator_name : null),
-            'subjectId' => $evaluation->subject_id,
+            'authorName' => $evaluation->author?->full_name ?? $evaluation->external_evaluator_name,
+            'subjectId' => $evaluation->subject_user_id,
             'subjectName' => $evaluation->subject?->full_name,
             'wardId' => $evaluation->ward_id,
-            'wardName' => $evaluation->ward?->name ?? $evaluation->wardRef?->name,
+            'wardName' => $evaluation->ward?->name,
             'evaluationDate' => $evaluation->evaluation_date?->toJSON(),
             'createdAt' => $evaluation->created_at?->toJSON(),
-            'overallRating' => $direction === 'resident' ? $evaluation->overall_rating : null,
+            'overallRating' => $direction === 'resident' ? $evaluation->answer('overall_rating') : null,
             'indicatorsMet' => $indicatorsMet,
             'indicatorsTotal' => count($scoreItems),
         ];

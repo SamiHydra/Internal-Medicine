@@ -2,10 +2,11 @@
 
 namespace Database\Seeders;
 
-use App\Models\ConsultantEvaluation;
 use App\Models\Department;
-use App\Models\ResidentEvaluation;
+use App\Models\Evaluation;
 use App\Models\User;
+use App\Models\Ward;
+use App\Services\Academic\EvaluationFormService;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Collection;
 
@@ -109,11 +110,17 @@ class DevUserSeeder extends Seeder
         ])->map(fn (array $account) => $this->ensureAcademicUser($account, 'consultant', 'Consultant', $wards));
 
         // Only seed evaluations once, so re-running never piles up duplicates.
-        if (ConsultantEvaluation::query()->exists() || ResidentEvaluation::query()->exists()) {
+        // Post-Phase-4 these go through the form engine into the unified
+        // tables; the legacy evaluation tables are read-only.
+        if (Evaluation::query()->exists()) {
             return;
         }
 
-        $wardList = $wards->values();
+        $forms = app(EvaluationFormService::class);
+        $mdtForm = $forms->published('consultant_mdt');
+        $acgmeForm = $forms->published('resident_acgme');
+        $teachingWards = Ward::query()->where('active', true)->get();
+
         $mdtPool = ['consultant', 'fellow', 'internist', 'residents', 'interns', 'nurse', 'clinical_pharmacy'];
         $issuePool = ['lab_delay', 'imaging_delay', 'staff_shortage', 'bed_issue', 'emr_interruption', 'communication_issue'];
         $concernPool = ['punctuality', 'preparation', 'medical_knowledge', 'clinical_reasoning', 'documentation', 'communication', 'professionalism', 'follow_through', 'time_management'];
@@ -127,13 +134,7 @@ class DevUserSeeder extends Seeder
 
         // Residents evaluating consultants (the MDT round form).
         for ($i = 0; $i < 32; $i++) {
-            $ward = $wardList->random();
-
-            ConsultantEvaluation::query()->create([
-                'author_id' => $residents->random()->id,
-                'subject_id' => $consultants->random()->id,
-                'ward_id' => $ward->id,
-                'evaluation_date' => now()->subDays(random_int(0, 56))->toDateString(),
+            $forms->store($mdtForm, [
                 'senior_present' => $chance(90),
                 'senior_joined_at' => sprintf('%02d:%02d', random_int(7, 9), [0, 15, 30, 45][random_int(0, 3)]),
                 'presence_minutes' => random_int(20, 75),
@@ -147,18 +148,18 @@ class DevUserSeeder extends Seeder
                 'round_delayed' => $chance(25),
                 'mdt_participants' => $sample($mdtPool, 5),
                 'system_issues' => $sample($issuePool, 3),
+            ], [
+                'author_id' => $residents->random()->id,
+                'subject_user_id' => $consultants->random()->id,
+                'evaluation_date' => now()->subDays(random_int(0, 56))->toDateString(),
+                'ward_id' => $teachingWards->random()->id,
+                'placement_type' => 'ward',
             ]);
         }
 
         // Consultants evaluating residents.
         for ($i = 0; $i < 22; $i++) {
-            $ward = $wardList->random();
-
-            ResidentEvaluation::query()->create([
-                'author_id' => $consultants->random()->id,
-                'subject_id' => $residents->random()->id,
-                'ward_id' => $ward->id,
-                'evaluation_date' => now()->subDays(random_int(0, 56))->toDateString(),
+            $forms->store($acgmeForm, [
                 'on_time' => $chance(88),
                 'prepared' => $chance(80),
                 'presentation_clear' => $chance(75),
@@ -171,6 +172,12 @@ class DevUserSeeder extends Seeder
                 'follow_through' => $chance(64),
                 'overall_rating' => random_int(2, 5),
                 'concerns' => $sample($concernPool, 3),
+            ], [
+                'author_id' => $consultants->random()->id,
+                'subject_user_id' => $residents->random()->id,
+                'evaluation_date' => now()->subDays(random_int(0, 56))->toDateString(),
+                'ward_id' => $teachingWards->random()->id,
+                'placement_type' => 'ward',
             ]);
         }
     }
