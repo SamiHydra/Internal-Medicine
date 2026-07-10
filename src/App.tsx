@@ -36,6 +36,11 @@ const AcademicSubmissionsPage = lazy(() =>
     default: module.AcademicSubmissionsPage,
   })),
 )
+const AcademicStructurePage = lazy(() =>
+  import('@/pages/admin/academic-structure-page').then((module) => ({
+    default: module.AcademicStructurePage,
+  })),
+)
 const AuditLogPage = lazy(() =>
   import('@/pages/admin/audit-log-page').then((module) => ({
     default: module.AuditLogPage,
@@ -275,6 +280,10 @@ function App() {
               <Route
                 path="/admin/academic/submissions"
                 element={renderLazyRoute(<AcademicSubmissionsPage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/structure"
+                element={renderLazyRoute(<AcademicStructurePage />, 'inline')}
               />
               <Route
                 path="/admin/academic/people/:userId"

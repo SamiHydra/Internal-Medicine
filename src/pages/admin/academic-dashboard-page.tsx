@@ -15,6 +15,7 @@ import {
   YAxis,
 } from 'recharts'
 
+import { AcademicSetupBanner } from '@/components/admin/academic-setup-banner'
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { ChartCard } from '@/components/dashboard/chart-card'
 import { AnalyticsContentSkeleton } from '@/components/layout/loading-skeletons'
@@ -423,6 +424,7 @@ export function AcademicDashboardPage() {
 
   return (
     <div className="space-y-6 px-4 py-5 md:px-6 md:py-8">
+      <AcademicSetupBanner />
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}

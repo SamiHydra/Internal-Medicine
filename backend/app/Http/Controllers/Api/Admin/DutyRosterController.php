@@ -1,0 +1,241 @@
+<?php
+
+namespace App\Http\Controllers\Api\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Models\DutyAssignment;
+use App\Models\DutyType;
+use App\Models\Section;
+use App\Models\User;
+use App\Services\Academic\RosterService;
+use App\Services\Admin\AdminAuditService;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+
+/**
+ * The month-by-month duty roster: every consultant's and resident's monthly
+ * duty plus day-level duties (on-call, Transition). Reads one month at a
+ * time; writes go through RosterService inside one transaction.
+ */
+class DutyRosterController extends Controller
+{
+    public function __construct(
+        private readonly RosterService $rosterService,
+        private readonly AdminAuditService $auditService,
+    ) {}
+
+    public function month(int $year, int $month): JsonResponse
+    {
+        Gate::authorize('viewAny', DutyAssignment::class);
+
+        [$monthStart, $monthEnd] = $this->monthBounds($year, $month);
+
+        $people = User::query()
+            ->whereIn('role_key', ['resident', 'consultant'])
+            ->where('active', true)
+            ->with('section')
+            ->orderBy('full_name')
+            ->get();
+
+        $assignments = DutyAssignment::query()
+            ->with('dutyType')
+            ->whereIn('user_id', $people->pluck('id'))
+            ->whereDate('starts_on', '<=', $monthEnd->toDateString())
+            ->whereDate('ends_on', '>=', $monthStart->toDateString())
+            ->orderBy('starts_on')
+            ->get()
+            ->groupBy('user_id');
+
+        $sections = Section::query()->orderBy('name')->get();
+
+        return response()->json([
+            'year' => $year,
+            'month' => $month,
+            'startsOn' => $monthStart->toDateString(),
+            'endsOn' => $monthEnd->toDateString(),
+            'sections' => $sections->map(fn (Section $section) => [
+                'id' => $section->id,
+                'name' => $section->name,
+            ])->values(),
+            'people' => $people->map(function (User $person) use ($assignments) {
+                $personAssignments = $assignments->get($person->id, collect());
+
+                return [
+                    'id' => $person->id,
+                    'fullName' => $person->full_name,
+                    'role' => $person->role_key,
+                    'sectionId' => $person->section_id,
+                    'sectionName' => $person->section?->name,
+                    'trainingYear' => $person->training_year,
+                    'rotationGroup' => $person->rotation_group,
+                    'monthly' => $personAssignments
+                        ->filter(fn (DutyAssignment $assignment) => $assignment->dutyType?->granularity === 'monthly')
+                        ->map(fn (DutyAssignment $assignment) => $this->serializeAssignment($assignment))
+                        ->values(),
+                    'daily' => $personAssignments
+                        ->filter(fn (DutyAssignment $assignment) => $assignment->dutyType?->granularity === 'daily')
+                        ->map(fn (DutyAssignment $assignment) => $this->serializeAssignment($assignment))
+                        ->values(),
+                ];
+            })->values(),
+        ]);
+    }
+
+    public function saveMonth(Request $request, int $year, int $month): JsonResponse
+    {
+        Gate::authorize('create', DutyAssignment::class);
+
+        $validated = $request->validate([
+            'assignments' => ['required', 'array', 'max:500'],
+            'assignments.*.userId' => ['required', 'string', Rule::exists('users', 'id')],
+            'assignments.*.dutyTypeId' => ['present', 'nullable', 'string', Rule::exists('duty_types', 'id')],
+        ]);
+
+        [$monthStart, $monthEnd] = $this->monthBounds($year, $month);
+
+        $rows = [];
+        $cleared = [];
+
+        foreach ($validated['assignments'] as $entry) {
+            if ($entry['dutyTypeId'] === null) {
+                $cleared[] = $entry['userId'];
+
+                continue;
+            }
+
+            $rows[] = [
+                'user_id' => $entry['userId'],
+                'duty_type_id' => $entry['dutyTypeId'],
+                'starts_on' => $monthStart->toDateString(),
+                'ends_on' => $monthEnd->toDateString(),
+            ];
+        }
+
+        $this->assertMonthlyTypes(array_column($rows, 'duty_type_id'));
+
+        // Clearing a cell removes the user's monthly assignments for the month.
+        foreach ($cleared as $userId) {
+            DutyAssignment::query()
+                ->where('user_id', $userId)
+                ->whereDate('starts_on', '<=', $monthEnd->toDateString())
+                ->whereDate('ends_on', '>=', $monthStart->toDateString())
+                ->whereHas('dutyType', fn (Builder $query) => $query->where('granularity', 'monthly'))
+                ->delete();
+        }
+
+        $this->rosterService->bulkAssign($rows, 'admin', $request->user());
+
+        $this->auditService->record(
+            $request->user(),
+            'save_roster_month',
+            'duty_roster',
+            sprintf('%04d-%02d', $year, $month),
+            null,
+            ['assigned' => count($rows), 'cleared' => count($cleared)],
+            $request,
+        );
+
+        return $this->month($year, $month);
+    }
+
+    public function saveDaily(Request $request): JsonResponse
+    {
+        Gate::authorize('create', DutyAssignment::class);
+
+        $validated = $request->validate([
+            'userId' => ['required', 'string', Rule::exists('users', 'id')],
+            'dutyTypeId' => ['required', 'string', Rule::exists('duty_types', 'id')],
+            'date' => ['required', 'date'],
+            'remove' => ['sometimes', 'boolean'],
+        ]);
+
+        $dutyType = DutyType::query()->findOrFail($validated['dutyTypeId']);
+
+        if ($dutyType->granularity !== 'daily') {
+            throw ValidationException::withMessages([
+                'dutyTypeId' => ['Only day-level duty types can be written through the daily strip.'],
+            ]);
+        }
+
+        $date = Carbon::parse($validated['date'])->toDateString();
+
+        if ($validated['remove'] ?? false) {
+            $deleted = DutyAssignment::query()
+                ->where('user_id', $validated['userId'])
+                ->where('duty_type_id', $dutyType->id)
+                ->whereDate('starts_on', $date)
+                ->whereDate('ends_on', $date)
+                ->delete();
+
+            $this->auditService->record($request->user(), 'remove_daily_duty', 'duty_roster', $validated['userId'], ['dutyTypeId' => $dutyType->id, 'date' => $date], null, $request);
+
+            return response()->json(['removed' => $deleted > 0]);
+        }
+
+        $this->rosterService->bulkAssign([[
+            'user_id' => $validated['userId'],
+            'duty_type_id' => $dutyType->id,
+            'starts_on' => $date,
+            'ends_on' => $date,
+        ]], 'admin', $request->user());
+
+        $this->auditService->record($request->user(), 'save_daily_duty', 'duty_roster', $validated['userId'], null, ['dutyTypeId' => $dutyType->id, 'date' => $date], $request);
+
+        return response()->json(['saved' => true], 201);
+    }
+
+    /**
+     * @param  list<string>  $dutyTypeIds
+     */
+    private function assertMonthlyTypes(array $dutyTypeIds): void
+    {
+        if ($dutyTypeIds === []) {
+            return;
+        }
+
+        $nonMonthly = DutyType::query()
+            ->whereIn('id', array_unique($dutyTypeIds))
+            ->where('granularity', '!=', 'monthly')
+            ->exists();
+
+        if ($nonMonthly) {
+            throw ValidationException::withMessages([
+                'assignments' => ['Month cells only accept monthly duty types; use the daily strip for day-level duties.'],
+            ]);
+        }
+    }
+
+    /**
+     * @return array{0: Carbon, 1: Carbon}
+     */
+    private function monthBounds(int $year, int $month): array
+    {
+        if ($month < 1 || $month > 12 || $year < 2000 || $year > 2100) {
+            throw ValidationException::withMessages([
+                'month' => ['Invalid roster month.'],
+            ]);
+        }
+
+        $start = Carbon::create($year, $month, 1)->startOfDay();
+
+        return [$start, $start->copy()->endOfMonth()];
+    }
+
+    private function serializeAssignment(DutyAssignment $assignment): array
+    {
+        return [
+            'id' => $assignment->id,
+            'dutyTypeId' => $assignment->duty_type_id,
+            'dutyTypeName' => $assignment->dutyType?->name,
+            'startsOn' => $assignment->starts_on?->toDateString(),
+            'endsOn' => $assignment->ends_on?->toDateString(),
+            'source' => $assignment->source,
+            'note' => $assignment->note,
+        ];
+    }
+}

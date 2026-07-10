@@ -4,13 +4,32 @@ namespace Database\Seeders;
 
 use App\Models\Department;
 use App\Models\ReportTemplate;
+use App\Models\Ward;
 use Illuminate\Database\Seeder;
 
 class DepartmentSeeder extends Seeder
 {
+    /**
+     * Inpatient reporting unit -> teaching ward (academic pillar). Mirrors the
+     * map in the seed_academic_structure migration, which only applies to
+     * databases that already hold departments; fresh installs seed departments
+     * after migrating, so the mapping is applied here too. HDU is deliberately
+     * unmapped: it is not one of the six teaching wards.
+     */
+    private const WARD_SLUG_BY_DEPARTMENT = [
+        'gi_neuro_inpatient' => 'gastro_neurology_ward',
+        'cardiac_inpatient' => 'cardio_endocrine_ward',
+        'nephrology_inpatient' => 'nephrology_ward',
+        'chest_inpatient' => 'pulmonology_ward',
+        'hematology_inpatient' => 'hematology_oncology_ward',
+        'oncology_inpatient' => 'hematology_oncology_ward',
+        'transition_inpatient' => 'transition_ward',
+    ];
+
     public function run(): void
     {
         $templateIds = ReportTemplate::query()->pluck('id', 'slug');
+        $wardIds = Ward::query()->pluck('id', 'slug');
 
         $departments = [
             ['gi_neuro_inpatient', 'inpatient', 'inpatient_weekly', 'GI/Neurology', 'Inpatient GI and neurology ward reporting.', '#1b7f8f', 26],
@@ -43,6 +62,8 @@ class DepartmentSeeder extends Seeder
         ];
 
         foreach ($departments as [$slug, $family, $templateSlug, $name, $description, $accentColor, $bedCount]) {
+            $wardSlug = self::WARD_SLUG_BY_DEPARTMENT[$slug] ?? null;
+
             Department::query()->updateOrCreate(
                 ['slug' => $slug],
                 [
@@ -52,6 +73,7 @@ class DepartmentSeeder extends Seeder
                     'description' => $description,
                     'accent_color' => $accentColor,
                     'bed_count' => $bedCount,
+                    'ward_id' => $wardSlug !== null ? ($wardIds[$wardSlug] ?? null) : null,
                 ],
             );
         }

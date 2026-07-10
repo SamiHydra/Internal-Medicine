@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LockKeyhole,
+  Network,
   Upload,
   Settings,
   ShieldCheck,
@@ -46,6 +47,7 @@ export const adminWorkspaceNav: Record<Workspace, NavigationItem[]> = {
   academic: [
     { label: 'Dashboard', href: '/admin/academic', icon: LayoutDashboard, end: true },
     { label: 'Submissions', href: '/admin/academic/submissions', icon: ClipboardCheck },
+    { label: 'Structure', href: '/admin/academic/structure', icon: Network },
     ...adminSystemNav,
   ],
 }

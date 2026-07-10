@@ -23,6 +23,9 @@ class User extends Authenticatable
         'phone',
         'active',
         'home_ward_id',
+        'training_year',
+        'rotation_group',
+        'section_id',
         'last_login_at',
         'password_change_required',
     ];
@@ -39,6 +42,7 @@ class User extends Authenticatable
             'last_login_at' => 'datetime',
             'password' => 'hashed',
             'active' => 'boolean',
+            'training_year' => 'integer',
             'password_change_required' => 'boolean',
         ];
     }
@@ -71,6 +75,16 @@ class User extends Authenticatable
     public function homeWard(): BelongsTo
     {
         return $this->belongsTo(Department::class, 'home_ward_id');
+    }
+
+    public function section(): BelongsTo
+    {
+        return $this->belongsTo(Section::class);
+    }
+
+    public function dutyAssignments(): HasMany
+    {
+        return $this->hasMany(DutyAssignment::class);
     }
 
     public function isAdminLike(): bool

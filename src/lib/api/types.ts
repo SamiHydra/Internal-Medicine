@@ -112,8 +112,28 @@ export type ApiTemplateConfig = {
   fields: ApiTemplateField[]
 }
 
+/** The academic slice of the workspace bootstrap (V2 guide 3.7). */
+export type AcademicWorkspaceState = {
+  currentPlacement: {
+    dutyTypeName: string | null
+    wardId: string | null
+    wardName: string | null
+    endsOn: string | null
+  } | null
+  isMorningRecorder: boolean
+  headsSections: string[]
+  repScope: { batchId: string; cohort: string; scope: string } | null
+  pendingTransferCount: number
+  academicSetup: {
+    calendarsMissing: boolean
+    consultantsWithoutSection: number
+    peopleWithoutAssignment: number
+  } | null
+}
+
 export type WorkspacePayload = {
   currentUser: UserProfile
+  academic?: AcademicWorkspaceState
   references: ApiReferenceState
   // The backend embeds hydrated template definitions under state.templates; the
   // SPA overlays these (DB edits) over the static config floor at parse time.

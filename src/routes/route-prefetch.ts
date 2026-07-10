@@ -20,6 +20,7 @@ const routeLoaders: Record<string, () => Promise<unknown>> = {
   // Academic admin
   '/admin/academic': () => import('@/pages/admin/academic-dashboard-page'),
   '/admin/academic/submissions': () => import('@/pages/admin/academic-submissions-page'),
+  '/admin/academic/structure': () => import('@/pages/admin/academic-structure-page'),
   // Shared admin system
   '/admin/users': () => import('@/pages/admin/user-management-page'),
   '/admin/audit': () => import('@/pages/admin/audit-log-page'),

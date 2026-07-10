@@ -6,13 +6,16 @@ use App\Http\Controllers\Api\AcademicRegistrationController;
 use App\Http\Controllers\Api\AccessRequestSubmissionController;
 use App\Http\Controllers\Api\AdminRegistrationController;
 use App\Http\Controllers\Api\Admin\AcademicEvaluationController as AdminAcademicEvaluationController;
+use App\Http\Controllers\Api\Admin\AcademicStructureController;
 use App\Http\Controllers\Api\Admin\AccessRequestController;
 use App\Http\Controllers\Api\Admin\ActionItemController;
 use App\Http\Controllers\Api\Admin\AdminAccessRequestController;
 use App\Http\Controllers\Api\Admin\AuditLogController;
+use App\Http\Controllers\Api\Admin\DutyRosterController;
 use App\Http\Controllers\Api\Admin\ReferenceDataController;
 use App\Http\Controllers\Api\Admin\ReportImportController;
 use App\Http\Controllers\Api\Admin\ReportAssignmentController;
+use App\Http\Controllers\Api\Admin\RotationController;
 use App\Http\Controllers\Api\Admin\SettingsController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\AnalyticsController;
@@ -155,5 +158,30 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
 
         Route::get('/academic/evaluations', [AdminAcademicEvaluationController::class, 'index'])->middleware('permission:academic.view');
         Route::get('/academic/audit', [AdminAcademicEvaluationController::class, 'audit'])->middleware('permission:academic.view');
+
+        // Academic structure (V2 Phase 1). Mounted under /academic/ because the
+        // clinical pillar already aliases /admin/wards to inpatient departments.
+        Route::get('/academic/wards', [AcademicStructureController::class, 'wards'])->middleware('permission:academicStructure.manage');
+        Route::post('/academic/wards', [AcademicStructureController::class, 'storeWard'])->middleware('permission:academicStructure.manage');
+        Route::patch('/academic/wards/{ward}', [AcademicStructureController::class, 'updateWard'])->middleware('permission:academicStructure.manage');
+        Route::delete('/academic/wards/{ward}', [AcademicStructureController::class, 'destroyWard'])->middleware('permission:academicStructure.manage');
+
+        Route::get('/academic/sections', [AcademicStructureController::class, 'sections'])->middleware('permission:academicStructure.manage');
+        Route::post('/academic/sections', [AcademicStructureController::class, 'storeSection'])->middleware('permission:academicStructure.manage');
+        Route::patch('/academic/sections/{section}', [AcademicStructureController::class, 'updateSection'])->middleware('permission:academicStructure.manage');
+        Route::delete('/academic/sections/{section}', [AcademicStructureController::class, 'destroySection'])->middleware('permission:academicStructure.manage');
+
+        Route::get('/academic/duty-types', [AcademicStructureController::class, 'dutyTypes'])->middleware('permission:academicStructure.manage');
+        Route::post('/academic/duty-types', [AcademicStructureController::class, 'storeDutyType'])->middleware('permission:academicStructure.manage');
+        Route::patch('/academic/duty-types/{dutyType}', [AcademicStructureController::class, 'updateDutyType'])->middleware('permission:academicStructure.manage');
+        Route::delete('/academic/duty-types/{dutyType}', [AcademicStructureController::class, 'destroyDutyType'])->middleware('permission:academicStructure.manage');
+
+        Route::get('/rotations/calendars', [RotationController::class, 'calendars'])->middleware('permission:rotations.manage');
+        Route::post('/rotations/calendars', [RotationController::class, 'storeCalendar'])->middleware('permission:rotations.manage');
+        Route::patch('/rotations/calendars/{calendar}/active', [RotationController::class, 'setCalendarActive'])->middleware('permission:rotations.manage');
+
+        Route::get('/roster/{year}/{month}', [DutyRosterController::class, 'month'])->whereNumber('year')->whereNumber('month')->middleware('permission:roster.manage');
+        Route::put('/roster/{year}/{month}', [DutyRosterController::class, 'saveMonth'])->whereNumber('year')->whereNumber('month')->middleware('permission:roster.manage');
+        Route::post('/roster/daily', [DutyRosterController::class, 'saveDaily'])->middleware('permission:roster.manage');
     });
 });

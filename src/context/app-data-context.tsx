@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import { createEmptyAppState } from '@/lib/app-state'
 import { departmentMap, templateMap } from '@/config/templates'
 import type {
+  AcademicWorkspaceState,
   AccessRequestPayload,
   AdminAccessRequest,
   CreateAdminAccountPayload,
@@ -92,6 +93,8 @@ import type {
 type AppDataContextValue = {
   state: AppState
   currentUser: UserProfile | null
+  /** Academic slice of the workspace bootstrap: placement, setup signals, head designations. */
+  academic: AcademicWorkspaceState | null
   isBootstrapping: boolean
   isConfigured: boolean
   missingEnvVars: string[]
@@ -127,11 +130,13 @@ type AppDataContextValue = {
   ) => Promise<void>
   ensureProfileDirectoryData: () => Promise<void>
   ensureAccessRequestData: () => Promise<void>
+  ensureUserManagementData: () => Promise<void>
   ensureHistoryData: () => Promise<void>
   ensureReportDetails: (
     reportIds: string[],
     options?: EnsureReportDetailsOptions,
   ) => Promise<Record<string, ReportDetailRecord>>
+  reportPeriodWindow: NonNullable<LiveAppStateLoadOptions['reportPeriodWindow']>
   refreshData: (options?: LiveAppStateLoadOptions) => Promise<void>
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>
 }
@@ -221,6 +226,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [isSyncing, setIsSyncing] = useState(false)
   const [isDataRefreshing, setIsDataRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [academic, setAcademic] = useState<AcademicWorkspaceState | null>(null)
   const [adminAccessRequests, setAdminAccessRequests] = useState<AdminAccessRequest[]>([])
   const [queuedReportSaveIds, setQueuedReportSaveIds] = useState<Set<string>>(
     () => new Set(),
@@ -229,6 +235,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     Record<string, ReportDetailLoadState>
   >({})
   const referencesRef = useRef<ApiReferenceState>(createEmptyReferenceState())
+  // Signature guard so the 60s poll only re-renders academic consumers when the
+  // academic slice actually changed (it is a fresh object every response).
+  const academicSignatureRef = useRef<string | null>(null)
   const loadVersionRef = useRef(0)
   const currentUserIdRef = useRef<string | null>(null)
   const currentStateRef = useRef<AppState>(createEmptyAppState())
@@ -241,6 +250,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const loadedReportDetailIdsRef = useRef<Set<string>>(new Set())
   const pendingReportDetailIdsRef = useRef<Set<string>>(new Set())
   const reportPeriodWindowRef = useRef<NonNullable<LiveAppStateLoadOptions['reportPeriodWindow']>>('default')
+  // Signature of the last applied background-poll payload. Lets an unchanged
+  // poll skip the state replacement (and its full-tree re-render) entirely.
+  const lastPolledStateSignatureRef = useRef<string | null>(null)
   const overdueSyncInFlightRef = useRef(false)
   const lastOverdueSyncAtRef = useRef(0)
   const syncPendingCountRef = useRef(0)
@@ -390,6 +402,37 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [],
   )
 
+  // Durable workspace cache is a warm-start optimisation, not a source of truth,
+  // so the multi-MB JSON.stringify + localStorage.setItem is debounced off the
+  // interaction path. Rapid bursts (a poll, then ensureReportDetails, then a
+  // save) coalesce into a single write. The record is resolved at call time so
+  // the flushed value matches what a synchronous write would have stored.
+  const pendingWorkspaceCacheRef = useRef<WorkspaceCacheRecord | null>(null)
+  const workspaceCacheTimerRef = useRef<number | null>(null)
+
+  const flushWorkspaceCache = useCallback(() => {
+    if (workspaceCacheTimerRef.current !== null) {
+      window.clearTimeout(workspaceCacheTimerRef.current)
+      workspaceCacheTimerRef.current = null
+    }
+
+    const record = pendingWorkspaceCacheRef.current
+    pendingWorkspaceCacheRef.current = null
+
+    if (!record) {
+      return
+    }
+
+    // Guard against a deferred write resurrecting a logged-out or switched
+    // user's state: currentStateRef updates synchronously on every sign-out /
+    // account switch, so a stale record is simply dropped.
+    if (record.userId !== currentStateRef.current.currentUserId) {
+      return
+    }
+
+    writeWorkspaceCache(record)
+  }, [])
+
   const persistWorkspaceCache = useCallback(
     (
       nextState: AppState,
@@ -401,11 +444,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       >,
     ) => {
       if (!nextState.currentUserId) {
+        pendingWorkspaceCacheRef.current = null
+        if (workspaceCacheTimerRef.current !== null) {
+          window.clearTimeout(workspaceCacheTimerRef.current)
+          workspaceCacheTimerRef.current = null
+        }
         clearWorkspaceCache()
         return
       }
 
-      writeWorkspaceCache({
+      pendingWorkspaceCacheRef.current = {
         version: 4,
         userId: nextState.currentUserId,
         cachedAt: new Date().toISOString(),
@@ -416,10 +464,37 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           overrides?.accessRequestDataLoaded ?? accessRequestDataLoadedRef.current,
         historyDataLoaded:
           overrides?.historyDataLoaded ?? historyDataLoadedRef.current,
-      })
+      }
+
+      if (workspaceCacheTimerRef.current === null) {
+        workspaceCacheTimerRef.current = window.setTimeout(flushWorkspaceCache, 600)
+      }
     },
-    [],
+    [flushWorkspaceCache],
   )
+
+  // Persist any pending debounced write before the tab is hidden/closed, and
+  // clear the timer on unmount so it can't fire against a torn-down component.
+  useEffect(() => {
+    const flushOnHide = () => {
+      if (document.visibilityState === 'hidden') {
+        flushWorkspaceCache()
+      }
+    }
+
+    window.addEventListener('pagehide', flushWorkspaceCache)
+    document.addEventListener('visibilitychange', flushOnHide)
+
+    return () => {
+      window.removeEventListener('pagehide', flushWorkspaceCache)
+      document.removeEventListener('visibilitychange', flushOnHide)
+
+      if (workspaceCacheTimerRef.current !== null) {
+        window.clearTimeout(workspaceCacheTimerRef.current)
+        workspaceCacheTimerRef.current = null
+      }
+    }
+  }, [flushWorkspaceCache])
 
   const applyWorkspaceCache = useCallback(
     (cacheRecord: WorkspaceCacheRecord) => {
@@ -449,11 +524,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     loadVersionRef.current += 1
     pendingExplicitAuthUserIdRef.current = null
     referencesRef.current = createEmptyReferenceState()
+    academicSignatureRef.current = null
     currentUserIdRef.current = null
     currentStateRef.current = createEmptyAppState()
     syncPendingCountRef.current = 0
     reportPeriodWindowRef.current = 'default'
     setState(createEmptyAppState())
+    setAcademic(null)
     resetDeferredDataState()
     clearWorkspaceCache()
     setError(null)
@@ -526,6 +603,38 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
 
         referencesRef.current = result.references
+        reportPeriodWindowRef.current = reportPeriodWindow
+
+        // Applied before the poll-skip below: a placement or setup-signal change
+        // must land even when the clinical state is byte-identical.
+        const academicSignature = JSON.stringify(result.academic ?? null)
+        if (academicSignature !== academicSignatureRef.current) {
+          academicSignatureRef.current = academicSignature
+          setAcademic(result.academic ?? null)
+        }
+
+        // Background polls re-fetch the full windowed workspace on a timer and
+        // on every tab focus. When the server returns byte-identical data (the
+        // common idle case) there is nothing to apply, so skip the state
+        // replacement (a full consumer-tree re-render) and the cache write. The
+        // signature is the entire fetched payload — on a poll each report
+        // carries values:{} so it stays small — which makes the comparison
+        // exhaustive (no rendered field can change without changing it). Only
+        // pure polls qualify: refreshes that pull extra collections (profiles /
+        // access requests / history) are never skipped.
+        const isPollRefresh = !includeProfiles && !includeAccessRequests && !includeHistory
+        const polledStateSignature = isPollRefresh ? JSON.stringify(result.state) : null
+
+        if (
+          isPollRefresh &&
+          polledStateSignature === lastPolledStateSignatureRef.current &&
+          currentStateRef.current.currentUserId === result.currentUser.id
+        ) {
+          setError(null)
+          scheduleOverdueSync()
+          return result
+        }
+
         const previouslyLoadedReportDetailIds = loadedReportDetailIdsRef.current
         const existingReportsById = Object.fromEntries(
           currentStateRef.current.reports.map((report) => [report.id, report]),
@@ -593,8 +702,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         currentUserIdRef.current = nextState.currentUserId
         currentStateRef.current = nextState
-        reportPeriodWindowRef.current = reportPeriodWindow
         setState(nextState)
+        // Record the applied poll signature so the next identical poll can skip;
+        // structural refreshes reset it (their payload shape differs from a
+        // poll's) so the following poll re-establishes the baseline.
+        lastPolledStateSignatureRef.current = polledStateSignature
         profileDirectoryLoadedRef.current =
           includeProfiles || !isAdminRole(result.currentUser.role)
         if (includeAccessRequests) {
@@ -1006,9 +1118,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         adminLiveRefreshInFlightRef.current = true
 
         void refreshDataWithOptions({
-          includeProfiles: profileDirectoryLoadedRef.current,
-          includeAccessRequests: accessRequestDataLoadedRef.current,
-          includeHistory: historyDataLoadedRef.current,
+          // Keep the 60-second live pulse lightweight. Once an admin has opened
+          // Users or Audit, carrying those large optional collections on every
+          // dashboard poll makes the cost grow with the lifetime of the browser
+          // session. Dedicated screens/actions explicitly refresh them when
+          // needed; loadUserState preserves already-loaded deferred data here.
+          includeProfiles: false,
+          includeAccessRequests: false,
+          includeHistory: false,
           reportPeriodWindow: reportPeriodWindowRef.current,
         }).finally(() => {
           adminLiveRefreshInFlightRef.current = false
@@ -1939,6 +2056,32 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [client, loadUserState],
   )
 
+  const ensureUserManagementData = useCallback(
+    async (): Promise<void> => {
+      if (
+        !client ||
+        !currentUserIdRef.current ||
+        (profileDirectoryLoadedRef.current && accessRequestDataLoadedRef.current)
+      ) {
+        return
+      }
+
+      try {
+        // Users & Access needs both deferred collections. Fetch them together so
+        // the load-version guard does not discard one of two parallel workspace
+        // requests and trigger a second render/retry cycle.
+        await loadUserState(currentUserIdRef.current, 'Unable to load users and access requests.', {
+          showBootstrapping: false,
+          includeProfiles: true,
+          includeAccessRequests: true,
+        })
+      } catch (loadError) {
+        toast.error(getMessage(loadError, 'Unable to load users and access requests.'))
+      }
+    },
+    [client, loadUserState],
+  )
+
   const ensureHistoryData = useCallback(
     async (): Promise<void> => {
       if (!client || !currentUserIdRef.current || historyDataLoadedRef.current) {
@@ -1961,6 +2104,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     () => ({
       state,
       currentUser,
+      academic,
       isBootstrapping,
       isConfigured: isApiConfigured,
       missingEnvVars: missingApiEnvKeys,
@@ -1992,14 +2136,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       assignUserToDepartment,
       ensureProfileDirectoryData,
       ensureAccessRequestData,
+      ensureUserManagementData,
       ensureHistoryData,
       ensureReportDetails,
+      reportPeriodWindow: reportPeriodWindowRef.current,
       refreshData: refreshDataWithOptions,
       changePassword,
     }),
     [
       state,
       currentUser,
+      academic,
       isBootstrapping,
       error,
       login,
@@ -2030,6 +2177,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       assignUserToDepartment,
       ensureProfileDirectoryData,
       ensureAccessRequestData,
+      ensureUserManagementData,
       ensureHistoryData,
       ensureReportDetails,
       refreshDataWithOptions,

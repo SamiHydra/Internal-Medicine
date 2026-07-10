@@ -12,7 +12,10 @@ use App\Models\ReportAssignment;
 use App\Models\ReportingPeriod;
 use App\Models\ReportStatusHistory;
 use App\Models\ReportTemplate;
+use App\Models\RotationCalendar;
+use App\Models\Section;
 use App\Models\User;
+use App\Services\Academic\RosterService;
 use App\Services\Admin\AppSettingsService;
 use App\Support\Authorization\Permissions;
 use App\Support\Reports\ReportPeriodWindow;
@@ -222,6 +225,7 @@ class WorkspaceController extends Controller
 
         return response()->json([
             'currentUser' => $this->profile($user),
+            'academic' => $this->academicPayload($user, $isAdmin),
             'references' => [
                 'departmentDbIdBySlug' => $departments->pluck('id', 'slug'),
                 'templateDbIdBySlug' => $templates->pluck('id', 'slug'),
@@ -233,6 +237,75 @@ class WorkspaceController extends Controller
             ],
             'state' => $state,
         ]);
+    }
+
+    /**
+     * The academic slice of the bootstrap (V2 guide 3.7). Kept to a handful of
+     * cheap indexed lookups: no per-row payload growth. Keys for later phases
+     * (isMorningRecorder, repScope, pendingTransferCount) ship with their
+     * defaults until those modules exist.
+     */
+    private function academicPayload(User $user, bool $isAdmin): array
+    {
+        $isAcademicRole = in_array($user->role_key, ['resident', 'consultant'], true);
+
+        $currentPlacement = null;
+
+        if ($isAcademicRole) {
+            $assignment = app(RosterService::class)->assignmentFor($user, now());
+
+            if ($assignment !== null) {
+                $currentPlacement = [
+                    'dutyTypeName' => $assignment->dutyType?->name,
+                    'wardId' => $assignment->dutyType?->ward_id,
+                    'wardName' => $assignment->dutyType?->ward?->name,
+                    'endsOn' => $assignment->ends_on?->toDateString(),
+                ];
+            }
+        }
+
+        $headsSections = $user->role_key === 'consultant'
+            ? Section::query()->where('head_user_id', $user->id)->pluck('id')->values()->all()
+            : [];
+
+        $academicSetup = null;
+
+        if ($isAdmin) {
+            $today = now()->toDateString();
+
+            $coveredYears = RotationCalendar::query()
+                ->where('active', true)
+                ->whereHas('blocks', fn ($query) => $query
+                    ->whereDate('starts_on', '<=', $today)
+                    ->whereDate('ends_on', '>=', $today))
+                ->distinct()
+                ->pluck('training_year');
+
+            $academicSetup = [
+                'calendarsMissing' => $coveredYears->count() < 3,
+                'consultantsWithoutSection' => User::query()
+                    ->where('role_key', 'consultant')
+                    ->where('active', true)
+                    ->whereNull('section_id')
+                    ->count(),
+                'peopleWithoutAssignment' => User::query()
+                    ->whereIn('role_key', ['resident', 'consultant'])
+                    ->where('active', true)
+                    ->whereDoesntHave('dutyAssignments', fn ($query) => $query
+                        ->whereDate('starts_on', '<=', $today)
+                        ->whereDate('ends_on', '>=', $today))
+                    ->count(),
+            ];
+        }
+
+        return [
+            'currentPlacement' => $currentPlacement,
+            'isMorningRecorder' => false,
+            'headsSections' => $headsSections,
+            'repScope' => null,
+            'pendingTransferCount' => 0,
+            'academicSetup' => $academicSetup,
+        ];
     }
 
     private function booleanOption(array $validated, string $snakeKey, string $camelKey): bool

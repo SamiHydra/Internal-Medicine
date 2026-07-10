@@ -60,6 +60,15 @@ final class Permissions
 
     public const ACADEMIC_MANAGE = 'academic.manage';
 
+    /** Wards, sections, and the duty-type catalog. */
+    public const ACADEMIC_STRUCTURE_MANAGE = 'academicStructure.manage';
+
+    /** The month-by-month consultant duty roster and day-level duties. */
+    public const ROSTER_MANAGE = 'roster.manage';
+
+    /** Rotation calendars and the resident rotation planner. */
+    public const ROTATIONS_MANAGE = 'rotations.manage';
+
     private const ADMIN_ROLES = ['superadmin', 'admin'];
 
     private const ROLE_PERMISSIONS = [
@@ -87,6 +96,9 @@ final class Permissions
             self::NOTIFICATIONS_VIEW,
             self::ACADEMIC_VIEW,
             self::ACADEMIC_MANAGE,
+            self::ACADEMIC_STRUCTURE_MANAGE,
+            self::ROSTER_MANAGE,
+            self::ROTATIONS_MANAGE,
         ],
         'admin' => [
             self::AUTH_VIEW_SELF,
@@ -110,6 +122,9 @@ final class Permissions
             self::NOTIFICATIONS_VIEW,
             self::ACADEMIC_VIEW,
             self::ACADEMIC_MANAGE,
+            self::ACADEMIC_STRUCTURE_MANAGE,
+            self::ROSTER_MANAGE,
+            self::ROTATIONS_MANAGE,
         ],
         'nurse' => [
             self::AUTH_VIEW_SELF,
