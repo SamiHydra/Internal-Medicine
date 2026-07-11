@@ -17,6 +17,7 @@ use App\Models\RotationCalendar;
 use App\Models\Section;
 use App\Models\TransferRequest;
 use App\Models\User;
+use App\Services\Academic\MorningSessionService;
 use App\Services\Academic\RosterService;
 use App\Services\Admin\AppSettingsService;
 use App\Support\Authorization\Permissions;
@@ -331,7 +332,7 @@ class WorkspaceController extends Controller
 
         return [
             'currentPlacement' => $currentPlacement,
-            'isMorningRecorder' => false,
+            'isMorningRecorder' => app(MorningSessionService::class)->isRecorder($user),
             'headsSections' => $headsSections,
             'repScope' => $repScope,
             'pendingTransferCount' => $pendingTransferCount,

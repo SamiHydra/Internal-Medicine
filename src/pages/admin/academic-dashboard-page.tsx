@@ -16,6 +16,7 @@ import {
 } from 'recharts'
 
 import { AcademicSetupBanner } from '@/components/admin/academic-setup-banner'
+import { MorningSessionsPanel } from '@/components/admin/morning-sessions-panel'
 import { TransferReviewPanel } from '@/components/academic/transfer-review-panel'
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { ChartCard } from '@/components/dashboard/chart-card'
@@ -703,6 +704,7 @@ export function AcademicDashboardPage() {
       )}
 
       <TransferReviewPanel allowImmediate />
+      <MorningSessionsPanel />
     </div>
   )
 }

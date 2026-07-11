@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\Admin\UndergraduateAdminController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\MorningSessionController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PasswordResetController;
 use App\Http\Controllers\Api\ReportCommentController;
@@ -106,6 +107,11 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::get('/analytics/summary', [AcademicAnalyticsController::class, 'summary'])->middleware('permission:academic.view');
         Route::get('/analytics/trend', [AcademicAnalyticsController::class, 'trend'])->middleware('permission:academic.view');
         Route::get('/analytics/people', [AcademicAnalyticsController::class, 'people'])->middleware('permission:academic.view');
+
+        // Morning sessions, recorder side (V2 Phase 6). The policy narrows the
+        // coarse permission to the designated recorders (same-day) and admins.
+        Route::get('/morning-sessions/today', [MorningSessionController::class, 'today'])->middleware('permission:morningAttendance.record');
+        Route::post('/morning-sessions/{morningSession}/record', [MorningSessionController::class, 'record'])->middleware('permission:morningAttendance.record');
 
         // Student evaluations (V2 Phase 5): any consultant, any student, one-way.
         Route::get('/students', [AcademicEvaluationController::class, 'students'])->middleware('permission:academic.submit');
@@ -223,6 +229,14 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::get('/transfer-requests', [AdminTransferRequestController::class, 'index'])->middleware('permission:transfers.review');
         Route::post('/transfer-requests/{transferRequest}/approve', [AdminTransferRequestController::class, 'approve'])->middleware('permission:transfers.review');
         Route::post('/transfer-requests/{transferRequest}/reject', [AdminTransferRequestController::class, 'reject'])->middleware('permission:transfers.review');
+
+        // Morning session oversight (V2 Phase 6).
+        Route::get('/morning-sessions', [MorningSessionController::class, 'index'])->middleware('permission:academic.view');
+        Route::patch('/morning-sessions/{morningSession}', [MorningSessionController::class, 'update'])->middleware('permission:academic.manage');
+        Route::post('/morning-sessions/{morningSession}/cancel', [MorningSessionController::class, 'cancel'])->middleware('permission:academic.manage');
+        Route::get('/morning-roster-overrides', [MorningSessionController::class, 'overrides'])->middleware('permission:academic.view');
+        Route::post('/morning-roster-overrides', [MorningSessionController::class, 'storeOverride'])->middleware('permission:academic.manage');
+        Route::delete('/morning-roster-overrides/{override}', [MorningSessionController::class, 'destroyOverride'])->middleware('permission:academic.manage');
 
         // Undergraduate module administration (V2 Phase 5).
         Route::middleware('permission:students.manage')->group(function (): void {

@@ -75,6 +75,9 @@ final class Permissions
     /** Structural evaluation-form edits (add/remove fields, change key or type) via draft + publish. Maintenance only. */
     public const EVALUATION_FORMS_EDIT_STRUCTURE = 'evaluationForms.editStructure';
 
+    /** Record the department-wide morning session; the policy narrows to the designated recorder. */
+    public const MORNING_ATTENDANCE_RECORD = 'morningAttendance.record';
+
     /** Record whether a scheduled teaching activity was held (student reps). */
     public const TEACHING_LOG_RECORD = 'teachingLog.record';
 
@@ -126,6 +129,7 @@ final class Permissions
             self::TEACHING_LOG_RECORD,
             self::STUDENT_ATTENDANCE_RECORD,
             self::STUDENTS_MANAGE,
+            self::MORNING_ATTENDANCE_RECORD,
         ],
         'admin' => [
             self::AUTH_VIEW_SELF,
@@ -157,6 +161,7 @@ final class Permissions
             self::TEACHING_LOG_RECORD,
             self::STUDENT_ATTENDANCE_RECORD,
             self::STUDENTS_MANAGE,
+            self::MORNING_ATTENDANCE_RECORD,
         ],
         'nurse' => [
             self::AUTH_VIEW_SELF,
@@ -168,6 +173,7 @@ final class Permissions
         'resident' => [
             self::AUTH_VIEW_SELF,
             self::ACADEMIC_SUBMIT,
+            self::MORNING_ATTENDANCE_RECORD,
         ],
         'consultant' => [
             self::AUTH_VIEW_SELF,
@@ -175,6 +181,7 @@ final class Permissions
             self::TRANSFERS_CREATE,
             self::TRANSFERS_REVIEW,
             self::STUDENT_ATTENDANCE_RECORD,
+            self::MORNING_ATTENDANCE_RECORD,
         ],
         // Student representatives record whether teaching happened, nothing
         // else. The ABSENCE of academic.submit / academic.view /

@@ -52,6 +52,13 @@ class AppSettingsService
                     'smsHoursBeforeDeadline' => (int) ($rows->get('report_reminders')?->value_json['sms_hours_before_deadline'] ?? 1),
                     'overdueHoursAfterDeadline' => (int) ($rows->get('report_reminders')?->value_json['overdue_hours_after_deadline'] ?? 0),
                 ],
+                // Morning sessions (V2 Phase 6): ISO weekdays (1 = Monday),
+                // the fixed scheduled start, and the designated recorders.
+                'academic' => [
+                    'morningSessionDays' => array_values(array_map('intval', $rows->get('academic_morning')?->value_json['session_days'] ?? [1, 3, 5])),
+                    'morningSessionTime' => (string) ($rows->get('academic_morning')?->value_json['session_time'] ?? '08:00'),
+                    'morningRecorderIds' => array_values($rows->get('academic_morning')?->value_json['recorder_ids'] ?? []),
+                ],
             ];
         });
     }
@@ -79,6 +86,11 @@ class AppSettingsService
                 'smsHoursBeforeDeadline' => (int) $this->value($validated, 'reminder_sms_hours_before_deadline', 'reminderSmsHoursBeforeDeadline', $current['reportReminderThresholds']['smsHoursBeforeDeadline']),
                 'overdueHoursAfterDeadline' => (int) $this->value($validated, 'reminder_overdue_hours_after_deadline', 'reminderOverdueHoursAfterDeadline', $current['reportReminderThresholds']['overdueHoursAfterDeadline']),
             ],
+            'academic' => [
+                'morningSessionDays' => array_values(array_map('intval', $this->value($validated, 'morning_session_days', 'morningSessionDays', $current['academic']['morningSessionDays']))),
+                'morningSessionTime' => (string) $this->value($validated, 'morning_session_time', 'morningSessionTime', $current['academic']['morningSessionTime']),
+                'morningRecorderIds' => array_values($this->value($validated, 'morning_recorder_ids', 'morningRecorderIds', $current['academic']['morningRecorderIds'])),
+            ],
         ];
 
         $this->upsert('workflow_controls', ['deadline_enforced' => (bool) $next['deadlineEnforced']], $actor);
@@ -100,6 +112,11 @@ class AppSettingsService
             'email_hours_before_deadline' => $next['reportReminderThresholds']['emailHoursBeforeDeadline'],
             'sms_hours_before_deadline' => $next['reportReminderThresholds']['smsHoursBeforeDeadline'],
             'overdue_hours_after_deadline' => $next['reportReminderThresholds']['overdueHoursAfterDeadline'],
+        ], $actor);
+        $this->upsert('academic_morning', [
+            'session_days' => $next['academic']['morningSessionDays'],
+            'session_time' => $next['academic']['morningSessionTime'],
+            'recorder_ids' => $next['academic']['morningRecorderIds'],
         ], $actor);
 
         // Only rewrite every period's deadline when the deadline policy (day or time)

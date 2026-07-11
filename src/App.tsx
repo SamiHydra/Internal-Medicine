@@ -71,6 +71,11 @@ const TeachingAttendancePage = lazy(() =>
     default: module.TeachingAttendancePage,
   })),
 )
+const MorningAttendancePage = lazy(() =>
+  import('@/pages/academic/morning-attendance-page').then((module) => ({
+    default: module.MorningAttendancePage,
+  })),
+)
 const AuditLogPage = lazy(() =>
   import('@/pages/admin/audit-log-page').then((module) => ({
     default: module.AuditLogPage,
@@ -286,6 +291,10 @@ function App() {
               <Route
                 path="/academic/history"
                 element={renderLazyRoute(<AcademicHistoryPage />, 'inline')}
+              />
+              <Route
+                path="/academic/morning"
+                element={renderLazyRoute(<MorningAttendancePage />, 'inline')}
               />
             </Route>
 

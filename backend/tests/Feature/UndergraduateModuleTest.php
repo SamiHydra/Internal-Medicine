@@ -375,6 +375,11 @@ class UndergraduateModuleTest extends TestCase
 
         $this->assertNotEmpty($routes);
 
+        $morningSession = \App\Models\MorningSession::query()->create([
+            'session_date' => '2026-09-14',
+            'scheduled_start_at' => '08:00',
+        ]);
+
         $bindings = [
             '{key}' => 'consultant_mdt',
             '{transferRequest}' => $transferRequest->id,
@@ -382,6 +387,7 @@ class UndergraduateModuleTest extends TestCase
             '{ward}' => Ward::query()->value('id'),
             '{section}' => \App\Models\Section::query()->value('id'),
             '{dutyType}' => \App\Models\DutyType::query()->value('id'),
+            '{morningSession}' => $morningSession->id,
         ];
 
         foreach ($routes as $route) {

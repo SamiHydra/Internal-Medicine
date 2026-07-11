@@ -73,6 +73,16 @@ class SettingsController extends Controller
             'metricTargets.*.amber' => ['sometimes', 'numeric', 'min:0'],
             'metric_targets.*.green' => ['sometimes', 'numeric', 'min:0'],
             'metricTargets.*.green' => ['sometimes', 'numeric', 'min:0'],
+            'morning_session_days' => ['sometimes', 'array'],
+            'morningSessionDays' => ['sometimes', 'array'],
+            'morning_session_days.*' => ['integer', 'between:1,7'],
+            'morningSessionDays.*' => ['integer', 'between:1,7'],
+            'morning_session_time' => ['sometimes', 'regex:/^\d{2}:\d{2}$/'],
+            'morningSessionTime' => ['sometimes', 'regex:/^\d{2}:\d{2}$/'],
+            'morning_recorder_ids' => ['sometimes', 'array'],
+            'morningRecorderIds' => ['sometimes', 'array'],
+            'morning_recorder_ids.*' => ['uuid', Rule::exists('users', 'id')],
+            'morningRecorderIds.*' => ['uuid', Rule::exists('users', 'id')],
         ]);
         $oldValues = $this->settingsService->structured();
         $settings = $this->settingsService->update($request->user(), $validated);

@@ -39,6 +39,7 @@ const routeLoaders: Record<string, () => Promise<unknown>> = {
   '/academic/submit': () => import('@/pages/academic/evaluation-form-page'),
   '/academic/history': () => import('@/pages/academic/academic-history-page'),
   '/academic/teaching': () => import('@/pages/academic/teaching-attendance-page'),
+  '/academic/morning': () => import('@/pages/academic/morning-attendance-page'),
   // Student reps
   '/teaching': () => import('@/pages/teaching/rep-log-page'),
 }

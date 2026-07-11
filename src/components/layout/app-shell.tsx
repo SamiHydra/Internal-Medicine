@@ -62,14 +62,16 @@ function BrandLockup({
 }
 
 function SidebarNav({ onNavigate, collapsed = false }: { onNavigate?: () => void; collapsed?: boolean }) {
-  const { currentUser } = useAppData()
+  const { currentUser, academic } = useAppData()
   const { workspace } = useWorkspace()
 
   if (!currentUser) {
     return null
   }
 
-  const items = getNavigationItems(currentUser.role, workspace)
+  const items = getNavigationItems(currentUser.role, workspace, {
+    isMorningRecorder: academic?.isMorningRecorder,
+  })
 
   return (
     <nav className="space-y-1.5">
@@ -207,7 +209,7 @@ function WorkspaceSwitcher({
 export function AppShell({ children }: PropsWithChildren) {
   const navigate = useNavigate()
   const location = useLocation()
-  const { currentUser, logout, state } = useAppData()
+  const { currentUser, logout, state, academic } = useAppData()
   const { workspace } = useWorkspace()
   const { isSyncing } = useAppSync()
   const currentPeriod = useCurrentReportingPeriod()
@@ -232,7 +234,9 @@ export function AppShell({ children }: PropsWithChildren) {
   const currentPeriodLabel = currentPeriod ? formatWeekLabel(currentPeriod) : '-'
 
   // Derive the current page title from the role's nav (most specific match wins).
-  const navItems = getNavigationItems(currentUser.role, workspace)
+  const navItems = getNavigationItems(currentUser.role, workspace, {
+    isMorningRecorder: academic?.isMorningRecorder,
+  })
   const activeNavItem = [...navItems]
     .sort((left, right) => right.href.length - left.href.length)
     .find(

@@ -10,6 +10,7 @@ import {
   ListChecks,
   LockKeyhole,
   Network,
+  Sunrise,
   Upload,
   Settings,
   ShieldCheck,
@@ -88,12 +89,27 @@ export function isWorkspaceRole(role: UserRole): boolean {
   return role === 'admin' || role === 'superadmin'
 }
 
-export function getNavigationItems(role: UserRole, workspace: Workspace): NavigationItem[] {
+export function getNavigationItems(
+  role: UserRole,
+  workspace: Workspace,
+  extras?: { isMorningRecorder?: boolean },
+): NavigationItem[] {
   if (role === 'admin' || role === 'superadmin') {
     return adminWorkspaceNav[workspace]
   }
 
-  return roleNav[role]
+  const items = roleNav[role]
+
+  // Data-driven, not role-driven (V2 guide 9.2): the morning-session entry
+  // renders only for the currently DESIGNATED recorder.
+  if (extras?.isMorningRecorder && (role === 'resident' || role === 'consultant')) {
+    return [
+      ...items,
+      { label: 'Morning session', shortLabel: 'Morning', href: '/academic/morning', icon: Sunrise },
+    ]
+  }
+
+  return items
 }
 
 /**
