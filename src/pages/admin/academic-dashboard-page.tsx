@@ -16,6 +16,11 @@ import {
 } from 'recharts'
 
 import { AcademicSetupBanner } from '@/components/admin/academic-setup-banner'
+import {
+  MorningAnalyticsTab,
+  StudentsAnalyticsTab,
+  TeachingAnalyticsTab,
+} from '@/components/admin/academic-operations-tabs'
 import { MorningSessionsPanel } from '@/components/admin/morning-sessions-panel'
 import { TransferReviewPanel } from '@/components/academic/transfer-review-panel'
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
@@ -201,6 +206,10 @@ export function AcademicDashboardPage() {
     analyticsKey('consultant', undefined, undefined, undefined, undefined, 'weekly'),
   )
   const cachedPeople = peopleCache.get(peopleKey('consultant', undefined, undefined, undefined)) ?? null
+
+  // The Phase 7 dashboard tabs: peer evaluations (the original dashboard),
+  // morning punctuality, teaching occurrence, and student progress.
+  const [opsTab, setOpsTab] = useState<'evaluations' | 'morning' | 'teaching' | 'students'>('evaluations')
 
   const [direction, setDirection] = useState<AcademicDirection>('consultant')
   const [wardId, setWardId] = useState<string>(ALL)
@@ -424,9 +433,46 @@ export function AcademicDashboardPage() {
         },
       ]
 
+  const opsTabs = [
+    { value: 'evaluations', label: 'Evaluations' },
+    { value: 'morning', label: 'Morning sessions' },
+    { value: 'teaching', label: 'Teaching activities' },
+    { value: 'students', label: 'Students' },
+  ] as const
+
   return (
     <div className="space-y-6 px-4 py-5 md:px-6 md:py-8">
       <AcademicSetupBanner />
+
+      <div className="flex w-fit flex-wrap gap-1.5 rounded-[0.35rem] bg-white p-1.5 outline outline-1 outline-[#d4dde8]">
+        {opsTabs.map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            onClick={() => setOpsTab(tab.value)}
+            className={cn(
+              'rounded-[0.25rem] px-3.5 py-2 text-sm font-semibold transition-colors',
+              opsTab === tab.value
+                ? 'bg-[#04162f] text-white'
+                : 'text-[#44474e] hover:bg-[#eef2f6]',
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {opsTab === 'morning' ? (
+        <>
+          <MorningAnalyticsTab />
+          <MorningSessionsPanel />
+        </>
+      ) : null}
+      {opsTab === 'teaching' ? <TeachingAnalyticsTab /> : null}
+      {opsTab === 'students' ? <StudentsAnalyticsTab /> : null}
+
+      {opsTab !== 'evaluations' ? null : (
+        <>
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -704,7 +750,8 @@ export function AcademicDashboardPage() {
       )}
 
       <TransferReviewPanel allowImmediate />
-      <MorningSessionsPanel />
+        </>
+      )}
     </div>
   )
 }

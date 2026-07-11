@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AcademicAnalyticsController;
 use App\Http\Controllers\Api\AcademicEvaluationController;
+use App\Http\Controllers\Api\AcademicOperationsAnalyticsController;
 use App\Http\Controllers\Api\AcademicRegistrationController;
 use App\Http\Controllers\Api\AccessRequestSubmissionController;
 use App\Http\Controllers\Api\AdminRegistrationController;
@@ -107,6 +108,12 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::get('/analytics/summary', [AcademicAnalyticsController::class, 'summary'])->middleware('permission:academic.view');
         Route::get('/analytics/trend', [AcademicAnalyticsController::class, 'trend'])->middleware('permission:academic.view');
         Route::get('/analytics/people', [AcademicAnalyticsController::class, 'people'])->middleware('permission:academic.view');
+
+        // Operations analytics (V2 Phase 7): morning punctuality, teaching
+        // occurrence, student progress. Content-stamp cached, never polled.
+        Route::get('/analytics/morning', [AcademicOperationsAnalyticsController::class, 'morning'])->middleware('permission:academic.view');
+        Route::get('/analytics/teaching', [AcademicOperationsAnalyticsController::class, 'teaching'])->middleware('permission:academic.view');
+        Route::get('/analytics/students', [AcademicOperationsAnalyticsController::class, 'students'])->middleware('permission:academic.view');
 
         // Morning sessions, recorder side (V2 Phase 6). The policy narrows the
         // coarse permission to the designated recorders (same-day) and admins.

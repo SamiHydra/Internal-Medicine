@@ -2,6 +2,8 @@ import { animate, motion, useReducedMotion, type Variants } from 'framer-motion'
 import { ArrowLeft, ChevronRight } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
+
+import { PersonMorningHistory } from '@/components/admin/academic-operations-tabs'
 import {
   Bar,
   BarChart,
@@ -619,6 +621,8 @@ export function AcademicPersonDetailPage() {
           </ChartCard>
         </>
       )}
+
+      <PersonMorningHistory userId={userId} />
 
       <AcademicEvaluationDetailSheet
         record={selectedRecord}

@@ -16,6 +16,8 @@ Schedule::command('academic:apply-section-transfers')->dailyAt('00:15')->without
 Schedule::command('academic:generate-teaching-sessions')->dailyAt('00:10')->withoutOverlapping(10);
 Schedule::command('academic:open-morning-session')->dailyAt('00:05')->withoutOverlapping(10);
 Schedule::command('academic:remind-morning-recorder')->dailyAt('08:15')->withoutOverlapping(10);
+Schedule::command('academic:remind-reps')->dailyAt('17:00')->withoutOverlapping(10);
+Schedule::command('academic:check-placements')->weeklyOn(5, '10:00')->withoutOverlapping(10);
 Schedule::command('reports:send-reminders')->hourly()->withoutOverlapping(10);
 Schedule::command('reports:ensure-periods')->weeklyOn(0, '00:05')->withoutOverlapping(10);
 Schedule::command('reports:send-digest')->weeklyOn(1, '07:00')->withoutOverlapping(10);

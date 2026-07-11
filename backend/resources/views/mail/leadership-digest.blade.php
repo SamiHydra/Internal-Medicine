@@ -43,6 +43,38 @@
             </tr>
         </table>
 
+        @if (!empty($digest['academic']))
+        <p style="font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: #005db6; margin: 26px 0 4px;">Academic week</p>
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+                <td style="padding: 10px 0; border-bottom: 1px solid #eef2f6;">Morning sessions recorded</td>
+                <td style="padding: 10px 0; border-bottom: 1px solid #eef2f6; text-align: right; font-weight: bold;">
+                    {{ $digest['academic']['morningRecorded'] }}@if ($digest['academic']['morningNotRecorded'] > 0)<span style="color: #ba1a1a;"> ({{ $digest['academic']['morningNotRecorded'] }} not recorded)</span>@endif
+                </td>
+            </tr>
+            @if ($digest['academic']['morningOnTimeRate'] !== null)
+            <tr>
+                <td style="padding: 10px 0; border-bottom: 1px solid #eef2f6;">Morning punctuality</td>
+                <td style="padding: 10px 0; border-bottom: 1px solid #eef2f6; text-align: right; font-weight: bold;">
+                    {{ $digest['academic']['morningOnTimeRate'] }}% on time · avg {{ $digest['academic']['morningAvgDelayMinutes'] }} min late
+                </td>
+            </tr>
+            @endif
+            <tr>
+                <td style="padding: 10px 0; border-bottom: 1px solid #eef2f6;">Teaching sessions held</td>
+                <td style="padding: 10px 0; border-bottom: 1px solid #eef2f6; text-align: right; font-weight: bold;">
+                    {{ $digest['academic']['teachingHeld'] }} of {{ $digest['academic']['teachingExpected'] }} expected
+                </td>
+            </tr>
+            <tr>
+                <td style="padding: 10px 0;">Evaluations filed</td>
+                <td style="padding: 10px 0; text-align: right; font-weight: bold;">
+                    {{ $digest['academic']['peerEvaluations'] }} peer · {{ $digest['academic']['studentEvaluations'] }} student
+                </td>
+            </tr>
+        </table>
+        @endif
+
         <p style="color: #8c929b; font-size: 12px; margin: 24px 0 0;">
             Generated automatically from the St Paul reporting platform.
         </p>

@@ -1,4 +1,5 @@
 export * from '@/lib/api/academic'
+export * from '@/lib/api/academic-operations'
 export * from '@/lib/api/academic-structure'
 export * from '@/lib/api/access-requests'
 export * from '@/lib/api/admin'
