@@ -1,0 +1,31 @@
+# The persistent queue worker (V2 guide 11.1), replacing the cron-tick
+# queue:work line. The ONE always-on process the on-prem move buys us; no
+# Redis, the queue stays on the database driver.
+#
+# Install:
+#   sudo cp deploy/queue-worker.service /etc/systemd/system/imreport-queue.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now imreport-queue.service
+#
+# Then set QUEUE_WORKER_MODE=daemon in backend/.env (disables the cron-tick
+# fallback) and run: php artisan config:cache
+#
+# app:launch-check verifies this unit is active.
+
+[Unit]
+Description=St Paul IM reporting queue worker
+After=network.target mariadb.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/imreport/backend
+ExecStart=/usr/bin/php artisan queue:work --tries=3 --backoff=10 --max-time=3600
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/imreport-queue.log
+StandardError=append:/var/log/imreport-queue.log
+
+[Install]
+WantedBy=multi-user.target

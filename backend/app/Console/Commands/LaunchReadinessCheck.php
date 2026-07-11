@@ -3,6 +3,8 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -28,6 +30,7 @@ class LaunchReadinessCheck extends Command
         $this->checkPerformance();
         $this->checkSameOriginCookieSettings();
         $this->checkBackupsAndErrors();
+        $this->checkOnPremHost();
 
         $this->newLine();
         $this->table(['Status', 'Check', 'Detail'], $this->results);
@@ -232,6 +235,146 @@ class LaunchReadinessCheck extends Command
             'Host cron installed',
             'Manual check: * * * * * cd /path/to/backend && php artisan schedule:run >> storage/logs/schedule.log 2>&1',
         );
+    }
+
+    /**
+     * The on-prem checks (V2 guide 11.3): backup freshness, the persistent
+     * queue worker unit, the scheduler heartbeat, free disk, and the HTTPS
+     * certificate window. Everything degrades to a WARN with a manual
+     * instruction when the host signal is unavailable (e.g. a dev machine).
+     */
+    private function checkOnPremHost(): void
+    {
+        // Last backup fresher than 26 hours (a daily 02:00 dump plus slack).
+        $backupDir = (string) env('BACKUP_DIR', '/var/backups/imreport');
+        $newestBackup = collect(is_dir($backupDir) ? (glob($backupDir.'/*.sql.gz') ?: []) : [])
+            ->map(fn (string $path) => filemtime($path))
+            ->max();
+
+        if ($newestBackup === null) {
+            $this->recordWarning(
+                'Database backup fresher than 26h',
+                sprintf('No *.sql.gz found in %s. Install deploy/backup.sh on the 02:00 cron.', $backupDir),
+            );
+        } else {
+            $ageHours = (now()->getTimestamp() - $newestBackup) / 3600;
+            $this->record(
+                $ageHours <= 26,
+                'Database backup fresher than 26h',
+                sprintf('Newest dump is %.1f hours old.', $ageHours),
+                sprintf('Newest dump is %.1f hours old. Check the deploy/backup.sh cron and its log.', $ageHours),
+            );
+        }
+
+        // The persistent queue worker unit (replaces the cron-tick worker).
+        $unit = (string) env('QUEUE_WORKER_SERVICE', 'imreport-queue.service');
+
+        if (env('QUEUE_WORKER_MODE') !== 'daemon') {
+            $this->recordWarning(
+                'Persistent queue worker active',
+                'QUEUE_WORKER_MODE is not "daemon": the cron-tick worker is in use. On the department server set QUEUE_WORKER_MODE=daemon and install deploy/queue-worker.service.',
+            );
+        } elseif (PHP_OS_FAMILY !== 'Linux' || ! function_exists('shell_exec')) {
+            $this->recordWarning(
+                'Persistent queue worker active',
+                sprintf('Manual check: systemctl is-active %s.', $unit),
+            );
+        } else {
+            $state = trim((string) shell_exec(sprintf('systemctl is-active %s 2>/dev/null', escapeshellarg($unit))));
+            $this->record(
+                $state === 'active',
+                'Persistent queue worker active',
+                sprintf('%s is active.', $unit),
+                sprintf('%s reports "%s". systemctl start %s and check journalctl -u %s.', $unit, $state === '' ? 'unknown' : $state, $unit, $unit),
+            );
+        }
+
+        // The scheduler heartbeat: routes/console.php touches this cache key
+        // every minute, so a silent cron failure surfaces here.
+        $heartbeat = Cache::get('scheduler:heartbeat');
+        $heartbeatFresh = is_string($heartbeat)
+            && Carbon::parse($heartbeat)->greaterThan(now()->subMinutes(5));
+
+        $this->record(
+            $heartbeatFresh,
+            'Scheduler heartbeat fresh',
+            sprintf('Last tick %s.', $heartbeat),
+            'No scheduler tick in the last 5 minutes. Check the system cron entry for php artisan schedule:run.',
+            warn: ! app()->environment('production'),
+        );
+
+        // Free disk above threshold (dumps + logs need headroom).
+        $minFreeGb = (float) env('MIN_FREE_DISK_GB', 5);
+        $freeBytes = @disk_free_space(base_path());
+
+        if ($freeBytes === false) {
+            $this->recordWarning('Free disk above threshold', 'Could not read free disk space.');
+        } else {
+            $freeGb = $freeBytes / 1024 ** 3;
+            $this->record(
+                $freeGb >= $minFreeGb,
+                'Free disk above threshold',
+                sprintf('%.1f GB free (threshold %.0f GB).', $freeGb, $minFreeGb),
+                sprintf('%.1f GB free is under the %.0f GB threshold. Prune old backups/logs or grow the disk.', $freeGb, $minFreeGb),
+            );
+        }
+
+        // HTTPS reachable with more than 21 days on the certificate. The PWA
+        // service worker requires HTTPS even on a LAN.
+        $appUrl = (string) config('app.url');
+        $host = parse_url($appUrl, PHP_URL_HOST);
+
+        if (! str_starts_with($appUrl, 'https://') || $host === null) {
+            $this->record(
+                false,
+                'APP_URL is the HTTPS internal hostname',
+                '',
+                sprintf('APP_URL is "%s". Set it to the https:// internal hostname (the PWA requires HTTPS on the LAN).', $appUrl),
+                warn: ! app()->environment('production'),
+            );
+        } else {
+            $this->pass('APP_URL is the HTTPS internal hostname', sprintf('APP_URL is %s.', $appUrl));
+            $this->checkCertificate($host, (int) (parse_url($appUrl, PHP_URL_PORT) ?: 443));
+        }
+    }
+
+    private function checkCertificate(string $host, int $port): void
+    {
+        try {
+            $context = stream_context_create(['ssl' => ['capture_peer_cert' => true, 'SNI_enabled' => true]]);
+            $socket = @stream_socket_client(
+                sprintf('ssl://%s:%d', $host, $port),
+                $errorCode,
+                $errorMessage,
+                5,
+                STREAM_CLIENT_CONNECT,
+                $context,
+            );
+
+            if ($socket === false) {
+                $this->recordWarning(
+                    'HTTPS certificate valid > 21 days',
+                    sprintf('Could not reach https://%s:%d from here (%s). Verify from a hospital device.', $host, $port, $errorMessage ?: 'no route'),
+                );
+
+                return;
+            }
+
+            $params = stream_context_get_params($socket);
+            fclose($socket);
+            $certificate = openssl_x509_parse($params['options']['ssl']['peer_certificate']);
+            $validTo = Carbon::createFromTimestamp($certificate['validTo_time_t']);
+            $daysLeft = now()->diffInDays($validTo, false);
+
+            $this->record(
+                $daysLeft > 21,
+                'HTTPS certificate valid > 21 days',
+                sprintf('Certificate expires %s (%d days).', $validTo->toDateString(), (int) $daysLeft),
+                sprintf('Certificate expires %s (%d days). Renew now: see docs/OPERATIONS.md.', $validTo->toDateString(), (int) $daysLeft),
+            );
+        } catch (\Throwable $error) {
+            $this->recordWarning('HTTPS certificate valid > 21 days', $error->getMessage());
+        }
     }
 
     private function containsOnlyLocalHosts(array $values): bool
