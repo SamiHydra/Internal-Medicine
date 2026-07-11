@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   FilePenLine,
+  GraduationCap,
   LayoutDashboard,
   ListChecks,
   LockKeyhole,
@@ -52,12 +53,13 @@ export const adminWorkspaceNav: Record<Workspace, NavigationItem[]> = {
     { label: 'Duty roster', shortLabel: 'Roster', href: '/admin/academic/roster', icon: CalendarDays },
     { label: 'Rotations', href: '/admin/academic/rotations', icon: CalendarRange },
     { label: 'Forms', href: '/admin/academic/evaluation-forms', icon: FilePenLine },
+    { label: 'Students', href: '/admin/academic/students', icon: GraduationCap },
     { label: 'Structure', href: '/admin/academic/structure', icon: Network },
     ...adminSystemNav,
   ],
 }
 
-const roleNav: Record<'nurse' | 'resident' | 'consultant', NavigationItem[]> = {
+const roleNav: Record<'nurse' | 'resident' | 'consultant' | 'student_rep', NavigationItem[]> = {
   nurse: [
     { label: 'Home', href: '/nurse', icon: LayoutDashboard, end: true },
     { label: 'My Reports', shortLabel: 'Reports', href: '/nurse/reports', icon: ClipboardList },
@@ -72,7 +74,12 @@ const roleNav: Record<'nurse' | 'resident' | 'consultant', NavigationItem[]> = {
   consultant: [
     { label: 'Home', href: '/academic', icon: LayoutDashboard, end: true },
     { label: 'Submit evaluation', shortLabel: 'Submit', href: '/academic/submit', icon: ClipboardCheck },
+    { label: 'Students', href: '/academic/teaching', icon: GraduationCap },
     { label: 'History', href: '/academic/history', icon: Activity },
+  ],
+  // The rep's ONLY surface: the held / not-held activity log.
+  student_rep: [
+    { label: 'Activity log', shortLabel: 'Log', href: '/teaching', icon: ClipboardCheck, end: true },
   ],
 }
 

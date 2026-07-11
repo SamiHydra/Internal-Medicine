@@ -17,5 +17,6 @@ export * from '@/lib/api/passwords'
 // '@/lib/api/realtime' directly (ideally via dynamic import) once realtime ships.
 export * from '@/lib/api/reports'
 export * from '@/lib/api/settings'
+export * from '@/lib/api/teaching'
 export * from '@/lib/api/types'
 export * from '@/lib/api/workspace'

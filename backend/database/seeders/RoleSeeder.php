@@ -35,6 +35,11 @@ class RoleSeeder extends Seeder
                 'label' => 'Consultant',
                 'description' => 'Submits performance evaluations of residents and is evaluated by residents',
             ],
+            [
+                'role_key' => 'student_rep',
+                'label' => 'Student representative',
+                'description' => 'Records whether scheduled teaching activities were held. No access to any evaluation, assessment, or score.',
+            ],
         ];
 
         foreach ($roles as $role) {

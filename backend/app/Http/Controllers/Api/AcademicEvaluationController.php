@@ -7,6 +7,8 @@ use App\Http\Controllers\Controller;
 use App\Models\ConsultantEvaluation;
 use App\Models\Evaluation;
 use App\Models\ResidentEvaluation;
+use App\Models\Student;
+use App\Models\SubgroupPlacement;
 use App\Models\User;
 use App\Models\Ward;
 use App\Services\Academic\AcademicAnalyticsFilters;
@@ -190,6 +192,112 @@ class AcademicEvaluationController extends Controller
             'summary' => $this->analytics->summary($filters),
             'trend' => $this->analytics->trend($filters),
         ]);
+    }
+
+    /**
+     * Students a consultant can evaluate (V2 Phase 5). Deliberately NOT
+     * ward-gated: consultants teach across the undergraduate program, so any
+     * consultant may evaluate any active student. The current placement is
+     * context, shown on the form and snapshotted at submission.
+     */
+    public function students(Request $request): JsonResponse
+    {
+        Gate::authorize('create', ConsultantEvaluation::class);
+
+        if ($request->user()->role_key !== 'consultant') {
+            return response()->json(['data' => []]);
+        }
+
+        $today = now()->toDateString();
+
+        $students = Student::query()
+            ->with('batch')
+            ->where('active', true)
+            ->whereHas('batch', fn ($query) => $query->where('active', true))
+            ->orderBy('full_name')
+            ->get();
+
+        $placements = SubgroupPlacement::query()
+            ->with('ward')
+            ->whereDate('week_starts_on', '<=', $today)
+            ->whereDate('week_ends_on', '>=', $today)
+            ->get()
+            ->keyBy(fn (SubgroupPlacement $placement) => $placement->batch_id.'|'.$placement->subgroup);
+
+        return response()->json([
+            'data' => $students->map(function (Student $student) use ($placements) {
+                $placement = $student->subgroup !== null
+                    ? $placements->get($student->batch_id.'|'.$student->subgroup)
+                    : null;
+
+                return [
+                    'id' => $student->id,
+                    'fullName' => $student->full_name,
+                    'batchLabel' => $student->batch?->label,
+                    'cohort' => $student->batch?->cohort,
+                    'subgroup' => $student->subgroup,
+                    'currentWardName' => $placement?->ward?->name,
+                ];
+            })->values(),
+        ]);
+    }
+
+    /**
+     * A consultant evaluates a student through the Phase 4 form engine
+     * (student_weekly at the end of each ward placement, student_final at
+     * the end of the attachment). One-way by design: there is no route by
+     * which a student or a rep evaluates anyone.
+     */
+    public function storeStudentEvaluation(Request $request): JsonResponse
+    {
+        Gate::authorize('create', ConsultantEvaluation::class);
+
+        if ($request->user()->role_key !== 'consultant') {
+            throw ValidationException::withMessages([
+                'subjectId' => 'Only consultants may evaluate students.',
+            ]);
+        }
+
+        $formKey = $request->input('formKey', $request->input('form_key'));
+
+        if (! in_array($formKey, ['student_weekly', 'student_final'], true)) {
+            throw ValidationException::withMessages([
+                'formKey' => 'Choose the weekly or the final student evaluation.',
+            ]);
+        }
+
+        $form = $this->forms->published($formKey);
+
+        $validated = Validator::make($this->normalize($request), [
+            'evaluation_date' => ['required', 'date', 'before_or_equal:today'],
+            'student_id' => ['required', 'uuid', 'exists:students,id'],
+            ...$this->forms->validationRulesFor($form),
+        ])->validate();
+
+        $student = Student::query()->findOrFail($validated['student_id']);
+        $date = Carbon::parse($validated['evaluation_date']);
+
+        // Snapshot the student's placement for that week (null when none:
+        // the evaluation still stands, unplaced).
+        $placement = $student->subgroup === null ? null : SubgroupPlacement::query()
+            ->where('batch_id', $student->batch_id)
+            ->where('subgroup', $student->subgroup)
+            ->whereDate('week_starts_on', '<=', $date->toDateString())
+            ->whereDate('week_ends_on', '>=', $date->toDateString())
+            ->first();
+
+        $evaluation = $this->forms->store($form, $validated, [
+            'author_id' => $request->user()->id,
+            'subject_student_id' => $student->id,
+            'evaluation_date' => $validated['evaluation_date'],
+            'ward_id' => $placement?->ward_id,
+            'placement_type' => $placement !== null ? 'ward' : null,
+            'week_starts_on' => $formKey === 'student_weekly'
+                ? ($placement?->week_starts_on?->toDateString() ?? $date->copy()->startOfWeek()->toDateString())
+                : null,
+        ]);
+
+        return response()->json($this->serializeStudentEvaluation($evaluation), 201);
     }
 
     private function storeThroughForm(Request $request, string $formKey, string $direction, string $policyClass): JsonResponse

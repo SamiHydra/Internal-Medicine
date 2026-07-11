@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\Admin\ReportAssignmentController;
 use App\Http\Controllers\Api\Admin\RotationController;
 use App\Http\Controllers\Api\Admin\SettingsController;
 use App\Http\Controllers\Api\Admin\TransferRequestController as AdminTransferRequestController;
+use App\Http\Controllers\Api\Admin\UndergraduateAdminController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\AuthController;
@@ -26,6 +27,7 @@ use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PasswordResetController;
 use App\Http\Controllers\Api\ReportCommentController;
 use App\Http\Controllers\Api\ReportWorkflowController;
+use App\Http\Controllers\Api\TeachingSessionController;
 use App\Http\Controllers\Api\TransferRequestController;
 use App\Http\Controllers\Api\WorkspaceController;
 use Illuminate\Support\Facades\Route;
@@ -105,11 +107,24 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::get('/analytics/trend', [AcademicAnalyticsController::class, 'trend'])->middleware('permission:academic.view');
         Route::get('/analytics/people', [AcademicAnalyticsController::class, 'people'])->middleware('permission:academic.view');
 
+        // Student evaluations (V2 Phase 5): any consultant, any student, one-way.
+        Route::get('/students', [AcademicEvaluationController::class, 'students'])->middleware('permission:academic.submit');
+        Route::post('/student-evaluations', [AcademicEvaluationController::class, 'storeStudentEvaluation'])->middleware('permission:academic.submit');
+
         // Section transfers, consultant side (V2 Phase 2).
         Route::get('/transfer-requests/options', [TransferRequestController::class, 'formOptions'])->middleware('permission:transfers.create');
         Route::post('/transfer-requests', [TransferRequestController::class, 'store'])->middleware('permission:transfers.create');
         Route::get('/transfer-requests/mine', [TransferRequestController::class, 'mine'])->middleware('permission:transfers.create');
         Route::post('/transfer-requests/{transferRequest}/cancel', [TransferRequestController::class, 'cancel'])->middleware('permission:transfers.create');
+    });
+
+    // Undergraduate teaching (V2 Phase 5): the rep's held / not-held log and
+    // the consultant's attendance surface. student_rep reaches ONLY these.
+    Route::prefix('teaching')->group(function (): void {
+        Route::get('/my-sessions', [TeachingSessionController::class, 'mySessions'])->middleware('permission:teachingLog.record');
+        Route::post('/sessions/{teachingSession}/record', [TeachingSessionController::class, 'record'])->middleware('permission:teachingLog.record');
+        Route::get('/today', [TeachingSessionController::class, 'today'])->middleware('permission:studentAttendance.record');
+        Route::put('/sessions/{teachingSession}/attendance', [TeachingSessionController::class, 'attendance'])->middleware('permission:studentAttendance.record');
     });
 
     Route::prefix('admin')->group(function (): void {
@@ -208,6 +223,32 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::get('/transfer-requests', [AdminTransferRequestController::class, 'index'])->middleware('permission:transfers.review');
         Route::post('/transfer-requests/{transferRequest}/approve', [AdminTransferRequestController::class, 'approve'])->middleware('permission:transfers.review');
         Route::post('/transfer-requests/{transferRequest}/reject', [AdminTransferRequestController::class, 'reject'])->middleware('permission:transfers.review');
+
+        // Undergraduate module administration (V2 Phase 5).
+        Route::middleware('permission:students.manage')->group(function (): void {
+            Route::get('/student-batches', [UndergraduateAdminController::class, 'batches']);
+            Route::post('/student-batches', [UndergraduateAdminController::class, 'storeBatch']);
+            Route::patch('/student-batches/{batch}', [UndergraduateAdminController::class, 'updateBatch']);
+
+            Route::get('/students', [UndergraduateAdminController::class, 'students']);
+            Route::post('/students', [UndergraduateAdminController::class, 'storeStudent']);
+            Route::post('/students/import', [UndergraduateAdminController::class, 'importStudents']);
+            Route::patch('/students/{student}', [UndergraduateAdminController::class, 'updateStudent']);
+
+            Route::get('/subgroup-placements', [UndergraduateAdminController::class, 'placements']);
+            Route::post('/subgroup-placements', [UndergraduateAdminController::class, 'storePlacement']);
+            Route::delete('/subgroup-placements/{placement}', [UndergraduateAdminController::class, 'destroyPlacement']);
+
+            Route::get('/teaching-schedules', [UndergraduateAdminController::class, 'schedules']);
+            Route::patch('/teaching-schedules/{schedule}/active', [UndergraduateAdminController::class, 'setScheduleActive']);
+
+            Route::get('/rep-assignments', [UndergraduateAdminController::class, 'repAssignments']);
+            Route::post('/rep-assignments', [UndergraduateAdminController::class, 'storeRepAssignment']);
+            Route::patch('/rep-assignments/{repAssignment}/active', [UndergraduateAdminController::class, 'setRepAssignmentActive']);
+
+            Route::get('/teaching-sessions', [UndergraduateAdminController::class, 'sessions']);
+            Route::post('/teaching-sessions/{teachingSession}/cancel', [UndergraduateAdminController::class, 'cancelSession']);
+        });
 
         Route::get('/roster/{year}/{month}', [DutyRosterController::class, 'month'])->whereNumber('year')->whereNumber('month')->middleware('permission:roster.manage');
         Route::put('/roster/{year}/{month}', [DutyRosterController::class, 'saveMonth'])->whereNumber('year')->whereNumber('month')->middleware('permission:roster.manage');

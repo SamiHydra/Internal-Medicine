@@ -4,6 +4,7 @@ export type UserRole =
   | 'nurse'
   | 'resident'
   | 'consultant'
+  | 'student_rep'
 
 export type ReportFamily = 'inpatient' | 'outpatient' | 'procedure'
 

@@ -25,7 +25,7 @@ class UserController extends Controller
         Gate::authorize('viewAny', User::class);
 
         $validated = $request->validate([
-            'role' => ['sometimes', Rule::in(['superadmin', 'admin', 'nurse'])],
+            'role' => ['sometimes', Rule::in(['superadmin', 'admin', 'nurse', 'resident', 'consultant', 'student_rep'])],
             'active' => ['sometimes', 'boolean'],
             'q' => ['sometimes', 'string', 'max:100'],
         ]);
@@ -69,8 +69,8 @@ class UserController extends Controller
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'username' => ['nullable', 'string', 'min:3', 'max:64', 'regex:/^[a-zA-Z0-9._-]+$/', 'unique:users,username'],
             'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::defaults()],
-            'role_key' => ['required_without:role', Rule::in(['admin', 'nurse'])],
-            'role' => ['required_without:role_key', Rule::in(['admin', 'nurse'])],
+            'role_key' => ['required_without:role', Rule::in(['admin', 'nurse', 'student_rep'])],
+            'role' => ['required_without:role_key', Rule::in(['admin', 'nurse', 'student_rep'])],
             'title' => ['nullable', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:32'],
             'active' => ['sometimes', 'boolean'],

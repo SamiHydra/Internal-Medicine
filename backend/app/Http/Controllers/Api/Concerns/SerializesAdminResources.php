@@ -274,6 +274,43 @@ trait SerializesAdminResources
     }
 
     /**
+     * A student evaluation (student_weekly / student_final): generic answer
+     * map keyed by camelCase field key, since the form is admin-editable.
+     *
+     * @return array<string, mixed>
+     */
+    protected function serializeStudentEvaluation(Evaluation $evaluation): array
+    {
+        $evaluation->loadMissing(['author', 'ward', 'answers', 'form.fields']);
+        $student = \App\Models\Student::query()->with('batch')->find($evaluation->subject_student_id);
+
+        $answers = [];
+        foreach ($evaluation->form?->fields ?? [] as $field) {
+            if ($field->key === 'comment') {
+                continue;
+            }
+            $answers[\Illuminate\Support\Str::camel($field->key)] = $evaluation->answer($field->key);
+        }
+
+        return [
+            'id' => $evaluation->id,
+            'formKey' => $evaluation->form_key,
+            'authorId' => $evaluation->author_id,
+            'authorName' => $evaluation->author?->full_name,
+            'subjectStudentId' => $evaluation->subject_student_id,
+            'subjectName' => $student?->full_name,
+            'batchLabel' => $student?->batch?->label,
+            'wardId' => $evaluation->ward_id,
+            'wardName' => $evaluation->ward?->name,
+            'weekStartsOn' => $evaluation->week_starts_on?->toDateString(),
+            'evaluationDate' => $evaluation->evaluation_date?->toJSON(),
+            'answers' => $answers,
+            'comment' => $evaluation->comment,
+            'createdAt' => $evaluation->created_at?->toJSON(),
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     protected function serializeEvaluationForm(EvaluationForm $form): array

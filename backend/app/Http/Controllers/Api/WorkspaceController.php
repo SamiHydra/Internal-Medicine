@@ -11,6 +11,7 @@ use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportingPeriod;
 use App\Models\ReportStatusHistory;
+use App\Models\RepAssignment;
 use App\Models\ReportTemplate;
 use App\Models\RotationCalendar;
 use App\Models\Section;
@@ -310,11 +311,29 @@ class WorkspaceController extends Controller
             ];
         }
 
+        $repScope = null;
+
+        if ($user->role_key === 'student_rep') {
+            $assignment = RepAssignment::query()
+                ->with('batch')
+                ->where('user_id', $user->id)
+                ->where('active', true)
+                ->first();
+
+            if ($assignment !== null) {
+                $repScope = [
+                    'batchId' => $assignment->batch_id,
+                    'cohort' => $assignment->batch?->cohort,
+                    'scope' => $assignment->scope,
+                ];
+            }
+        }
+
         return [
             'currentPlacement' => $currentPlacement,
             'isMorningRecorder' => false,
             'headsSections' => $headsSections,
-            'repScope' => null,
+            'repScope' => $repScope,
             'pendingTransferCount' => $pendingTransferCount,
             'academicSetup' => $academicSetup,
         ];

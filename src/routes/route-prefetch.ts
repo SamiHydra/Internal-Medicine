@@ -24,6 +24,7 @@ const routeLoaders: Record<string, () => Promise<unknown>> = {
   '/admin/academic/roster': () => import('@/pages/admin/duty-roster-page'),
   '/admin/academic/rotations': () => import('@/pages/admin/rotation-planner-page'),
   '/admin/academic/evaluation-forms': () => import('@/pages/admin/evaluation-forms-page'),
+  '/admin/academic/students': () => import('@/pages/admin/students-page'),
   // Shared admin system
   '/admin/users': () => import('@/pages/admin/user-management-page'),
   '/admin/audit': () => import('@/pages/admin/audit-log-page'),
@@ -37,6 +38,9 @@ const routeLoaders: Record<string, () => Promise<unknown>> = {
   '/academic': () => import('@/pages/academic/academic-home-page'),
   '/academic/submit': () => import('@/pages/academic/evaluation-form-page'),
   '/academic/history': () => import('@/pages/academic/academic-history-page'),
+  '/academic/teaching': () => import('@/pages/academic/teaching-attendance-page'),
+  // Student reps
+  '/teaching': () => import('@/pages/teaching/rep-log-page'),
 }
 
 const warmed = new Set<string>()

@@ -145,6 +145,7 @@ export function EvaluationFormRenderer({
   subjects,
   subjectLabel,
   onSubmitted,
+  submit: submitOverride,
 }: {
   client: LaravelApiClient
   form: EvaluationFormDefinition
@@ -153,6 +154,8 @@ export function EvaluationFormRenderer({
   subjects: Array<{ id: string; fullName: string }>
   subjectLabel: string
   onSubmitted: () => void
+  /** Replace the default peer-evaluation endpoints (e.g. student evaluations). */
+  submit?: (payload: Record<string, unknown>) => Promise<unknown>
 }) {
   const activeFields = useMemo(
     () =>
@@ -225,7 +228,11 @@ export function EvaluationFormRenderer({
         payload[field.key] = toPayloadValue(field, answers[field.key])
       }
 
-      await submitEvaluationAnswers(client, direction, payload)
+      if (submitOverride) {
+        await submitOverride(payload)
+      } else {
+        await submitEvaluationAnswers(client, direction, payload)
+      }
       toast.success('Evaluation submitted.')
       setSubjectId('')
       setAnswers(Object.fromEntries(activeFields.map((field) => [field.key, defaultValueFor(field)])))

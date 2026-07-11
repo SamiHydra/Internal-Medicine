@@ -56,6 +56,21 @@ const EvaluationFormsPage = lazy(() =>
     default: module.EvaluationFormsPage,
   })),
 )
+const StudentsPage = lazy(() =>
+  import('@/pages/admin/students-page').then((module) => ({
+    default: module.StudentsPage,
+  })),
+)
+const RepLogPage = lazy(() =>
+  import('@/pages/teaching/rep-log-page').then((module) => ({
+    default: module.RepLogPage,
+  })),
+)
+const TeachingAttendancePage = lazy(() =>
+  import('@/pages/academic/teaching-attendance-page').then((module) => ({
+    default: module.TeachingAttendancePage,
+  })),
+)
 const AuditLogPage = lazy(() =>
   import('@/pages/admin/audit-log-page').then((module) => ({
     default: module.AuditLogPage,
@@ -274,6 +289,17 @@ function App() {
               />
             </Route>
 
+            <Route element={<ProtectedRoute roles={['consultant']} />}>
+              <Route
+                path="/academic/teaching"
+                element={renderLazyRoute(<TeachingAttendancePage />, 'inline')}
+              />
+            </Route>
+
+            <Route element={<ProtectedRoute roles={['student_rep']} />}>
+              <Route path="/teaching" element={renderLazyRoute(<RepLogPage />, 'inline')} />
+            </Route>
+
             <Route element={<ProtectedRoute roles={['nurse']} />}>
               <Route path="/nurse" element={renderLazyRoute(<NurseDashboardPage />, 'inline')} />
               <Route
@@ -311,6 +337,10 @@ function App() {
               <Route
                 path="/admin/academic/evaluation-forms"
                 element={renderLazyRoute(<EvaluationFormsPage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/students"
+                element={renderLazyRoute(<StudentsPage />, 'inline')}
               />
               <Route
                 path="/admin/academic/people/:userId"

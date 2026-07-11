@@ -38,6 +38,7 @@ const roleLabels = {
   nurse: 'Nurse',
   resident: 'Resident',
   consultant: 'Consultant',
+  student_rep: 'Student rep',
 } as const
 
 function adminSortValue(profile: UserProfile) {

@@ -13,6 +13,7 @@ Artisan::command('inspire', function () {
 // mutex for the default 24h — which would silently halt delivery/digests.
 Schedule::command('reports:sync-overdue')->hourly()->withoutOverlapping(10);
 Schedule::command('academic:apply-section-transfers')->dailyAt('00:15')->withoutOverlapping(10);
+Schedule::command('academic:generate-teaching-sessions')->dailyAt('00:10')->withoutOverlapping(10);
 Schedule::command('reports:send-reminders')->hourly()->withoutOverlapping(10);
 Schedule::command('reports:ensure-periods')->weeklyOn(0, '00:05')->withoutOverlapping(10);
 Schedule::command('reports:send-digest')->weeklyOn(1, '07:00')->withoutOverlapping(10);

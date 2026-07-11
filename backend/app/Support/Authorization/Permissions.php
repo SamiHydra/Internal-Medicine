@@ -75,6 +75,15 @@ final class Permissions
     /** Structural evaluation-form edits (add/remove fields, change key or type) via draft + publish. Maintenance only. */
     public const EVALUATION_FORMS_EDIT_STRUCTURE = 'evaluationForms.editStructure';
 
+    /** Record whether a scheduled teaching activity was held (student reps). */
+    public const TEACHING_LOG_RECORD = 'teachingLog.record';
+
+    /** Record per-student attendance for a teaching session (consultants). */
+    public const STUDENT_ATTENDANCE_RECORD = 'studentAttendance.record';
+
+    /** Student batches, rosters, placements, rep accounts, session oversight. */
+    public const STUDENTS_MANAGE = 'students.manage';
+
     /** File or cancel one's own section-transfer request (consultants). */
     public const TRANSFERS_CREATE = 'transfers.create';
 
@@ -114,6 +123,9 @@ final class Permissions
             self::TRANSFERS_REVIEW,
             self::EVALUATION_FORMS_EDIT_CONTENT,
             self::EVALUATION_FORMS_EDIT_STRUCTURE,
+            self::TEACHING_LOG_RECORD,
+            self::STUDENT_ATTENDANCE_RECORD,
+            self::STUDENTS_MANAGE,
         ],
         'admin' => [
             self::AUTH_VIEW_SELF,
@@ -142,6 +154,9 @@ final class Permissions
             self::ROTATIONS_MANAGE,
             self::TRANSFERS_REVIEW,
             self::EVALUATION_FORMS_EDIT_CONTENT,
+            self::TEACHING_LOG_RECORD,
+            self::STUDENT_ATTENDANCE_RECORD,
+            self::STUDENTS_MANAGE,
         ],
         'nurse' => [
             self::AUTH_VIEW_SELF,
@@ -159,6 +174,16 @@ final class Permissions
             self::ACADEMIC_SUBMIT,
             self::TRANSFERS_CREATE,
             self::TRANSFERS_REVIEW,
+            self::STUDENT_ATTENDANCE_RECORD,
+        ],
+        // Student representatives record whether teaching happened, nothing
+        // else. The ABSENCE of academic.submit / academic.view /
+        // academic.manage here is the structural guarantee that reps can
+        // never reach evaluation data (V2 guide 3.6); a test asserts it.
+        'student_rep' => [
+            self::AUTH_VIEW_SELF,
+            self::NOTIFICATIONS_VIEW,
+            self::TEACHING_LOG_RECORD,
         ],
     ];
 
