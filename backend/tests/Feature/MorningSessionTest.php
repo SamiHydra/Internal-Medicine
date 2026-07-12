@@ -302,4 +302,55 @@ class MorningSessionTest extends TestCase
                 ->json('academic.isMorningRecorder'),
         );
     }
+
+    // ---- Review-pass regression: corrections edit the snapshot ----
+
+    public function test_correction_updates_the_recorded_snapshot_not_a_recomputed_roster(): void
+    {
+        $onWard = User::factory()->role('resident', 'Resident')->create();
+        $this->assign($onWard, 'nephrology_ward_service', '2026-09-01', '2026-09-30');
+
+        $session = app(MorningSessionService::class)->openFor(Carbon::parse('2026-09-14'));
+
+        $this->actingAs($this->recorder)
+            ->postJson("/api/academic/morning-sessions/{$session->id}/record", [
+                'startedOnTime' => true,
+                'presence' => [$onWard->id => false],
+            ])
+            ->assertOk();
+
+        // The person leaves the roster AFTER recording (assignment deleted).
+        DutyAssignment::query()->where('user_id', $onWard->id)->delete();
+
+        // Correcting the session must still honour their presence flag: the
+        // snapshot rows are the roster now, not a recomputation.
+        $this->actingAs($this->recorder)
+            ->postJson("/api/academic/morning-sessions/{$session->id}/record", [
+                'startedOnTime' => true,
+                'presence' => [$onWard->id => true],
+            ])
+            ->assertOk();
+
+        $this->assertDatabaseHas('morning_attendance', [
+            'morning_session_id' => $session->id,
+            'user_id' => $onWard->id,
+            'present' => true,
+        ]);
+
+        // An attendee omitted from a correction keeps their recorded flag
+        // instead of being reset to absent.
+        $this->actingAs($this->recorder)
+            ->postJson("/api/academic/morning-sessions/{$session->id}/record", [
+                'startedOnTime' => false,
+                'actualStartAt' => '08:20',
+                'presence' => [],
+            ])
+            ->assertOk();
+
+        $this->assertDatabaseHas('morning_attendance', [
+            'morning_session_id' => $session->id,
+            'user_id' => $onWard->id,
+            'present' => true,
+        ]);
+    }
 }

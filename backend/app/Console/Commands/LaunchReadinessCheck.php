@@ -269,7 +269,7 @@ class LaunchReadinessCheck extends Command
         // The persistent queue worker unit (replaces the cron-tick worker).
         $unit = (string) env('QUEUE_WORKER_SERVICE', 'imreport-queue.service');
 
-        if (env('QUEUE_WORKER_MODE') !== 'daemon') {
+        if (config('queue.worker_mode') !== 'daemon') {
             $this->recordWarning(
                 'Persistent queue worker active',
                 'QUEUE_WORKER_MODE is not "daemon": the cron-tick worker is in use. On the department server set QUEUE_WORKER_MODE=daemon and install deploy/queue-worker.service.',

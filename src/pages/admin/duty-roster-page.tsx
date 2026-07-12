@@ -324,7 +324,7 @@ export function DutyRosterPage() {
                         <td className="px-4 py-2.5 text-[#74777f]">
                           {person.role === 'consultant'
                             ? (person.sectionName ?? 'No section')
-                            : (person.rotationGroup ? `Group ${person.rotationGroup}` : '—')}
+                            : (person.rotationGroup ? `Group ${person.rotationGroup}` : '-')}
                         </td>
                         <td className="px-4 py-2.5">
                           <Select

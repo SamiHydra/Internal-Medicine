@@ -51,6 +51,12 @@ final class EvaluationFormService
             }
 
             $rules[$field->key] = $this->rulesForField($field);
+
+            // Members get their own rule so a disallowed value 422s instead of
+            // being silently dropped at normalize time.
+            if ($field->type === 'multi_select' && $field->choiceValues() !== []) {
+                $rules[$field->key.'.*'] = ['string', Rule::in($field->choiceValues())];
+            }
         }
 
         return $rules;
@@ -232,10 +238,6 @@ final class EvaluationFormService
         return $rules;
     }
 
-    /**
-     * Multi-select members are validated here (nested rules would need the
-     * caller to merge `key.*` entries; keeping it in one place is simpler).
-     */
     private function normalizeValue(EvaluationFormField $field, mixed $value): mixed
     {
         if ($value === null || $value === '') {
@@ -252,13 +254,14 @@ final class EvaluationFormService
 
     private function normalizeMultiSelect(EvaluationFormField $field, mixed $value): array
     {
+        // Disallowed members already 422 via the `key.*` rule; this is the
+        // last line of defence, so an empty choice list admits nothing.
         $allowed = $field->choiceValues();
-        $values = array_values(array_filter(
-            is_array($value) ? $value : [],
-            fn ($entry) => is_string($entry) && ($allowed === [] || in_array($entry, $allowed, true)),
-        ));
 
-        return $values;
+        return array_values(array_filter(
+            is_array($value) ? $value : [],
+            fn ($entry) => is_string($entry) && in_array($entry, $allowed, true),
+        ));
     }
 
     /**

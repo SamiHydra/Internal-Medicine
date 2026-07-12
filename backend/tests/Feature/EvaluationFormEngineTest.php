@@ -116,15 +116,14 @@ class EvaluationFormEngineTest extends TestCase
             ->assertStatus(422)
             ->assertJsonValidationErrors(['vte_assessed']);
 
-        // Unknown multi-select values are silently dropped, never stored.
-        $response = $this->actingAs($this->resident)
+        // Unknown multi-select values are rejected, never silently dropped.
+        $this->actingAs($this->resident)
             ->postJson('/api/academic/consultant-evaluations', [
                 ...$this->validConsultantPayload(),
                 'mdtParticipants' => ['consultant', 'time_traveler'],
             ])
-            ->assertCreated();
-
-        $this->assertSame(['consultant'], $response->json('mdtParticipants'));
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['mdt_participants.1']);
     }
 
     // ---- Content vs structural edits ----
@@ -403,5 +402,136 @@ class EvaluationFormEngineTest extends TestCase
 
         $third = app()->make(AcademicAnalyticsService::class)->summary($filters);
         $this->assertSame(2, $third['evaluationCount']);
+    }
+
+    // ---- Review-pass regressions ----
+
+    public function test_the_form_endpoint_serves_every_published_form_key(): void
+    {
+        // The teaching page renders the student forms for consultants through
+        // this same endpoint; a peer-only whitelist here killed that page.
+        foreach (EvaluationForm::KEYS as $key) {
+            $this->actingAs($this->consultant)
+                ->getJson("/api/academic/evaluation-forms/{$key}")
+                ->assertOk()
+                ->assertJsonPath('key', $key);
+        }
+
+        $this->actingAs($this->consultant)
+            ->getJson('/api/academic/evaluation-forms/no_such_form')
+            ->assertStatus(422);
+    }
+
+    public function test_score_item_fields_are_core_and_cannot_be_deactivated(): void
+    {
+        foreach ([
+            'consultant_mdt' => \App\Support\Academic\EvaluationScoring::CONSULTANT_SCORE_ITEMS,
+            'resident_acgme' => \App\Support\Academic\EvaluationScoring::RESIDENT_SCORE_ITEMS,
+        ] as $key => $items) {
+            $form = EvaluationForm::query()->where('key', $key)->where('status', 'published')->firstOrFail();
+            $coreKeys = $form->fields()->where('is_core', true)->pluck('key')->all();
+
+            foreach ($items as $item) {
+                $this->assertContains($item, $coreKeys, "{$key}.{$item} must be core");
+            }
+
+            // A content edit deactivating a score input would silently cap
+            // every future score below 100.
+            $this->actingAs($this->admin)
+                ->patchJson("/api/admin/academic/evaluation-forms/{$form->id}/content", [
+                    'fields' => [['key' => $items[0], 'active' => false]],
+                ])
+                ->assertStatus(422);
+        }
+    }
+
+    public function test_structure_editor_rejects_reserved_keys_non_text_comment_and_choiceless_selects(): void
+    {
+        $draft = $this->actingAs($this->superadmin)
+            ->postJson('/api/admin/academic/evaluation-forms/consultant_mdt/draft')
+            ->assertCreated()
+            ->json();
+
+        $baseFields = collect($draft['fields'])->map(fn (array $field) => [
+            'key' => $field['key'],
+            'section' => $field['section'],
+            'label' => $field['label'],
+            'helpText' => $field['helpText'],
+            'type' => $field['type'],
+            'options' => $field['options'],
+            'required' => $field['required'],
+            'sortOrder' => $field['sortOrder'],
+            'active' => $field['active'],
+        ]);
+
+        $attempt = fn (array $extra) => $this->actingAs($this->superadmin)
+            ->putJson("/api/admin/academic/evaluation-forms/{$draft['id']}/structure", [
+                'fields' => $baseFields->push($extra)->all(),
+            ]);
+
+        // A field named after a submit-endpoint header key would clobber the
+        // controller's validation rules for it.
+        $attempt([
+            'key' => 'subject_id', 'section' => 'Notes', 'label' => 'Subject', 'helpText' => null,
+            'type' => 'text', 'options' => null, 'required' => false, 'sortOrder' => 900, 'active' => true,
+        ])->assertStatus(422);
+
+        // 'comment' lives on the header text column: only text fits.
+        $comment = $baseFields->map(
+            fn (array $field) => $field['key'] === 'comment' ? [...$field, 'type' => 'multi_select', 'options' => ['choices' => [['value' => 'a', 'label' => 'A']]]] : $field,
+        );
+        $this->actingAs($this->superadmin)
+            ->putJson("/api/admin/academic/evaluation-forms/{$draft['id']}/structure", ['fields' => $comment->all()])
+            ->assertStatus(422);
+
+        // A select field with no choices could never be answered.
+        $attempt([
+            'key' => 'ward_mood', 'section' => 'Notes', 'label' => 'Ward mood', 'helpText' => null,
+            'type' => 'single_select', 'options' => ['choices' => []], 'required' => false, 'sortOrder' => 910, 'active' => true,
+        ])->assertStatus(422);
+    }
+
+    public function test_admin_added_field_answers_surface_as_extra_answers(): void
+    {
+        // Publish v2 with an extra boolean, answer it, and check the admin
+        // serializer exposes it (it enumerates only the v1 keys explicitly).
+        $draft = $this->actingAs($this->superadmin)
+            ->postJson('/api/admin/academic/evaluation-forms/consultant_mdt/draft')
+            ->assertCreated()
+            ->json();
+
+        $fields = collect($draft['fields'])->map(fn (array $field) => [
+            'key' => $field['key'],
+            'section' => $field['section'],
+            'label' => $field['label'],
+            'helpText' => $field['helpText'],
+            'type' => $field['type'],
+            'options' => $field['options'],
+            'required' => $field['required'],
+            'sortOrder' => $field['sortOrder'],
+            'active' => $field['active'],
+        ])->push([
+            'key' => 'teaching_points_given', 'section' => 'Round quality', 'label' => 'Teaching points given',
+            'helpText' => null, 'type' => 'boolean', 'options' => null, 'required' => false,
+            'sortOrder' => 65, 'active' => true,
+        ])->all();
+
+        $this->actingAs($this->superadmin)
+            ->putJson("/api/admin/academic/evaluation-forms/{$draft['id']}/structure", ['fields' => $fields])
+            ->assertOk();
+        $this->actingAs($this->superadmin)
+            ->postJson("/api/admin/academic/evaluation-forms/{$draft['id']}/publish")
+            ->assertOk();
+
+        $created = $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', [
+                ...$this->validConsultantPayload(),
+                'teachingPointsGiven' => true,
+            ])
+            ->assertCreated();
+
+        $extras = collect($created->json('extraAnswers'));
+        $this->assertTrue((bool) $extras->firstWhere('key', 'teaching_points_given')['value']);
+        $this->assertSame('Teaching points given', $extras->firstWhere('key', 'teaching_points_given')['label']);
     }
 }

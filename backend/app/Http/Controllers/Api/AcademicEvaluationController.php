@@ -93,7 +93,9 @@ class AcademicEvaluationController extends Controller
     {
         Gate::authorize('create', ConsultantEvaluation::class);
 
-        if (! in_array($key, ['consultant_mdt', 'resident_acgme'], true)) {
+        // All four forms: consultants render the student forms on the
+        // teaching page through this same endpoint.
+        if (! in_array($key, \App\Models\EvaluationForm::KEYS, true)) {
             throw ValidationException::withMessages([
                 'key' => ['Unknown evaluation form.'],
             ]);
@@ -268,10 +270,12 @@ class AcademicEvaluationController extends Controller
 
         $form = $this->forms->published($formKey);
 
+        // Form rules spread FIRST so the header rules always win: a form
+        // field sharing a header key must not weaken its validation.
         $validated = Validator::make($this->normalize($request), [
+            ...$this->forms->validationRulesFor($form),
             'evaluation_date' => ['required', 'date', 'before_or_equal:today'],
             'student_id' => ['required', 'uuid', 'exists:students,id'],
-            ...$this->forms->validationRulesFor($form),
         ])->validate();
 
         $student = Student::query()->findOrFail($validated['student_id']);
@@ -304,13 +308,15 @@ class AcademicEvaluationController extends Controller
     {
         $form = $this->forms->published($formKey);
 
+        // Form rules spread FIRST so the header rules always win: a form
+        // field sharing a header key must not weaken its validation.
         $validated = Validator::make($this->normalize($request), [
+            ...$this->forms->validationRulesFor($form),
             'evaluation_date' => ['required', 'date', 'before_or_equal:today'],
             // Accepted for backwards compatibility but IGNORED: the ward is
             // snapshotted server-side from the shared duty placement.
             'ward_id' => ['sometimes', 'nullable', 'uuid'],
             'subject_id' => ['required', 'uuid', 'exists:users,id'],
-            ...$this->forms->validationRulesFor($form),
         ])->validate();
 
         $subject = User::query()->findOrFail($validated['subject_id']);

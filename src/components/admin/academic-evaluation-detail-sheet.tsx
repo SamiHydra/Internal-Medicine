@@ -14,6 +14,7 @@ import {
 import type {
   AcademicEvaluationRecord,
   ConsultantEvaluationRecord,
+  ExtraEvaluationAnswer,
   ResidentEvaluationRecord,
 } from '@/lib/api/types'
 import { cn } from '@/lib/utils'
@@ -126,6 +127,35 @@ function ChipList({ labels, empty }: { labels: string[]; empty: string }) {
   )
 }
 
+function formatExtraValue(value: unknown): ReactNode {
+  if (value === null || value === undefined || value === '') {
+    return '—'
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'Yes' : 'No'
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.join(', ') : '—'
+  }
+  return String(value)
+}
+
+/** Answers to admin-added form fields (beyond the built-in v1 layout). */
+function ExtraAnswersSection({ extras }: { extras?: ExtraEvaluationAnswer[] }) {
+  if (!extras || extras.length === 0) {
+    return null
+  }
+  return (
+    <Section label="Additional fields">
+      <div className="divide-y divide-white/10">
+        {extras.map((extra) => (
+          <MetaRow key={extra.key} label={extra.label} value={formatExtraValue(extra.value)} />
+        ))}
+      </div>
+    </Section>
+  )
+}
+
 function CommentBlock({ comment }: { comment: string | null }) {
   if (!comment) {
     return <p className="text-sm text-white/40">No comment left.</p>
@@ -210,6 +240,8 @@ function ConsultantDetail({ record }: { record: ConsultantEvaluationRecord }) {
         />
       </Section>
 
+      <ExtraAnswersSection extras={record.extraAnswers} />
+
       <Section label="Comment">
         <CommentBlock comment={record.comment} />
       </Section>
@@ -262,6 +294,8 @@ function ResidentDetail({ record }: { record: ResidentEvaluationRecord }) {
           empty="None flagged."
         />
       </Section>
+
+      <ExtraAnswersSection extras={record.extraAnswers} />
 
       <Section label="Comment">
         <CommentBlock comment={record.comment} />

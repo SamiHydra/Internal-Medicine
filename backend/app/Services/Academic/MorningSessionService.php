@@ -115,9 +115,16 @@ final class MorningSessionService
             ]);
         }
 
-        $roster = $this->roster($session->session_date)->keyBy('id');
+        // A correction of an already-recorded session updates the SNAPSHOT
+        // (the existing attendance rows), never the roster recomputed from
+        // current data: assignments may have changed since, and a re-derived
+        // roster would silently drop off-roster attendees' flags.
+        $isCorrection = $session->status === 'recorded';
+        $rosterIds = $isCorrection
+            ? $session->attendance()->pluck('user_id')->all()
+            : $this->roster($session->session_date)->pluck('id')->all();
 
-        DB::transaction(function () use ($session, $onTime, $actualStart, $presence, $by, $roster): void {
+        DB::transaction(function () use ($session, $onTime, $actualStart, $presence, $by, $rosterIds, $isCorrection): void {
             $session->forceFill([
                 'started_on_time' => $onTime,
                 'actual_start_at' => $onTime ? null : substr(trim((string) $actualStart), 0, 5),
@@ -126,9 +133,14 @@ final class MorningSessionService
                 'recorded_at' => now(),
             ])->save();
 
-            // Snapshot: one row per expected attendee, present defaulting to
-            // false when the recorder left someone untouched.
-            foreach ($roster as $userId => $user) {
+            // Snapshot: one row per expected attendee. On first recording an
+            // untouched attendee defaults to absent; on a correction an
+            // omitted attendee keeps the flag already on their row.
+            foreach ($rosterIds as $userId) {
+                if ($isCorrection && ! array_key_exists($userId, $presence)) {
+                    continue;
+                }
+
                 MorningAttendance::query()->updateOrCreate(
                     ['morning_session_id' => $session->id, 'user_id' => $userId],
                     ['present' => (bool) ($presence[$userId] ?? false)],

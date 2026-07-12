@@ -245,6 +245,13 @@ export type SaveConsultantEvaluationPayload = {
   comment?: string | null
 }
 
+/** An answer to an admin-added form field the fixed record shape does not know about. */
+export type ExtraEvaluationAnswer = {
+  key: string
+  label: string
+  value: unknown
+}
+
 export type ConsultantEvaluationRecord = {
   id: string
   authorId: string
@@ -269,6 +276,7 @@ export type ConsultantEvaluationRecord = {
   systemIssues: string[]
   comment: string | null
   qualityScore: number
+  extraAnswers?: ExtraEvaluationAnswer[]
   createdAt: string | null
   updatedAt: string | null
 }
@@ -314,6 +322,7 @@ export type ResidentEvaluationRecord = {
   concerns: string[]
   comment: string | null
   performanceScore: number
+  extraAnswers?: ExtraEvaluationAnswer[]
   createdAt: string | null
   updatedAt: string | null
 }

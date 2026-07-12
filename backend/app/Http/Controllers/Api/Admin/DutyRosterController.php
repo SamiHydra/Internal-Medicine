@@ -9,7 +9,6 @@ use App\Models\Section;
 use App\Models\User;
 use App\Services\Academic\RosterService;
 use App\Services\Admin\AdminAuditService;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -118,14 +117,10 @@ class DutyRosterController extends Controller
 
         $this->assertMonthlyTypes(array_column($rows, 'duty_type_id'));
 
-        // Clearing a cell removes the user's monthly assignments for the month.
+        // Clearing a cell frees the user's month; a cross-month block is
+        // trimmed or split, never deleted outside this month.
         foreach ($cleared as $userId) {
-            DutyAssignment::query()
-                ->where('user_id', $userId)
-                ->whereDate('starts_on', '<=', $monthEnd->toDateString())
-                ->whereDate('ends_on', '>=', $monthStart->toDateString())
-                ->whereHas('dutyType', fn (Builder $query) => $query->where('granularity', 'monthly'))
-                ->delete();
+            $this->rosterService->carveMonthlyWindow($userId, $monthStart->toDateString(), $monthEnd->toDateString());
         }
 
         $this->rosterService->bulkAssign($rows, 'admin', $request->user());

@@ -403,4 +403,63 @@ class UndergraduateModuleTest extends TestCase
             );
         }
     }
+
+    // ---- Review-pass regressions ----
+
+    public function test_import_dedupes_on_external_id_when_present_and_name_otherwise(): void
+    {
+        $batch = $this->makeBatch();
+
+        // Two distinct students sharing a name are told apart by their
+        // registrar ids; the exact same line is still skipped.
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/students/import', [
+                'batchId' => $batch->id,
+                'csv' => "Alem Kebede,ETS0101,A
+Alem Kebede,ETS0202,B
+Alem Kebede,ETS0101,A",
+            ])
+            ->assertCreated()
+            ->assertJsonPath('created', 2)
+            ->assertJsonPath('skipped', 1);
+
+        // Name-only lines fall back to name dedupe.
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/students/import', [
+                'batchId' => $batch->id,
+                'csv' => "Birtukan Mengistu
+Birtukan Mengistu",
+            ])
+            ->assertCreated()
+            ->assertJsonPath('created', 1)
+            ->assertJsonPath('skipped', 1);
+    }
+
+    public function test_batch_dates_cannot_be_inverted_through_a_partial_update(): void
+    {
+        $batch = $this->makeBatch();
+
+        // Moving startsOn past the stored endsOn would silently halt session
+        // generation for the batch.
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/student-batches/{$batch->id}", [
+                'startsOn' => '2027-01-01',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['endsOn']);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/student-batches/{$batch->id}", [
+                'endsOn' => '2026-01-01',
+            ])
+            ->assertStatus(422);
+
+        // A consistent pair still updates fine.
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/student-batches/{$batch->id}", [
+                'startsOn' => '2026-09-21',
+                'endsOn' => '2026-12-13',
+            ])
+            ->assertOk();
+    }
 }

@@ -12,6 +12,21 @@ class EvaluationForm extends Model
 
     public const KEYS = ['consultant_mdt', 'resident_acgme', 'student_weekly', 'student_final'];
 
+    /**
+     * Keys the submit endpoints use for the evaluation HEADER payload; a form
+     * field with one of these keys would collide with (and clobber) the
+     * controller's validation rules for it.
+     */
+    public const RESERVED_FIELD_KEYS = [
+        'evaluation_date',
+        'subject_id',
+        'student_id',
+        'ward_id',
+        'author_id',
+        'form_key',
+        'external_evaluator_name',
+    ];
+
     public const FIELD_TYPES = ['boolean', 'rating', 'percent', 'integer', 'time', 'text', 'single_select', 'multi_select'];
 
     protected $fillable = [

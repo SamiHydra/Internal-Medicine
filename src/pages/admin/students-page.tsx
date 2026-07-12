@@ -403,7 +403,7 @@ export function StudentsPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={NONE}>—</SelectItem>
+                        <SelectItem value={NONE}>-</SelectItem>
                         <SelectItem value="A">A</SelectItem>
                         <SelectItem value="B">B</SelectItem>
                       </SelectContent>

@@ -243,7 +243,7 @@ export function TeachingAnalyticsTab() {
               <StatBlock
                 key={row.activityType}
                 label={ACTIVITY_LABELS[row.activityType as TeachingActivityType] ?? row.activityType}
-                value={row.heldRate !== null ? `${Math.round(row.heldRate)}%` : '—'}
+                value={row.heldRate !== null ? `${Math.round(row.heldRate)}%` : '-'}
                 note={`${row.held} held · ${row.notHeld} not held`}
               />
             ))}
@@ -298,7 +298,7 @@ export function TeachingAnalyticsTab() {
                 >
                   <span className="truncate text-sm text-[#000a1e]">{row.batchLabel}</span>
                   <span className="shrink-0 text-sm tabular-nums text-[#44474e]">
-                    {row.heldRate !== null ? `${Math.round(row.heldRate)}% held` : '—'}
+                    {row.heldRate !== null ? `${Math.round(row.heldRate)}% held` : '-'}
                     {row.pending > 0 ? ` · ${row.pending} pending` : ''}
                   </span>
                 </div>
@@ -356,9 +356,9 @@ export function StudentsAnalyticsTab() {
           <div className="mt-5 grid grid-cols-2 gap-x-8 gap-y-5 lg:grid-cols-4">
             {data.batches.map((batch) => (
               <StatBlock
-                key={batch.batchLabel ?? '—'}
-                label={batch.batchLabel ?? '—'}
-                value={batch.avgAttendanceRate !== null ? `${Math.round(batch.avgAttendanceRate)}%` : '—'}
+                key={batch.batchLabel ?? '-'}
+                label={batch.batchLabel ?? '-'}
+                value={batch.avgAttendanceRate !== null ? `${Math.round(batch.avgAttendanceRate)}%` : '-'}
                 note={`${batch.studentCount} students · ${batch.finalsRecorded} finals in`}
               />
             ))}
@@ -385,10 +385,10 @@ export function StudentsAnalyticsTab() {
                       {student.subgroup ? ` · ${student.subgroup}` : ''}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums">
-                      {student.attendanceRate !== null ? `${Math.round(student.attendanceRate)}%` : '—'}
+                      {student.attendanceRate !== null ? `${Math.round(student.attendanceRate)}%` : '-'}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums">
-                      {student.weeklyAvgRating ?? '—'}
+                      {student.weeklyAvgRating ?? '-'}
                       {student.weeklyEvaluationCount ? (
                         <span className="ml-1 text-xs text-[#9aa7b8]">({student.weeklyEvaluationCount})</span>
                       ) : null}
@@ -397,13 +397,13 @@ export function StudentsAnalyticsTab() {
                       <span className="flex gap-1">
                         {student.weeklyTrajectory.map((point, index) => (
                           <Badge key={index} variant="neutral">
-                            {point.rating ?? '—'}
+                            {point.rating ?? '-'}
                           </Badge>
                         ))}
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-[#005db6]">
-                      {student.finalRating ?? '—'}
+                      {student.finalRating ?? '-'}
                     </td>
                   </tr>
                 ))}

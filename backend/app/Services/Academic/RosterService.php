@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Models\Ward;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -249,12 +250,7 @@ final class RosterService
                 }
 
                 if ($type->granularity === 'monthly') {
-                    DutyAssignment::query()
-                        ->where('user_id', $row['user_id'])
-                        ->whereDate('starts_on', '<=', $row['ends_on'])
-                        ->whereDate('ends_on', '>=', $row['starts_on'])
-                        ->whereHas('dutyType', fn (Builder $query) => $query->where('granularity', 'monthly'))
-                        ->delete();
+                    $this->carveMonthlyWindow($row['user_id'], $row['starts_on'], $row['ends_on']);
                 } else {
                     DutyAssignment::query()
                         ->where('user_id', $row['user_id'])
@@ -275,6 +271,61 @@ final class RosterService
                 ]);
             }
         });
+    }
+
+    /**
+     * Free the user's monthly window [$from, $to] WITHOUT touching what lies
+     * outside it: an assignment fully inside is deleted, one hanging over an
+     * edge is trimmed, and one spanning both edges is split in two. A plain
+     * overlap-delete here would erase a whole cross-month block (a Y3
+     * two-month rotation, say) when an admin re-plans just one month of it.
+     */
+    public function carveMonthlyWindow(string $userId, string $from, string $to): void
+    {
+        $windowStart = Carbon::parse($from);
+        $windowEnd = Carbon::parse($to);
+
+        $overlapping = DutyAssignment::query()
+            ->where('user_id', $userId)
+            ->whereDate('starts_on', '<=', $windowEnd->toDateString())
+            ->whereDate('ends_on', '>=', $windowStart->toDateString())
+            ->whereHas('dutyType', fn (Builder $query) => $query->where('granularity', 'monthly'))
+            ->orderBy('starts_on')
+            ->get();
+
+        foreach ($overlapping as $assignment) {
+            $startsBefore = $assignment->starts_on->lessThan($windowStart);
+            $endsAfter = $assignment->ends_on->greaterThan($windowEnd);
+
+            if (! $startsBefore && ! $endsAfter) {
+                $assignment->delete();
+
+                continue;
+            }
+
+            if ($startsBefore && $endsAfter) {
+                // Split: the existing row keeps the head, a new row takes
+                // the tail beyond the carved window.
+                DutyAssignment::query()->create([
+                    'user_id' => $assignment->user_id,
+                    'duty_type_id' => $assignment->duty_type_id,
+                    'starts_on' => $windowEnd->copy()->addDay()->toDateString(),
+                    'ends_on' => $assignment->ends_on->toDateString(),
+                    'source' => $assignment->source,
+                    'created_by' => $assignment->created_by,
+                    'note' => $assignment->note,
+                ]);
+                $assignment->forceFill(['ends_on' => $windowStart->copy()->subDay()->toDateString()])->save();
+
+                continue;
+            }
+
+            if ($startsBefore) {
+                $assignment->forceFill(['ends_on' => $windowStart->copy()->subDay()->toDateString()])->save();
+            } else {
+                $assignment->forceFill(['starts_on' => $windowEnd->copy()->addDay()->toDateString()])->save();
+            }
+        }
     }
 
     private function assertNoMonthlyOverlap(User $user, DutyType $type, CarbonInterface $from, CarbonInterface $to): void

@@ -82,6 +82,18 @@ class UndergraduateAdminController extends Controller
             'active' => ['sometimes', 'boolean'],
         ]);
 
+        // Cross-field check against the EFFECTIVE pair (validated value or the
+        // stored one): an inverted range would silently stop every session
+        // generation for the batch.
+        $effectiveStart = Carbon::parse($validated['startsOn'] ?? $batch->starts_on);
+        $effectiveEnd = Carbon::parse($validated['endsOn'] ?? $batch->ends_on);
+
+        if ($effectiveEnd->lessThanOrEqualTo($effectiveStart)) {
+            throw ValidationException::withMessages([
+                'endsOn' => ['The batch end date must be after its start date.'],
+            ]);
+        }
+
         $old = $this->serializeBatch($batch);
         $batch->forceFill([
             ...(isset($validated['label']) ? ['label' => $validated['label']] : []),
@@ -200,9 +212,15 @@ class UndergraduateAdminController extends Controller
                 }
             }
 
+            // Dedupe by registrar id when the line carries one (two distinct
+            // students can share a name); name-only is the fallback.
             $exists = Student::query()
                 ->where('batch_id', $validated['batchId'])
-                ->where('full_name', $fullName)
+                ->when(
+                    $externalId !== null,
+                    fn ($query) => $query->where('external_id', $externalId),
+                    fn ($query) => $query->where('full_name', $fullName),
+                )
                 ->exists();
 
             if ($exists) {

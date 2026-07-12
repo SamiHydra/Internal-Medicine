@@ -133,11 +133,11 @@ export function TransferReviewPanel({ allowImmediate = false }: { allowImmediate
                   {request.userName ?? 'Consultant'}
                   <span className="font-normal text-[#74777f]">
                     {' '}
-                    · {request.fromSectionName ?? '—'} → {request.toSectionName ?? '—'}
+                    · {request.fromSectionName ?? '-'} → {request.toSectionName ?? '-'}
                   </span>
                 </p>
                 <p className="mt-0.5 text-xs text-[#74777f]">
-                  Requested {dateLabel(request.requestedAt) ?? '—'}
+                  Requested {dateLabel(request.requestedAt) ?? '-'}
                   {request.reason ? ` · "${request.reason}"` : ''}
                 </p>
               </div>

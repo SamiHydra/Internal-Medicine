@@ -175,6 +175,34 @@ class EvaluationFormController extends Controller
             ]);
         }
 
+        foreach ($validated['fields'] as $entry) {
+            // These keys are claimed by the submit endpoint's own header
+            // payload: a field named after one would clobber the controller's
+            // validation rules for it.
+            if (in_array($entry['key'], EvaluationForm::RESERVED_FIELD_KEYS, true)) {
+                throw ValidationException::withMessages([
+                    'fields' => ["'{$entry['key']}' is a reserved key and cannot be used as a field key."],
+                ]);
+            }
+
+            // 'comment' lives on the evaluation header's text column, so any
+            // other type would hand it a non-string value.
+            if ($entry['key'] === 'comment' && $entry['type'] !== 'text') {
+                throw ValidationException::withMessages([
+                    'fields' => ["The 'comment' field must keep the text type."],
+                ]);
+            }
+
+            // A select field with no choices could never be answered (and a
+            // multi-select would silently drop every submitted member).
+            if (in_array($entry['type'], ['single_select', 'multi_select'], true)
+                && ($entry['options']['choices'] ?? []) === []) {
+                throw ValidationException::withMessages([
+                    'fields' => ["The select field '{$entry['key']}' needs at least one choice."],
+                ]);
+            }
+        }
+
         $before = $this->serializeEvaluationForm($evaluationForm);
 
         DB::transaction(function () use ($evaluationForm, $validated): void {

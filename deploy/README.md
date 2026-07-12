@@ -3,7 +3,7 @@
 The platform runs on ONE Ubuntu LTS box on the hospital LAN, reachable only
 from inside the hospital network (V2 guide Section 11). Same-origin: nginx
 serves the built SPA and proxies `/api` and `/sanctum` to PHP-FPM 8.3.
-MariaDB is local. Queue, cache, and sessions stay on the database driver —
+MariaDB is local. Queue, cache, and sessions stay on the database driver;
 do not add Redis. The one always-on process is the systemd queue worker.
 
 ## Files here
@@ -43,7 +43,7 @@ do not add Redis. The one always-on process is the systemd queue worker.
    * * * * *  cd /opt/imreport/backend && php artisan schedule:run >> storage/logs/schedule.log 2>&1
    0 2 * * *  /opt/imreport/deploy/backup.sh >> /var/log/imreport-backup.log 2>&1
    ```
-7. Run `deploy.sh`, then `php artisan app:launch-check` — it must be green
+7. Run `deploy.sh`, then `php artisan app:launch-check`; it must be green
    (it verifies backup freshness, the worker unit, the scheduler heartbeat,
    free disk, HTTPS, and the certificate window).
 

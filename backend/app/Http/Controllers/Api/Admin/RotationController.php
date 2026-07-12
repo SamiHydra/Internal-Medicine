@@ -216,12 +216,13 @@ class RotationController extends Controller
             }
 
             if ($entry['dutyTypeId'] === null) {
-                DutyAssignment::query()
-                    ->where('user_id', $entry['userId'])
-                    ->whereDate('starts_on', '<=', $block->ends_on->toDateString())
-                    ->whereDate('ends_on', '>=', $block->starts_on->toDateString())
-                    ->whereHas('dutyType', fn (Builder $query) => $query->where('granularity', 'monthly'))
-                    ->delete();
+                // Free just this block's window; a block-spanning assignment
+                // is trimmed or split, never deleted wholesale.
+                $this->rosterService->carveMonthlyWindow(
+                    $entry['userId'],
+                    $block->starts_on->toDateString(),
+                    $block->ends_on->toDateString(),
+                );
                 $cleared++;
 
                 continue;

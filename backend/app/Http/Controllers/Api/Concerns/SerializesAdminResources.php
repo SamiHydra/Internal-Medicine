@@ -227,6 +227,12 @@ trait SerializesAdminResources
             'systemIssues' => $evaluation->answer('system_issues') ?? [],
             'comment' => $evaluation->comment,
             'qualityScore' => round(EvaluationScoring::score($evaluation, 'consultant'), 1),
+            'extraAnswers' => $this->extraEvaluationAnswers($evaluation, [
+                'senior_present', 'senior_joined_at', 'presence_minutes',
+                'all_patients_reviewed', 'mgmt_plan_documented', 'vte_assessed',
+                'discharge_discussed', 'med_review_done', 'critical_labs_reviewed',
+                'pct_patients_seen', 'round_delayed', 'mdt_participants', 'system_issues',
+            ]),
             'createdAt' => $evaluation->created_at?->toJSON(),
             'updatedAt' => $evaluation->updated_at?->toJSON(),
         ];
@@ -268,9 +274,42 @@ trait SerializesAdminResources
             'concerns' => $evaluation->answer('concerns') ?? [],
             'comment' => $evaluation->comment,
             'performanceScore' => round(EvaluationScoring::score($evaluation, 'resident'), 1),
+            'extraAnswers' => $this->extraEvaluationAnswers($evaluation, [
+                'on_time', 'prepared', 'presentation_clear', 'clinical_reasoning',
+                'management_plan', 'documentation_timely', 'communication', 'professional',
+                'responsive_feedback', 'follow_through', 'overall_rating', 'concerns',
+            ]),
             'createdAt' => $evaluation->created_at?->toJSON(),
             'updatedAt' => $evaluation->updated_at?->toJSON(),
         ];
+    }
+
+    /**
+     * Answers to admin-added fields (anything beyond the v1 keys the fixed
+     * payload above enumerates), so a new field's data is visible in the
+     * detail sheet and not write-only.
+     *
+     * @param  list<string>  $knownKeys
+     * @return list<array{key: string, label: string, value: mixed}>
+     */
+    private function extraEvaluationAnswers(Evaluation $evaluation, array $knownKeys): array
+    {
+        $evaluation->loadMissing('form.fields');
+
+        $extras = [];
+        foreach ($evaluation->form?->fields ?? [] as $field) {
+            if ($field->key === 'comment' || in_array($field->key, $knownKeys, true)) {
+                continue;
+            }
+
+            $extras[] = [
+                'key' => $field->key,
+                'label' => $field->label,
+                'value' => $evaluation->answer($field->key),
+            ];
+        }
+
+        return $extras;
     }
 
     /**

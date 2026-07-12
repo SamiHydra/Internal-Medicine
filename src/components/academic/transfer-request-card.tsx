@@ -175,7 +175,7 @@ export function TransferRequestCard() {
                 <ArrowRightLeft className="h-4 w-4 shrink-0 text-[#9aa7b8]" aria-hidden="true" />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-[#000a1e]">
-                    {request.fromSectionName ?? '—'} → {request.toSectionName ?? '—'}
+                    {request.fromSectionName ?? '-'} → {request.toSectionName ?? '-'}
                   </p>
                   <p className="text-xs text-[#74777f]">
                     {request.status === 'approved' && request.effectiveOn

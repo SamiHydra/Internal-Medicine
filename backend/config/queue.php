@@ -16,6 +16,13 @@ return [
     'default' => env('QUEUE_CONNECTION', 'database'),
 
     /*
+    | 'cron' runs queue:work as a per-minute scheduler tick (shared hosting);
+    | 'daemon' means the persistent systemd unit runs it and the tick is off.
+    | Read via config() so it survives config:cache (env() would not).
+    */
+    'worker_mode' => env('QUEUE_WORKER_MODE', 'cron'),
+
+    /*
     |--------------------------------------------------------------------------
     | Queue Connections
     |--------------------------------------------------------------------------

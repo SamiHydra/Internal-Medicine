@@ -389,4 +389,43 @@ class RosterTest extends TestCase
             DutyType::query()->where('slug', 'endocrinology_ward_service')->value('ward_id'),
         );
     }
+
+    // ---- Review-pass regression: carving, not wholesale replacement ----
+
+    public function test_replanning_one_month_carves_a_cross_month_block_instead_of_deleting_it(): void
+    {
+        $resident = User::factory()->role('resident', 'Resident')->create();
+
+        // A two-month block: July + August.
+        $this->assign($resident, 'nephrology_ward_service', '2026-07-01', '2026-08-31');
+
+        // Re-planning AUGUST must not erase the July half of the block.
+        $this->roster->bulkAssign([[
+            'user_id' => $resident->id,
+            'duty_type_id' => $this->dutyType('opd')->id,
+            'starts_on' => '2026-08-01',
+            'ends_on' => '2026-08-31',
+        ]], 'admin', $this->admin);
+
+        $rows = DutyAssignment::query()->where('user_id', $resident->id)->orderBy('starts_on')->get();
+        $this->assertCount(2, $rows);
+        $this->assertSame('2026-07-01', $rows[0]->starts_on->toDateString());
+        $this->assertSame('2026-07-31', $rows[0]->ends_on->toDateString());
+        $this->assertSame($this->dutyType('opd')->id, $rows[1]->duty_type_id);
+
+        // Carving a window out of the middle splits the block in two.
+        $resident2 = User::factory()->role('resident', 'Resident')->create();
+        $this->assign($resident2, 'nephrology_ward_service', '2026-07-01', '2026-09-30');
+        $this->roster->carveMonthlyWindow($resident2->id, '2026-08-01', '2026-08-31');
+
+        $pieces = DutyAssignment::query()->where('user_id', $resident2->id)->orderBy('starts_on')->get();
+        $this->assertCount(2, $pieces);
+        $this->assertSame(['2026-07-01', '2026-07-31'], [$pieces[0]->starts_on->toDateString(), $pieces[0]->ends_on->toDateString()]);
+        $this->assertSame(['2026-09-01', '2026-09-30'], [$pieces[1]->starts_on->toDateString(), $pieces[1]->ends_on->toDateString()]);
+        $this->assertSame($pieces[0]->duty_type_id, $pieces[1]->duty_type_id);
+
+        // A fully-covered assignment is still simply removed.
+        $this->roster->carveMonthlyWindow($resident2->id, '2026-06-01', '2026-10-31');
+        $this->assertSame(0, DutyAssignment::query()->where('user_id', $resident2->id)->count());
+    }
 }

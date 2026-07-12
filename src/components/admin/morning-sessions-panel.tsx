@@ -326,7 +326,7 @@ export function MorningSessionsPanel() {
                   </p>
                   <p className="text-xs text-[#74777f]">
                     {session.status === 'recorded'
-                      ? `${session.presentCount} of ${session.attendanceCount} present · recorded by ${session.recordedByName ?? '—'}`
+                      ? `${session.presentCount} of ${session.attendanceCount} present · recorded by ${session.recordedByName ?? '-'}`
                       : session.status === 'cancelled'
                         ? (session.reason ?? 'Cancelled')
                         : 'Not recorded'}

@@ -617,8 +617,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         // on every tab focus. When the server returns byte-identical data (the
         // common idle case) there is nothing to apply, so skip the state
         // replacement (a full consumer-tree re-render) and the cache write. The
-        // signature is the entire fetched payload — on a poll each report
-        // carries values:{} so it stays small — which makes the comparison
+        // signature is the entire fetched payload (on a poll each report
+        // carries values:{} so it stays small), which makes the comparison
         // exhaustive (no rendered field can change without changing it). Only
         // pure polls qualify: refreshes that pull extra collections (profiles /
         // access requests / history) are never skipped.

@@ -42,7 +42,7 @@ function errorMessage(error: unknown, fallback: string) {
  * Admin entry of an externally-sourced paper evaluation (V2 Phase 3): host
  * departments (ICU, Emergency, external hospitals, ...) evaluate rotating
  * residents on paper; an administrator records the sheet here. No author
- * account exists — the evaluator's name and department are stored verbatim.
+ * account exists; the evaluator's name and department are stored verbatim.
  */
 export function ExternalEvaluationPanel({ onRecorded }: { onRecorded: () => void }) {
   const client = getApiBrowserClient()

@@ -32,7 +32,8 @@ Schedule::call(fn () => Cache::put('scheduler:heartbeat', now()->toIso8601String
 // The cron-tick worker serves shared hosting. On the department server the
 // persistent systemd unit (deploy/queue-worker.service) replaces it: set
 // QUEUE_WORKER_MODE=daemon there and this line becomes a no-op (V2 guide 11.1).
-if (env('QUEUE_WORKER_MODE', 'cron') !== 'daemon') {
+// Read through config(), NOT env(): env() returns null once config:cache runs.
+if (config('queue.worker_mode') !== 'daemon') {
     Schedule::command('queue:work --stop-when-empty --max-time=50')->everyMinute()->withoutOverlapping(10);
 }
 

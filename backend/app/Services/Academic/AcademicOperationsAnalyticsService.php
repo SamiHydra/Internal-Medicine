@@ -128,7 +128,7 @@ final class AcademicOperationsAnalyticsService
                     ->map(fn ($group, string $activityType) => ['activityType' => $activityType, ...$rate($group)])
                     ->values(),
                 'byBatch' => $sessions
-                    ->groupBy(fn (TeachingSession $session) => $session->batch?->label ?? '—')
+                    ->groupBy(fn (TeachingSession $session) => $session->batch?->label ?? '-')
                     ->map(fn ($group, string $label) => ['batchLabel' => $label, ...$rate($group)])
                     ->values(),
                 'reasons' => $sessions
