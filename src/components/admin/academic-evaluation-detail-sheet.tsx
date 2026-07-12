@@ -27,7 +27,7 @@ function isConsultantRecord(
 
 function formatDate(value: string | null): string {
   if (!value) {
-    return '—'
+    return '-'
   }
   const date = new Date(value)
   return Number.isNaN(date.getTime())
@@ -43,7 +43,7 @@ function initialsFor(fullName: string | null): string {
       .filter(Boolean)
       .join('')
       .slice(0, 2)
-      .toUpperCase() || '—'
+      .toUpperCase() || '-'
   )
 }
 
@@ -129,13 +129,13 @@ function ChipList({ labels, empty }: { labels: string[]; empty: string }) {
 
 function formatExtraValue(value: unknown): ReactNode {
   if (value === null || value === undefined || value === '') {
-    return '—'
+    return '-'
   }
   if (typeof value === 'boolean') {
     return value ? 'Yes' : 'No'
   }
   if (Array.isArray(value)) {
-    return value.length > 0 ? value.join(', ') : '—'
+    return value.length > 0 ? value.join(', ') : '-'
   }
   return String(value)
 }
@@ -199,8 +199,8 @@ function ConsultantDetail({ record }: { record: ConsultantEvaluationRecord }) {
       <Section label="Round details">
         <div className="divide-y divide-white/10">
           <MetaRow label="Evaluation date" value={formatDate(record.evaluationDate)} />
-          <MetaRow label="Ward" value={record.wardName ?? '—'} />
-          <MetaRow label="Evaluator" value={record.authorName ?? '—'} />
+          <MetaRow label="Ward" value={record.wardName ?? '-'} />
+          <MetaRow label="Evaluator" value={record.authorName ?? '-'} />
           <MetaRow label="Senior present" value={record.seniorPresent ? 'Yes' : 'No'} />
           {record.seniorJoinedAt ? (
             <MetaRow label="Senior joined" value={record.seniorJoinedAt} />
@@ -256,14 +256,14 @@ function ResidentDetail({ record }: { record: ResidentEvaluationRecord }) {
       <Section label="Round details">
         <div className="divide-y divide-white/10">
           <MetaRow label="Evaluation date" value={formatDate(record.evaluationDate)} />
-          <MetaRow label="Ward" value={record.wardName ?? '—'} />
-          <MetaRow label="Evaluator" value={record.authorName ?? '—'} />
+          <MetaRow label="Ward" value={record.wardName ?? '-'} />
+          <MetaRow label="Evaluator" value={record.authorName ?? '-'} />
           <MetaRow
             label="Overall rating"
             value={
               record.overallRating != null
                 ? `${record.overallRating} / 5${descriptor ? ` · ${descriptor}` : ''}`
-                : '—'
+                : '-'
             }
           />
         </div>
