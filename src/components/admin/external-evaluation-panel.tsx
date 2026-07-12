@@ -25,6 +25,7 @@ import {
   RESIDENT_COMPETENCIES,
 } from '@/config/academic-evaluation-fields'
 import { cn } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/api/helpers'
 
 const today = new Date().toISOString().slice(0, 10)
 
@@ -33,10 +34,6 @@ type IndicatorState = Record<string, boolean>
 const emptyIndicators: IndicatorState = Object.fromEntries(
   RESIDENT_COMPETENCIES.flatMap((group) => group.items.map((item) => [item.name, false])),
 )
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
 
 /**
  * Admin entry of an externally-sourced paper evaluation (V2 Phase 3): host
@@ -115,7 +112,7 @@ export function ExternalEvaluationPanel({ onRecorded }: { onRecorded: () => void
       setIsOpen(false)
       onRecorded()
     } catch (error) {
-      toast.error(errorMessage(error, 'Unable to record the external evaluation.'))
+      toast.error(getErrorMessage(error, 'Unable to record the external evaluation.'))
     } finally {
       setIsBusy(false)
     }

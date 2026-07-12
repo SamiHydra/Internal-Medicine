@@ -3,9 +3,9 @@
 namespace App\Services\Academic;
 
 use App\Models\Evaluation;
+use App\Services\Academic\Concerns\CachesByContentStamp;
 use App\Support\Academic\EvaluationScoring;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
 /**
@@ -19,7 +19,7 @@ use Illuminate\Support\Str;
  */
 class AcademicAnalyticsService
 {
-    private const CACHE_TTL_SECONDS = 300;
+    use CachesByContentStamp;
 
     /**
      * Request-scoped memo: a single endpoint resolves one service instance and
@@ -175,17 +175,12 @@ class AcademicAnalyticsService
             $stampQuery->whereDate('evaluation_date', '<=', $filters->dateTo);
         }
 
-        $stamp = $stampQuery
-            ->selectRaw('count(*) as row_count, max(updated_at) as latest')
-            ->first();
-
-        $key = sprintf(
-            'academic:analytics:%s:%s',
+        return $this->rememberByStamp(
+            'academic:analytics',
             $operation,
-            md5($filters->memoKey().'|'.($stamp->row_count ?? 0).'|'.($stamp->latest ?? '')),
+            $filters->memoKey().'|'.$this->contentStamp($stampQuery),
+            $build,
         );
-
-        return Cache::remember($key, self::CACHE_TTL_SECONDS, $build);
     }
 
     /**

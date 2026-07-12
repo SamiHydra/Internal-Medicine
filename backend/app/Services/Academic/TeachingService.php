@@ -51,6 +51,22 @@ final class TeachingService
             ->get()
             ->groupBy('cohort');
 
+        // One query each for the day's placements and existing sessions:
+        // the loop below is per batch x activity x subgroup and must not
+        // query per cell.
+        $placements = SubgroupPlacement::query()
+            ->whereIn('batch_id', $batches->pluck('id'))
+            ->whereDate('week_starts_on', '<=', $date->toDateString())
+            ->whereDate('week_ends_on', '>=', $date->toDateString())
+            ->get()
+            ->keyBy(fn (SubgroupPlacement $placement) => $placement->batch_id.'|'.$placement->subgroup);
+
+        $existingSessions = TeachingSession::query()
+            ->whereIn('batch_id', $batches->pluck('id'))
+            ->whereDate('scheduled_date', $date->toDateString())
+            ->get()
+            ->keyBy(fn (TeachingSession $session) => $session->batch_id.'|'.$session->subgroup.'|'.$session->activity_type);
+
         $generated = 0;
 
         foreach ($batches as $batch) {
@@ -60,19 +76,9 @@ final class TeachingService
                 foreach ($subgroups as $subgroup) {
                     $wardId = $subgroup === null
                         ? null
-                        : SubgroupPlacement::query()
-                            ->where('batch_id', $batch->id)
-                            ->where('subgroup', $subgroup)
-                            ->whereDate('week_starts_on', '<=', $date->toDateString())
-                            ->whereDate('week_ends_on', '>=', $date->toDateString())
-                            ->value('ward_id');
+                        : $placements->get($batch->id.'|'.$subgroup)?->ward_id;
 
-                    $existing = TeachingSession::query()
-                        ->where('batch_id', $batch->id)
-                        ->where('subgroup', $subgroup)
-                        ->where('activity_type', $schedule->activity_type)
-                        ->whereDate('scheduled_date', $date->toDateString())
-                        ->first();
+                    $existing = $existingSessions->get($batch->id.'|'.$subgroup.'|'.$schedule->activity_type);
 
                     if ($existing !== null) {
                         // Refresh the ward snapshot only while nothing has

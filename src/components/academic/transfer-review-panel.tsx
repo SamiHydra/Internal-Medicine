@@ -16,10 +16,7 @@ import {
   type TransferRequestRecord,
 } from '@/lib/api'
 import { getApiBrowserClient } from '@/lib/api/client'
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
+import { getErrorMessage } from '@/lib/api/helpers'
 
 function dateLabel(value: string | null) {
   if (!value) {
@@ -77,7 +74,7 @@ export function TransferReviewPanel({ allowImmediate = false }: { allowImmediate
           : 'Transfer request declined.',
       )
     } catch (error) {
-      toast.error(errorMessage(error, 'Unable to record the decision.'))
+      toast.error(getErrorMessage(error, 'Unable to record the decision.'))
     } finally {
       setBusyId(null)
     }

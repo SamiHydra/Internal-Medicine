@@ -2,9 +2,7 @@ import type { ReactNode } from 'react'
 
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-
-const panelClass =
-  'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
+import { panelClass } from '@/components/dashboard/section-panel'
 
 function LoadingRegion({
   label,

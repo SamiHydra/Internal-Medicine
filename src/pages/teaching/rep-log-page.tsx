@@ -20,10 +20,7 @@ import {
 } from '@/lib/api/teaching'
 import { getApiBrowserClient } from '@/lib/api/client'
 import { cn } from '@/lib/utils'
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
+import { getErrorMessage } from '@/lib/api/helpers'
 
 function dateLabel(value: string) {
   return new Date(value).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
@@ -98,7 +95,7 @@ export function RepLogPage() {
       setReason('')
       await load()
     } catch (error) {
-      toast.error(errorMessage(error, 'Unable to record the session.'))
+      toast.error(getErrorMessage(error, 'Unable to record the session.'))
     } finally {
       setBusyId(null)
     }

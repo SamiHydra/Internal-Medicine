@@ -31,6 +31,7 @@ import {
 } from '@/lib/api/academic'
 import { getApiBrowserClient } from '@/lib/api/client'
 import { cn } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/api/helpers'
 
 const fieldTypeOptions: Array<{ value: EvaluationFieldType; label: string }> = [
   { value: 'boolean', label: 'Yes / no' },
@@ -42,10 +43,6 @@ const fieldTypeOptions: Array<{ value: EvaluationFieldType; label: string }> = [
   { value: 'single_select', label: 'Pick one' },
   { value: 'multi_select', label: 'Pick several' },
 ]
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
 
 const statusVariant: Record<EvaluationFormDefinition['status'], 'success' | 'info' | 'neutral'> = {
   published: 'success',
@@ -150,7 +147,7 @@ export function EvaluationFormsPage() {
     try {
       await action()
     } catch (error) {
-      toast.error(errorMessage(error, failure))
+      toast.error(getErrorMessage(error, failure))
     } finally {
       setBusy(null)
     }

@@ -17,6 +17,17 @@ class TeachingSessionPolicy
     }
 
     /**
+     * Admin writes across the undergraduate module (batches, rosters,
+     * placements, schedules, rep designations, session oversight). Same
+     * population as viewAny today, but a separate ability so widening one
+     * never silently widens the other.
+     */
+    public function manage(User $user): bool
+    {
+        return $this->isAdminLike($user);
+    }
+
+    /**
      * The data-driven rep rule (V2 guide 8.1): an admin may record anything;
      * a rep needs an ACTIVE assignment for the session's batch whose scope
      * covers the activity: `group` records lectures and seminars for the

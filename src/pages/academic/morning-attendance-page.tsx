@@ -18,10 +18,7 @@ import {
 } from '@/lib/api/morning'
 import { getApiBrowserClient } from '@/lib/api/client'
 import { cn } from '@/lib/utils'
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
+import { getErrorMessage } from '@/lib/api/helpers'
 
 /**
  * The designated recorder's morning-session page (V2 Phase 6): the roster is
@@ -89,7 +86,7 @@ export function MorningAttendancePage() {
       toast.success('Morning session recorded.')
       await load()
     } catch (error) {
-      toast.error(errorMessage(error, 'Unable to record the session.'))
+      toast.error(getErrorMessage(error, 'Unable to record the session.'))
     } finally {
       setIsSaving(false)
     }

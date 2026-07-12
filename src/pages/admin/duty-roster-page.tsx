@@ -28,6 +28,7 @@ import {
 } from '@/lib/api'
 import { getApiBrowserClient } from '@/lib/api/client'
 import { cn } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/api/helpers'
 
 const ALL = 'all'
 const CLEARED = 'cleared'
@@ -44,10 +45,6 @@ function monthLabel(year: number, month: number) {
     month: 'long',
     year: 'numeric',
   })
-}
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
 }
 
 /**
@@ -172,7 +169,7 @@ export function DutyRosterPage() {
       setStaged({})
       toast.success('Roster month saved.')
     } catch (error) {
-      toast.error(errorMessage(error, 'Unable to save the roster month.'))
+      toast.error(getErrorMessage(error, 'Unable to save the roster month.'))
     } finally {
       setIsSaving(false)
     }
@@ -192,7 +189,7 @@ export function DutyRosterPage() {
       setDailyDraft((prev) => ({ ...prev, date: '' }))
       await load()
     } catch (error) {
-      toast.error(errorMessage(error, 'Unable to add the day duty.'))
+      toast.error(getErrorMessage(error, 'Unable to add the day duty.'))
     }
   }
 
@@ -205,7 +202,7 @@ export function DutyRosterPage() {
       await saveDailyDuty(client, { userId: person.id, dutyTypeId, date, remove: true })
       await load()
     } catch (error) {
-      toast.error(errorMessage(error, 'Unable to remove the day duty.'))
+      toast.error(getErrorMessage(error, 'Unable to remove the day duty.'))
     }
   }
 

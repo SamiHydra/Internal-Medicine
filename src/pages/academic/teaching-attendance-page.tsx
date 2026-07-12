@@ -32,12 +32,9 @@ import {
 } from '@/lib/api/teaching'
 import { getApiBrowserClient } from '@/lib/api/client'
 import { cn } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/api/helpers'
 
 const todayString = new Date().toISOString().slice(0, 10)
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
 
 /**
  * The consultant's undergraduate surface (V2 Phase 5): mark today's session
@@ -107,7 +104,7 @@ export function TeachingAttendancePage() {
       })
       await load()
     } catch (error) {
-      toast.error(errorMessage(error, 'Unable to save attendance.'))
+      toast.error(getErrorMessage(error, 'Unable to save attendance.'))
     } finally {
       setBusyId(null)
     }

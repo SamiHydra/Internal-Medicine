@@ -45,6 +45,7 @@ import {
   type RotationCalendarSummary,
 } from '@/lib/api'
 import { getApiBrowserClient } from '@/lib/api/client'
+import { getErrorMessage } from '@/lib/api/helpers'
 
 const NONE = 'none'
 
@@ -60,17 +61,6 @@ const granularityOptions: Array<{ value: DutyTypeGranularity; label: string }> =
   { value: 'monthly', label: 'Monthly' },
   { value: 'daily', label: 'Daily' },
 ]
-
-function errorMessage(error: unknown, fallback: string) {
-  if (typeof error === 'object' && error && 'message' in error) {
-    const message = (error as { message?: unknown }).message
-    if (typeof message === 'string' && message.trim().length) {
-      return message
-    }
-  }
-
-  return fallback
-}
 
 /** Row shell shared by every tab: content left, controls right, hairline divider. */
 function StructureRow({ children, controls }: { children: ReactNode; controls: ReactNode }) {
@@ -170,7 +160,7 @@ export function AcademicStructurePage() {
     try {
       await action()
     } catch (error) {
-      toast.error(errorMessage(error, failure))
+      toast.error(getErrorMessage(error, failure))
     } finally {
       setBusy(null)
     }

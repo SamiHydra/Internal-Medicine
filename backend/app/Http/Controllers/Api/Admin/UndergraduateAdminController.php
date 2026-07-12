@@ -50,7 +50,7 @@ class UndergraduateAdminController extends Controller
 
     public function storeBatch(Request $request): JsonResponse
     {
-        Gate::authorize('viewAny', TeachingSession::class);
+        Gate::authorize('manage', TeachingSession::class);
 
         $validated = $request->validate([
             'cohort' => ['required', Rule::in(StudentBatch::COHORTS)],
@@ -73,7 +73,7 @@ class UndergraduateAdminController extends Controller
 
     public function updateBatch(Request $request, StudentBatch $batch): JsonResponse
     {
-        Gate::authorize('viewAny', TeachingSession::class);
+        Gate::authorize('manage', TeachingSession::class);
 
         $validated = $request->validate([
             'label' => ['sometimes', 'string', 'max:64', Rule::unique('student_batches', 'label')->ignore($batch->id)],
@@ -130,7 +130,7 @@ class UndergraduateAdminController extends Controller
 
     public function storeStudent(Request $request): JsonResponse
     {
-        Gate::authorize('viewAny', TeachingSession::class);
+        Gate::authorize('manage', TeachingSession::class);
 
         $validated = $request->validate([
             'batchId' => ['required', 'uuid', Rule::exists('student_batches', 'id')],
@@ -153,7 +153,7 @@ class UndergraduateAdminController extends Controller
 
     public function updateStudent(Request $request, Student $student): JsonResponse
     {
-        Gate::authorize('viewAny', TeachingSession::class);
+        Gate::authorize('manage', TeachingSession::class);
 
         $validated = $request->validate([
             'fullName' => ['sometimes', 'string', 'max:255'],
@@ -183,7 +183,7 @@ class UndergraduateAdminController extends Controller
      */
     public function importStudents(Request $request): JsonResponse
     {
-        Gate::authorize('viewAny', TeachingSession::class);
+        Gate::authorize('manage', TeachingSession::class);
 
         $validated = $request->validate([
             'batchId' => ['required', 'uuid', Rule::exists('student_batches', 'id')],
@@ -192,6 +192,15 @@ class UndergraduateAdminController extends Controller
 
         $created = 0;
         $skipped = 0;
+
+        // One roster read up front (a paste can be hundreds of lines); the
+        // sets grow as lines create students so in-payload duplicates dedupe
+        // exactly like pre-existing rows.
+        $roster = Student::query()
+            ->where('batch_id', $validated['batchId'])
+            ->get(['external_id', 'full_name']);
+        $knownExternalIds = $roster->pluck('external_id')->filter()->flip();
+        $knownNames = $roster->pluck('full_name')->flip();
 
         foreach (preg_split('/\r\n|\r|\n/', $validated['csv']) as $line) {
             $parts = array_map('trim', explode(',', $line));
@@ -214,14 +223,9 @@ class UndergraduateAdminController extends Controller
 
             // Dedupe by registrar id when the line carries one (two distinct
             // students can share a name); name-only is the fallback.
-            $exists = Student::query()
-                ->where('batch_id', $validated['batchId'])
-                ->when(
-                    $externalId !== null,
-                    fn ($query) => $query->where('external_id', $externalId),
-                    fn ($query) => $query->where('full_name', $fullName),
-                )
-                ->exists();
+            $exists = $externalId !== null
+                ? $knownExternalIds->has($externalId)
+                : $knownNames->has($fullName);
 
             if ($exists) {
                 $skipped++;
@@ -236,6 +240,11 @@ class UndergraduateAdminController extends Controller
                 'subgroup' => $subgroup,
             ]);
             $created++;
+
+            if ($externalId !== null) {
+                $knownExternalIds->put($externalId, true);
+            }
+            $knownNames->put($fullName, true);
         }
 
         $this->auditService->record($request->user(), 'import', 'student', $validated['batchId'], null, [
@@ -269,7 +278,7 @@ class UndergraduateAdminController extends Controller
 
     public function storePlacement(Request $request): JsonResponse
     {
-        Gate::authorize('viewAny', TeachingSession::class);
+        Gate::authorize('manage', TeachingSession::class);
 
         $validated = $request->validate([
             'batchId' => ['required', 'uuid', Rule::exists('student_batches', 'id')],
@@ -306,10 +315,16 @@ class UndergraduateAdminController extends Controller
 
     public function destroyPlacement(Request $request, SubgroupPlacement $placement): JsonResponse
     {
-        Gate::authorize('viewAny', TeachingSession::class);
+        Gate::authorize('manage', TeachingSession::class);
 
         $old = $this->serializePlacement($placement->load(['ward', 'batch']));
+        $weekStart = $placement->week_starts_on->copy();
+        $weekEnd = $placement->week_ends_on->copy();
         $placement->delete();
+
+        // Mirror storePlacement: the week's pending sessions re-snapshot
+        // (to no ward now), so the reps' log stays truthful.
+        $this->teachingService->generateRange($weekStart, $weekEnd);
 
         $this->auditService->record($request->user(), 'delete', 'subgroup_placement', $placement->id, $old, null, $request);
 
@@ -340,7 +355,7 @@ class UndergraduateAdminController extends Controller
 
     public function setScheduleActive(Request $request, TeachingActivitySchedule $schedule): JsonResponse
     {
-        Gate::authorize('viewAny', TeachingSession::class);
+        Gate::authorize('manage', TeachingSession::class);
 
         $validated = $request->validate(['active' => ['required', 'boolean']]);
 
@@ -373,7 +388,7 @@ class UndergraduateAdminController extends Controller
 
     public function storeRepAssignment(Request $request): JsonResponse
     {
-        Gate::authorize('viewAny', TeachingSession::class);
+        Gate::authorize('manage', TeachingSession::class);
 
         $validated = $request->validate([
             'userId' => ['required', 'uuid', Rule::exists('users', 'id')],
@@ -402,7 +417,7 @@ class UndergraduateAdminController extends Controller
 
     public function setRepAssignmentActive(Request $request, RepAssignment $repAssignment): JsonResponse
     {
-        Gate::authorize('viewAny', TeachingSession::class);
+        Gate::authorize('manage', TeachingSession::class);
 
         $validated = $request->validate(['active' => ['required', 'boolean']]);
 
@@ -458,7 +473,7 @@ class UndergraduateAdminController extends Controller
     /** Cancelled sessions (holidays, exam weeks) never distort occurrence stats. */
     public function cancelSession(Request $request, TeachingSession $teachingSession): JsonResponse
     {
-        Gate::authorize('viewAny', TeachingSession::class);
+        Gate::authorize('manage', TeachingSession::class);
 
         $validated = $request->validate([
             'reason' => ['required', 'string', 'max:1000'],

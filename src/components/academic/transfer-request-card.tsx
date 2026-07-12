@@ -22,10 +22,7 @@ import {
   type TransferRequestRecord,
 } from '@/lib/api'
 import { getApiBrowserClient } from '@/lib/api/client'
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
+import { getErrorMessage } from '@/lib/api/helpers'
 
 const statusVariant: Record<TransferRequestRecord['status'], 'info' | 'success' | 'danger' | 'neutral'> = {
   pending: 'info',
@@ -94,7 +91,7 @@ export function TransferRequestCard() {
       toast.success('Transfer request sent to the section head.')
       await load()
     } catch (error) {
-      toast.error(errorMessage(error, 'Unable to file the transfer request.'))
+      toast.error(getErrorMessage(error, 'Unable to file the transfer request.'))
     } finally {
       setIsBusy(false)
     }
@@ -111,7 +108,7 @@ export function TransferRequestCard() {
       toast.success('Transfer request cancelled.')
       await load()
     } catch (error) {
-      toast.error(errorMessage(error, 'Unable to cancel the request.'))
+      toast.error(getErrorMessage(error, 'Unable to cancel the request.'))
     } finally {
       setIsBusy(false)
     }

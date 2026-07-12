@@ -213,10 +213,6 @@ export function saveSubgroupPlacement(
   return client.post<SubgroupPlacementRecord>('/api/admin/subgroup-placements', payload)
 }
 
-export async function deleteSubgroupPlacement(client: LaravelApiClient, placementId: string) {
-  await client.delete(`/api/admin/subgroup-placements/${placementId}`)
-}
-
 export async function fetchRepAssignments(client: LaravelApiClient): Promise<RepAssignmentRecord[]> {
   return (await client.get<{ data: RepAssignmentRecord[] }>('/api/admin/rep-assignments')).data
 }

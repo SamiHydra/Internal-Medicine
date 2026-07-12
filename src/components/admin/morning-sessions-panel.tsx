@@ -27,10 +27,7 @@ import {
   type MorningSessionRecord,
 } from '@/lib/api/morning'
 import { getApiBrowserClient } from '@/lib/api/client'
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
+import { getErrorMessage } from '@/lib/api/helpers'
 
 const statusVariant: Record<MorningSessionRecord['status'], 'info' | 'success' | 'neutral'> = {
   pending: 'info',
@@ -106,7 +103,7 @@ export function MorningSessionsPanel() {
     try {
       await action()
     } catch (error) {
-      toast.error(errorMessage(error, failure))
+      toast.error(getErrorMessage(error, failure))
     } finally {
       setBusy(null)
     }

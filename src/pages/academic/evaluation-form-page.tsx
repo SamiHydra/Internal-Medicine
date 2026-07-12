@@ -14,9 +14,8 @@ import {
 import { getApiBrowserClient } from '@/lib/api/client'
 import { apiEnvSetupHint } from '@/lib/api/env'
 import type { AcademicEvaluationRecord, AcademicFormOptions, AcademicMySubmissions } from '@/lib/api/types'
+import { panelClass } from '@/components/dashboard/section-panel'
 
-const panelClass =
-  'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
 const eyebrowClass = 'text-[11px] font-semibold uppercase tracking-[0.22em] text-[#005db6]'
 
 const todayString = new Date().toISOString().slice(0, 10)

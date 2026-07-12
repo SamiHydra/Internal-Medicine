@@ -8,7 +8,7 @@ use App\Models\MorningSession;
 use App\Models\Student;
 use App\Models\StudentAttendance;
 use App\Models\TeachingSession;
-use Illuminate\Support\Facades\Cache;
+use App\Services\Academic\Concerns\CachesByContentStamp;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -20,7 +20,7 @@ use Illuminate\Support\Facades\DB;
  */
 final class AcademicOperationsAnalyticsService
 {
-    private const CACHE_TTL_SECONDS = 300;
+    use CachesByContentStamp;
 
     /**
      * Morning punctuality: summary, per-session trend, per-person attendance
@@ -30,7 +30,7 @@ final class AcademicOperationsAnalyticsService
      */
     public function morning(?string $userId = null): array
     {
-        $stamp = $this->stamp(MorningSession::query()) . '|' . MorningAttendance::query()->count();
+        $stamp = $this->contentStamp(MorningSession::query()) . '|' . MorningAttendance::query()->count();
 
         return $this->cached('morning:'.($userId ?? 'all'), $stamp, function () use ($userId): array {
             $sessions = MorningSession::query()
@@ -105,7 +105,7 @@ final class AcademicOperationsAnalyticsService
      */
     public function teaching(): array
     {
-        return $this->cached('teaching', $this->stamp(TeachingSession::query()), function (): array {
+        return $this->cached('teaching', $this->contentStamp(TeachingSession::query()), function (): array {
             $sessions = TeachingSession::query()->with('batch')->get();
 
             $rate = function ($group): array {
@@ -157,7 +157,7 @@ final class AcademicOperationsAnalyticsService
     {
         $stamp = Student::query()->count()
             .'|'.StudentAttendance::query()->count()
-            .'|'.$this->stamp(Evaluation::query()->whereIn('form_key', ['student_weekly', 'student_final']));
+            .'|'.$this->contentStamp(Evaluation::query()->whereIn('form_key', ['student_weekly', 'student_final']));
 
         return $this->cached('students', $stamp, function (): array {
             $attendance = DB::table('student_attendance')
@@ -231,23 +231,12 @@ final class AcademicOperationsAnalyticsService
         });
     }
 
-    private function stamp($query): string
-    {
-        $row = (clone $query)->selectRaw('count(*) as row_count, max(updated_at) as latest')->first();
-
-        return ($row->row_count ?? 0).'|'.($row->latest ?? '');
-    }
-
     /**
      * @param  callable(): array<string, mixed>  $build
      * @return array<string, mixed>
      */
     private function cached(string $operation, string $stamp, callable $build): array
     {
-        return Cache::remember(
-            sprintf('academic:ops:%s:%s', $operation, md5($stamp)),
-            self::CACHE_TTL_SECONDS,
-            $build,
-        );
+        return $this->rememberByStamp('academic:ops', $operation, $stamp, $build);
     }
 }

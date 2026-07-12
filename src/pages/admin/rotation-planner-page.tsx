@@ -25,12 +25,9 @@ import {
 } from '@/lib/api'
 import { getApiBrowserClient } from '@/lib/api/client'
 import { cn } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/api/helpers'
 
 const CLEARED = 'cleared'
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
 
 function blockLabel(block: RotationCalendarSummary['blocks'][number]) {
   const start = new Date(block.startsOn)
@@ -173,7 +170,7 @@ export function RotationPlannerPage() {
       setStaged({})
       toast.success('Rotation plan saved.')
     } catch (error) {
-      toast.error(errorMessage(error, 'Unable to save the rotation plan.'))
+      toast.error(getErrorMessage(error, 'Unable to save the rotation plan.'))
     } finally {
       setIsSaving(false)
     }

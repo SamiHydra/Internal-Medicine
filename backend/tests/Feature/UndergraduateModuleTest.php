@@ -7,6 +7,7 @@ use App\Models\RepAssignment;
 use App\Models\Student;
 use App\Models\StudentBatch;
 use App\Models\SubgroupPlacement;
+use App\Models\TeachingActivitySchedule;
 use App\Models\TeachingSession;
 use App\Models\User;
 use App\Models\Ward;
@@ -461,5 +462,65 @@ Birtukan Mengistu",
                 'endsOn' => '2026-12-13',
             ])
             ->assertOk();
+    }
+
+    public function test_placement_save_and_delete_re_snapshot_the_weeks_pending_sessions(): void
+    {
+        $batch = $this->makeBatch();
+        $ward = Ward::query()->where('slug', 'pulmonology_ward')->firstOrFail();
+        app(TeachingService::class)->generateSessions(Carbon::parse('2026-09-14'));
+
+        $bedside = TeachingSession::query()
+            ->where('batch_id', $batch->id)
+            ->where('activity_type', 'bedside')
+            ->where('subgroup', 'A')
+            ->firstOrFail();
+        $this->assertNull($bedside->ward_id);
+
+        // Saving the week's placement re-points the pending session.
+        $placementId = $this->actingAs($this->admin)
+            ->postJson('/api/admin/subgroup-placements', [
+                'batchId' => $batch->id,
+                'subgroup' => 'A',
+                'wardId' => $ward->id,
+                'weekStartsOn' => '2026-09-14',
+            ])
+            ->assertCreated()
+            ->json('id');
+
+        $this->assertSame($ward->id, $bedside->refresh()->ward_id);
+
+        // Deleting it re-snapshots back to no ward.
+        $this->actingAs($this->admin)
+            ->deleteJson("/api/admin/subgroup-placements/{$placementId}")
+            ->assertNoContent();
+
+        $this->assertNull($bedside->refresh()->ward_id);
+    }
+
+    public function test_deactivating_a_schedule_row_stops_future_generation(): void
+    {
+        $this->makeBatch();
+
+        $lectureRow = TeachingActivitySchedule::query()
+            ->where('cohort', 'C1')
+            ->where('weekday', 1)
+            ->where('activity_type', 'lecture')
+            ->firstOrFail();
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/teaching-schedules/{$lectureRow->id}/active", ['active' => false])
+            ->assertOk()
+            ->assertJsonPath('active', false);
+
+        // Monday generation now yields only the two bedside rows.
+        app(TeachingService::class)->generateSessions(Carbon::parse('2026-09-21'));
+        $this->assertSame(
+            0,
+            TeachingSession::query()
+                ->where('activity_type', 'lecture')
+                ->whereDate('scheduled_date', '2026-09-21')
+                ->count(),
+        );
     }
 }

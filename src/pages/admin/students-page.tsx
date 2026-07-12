@@ -46,12 +46,9 @@ import {
 } from '@/lib/api/teaching'
 import { fetchAcademicWards, type AcademicWard } from '@/lib/api/academic-structure'
 import { getApiBrowserClient } from '@/lib/api/client'
+import { getErrorMessage } from '@/lib/api/helpers'
 
 const NONE = 'none'
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
-}
 
 const sessionStatusVariant: Record<OversightSessionRecord['status'], 'info' | 'success' | 'danger' | 'neutral'> = {
   pending: 'info',
@@ -133,7 +130,7 @@ export function StudentsPage() {
     try {
       await action()
     } catch (error) {
-      toast.error(errorMessage(error, failure))
+      toast.error(getErrorMessage(error, failure))
     } finally {
       setBusy(null)
     }
