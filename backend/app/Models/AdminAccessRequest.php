@@ -7,6 +7,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * A pending self-service account request. The table name is historical: the
+ * queue started out admin-only and now carries any self-service request
+ * (admin, resident, consultant), distinguished by requested_role.
+ */
 class AdminAccessRequest extends Model
 {
     use HasFactory, HasUuids;
@@ -19,6 +24,7 @@ class AdminAccessRequest extends Model
         'requested_role',
         'status',
         'notes',
+        'home_ward_id',
         'requested_at',
         'reviewed_at',
         'reviewed_by',
@@ -46,5 +52,10 @@ class AdminAccessRequest extends Model
     public function createdUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_user_id');
+    }
+
+    public function homeWard(): BelongsTo
+    {
+        return $this->belongsTo(Department::class, 'home_ward_id');
     }
 }

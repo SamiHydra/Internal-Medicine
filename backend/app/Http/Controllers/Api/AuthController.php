@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -57,7 +58,7 @@ class AuthController extends Controller
     {
         $validated = $request->validate([
             'current_password' => ['required', 'string'],
-            'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::defaults(), 'confirmed', 'different:current_password'],
+            'password' => ['required', 'string', Password::defaults(), 'confirmed', 'different:current_password'],
         ]);
 
         $user = $request->user();

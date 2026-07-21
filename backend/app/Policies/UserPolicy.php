@@ -40,7 +40,13 @@ class UserPolicy
             return true;
         }
 
-        return $this->isAdminLike($user) && $target->role_key === 'nurse';
+        // Mirrors setActive: an actor allowed to deactivate an account must also
+        // be able to correct it (name, ward, academic placement, password).
+        if (Permissions::isAdminRole($target->role_key)) {
+            return false;
+        }
+
+        return $this->isAdminLike($user);
     }
 
     public function setActive(User $user, User $target): bool

@@ -46,6 +46,12 @@ export function recordMorningSession(
   return client.post<MorningSessionRecord>(`/api/academic/morning-sessions/${sessionId}/record`, payload)
 }
 
+export function cancelOwnMorningSession(client: LaravelApiClient, sessionId: string, reason: string) {
+  return client.post<MorningSessionRecord>(`/api/academic/morning-sessions/${sessionId}/cancel`, {
+    reason,
+  })
+}
+
 export async function fetchMorningSessions(
   client: LaravelApiClient,
   status?: MorningSessionRecord['status'],
@@ -97,6 +103,11 @@ export async function deleteMorningOverride(client: LaravelApiClient, overrideId
 /** Update the designated recorders through the global settings endpoint. */
 export function updateMorningRecorders(client: LaravelApiClient, recorderIds: string[]) {
   return client.patch('/api/admin/settings', { morningRecorderIds: recorderIds })
+}
+
+/** Update the scheduled start used when future morning sessions are opened. */
+export function updateMorningSessionTime(client: LaravelApiClient, sessionTime: string) {
+  return client.patch('/api/admin/settings', { morningSessionTime: sessionTime })
 }
 
 export type MorningConfig = {

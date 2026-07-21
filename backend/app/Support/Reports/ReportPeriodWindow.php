@@ -3,16 +3,20 @@
 namespace App\Support\Reports;
 
 use App\Models\ReportingPeriod;
+use App\Support\HospitalClock;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
 class ReportPeriodWindow
 {
     public const DEFAULT_WINDOW = 'default';
+
     public const ALL_WINDOW = 'all';
 
     private const LIVE_REPORTING_START = '2026-03-02';
+
     private const DEFAULT_PERIOD_COUNT = 9;
+
     private const MAX_PERIOD_COUNT = 104;
 
     private static function defaultCount(): int
@@ -21,7 +25,7 @@ class ReportPeriodWindow
     }
 
     /**
-     * Hard ceiling on how many periods any single payload may span — applied even
+     * Hard ceiling on how many periods any single payload may span - applied even
      * to the "all" window so the unpaginated workspace response stays bounded as
      * history accumulates.
      */
@@ -43,7 +47,7 @@ class ReportPeriodWindow
         $sortedPeriods = $periods
             ->sortBy(fn (ReportingPeriod $period) => $period->week_start?->timestamp ?? 0)
             ->values();
-        $today = Carbon::today();
+        $today = HospitalClock::today();
         $currentPeriod = $sortedPeriods
             ->filter(fn (ReportingPeriod $period): bool => $period->week_start?->lte($today) ?? false)
             ->last() ?? $sortedPeriods->first();

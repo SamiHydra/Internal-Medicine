@@ -1,22 +1,35 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Loader2, Save, X } from 'lucide-react'
-import { toast } from 'sonner'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  CalendarDays,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Loader2,
+  ShieldAlert,
+  Save,
+  Undo2,
+  X,
+} from 'lucide-react';
+import { toast } from 'sonner';
 
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@/components/ui/select';
+import { AcademicWorkspaceHero } from '@/components/admin/academic-workspace-hero';
 import {
   SectionEmptyState,
-  SectionHeader,
   panelClass,
-} from '@/components/dashboard/section-panel'
+} from '@/components/dashboard/section-panel';
 import {
   fetchAcademicDutyTypes,
   fetchRosterMonth,
@@ -25,26 +38,39 @@ import {
   type AcademicDutyType,
   type RosterMonth,
   type RosterPerson,
-} from '@/lib/api'
-import { getApiBrowserClient } from '@/lib/api/client'
-import { cn } from '@/lib/utils'
-import { getErrorMessage } from '@/lib/api/helpers'
+} from '@/lib/api';
+import { getApiBrowserClient } from '@/lib/api/client';
+import {
+  matchesRosterRoleFilter,
+  rosterRoleFilters,
+  type RosterRoleFilter,
+} from '@/lib/duty-roster-filters';
+import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/api/helpers';
 
-const ALL = 'all'
-const CLEARED = 'cleared'
-
-const roleFilters = [
-  { value: 'consultant', label: 'Consultants' },
-  { value: 'resident-1', label: 'Residents Y1' },
-  { value: 'resident-2', label: 'Residents Y2' },
-  { value: 'resident-3', label: 'Residents Y3' },
-] as const
+const ALL = 'all';
+const CLEARED = 'cleared';
+const MIXED = 'mixed';
 
 function monthLabel(year: number, month: number) {
   return new Date(year, month - 1, 1).toLocaleDateString('en-GB', {
     month: 'long',
     year: 'numeric',
-  })
+  });
+}
+
+function shortDate(value: string) {
+  return new Date(`${value}T00:00:00`).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+  });
+}
+
+function sourceLabel(source: string, isRotationOverride: boolean) {
+  if (isRotationOverride) return 'Roster override';
+  if (source === 'rotation_planner') return 'Rotation plan';
+  if (source === 'transfer') return 'Approved transfer';
+  return 'Duty roster';
 }
 
 /**
@@ -54,107 +80,128 @@ function monthLabel(year: number, month: number) {
  * transaction; day duties write immediately.
  */
 export function DutyRosterPage() {
-  const client = getApiBrowserClient()
+  const client = getApiBrowserClient();
 
-  const today = new Date()
-  const [year, setYear] = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth() + 1)
-  const [data, setData] = useState<RosterMonth | null>(null)
-  const [dutyTypes, setDutyTypes] = useState<AcademicDutyType[] | null>(null)
-  const [roleFilter, setRoleFilter] = useState<(typeof roleFilters)[number]['value']>('consultant')
-  const [sectionFilter, setSectionFilter] = useState(ALL)
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1);
+  const [data, setData] = useState<RosterMonth | null>(null);
+  const [dutyTypes, setDutyTypes] = useState<AcademicDutyType[] | null>(null);
+  const [roleFilter, setRoleFilter] =
+    useState<RosterRoleFilter>('consultant');
+  const [sectionFilter, setSectionFilter] = useState(ALL);
   // Staged monthly edits: userId -> dutyTypeId (or CLEARED). Saved together.
-  const [staged, setStaged] = useState<Record<string, string>>({})
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [dailyDraft, setDailyDraft] = useState({ dutyTypeId: '', date: '' })
-  const [isSaving, setIsSaving] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
-  const [loadError, setLoadError] = useState(false)
+  const [staged, setStaged] = useState<Record<string, string>>({});
+  const [overrideReasons, setOverrideReasons] = useState<Record<string, string>>(
+    {},
+  );
+  const [overrideId, setOverrideId] = useState<string | null>(null);
+  const [overrideDraft, setOverrideDraft] = useState({
+    dutyTypeId: '',
+    reason: '',
+  });
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [dailyDraft, setDailyDraft] = useState({ dutyTypeId: '', date: '' });
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async () => {
     if (!client) {
-      setLoadError(true)
-      setIsLoading(false)
-      return
+      setLoadError(true);
+      setIsLoading(false);
+      return;
     }
 
-    setIsLoading(true)
+    setIsLoading(true);
     try {
       const [monthData, types] = await Promise.all([
         fetchRosterMonth(client, year, month),
         dutyTypes ? Promise.resolve(dutyTypes) : fetchAcademicDutyTypes(client),
-      ])
-      setData(monthData)
-      setDutyTypes(types)
-      setStaged({})
-      setLoadError(false)
+      ]);
+      setData(monthData);
+      setDutyTypes(types);
+      setStaged({});
+      setOverrideReasons({});
+      setOverrideId(null);
+      setLoadError(false);
     } catch {
-      setLoadError(true)
-      toast.error('Unable to load the duty roster.')
+      setLoadError(true);
+      toast.error('Unable to load the duty roster.');
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, year, month])
+  }, [client, year, month]);
 
   useEffect(() => {
-    void load()
-  }, [load])
+    void load();
+  }, [load]);
 
   const monthlyTypes = useMemo(
-    () => (dutyTypes ?? []).filter((type) => type.granularity === 'monthly' && type.active),
+    () =>
+      (dutyTypes ?? []).filter(
+        (type) => type.granularity === 'monthly' && type.active,
+      ),
     [dutyTypes],
-  )
+  );
   const dailyTypes = useMemo(
-    () => (dutyTypes ?? []).filter((type) => type.granularity === 'daily' && type.active),
+    () =>
+      (dutyTypes ?? []).filter(
+        (type) => type.granularity === 'daily' && type.active,
+      ),
     [dutyTypes],
-  )
+  );
 
   /** Section duties first, then department-wide, for the person's picker. */
   const optionsFor = useCallback(
     (person: RosterPerson) =>
       [...monthlyTypes].sort((a, b) => {
-        const aOwn = a.sectionId === person.sectionId ? 0 : a.sectionId === null ? 1 : 2
-        const bOwn = b.sectionId === person.sectionId ? 0 : b.sectionId === null ? 1 : 2
-        return aOwn - bOwn || a.name.localeCompare(b.name)
+        const aOwn =
+          a.sectionId === person.sectionId ? 0 : a.sectionId === null ? 1 : 2;
+        const bOwn =
+          b.sectionId === person.sectionId ? 0 : b.sectionId === null ? 1 : 2;
+        return aOwn - bOwn || a.name.localeCompare(b.name);
       }),
     [monthlyTypes],
-  )
+  );
 
   const people = useMemo(() => {
     if (!data) {
-      return []
+      return [];
     }
 
     return data.people.filter((person) => {
-      if (roleFilter === 'consultant') {
-        if (person.role !== 'consultant') {
-          return false
-        }
-        return sectionFilter === ALL || person.sectionId === sectionFilter
+      if (!matchesRosterRoleFilter(person, roleFilter)) {
+        return false;
       }
 
-      const yearWanted = Number(roleFilter.split('-')[1])
-      return person.role === 'resident' && person.trainingYear === yearWanted
-    })
-  }, [data, roleFilter, sectionFilter])
+      if (roleFilter === 'consultant' || roleFilter === 'internist') {
+        return sectionFilter === ALL || person.sectionId === sectionFilter;
+      }
 
-  const dirtyCount = Object.keys(staged).length
+      return true;
+    });
+  }, [data, roleFilter, sectionFilter]);
+
+  const dirtyCount = Object.keys(staged).length;
 
   const stepMonth = (delta: number) => {
-    const next = new Date(year, month - 1 + delta, 1)
-    setYear(next.getFullYear())
-    setMonth(next.getMonth() + 1)
-    setStaged({})
-    setExpandedId(null)
-  }
+    const next = new Date(year, month - 1 + delta, 1);
+    setYear(next.getFullYear());
+    setMonth(next.getMonth() + 1);
+    setStaged({});
+    setOverrideReasons({});
+    setOverrideId(null);
+    setExpandedId(null);
+  };
 
   const saveStagedMonth = async () => {
     if (!client || dirtyCount === 0) {
-      return
+      return;
     }
 
-    setIsSaving(true)
+    setIsSaving(true);
     try {
       const next = await saveRosterMonth(
         client,
@@ -163,21 +210,26 @@ export function DutyRosterPage() {
         Object.entries(staged).map(([userId, dutyTypeId]) => ({
           userId,
           dutyTypeId: dutyTypeId === CLEARED ? null : dutyTypeId,
+          ...(overrideReasons[userId]
+            ? { overrideReason: overrideReasons[userId] }
+            : {}),
         })),
-      )
-      setData(next)
-      setStaged({})
-      toast.success('Roster month saved.')
+      );
+      setData(next);
+      setStaged({});
+      setOverrideReasons({});
+      setOverrideId(null);
+      toast.success('Roster month saved.');
     } catch (error) {
-      toast.error(getErrorMessage(error, 'Unable to save the roster month.'))
+      toast.error(getErrorMessage(error, 'Unable to save the roster month.'));
     } finally {
-      setIsSaving(false)
+      setIsSaving(false);
     }
-  }
+  };
 
   const addDailyDuty = async (person: RosterPerson) => {
     if (!client || !dailyDraft.dutyTypeId || !dailyDraft.date) {
-      return
+      return;
     }
 
     try {
@@ -185,60 +237,135 @@ export function DutyRosterPage() {
         userId: person.id,
         dutyTypeId: dailyDraft.dutyTypeId,
         date: dailyDraft.date,
-      })
-      setDailyDraft((prev) => ({ ...prev, date: '' }))
-      await load()
+      });
+      setDailyDraft((prev) => ({ ...prev, date: '' }));
+      await load();
     } catch (error) {
-      toast.error(getErrorMessage(error, 'Unable to add the day duty.'))
+      toast.error(getErrorMessage(error, 'Unable to add the day duty.'));
     }
-  }
+  };
 
-  const removeDailyDuty = async (person: RosterPerson, dutyTypeId: string, date: string) => {
+  const removeDailyDuty = async (
+    person: RosterPerson,
+    dutyTypeId: string,
+    date: string,
+  ) => {
     if (!client) {
-      return
+      return;
     }
 
     try {
-      await saveDailyDuty(client, { userId: person.id, dutyTypeId, date, remove: true })
-      await load()
+      await saveDailyDuty(client, {
+        userId: person.id,
+        dutyTypeId,
+        date,
+        remove: true,
+      });
+      await load();
     } catch (error) {
-      toast.error(getErrorMessage(error, 'Unable to remove the day duty.'))
+      toast.error(getErrorMessage(error, 'Unable to remove the day duty.'));
     }
-  }
+  };
 
   return (
-    <div className="space-y-6 px-4 py-6 md:px-8">
-      <section className={panelClass}>
-        <SectionHeader
-          eyebrow="Duty roster"
-          description="The month-by-month duty schedule for every consultant and resident. Monthly cells stage until you save; day-level duties (on call, Transition) apply immediately."
-          actions={
-            <Button onClick={() => void saveStagedMonth()} disabled={dirtyCount === 0 || isSaving}>
-              {isSaving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
-              Save month{dirtyCount ? ` (${dirtyCount})` : ''}
-            </Button>
-          }
-        />
+    <div className="space-y-5 px-4 py-6 md:px-8">
+      <AcademicWorkspaceHero
+        eyebrow="Scheduling"
+        title="Duty & daily coverage"
+        description="Manage operational month coverage and day duties. Resident block rotations remain authoritative in the rotation plan."
+        metrics={[
+          {
+            label: 'Month',
+            value: monthLabel(year, month),
+            note: 'Current roster view',
+            compact: true,
+          },
+          {
+            label: 'People',
+            value: isLoading ? '-' : String(people.length),
+            note:
+              rosterRoleFilters.find((item) => item.value === roleFilter)?.label ??
+              'Filtered staff',
+          },
+          {
+            label: 'Covered',
+            value:
+              !isLoading && people.length > 0
+                ? `${Math.round(
+                    (people.filter((person) => {
+                      if (staged[person.id] !== undefined) {
+                        return staged[person.id] !== CLEARED;
+                      }
 
-        <div className="mt-5 flex flex-wrap items-center gap-3">
+                      return person.monthly.length > 0;
+                    }).length /
+                      people.length) *
+                      100,
+                  )}%`
+                : '-',
+            note: 'Monthly duty assigned',
+          },
+          {
+            label: 'Changes',
+            value: String(dirtyCount),
+            note: 'Waiting to save',
+          },
+        ]}
+        actions={
+          <Button
+            variant="secondary"
+            className="border-white/20 bg-white text-[#04162f] hover:bg-[#eaf2fb]"
+            onClick={() => void saveStagedMonth()}
+            disabled={dirtyCount === 0 || isSaving}
+          >
+            {isSaving ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="mr-1.5 h-4 w-4" />
+            )}
+            Save month{dirtyCount ? ` (${dirtyCount})` : ''}
+          </Button>
+        }
+      />
+
+      <section className={panelClass}>
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1.5">
-            <Button variant="secondary" size="icon" aria-label="Previous month" onClick={() => stepMonth(-1)}>
+            <Button
+              variant="secondary"
+              size="icon"
+              aria-label="Previous month"
+              onClick={() => stepMonth(-1)}
+            >
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <span className="min-w-[150px] text-center text-sm font-semibold text-[#000a1e]">
+            <span className="min-w-[116px] whitespace-nowrap text-center text-sm font-semibold text-[#000a1e] sm:min-w-[150px]">
               {monthLabel(year, month)}
             </span>
-            <Button variant="secondary" size="icon" aria-label="Next month" onClick={() => stepMonth(1)}>
+            <Button
+              variant="secondary"
+              size="icon"
+              aria-label="Next month"
+              onClick={() => stepMonth(1)}
+            >
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
 
-          <Select value={roleFilter} onValueChange={(value) => setRoleFilter(value as typeof roleFilter)}>
-            <SelectTrigger className="w-[170px]" aria-label="People filter">
+          <Select
+            value={roleFilter}
+            onValueChange={(value) => setRoleFilter(value as typeof roleFilter)}
+          >
+            <SelectTrigger className="w-[190px]" aria-label="People filter">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent>
-              {roleFilters.map((option) => (
+            <SelectContent
+              style={{
+                maxHeight:
+                  'min(var(--radix-select-content-available-height), 24rem)',
+              }}
+            >
+              {rosterRoleFilters.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
                 </SelectItem>
@@ -246,7 +373,7 @@ export function DutyRosterPage() {
             </SelectContent>
           </Select>
 
-          {roleFilter === 'consultant' ? (
+          {roleFilter === 'consultant' || roleFilter === 'internist' ? (
             <Select value={sectionFilter} onValueChange={setSectionFilter}>
               <SelectTrigger className="w-[190px]" aria-label="Section filter">
                 <SelectValue />
@@ -263,9 +390,32 @@ export function DutyRosterPage() {
           ) : null}
         </div>
 
+        <div className="mt-4 flex flex-col gap-3 border-y border-[#dce6f0] bg-[#f7faff] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <ShieldAlert
+              className="mt-0.5 h-4 w-4 shrink-0 text-[#005db6]"
+              aria-hidden="true"
+            />
+            <p className="text-[13px] leading-5 text-[#526171]">
+              Resident block assignments are controlled by the rotation plan.
+              This page can create a dated calendar-month override only when a
+              reason is recorded.
+            </p>
+          </div>
+          <Link
+            to="/admin/academic/rotations"
+            className="shrink-0 text-[13px] font-semibold text-[#005db6] hover:text-[#003f7d]"
+          >
+            Open resident rotation plan
+          </Link>
+        </div>
+
         {isLoading ? (
           <div className="flex min-h-[260px] items-center justify-center text-[#74777f]">
-            <Loader2 className="h-5 w-5 animate-spin" aria-label="Loading roster" />
+            <Loader2
+              className="h-5 w-5 animate-spin"
+              aria-label="Loading roster"
+            />
           </div>
         ) : loadError || !data ? (
           <div className="mt-6">
@@ -281,9 +431,13 @@ export function DutyRosterPage() {
               icon={<CalendarDays className="h-6 w-6" />}
               title="Nobody matches this view"
               description={
-                roleFilter === 'consultant'
-                  ? 'No active consultants in this section.'
-                  : 'No active residents carry this training year yet. Set training years in Users & Access.'
+                roleFilter === 'consultant' || roleFilter === 'internist'
+                  ? `No active ${roleFilter === 'consultant' ? 'consultants' : 'internists'} in this section.`
+                  : `No active staff match the ${
+                      rosterRoleFilters
+                        .find((option) => option.value === roleFilter)
+                        ?.label ?? 'selected grade'
+                    } filter.`
               }
             />
           </div>
@@ -291,9 +445,13 @@ export function DutyRosterPage() {
           <div className="mt-5 max-h-[62vh] overflow-auto rounded-[0.4rem] border border-[#e6ecf3]">
             <table className="w-full border-collapse text-sm">
               <thead className="sticky top-0 z-10 bg-[#f8fafc]">
-                <tr className="border-b border-[#e6ecf3] text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-[#74777f]">
+                <tr className="border-b border-[#e6ecf3] text-left text-xs font-bold uppercase tracking-[0.1em] text-[#526171]">
                   <th className="px-4 py-3">Person</th>
-                  <th className="px-4 py-3">{roleFilter === 'consultant' ? 'Section' : 'Group'}</th>
+                  <th className="px-4 py-3">
+                    {roleFilter === 'consultant' || roleFilter === 'internist'
+                      ? 'Section'
+                      : 'Group'}
+                  </th>
                   <th className="px-4 py-3">Monthly duty</th>
                   <th className="px-4 py-3">Day duties</th>
                   <th className="w-10 px-2 py-3" aria-label="Expand" />
@@ -301,76 +459,264 @@ export function DutyRosterPage() {
               </thead>
               <tbody>
                 {people.map((person) => {
-                  const currentMonthly = person.monthly[0]?.dutyTypeId ?? null
-                  const stagedValue = staged[person.id]
+                  const monthlyDutyIds = [
+                    ...new Set(person.monthly.map((item) => item.dutyTypeId)),
+                  ];
+                  const currentMonthly =
+                    monthlyDutyIds.length === 1 ? monthlyDutyIds[0] : null;
+                  const hasMixedCoverage = monthlyDutyIds.length > 1;
+                  const stagedValue = staged[person.id];
                   const selectValue =
-                    stagedValue !== undefined ? stagedValue : (currentMonthly ?? CLEARED)
-                  const isEmpty = selectValue === CLEARED
-                  const isExpanded = expandedId === person.id
+                    stagedValue !== undefined
+                      ? stagedValue
+                      : hasMixedCoverage
+                        ? MIXED
+                        : (currentMonthly ?? CLEARED);
+                  const isEmpty = selectValue === CLEARED;
+                  const isExpanded = expandedId === person.id;
+                  const isOverrideExpanded = overrideId === person.id;
+                  const stagedTypeName =
+                    stagedValue === CLEARED
+                      ? 'No monthly coverage'
+                      : monthlyTypes.find((type) => type.id === stagedValue)?.name;
 
                   return (
-                    <>
+                    <Fragment key={person.id}>
                       <tr
-                        key={person.id}
                         className={cn(
                           'border-b border-[#eef2f6] last:border-b-0',
                           stagedValue !== undefined && 'bg-[#f4f9ff]',
                         )}
                       >
-                        <td className="px-4 py-2.5 font-semibold text-[#000a1e]">{person.fullName}</td>
-                        <td className="px-4 py-2.5 text-[#74777f]">
+                        <td className="px-4 py-2.5 font-semibold text-[#000a1e]">
+                          {person.fullName}
+                        </td>
+                        <td className="px-4 py-2.5 text-[#5f6670]">
                           {person.role === 'consultant'
                             ? (person.sectionName ?? 'No section')
-                            : (person.rotationGroup ? `Group ${person.rotationGroup}` : '-')}
+                            : person.rotationGroup
+                              ? `Group ${person.rotationGroup}`
+                              : '-'}
                         </td>
                         <td className="px-4 py-2.5">
-                          <Select
-                            value={selectValue}
-                            onValueChange={(value) =>
-                              setStaged((prev) => {
-                                const original = currentMonthly ?? CLEARED
-                                if (value === original) {
-                                  const next = { ...prev }
-                                  delete next[person.id]
-                                  return next
-                                }
-                                return { ...prev, [person.id]: value }
-                              })
-                            }
-                          >
-                            <SelectTrigger
-                              className={cn(
-                                'w-[230px]',
-                                isEmpty && 'border-[#f0b429] bg-[#fff8e8] text-[#8a6100]',
+                          {person.rotationManaged ? (
+                            <div className="min-w-[310px] max-w-[410px] space-y-2">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <Badge variant="info">Rotation-managed</Badge>
+                                {hasMixedCoverage ? (
+                                  <Badge variant="warning">Mixed coverage</Badge>
+                                ) : null}
+                                {person.monthly.some(
+                                  (assignment) => assignment.isRotationOverride,
+                                ) ? (
+                                  <Badge variant="warning">Active override</Badge>
+                                ) : null}
+                              </div>
+
+                              {stagedValue !== undefined ? (
+                                <div className="flex items-start justify-between gap-3 border-l-2 border-[#005db6] bg-[#f4f9ff] px-3 py-2">
+                                  <div>
+                                    <p className="text-[13px] font-semibold text-[#003f7d]">
+                                      Staged override: {stagedTypeName}
+                                    </p>
+                                    <p className="mt-0.5 text-xs leading-5 text-[#526171]">
+                                      {shortDate(data.startsOn)} -{' '}
+                                      {shortDate(data.endsOn)} ·{' '}
+                                      {overrideReasons[person.id]}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    aria-label={`Undo staged override for ${person.fullName}`}
+                                    className="mt-0.5 text-[#005db6] hover:text-[#003f7d]"
+                                    onClick={() => {
+                                      setStaged((previous) => {
+                                        const next = { ...previous };
+                                        delete next[person.id];
+                                        return next;
+                                      });
+                                      setOverrideReasons((previous) => {
+                                        const next = { ...previous };
+                                        delete next[person.id];
+                                        return next;
+                                      });
+                                    }}
+                                  >
+                                    <Undo2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              ) : person.monthly.length ? (
+                                <div className="space-y-1">
+                                  {person.monthly.map((assignment) => (
+                                    <div
+                                      key={assignment.id}
+                                      className="border-l border-[#dce6f0] pl-2"
+                                    >
+                                      <div className="flex flex-wrap items-baseline gap-x-2 text-[13px] leading-5">
+                                        <span className="font-semibold text-[#1d3047]">
+                                          {assignment.dutyTypeName ??
+                                            'Unknown duty'}
+                                        </span>
+                                        <span className="text-[#657180]">
+                                          {shortDate(assignment.startsOn)} -{' '}
+                                          {shortDate(assignment.endsOn)}
+                                        </span>
+                                        <span className="text-xs font-medium text-[#005db6]">
+                                          {sourceLabel(
+                                            assignment.source,
+                                            assignment.isRotationOverride,
+                                          )}
+                                        </span>
+                                      </div>
+                                      {assignment.isRotationOverride &&
+                                      assignment.note ? (
+                                        <p className="mt-0.5 text-xs leading-5 text-[#657180]">
+                                          Reason:{' '}
+                                          {assignment.note.replace(
+                                            /^Rotation override:\s*/,
+                                            '',
+                                          )}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[13px] font-medium text-[#8a5a00]">
+                                  No effective coverage in this month
+                                </p>
                               )}
-                              aria-label={`Monthly duty for ${person.fullName}`}
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={CLEARED}>No monthly duty</SelectItem>
-                              {optionsFor(person).map((type) => (
-                                <SelectItem key={type.id} value={type.id}>
-                                  {type.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => {
+                                  if (isOverrideExpanded) {
+                                    setOverrideId(null);
+                                    return;
+                                  }
+
+                                  setOverrideId(person.id);
+                                  setOverrideDraft({
+                                    dutyTypeId:
+                                      stagedValue ??
+                                      currentMonthly ??
+                                      person.monthly[0]?.dutyTypeId ??
+                                      CLEARED,
+                                    reason: overrideReasons[person.id] ?? '',
+                                  });
+                                }}
+                              >
+                                {isOverrideExpanded
+                                  ? 'Close override'
+                                  : stagedValue !== undefined
+                                    ? 'Edit override'
+                                    : 'Create month override'}
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="min-w-[270px] space-y-2">
+                              <div className="flex items-center gap-2">
+                                <Select
+                                  value={selectValue}
+                                  onValueChange={(value) =>
+                                    setStaged((prev) => {
+                                      const original = hasMixedCoverage
+                                        ? MIXED
+                                        : (currentMonthly ?? CLEARED);
+                                      if (value === original) {
+                                        const next = { ...prev };
+                                        delete next[person.id];
+                                        return next;
+                                      }
+                                      return { ...prev, [person.id]: value };
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger
+                                    className={cn(
+                                      'w-[250px]',
+                                      isEmpty &&
+                                        'border-[#f0b429] bg-[#fff8e8] text-[#8a6100]',
+                                      hasMixedCoverage &&
+                                        stagedValue === undefined &&
+                                        'border-[#f0b429] bg-[#fff8e8]',
+                                    )}
+                                    aria-label={`Monthly duty for ${person.fullName}`}
+                                  >
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {hasMixedCoverage ? (
+                                      <SelectItem value={MIXED} disabled>
+                                        Mixed monthly coverage
+                                      </SelectItem>
+                                    ) : null}
+                                    <SelectItem value={CLEARED}>
+                                      No monthly duty
+                                    </SelectItem>
+                                    {optionsFor(person).map((type) => (
+                                      <SelectItem key={type.id} value={type.id}>
+                                        {type.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                {stagedValue !== undefined ? (
+                                  <button
+                                    type="button"
+                                    aria-label={`Undo monthly change for ${person.fullName}`}
+                                    className="text-[#005db6] hover:text-[#003f7d]"
+                                    onClick={() =>
+                                      setStaged((previous) => {
+                                        const next = { ...previous };
+                                        delete next[person.id];
+                                        return next;
+                                      })
+                                    }
+                                  >
+                                    <Undo2 className="h-4 w-4" />
+                                  </button>
+                                ) : null}
+                              </div>
+                              {person.monthly.length ? (
+                                <div className="space-y-0.5">
+                                  {person.monthly.map((assignment) => (
+                                    <p
+                                      key={assignment.id}
+                                      className="text-xs leading-5 text-[#657180]"
+                                      title={assignment.note ?? undefined}
+                                    >
+                                      {shortDate(assignment.startsOn)} -{' '}
+                                      {shortDate(assignment.endsOn)} ·{' '}
+                                      {sourceLabel(
+                                        assignment.source,
+                                        assignment.isRotationOverride,
+                                      )}
+                                    </p>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-2.5">
                           {person.daily.length ? (
                             <div className="flex flex-wrap gap-1.5">
                               {person.daily.slice(0, 4).map((duty) => (
                                 <Badge key={duty.id} variant="neutral">
-                                  {duty.dutyTypeName} · {duty.startsOn.slice(8)}/{duty.startsOn.slice(5, 7)}
+                                  {duty.dutyTypeName}, {duty.startsOn.slice(8)}/
+                                  {duty.startsOn.slice(5, 7)}
                                 </Badge>
                               ))}
                               {person.daily.length > 4 ? (
-                                <span className="text-xs text-[#74777f]">+{person.daily.length - 4} more</span>
+                                <span className="text-[13px] font-medium text-[#5f6670]">
+                                  +{person.daily.length - 4} more
+                                </span>
                               ) : null}
                             </div>
                           ) : (
-                            <span className="text-xs text-[#9aa7b8]">None</span>
+                            <span className="text-[13px] font-medium text-[#657180]">None</span>
                           )}
                         </td>
                         <td className="px-2 py-2.5">
@@ -380,23 +726,137 @@ export function DutyRosterPage() {
                             aria-label={`${isExpanded ? 'Collapse' : 'Expand'} day duties for ${person.fullName}`}
                             aria-expanded={isExpanded}
                             onClick={() => {
-                              setExpandedId(isExpanded ? null : person.id)
-                              setDailyDraft({ dutyTypeId: dailyTypes[0]?.id ?? '', date: '' })
+                              setExpandedId(isExpanded ? null : person.id);
+                              setDailyDraft({
+                                dutyTypeId: dailyTypes[0]?.id ?? '',
+                                date: '',
+                              });
                             }}
                           >
-                            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                            {isExpanded ? (
+                              <ChevronUp className="h-4 w-4" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4" />
+                            )}
                           </Button>
                         </td>
                       </tr>
+                      {isOverrideExpanded ? (
+                        <tr className="border-b border-[#dce6f0] bg-[#f7faff]">
+                          <td colSpan={5} className="px-4 py-4">
+                            <div className="grid gap-4 lg:grid-cols-[minmax(220px,0.8fr)_minmax(320px,1.4fr)_auto] lg:items-end">
+                              <div>
+                                <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#005db6]">
+                                  Calendar-month override
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-[#1d3047]">
+                                  {shortDate(data.startsOn)} -{' '}
+                                  {shortDate(data.endsOn)}
+                                </p>
+                                <p className="mt-1 text-xs leading-5 text-[#657180]">
+                                  Overlaps{' '}
+                                  {person.rotationBlocks
+                                    .map((block) => `Block ${block.blockIndex}`)
+                                    .join(', ')}
+                                  . The rotation plan will show this block as
+                                  mixed until it is reconciled.
+                                </p>
+                              </div>
+                              <div className="grid gap-3 sm:grid-cols-[220px_minmax(240px,1fr)]">
+                                <Select
+                                  value={overrideDraft.dutyTypeId}
+                                  onValueChange={(dutyTypeId) =>
+                                    setOverrideDraft((previous) => ({
+                                      ...previous,
+                                      dutyTypeId,
+                                    }))
+                                  }
+                                >
+                                  <SelectTrigger aria-label="Override monthly duty">
+                                    <SelectValue placeholder="Choose coverage" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value={CLEARED}>
+                                      No monthly coverage
+                                    </SelectItem>
+                                    {optionsFor(person).map((type) => (
+                                      <SelectItem key={type.id} value={type.id}>
+                                        {type.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <div>
+                                  <Textarea
+                                    className="min-h-20 resize-y bg-white"
+                                    value={overrideDraft.reason}
+                                    minLength={10}
+                                    maxLength={500}
+                                    aria-label="Rotation override reason"
+                                    placeholder="Reason for overriding the resident rotation"
+                                    onChange={(event) =>
+                                      setOverrideDraft((previous) => ({
+                                        ...previous,
+                                        reason: event.target.value,
+                                      }))
+                                    }
+                                  />
+                                  <p className="mt-1 text-xs text-[#657180]">
+                                    Minimum 10 characters · saved in the audit
+                                    trail
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  disabled={
+                                    !overrideDraft.dutyTypeId ||
+                                    overrideDraft.reason.trim().length < 10
+                                  }
+                                  onClick={() => {
+                                    setStaged((previous) => ({
+                                      ...previous,
+                                      [person.id]: overrideDraft.dutyTypeId,
+                                    }));
+                                    setOverrideReasons((previous) => ({
+                                      ...previous,
+                                      [person.id]: overrideDraft.reason.trim(),
+                                    }));
+                                    setOverrideId(null);
+                                  }}
+                                >
+                                  Stage override
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setOverrideId(null)}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
                       {isExpanded ? (
-                        <tr key={`${person.id}-daily`} className="border-b border-[#eef2f6] bg-[#f8fafc]">
+                        <tr className="border-b border-[#eef2f6] bg-[#f8fafc]">
                           <td colSpan={5} className="px-4 py-3">
                             <div className="flex flex-wrap items-center gap-2">
                               <Select
                                 value={dailyDraft.dutyTypeId}
-                                onValueChange={(dutyTypeId) => setDailyDraft((prev) => ({ ...prev, dutyTypeId }))}
+                                onValueChange={(dutyTypeId) =>
+                                  setDailyDraft((prev) => ({
+                                    ...prev,
+                                    dutyTypeId,
+                                  }))
+                                }
                               >
-                                <SelectTrigger className="w-[210px]" aria-label="Day duty type">
+                                <SelectTrigger
+                                  className="w-[210px]"
+                                  aria-label="Day duty type"
+                                >
                                   <SelectValue placeholder="Day duty" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -415,12 +875,17 @@ export function DutyRosterPage() {
                                 max={data.endsOn}
                                 aria-label="Day duty date"
                                 onChange={(event) =>
-                                  setDailyDraft((prev) => ({ ...prev, date: event.target.value }))
+                                  setDailyDraft((prev) => ({
+                                    ...prev,
+                                    date: event.target.value,
+                                  }))
                                 }
                               />
                               <Button
                                 size="sm"
-                                disabled={!dailyDraft.dutyTypeId || !dailyDraft.date}
+                                disabled={
+                                  !dailyDraft.dutyTypeId || !dailyDraft.date
+                                }
                                 onClick={() => void addDailyDuty(person)}
                               >
                                 Add day duty
@@ -431,14 +896,20 @@ export function DutyRosterPage() {
                                 {person.daily.map((duty) => (
                                   <span
                                     key={duty.id}
-                                    className="inline-flex items-center gap-1.5 rounded-[0.25rem] border border-[#d4dde8] bg-white px-2.5 py-1 text-xs font-medium text-[#44474e]"
+                                    className="inline-flex items-center gap-1.5 rounded-[0.25rem] border border-[#d4dde8] bg-white px-2.5 py-1 text-[13px] font-medium text-[#44474e]"
                                   >
-                                    {duty.dutyTypeName} · {duty.startsOn}
+                                    {duty.dutyTypeName}, {duty.startsOn}
                                     <button
                                       type="button"
                                       aria-label={`Remove ${duty.dutyTypeName} on ${duty.startsOn}`}
                                       className="text-[#ba1a1a] hover:text-[#7f1212]"
-                                      onClick={() => void removeDailyDuty(person, duty.dutyTypeId, duty.startsOn)}
+                                      onClick={() =>
+                                        void removeDailyDuty(
+                                          person,
+                                          duty.dutyTypeId,
+                                          duty.startsOn,
+                                        )
+                                      }
                                     >
                                       <X className="h-3.5 w-3.5" />
                                     </button>
@@ -449,8 +920,8 @@ export function DutyRosterPage() {
                           </td>
                         </tr>
                       ) : null}
-                    </>
-                  )
+                    </Fragment>
+                  );
                 })}
               </tbody>
             </table>
@@ -458,5 +929,5 @@ export function DutyRosterPage() {
         )}
       </section>
     </div>
-  )
+  );
 }

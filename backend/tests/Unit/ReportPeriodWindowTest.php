@@ -18,7 +18,7 @@ class ReportPeriodWindowTest extends TestCase
     {
         return collect(range(0, $count - 1))->map(function (int $offset) use ($start): ReportingPeriod {
             $weekStart = Carbon::parse($start)->addWeeks($offset);
-            $period = new ReportingPeriod();
+            $period = new ReportingPeriod;
             $period->forceFill([
                 'id' => sprintf('period-%03d', $offset),
                 'week_start' => $weekStart,
@@ -41,7 +41,7 @@ class ReportPeriodWindowTest extends TestCase
         try {
             $ids = ReportPeriodWindow::ids($this->periods(12), ReportPeriodWindow::DEFAULT_WINDOW);
 
-            // Default count is 9 (config/reports.php) — the most recent 9 of 12.
+            // Default count is 9 (config/reports.php), the most recent 9 of 12.
             $this->assertCount(9, $ids);
             $this->assertSame('period-011', $ids[array_key_last($ids)]);
             $this->assertNotContains('period-000', $ids);

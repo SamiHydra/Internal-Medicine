@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Services\Academic\TeachingService;
+use App\Support\HospitalClock;
 use Illuminate\Console\Command;
 
 class GenerateTeachingSessions extends Command
@@ -13,7 +14,9 @@ class GenerateTeachingSessions extends Command
 
     public function handle(TeachingService $teachingService): int
     {
-        $date = $this->option('date') ? now()->parse($this->option('date')) : now();
+        $date = $this->option('date')
+            ? HospitalClock::parseDate((string) $this->option('date'))
+            : HospitalClock::today();
 
         $generated = $teachingService->generateSessions($date);
 

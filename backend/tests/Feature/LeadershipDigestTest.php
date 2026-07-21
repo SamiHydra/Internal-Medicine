@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Mail\LeadershipDigestMail;
 use App\Models\Department;
-use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportingPeriod;
 use App\Models\ReportTemplate;
@@ -79,6 +78,7 @@ class LeadershipDigestTest extends TestCase
         $digest = app(LeadershipDigestService::class)->build();
 
         $this->assertTrue($digest['hasData']);
+        $this->assertSame($this->period->id, $digest['periodId']);
         $this->assertSame(1, $digest['submitted']);
         $this->assertSame(1, $digest['expected']);
         $this->assertSame(100, $digest['deliveryRate']);
@@ -95,9 +95,15 @@ class LeadershipDigestTest extends TestCase
             ->expectsOutputToContain('Leadership digest queued for 1 recipient')
             ->assertExitCode(0);
 
+        $this->artisan('reports:send-digest')
+            ->expectsOutputToContain('Leadership digest queued for 0 recipient')
+            ->assertExitCode(0);
+
         Mail::assertQueued(LeadershipDigestMail::class, function (LeadershipDigestMail $mail): bool {
             return $mail->hasTo('lead@example.test');
         });
+        Mail::assertQueuedCount(1);
+        $this->assertDatabaseCount('leadership_digest_deliveries', 1);
     }
 
     public function test_digest_skips_when_no_admin_recipients(): void

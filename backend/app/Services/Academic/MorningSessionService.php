@@ -8,9 +8,11 @@ use App\Models\MorningSession;
 use App\Models\Notification;
 use App\Models\User;
 use App\Services\Admin\AppSettingsService;
+use App\Support\HospitalClock;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -103,29 +105,41 @@ final class MorningSessionService
      */
     public function record(MorningSession $session, bool $onTime, ?string $actualStart, array $presence, User $by): MorningSession
     {
-        if ($session->status === 'cancelled') {
-            throw ValidationException::withMessages([
-                'session' => ['A cancelled session cannot be recorded.'],
-            ]);
-        }
-
         if (! $onTime && ($actualStart === null || trim($actualStart) === '')) {
             throw ValidationException::withMessages([
                 'actualStartAt' => ['Enter the actual start time when the session did not start on time.'],
             ]);
         }
 
-        // A correction of an already-recorded session updates the SNAPSHOT
-        // (the existing attendance rows), never the roster recomputed from
-        // current data: assignments may have changed since, and a re-derived
-        // roster would silently drop off-roster attendees' flags.
-        $isCorrection = $session->status === 'recorded';
-        $rosterIds = $isCorrection
-            ? $session->attendance()->pluck('user_id')->all()
-            : $this->roster($session->session_date)->pluck('id')->all();
+        return DB::transaction(function () use ($session, $onTime, $actualStart, $presence, $by): MorningSession {
+            $locked = $this->lockSession($session->id);
 
-        DB::transaction(function () use ($session, $onTime, $actualStart, $presence, $by, $rosterIds, $isCorrection): void {
-            $session->forceFill([
+            // Route-model authorization is only an early boundary. Repeat it
+            // against the locked row so a stale caller cannot act after a
+            // concurrent cancellation or a same-day policy state change.
+            Gate::forUser($by)->authorize('record', $locked);
+
+            if ($locked->status === 'cancelled') {
+                throw ValidationException::withMessages([
+                    'session' => ['A cancelled session cannot be recorded.'],
+                ]);
+            }
+
+            if (! in_array($locked->status, ['pending', 'recorded'], true)) {
+                throw ValidationException::withMessages([
+                    'session' => ['This morning session cannot be recorded in its current state.'],
+                ]);
+            }
+
+            // A correction of an already-recorded session updates the
+            // SNAPSHOT (the existing attendance rows), never a roster
+            // recomputed from current assignments.
+            $isCorrection = $locked->status === 'recorded';
+            $rosterIds = $isCorrection
+                ? $locked->attendance()->pluck('user_id')->all()
+                : $this->roster($locked->session_date)->pluck('id')->all();
+
+            $locked->forceFill([
                 'started_on_time' => $onTime,
                 'actual_start_at' => $onTime ? null : substr(trim((string) $actualStart), 0, 5),
                 'status' => 'recorded',
@@ -142,16 +156,17 @@ final class MorningSessionService
                 }
 
                 MorningAttendance::query()->updateOrCreate(
-                    ['morning_session_id' => $session->id, 'user_id' => $userId],
+                    ['morning_session_id' => $locked->id, 'user_id' => $userId],
                     ['present' => (bool) ($presence[$userId] ?? false)],
                 );
             }
-        });
 
-        return $session->refresh();
+            return $locked->refresh();
+        });
     }
 
-    public function cancel(MorningSession $session, string $reason, User $by): MorningSession
+    /** @return array{session: MorningSession, transitioned: bool} */
+    public function cancel(MorningSession $session, string $reason, User $by): array
     {
         if (trim($reason) === '') {
             throw ValidationException::withMessages([
@@ -159,18 +174,42 @@ final class MorningSessionService
             ]);
         }
 
-        $session->forceFill([
-            'status' => 'cancelled',
-            'reason' => $reason,
-            'recorded_by' => $by->id,
-            'recorded_at' => now(),
-        ])->save();
+        return DB::transaction(function () use ($session, $reason, $by): array {
+            $locked = $this->lockSession($session->id);
 
-        return $session;
+            // This preserves the policy distinction: an administrator can
+            // cancel a recorded session and retry a cancellation, while a
+            // designated recorder can cancel only today's pending session.
+            Gate::forUser($by)->authorize('cancel', $locked);
+
+            if ($locked->status === 'cancelled') {
+                return ['session' => $locked, 'transitioned' => false];
+            }
+
+            if (! in_array($locked->status, ['pending', 'recorded'], true)) {
+                throw ValidationException::withMessages([
+                    'session' => ['This morning session cannot be cancelled in its current state.'],
+                ]);
+            }
+
+            $locked->forceFill([
+                'status' => 'cancelled',
+                'reason' => trim($reason),
+                'recorded_by' => $by->id,
+                'recorded_at' => now(),
+            ])->save();
+
+            return ['session' => $locked->refresh(), 'transitioned' => true];
+        });
     }
 
-    /** The 08:15 nudge: a still-pending session notifies every designated recorder. */
-    public function remindRecorders(CarbonInterface $date): int
+    private function lockSession(string $sessionId): MorningSession
+    {
+        return MorningSession::query()->lockForUpdate()->findOrFail($sessionId);
+    }
+
+    /** Notify recorders once a pending session is 15 minutes past its snapshotted start. */
+    public function remindRecorders(CarbonInterface $date, ?CarbonInterface $at = null): int
     {
         $session = MorningSession::query()
             ->whereDate('session_date', $date->toDateString())
@@ -181,24 +220,43 @@ final class MorningSessionService
             return 0;
         }
 
-        $recorderIds = $this->config()['morningRecorderIds'];
+        $scheduledAt = $date->copy()
+            ->setTimezone((string) config('app.business_timezone', 'Africa/Nairobi'))
+            ->setTimeFromTimeString(substr((string) $session->scheduled_start_at, 0, 5));
+        $reminderDueAt = $scheduledAt->copy()->addMinutes(15);
 
-        foreach ($recorderIds as $recorderId) {
-            Notification::query()->create([
-                'recipient_id' => $recorderId,
-                'type' => 'morning_session_reminder',
-                'title' => 'Morning session not recorded yet',
-                'message' => sprintf(
-                    "Today's %s morning session has not been recorded. It takes under a minute.",
-                    substr((string) $session->scheduled_start_at, 0, 5),
-                ),
-                'related_route' => '/academic/morning',
-                'related_entity' => 'morning_session',
-                'related_id' => $session->id,
-                'created_at' => now(),
-            ]);
+        if (($at ?? HospitalClock::now())->lessThan($reminderDueAt)) {
+            return 0;
         }
 
-        return count($recorderIds);
+        $recorderIds = $this->config()['morningRecorderIds'];
+
+        $notified = 0;
+
+        foreach ($recorderIds as $recorderId) {
+            $notification = Notification::query()->firstOrCreate(
+                [
+                    'recipient_id' => $recorderId,
+                    'type' => 'morning_session_reminder',
+                    'related_id' => $session->id,
+                ],
+                [
+                    'title' => 'Morning session not recorded yet',
+                    'message' => sprintf(
+                        "Today's %s morning session has not been recorded. It takes under a minute.",
+                        substr((string) $session->scheduled_start_at, 0, 5),
+                    ),
+                    'related_route' => '/academic/morning',
+                    'related_entity' => 'morning_session',
+                    'created_at' => now(),
+                ],
+            );
+
+            if ($notification->wasRecentlyCreated) {
+                $notified++;
+            }
+        }
+
+        return $notified;
     }
 }

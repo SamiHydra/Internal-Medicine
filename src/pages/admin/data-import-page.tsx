@@ -36,7 +36,7 @@ export function DataImportPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Offer the same non-future periods the rest of the app shows (newest first),
-  // and default to the current reporting period — not the latest future period —
+  // and default to the current reporting period - not the latest future period -
   // so the selector matches the header instead of jumping ~6 months ahead.
   const periods = useMemo(
     () =>
@@ -69,7 +69,7 @@ export function DataImportPage() {
       if (outcome.imported > 0) {
         toast.success(`Imported ${outcome.imported} report${outcome.imported === 1 ? '' : 's'}.`)
       } else {
-        toast.error('No reports were imported — check the errors below.')
+        toast.error('No reports were imported - check the errors below.')
       }
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : 'Unable to import the file.')
@@ -187,7 +187,7 @@ export function DataImportPage() {
               ))}
             </ul>
           ) : result.imported === 0 ? (
-            <p className="mt-3 text-sm text-[#5b6169]">No rows found — check the file uses the downloaded template.</p>
+            <p className="mt-3 text-sm text-[#5b6169]">No rows found - check the file uses the downloaded template.</p>
           ) : null}
         </motion.section>
       ) : null}

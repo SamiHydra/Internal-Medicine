@@ -172,7 +172,7 @@ const notificationMeta: Record<
     chipTone: 'border-[#cfe0f4] bg-[#edf4fb] text-[#005db6]',
   },
   admin_access_request: {
-    label: 'Admin request',
+    label: 'Account request',
     icon: UserRoundPlus,
     iconTone: 'bg-[#edf4fb] text-[#005db6]',
     chipTone: 'border-[#cfe0f4] bg-[#edf4fb] text-[#005db6]',
@@ -388,7 +388,7 @@ export function NotificationsPage() {
 
         {/* Filter + bulk actions */}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-b border-[#eef2f6] pb-4">
-          <div className="inline-flex rounded-full bg-[#f4f7fb] p-1 outline outline-1 outline-[#e3e9f1]">
+          <div className="inline-flex w-fit flex-wrap gap-1.5 rounded-[0.35rem] bg-white p-1.5 outline outline-1 outline-[#d4dde8]">
             {segments.map((segment) => {
               const active = filter === segment.value
               return (
@@ -398,15 +398,19 @@ export function NotificationsPage() {
                   onClick={() => setFilter(segment.value)}
                   aria-pressed={active}
                   className={cn(
-                    'inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors duration-200',
-                    active ? 'bg-white text-[#000a1e] shadow-sm' : 'text-[#74777f] hover:text-[#000a1e]',
+                    'inline-flex items-center gap-2 rounded-[0.25rem] px-3.5 py-2 text-sm font-semibold transition-colors',
+                    active
+                      ? 'bg-[#04162f] text-white'
+                      : 'text-[#44474e] hover:bg-[#eef2f6]',
                   )}
                 >
                   {segment.label}
                   <span
                     className={cn(
-                      'rounded-full px-1.5 text-[10px] font-bold tabular-nums',
-                      active ? 'bg-[#edf4fb] text-[#005db6]' : 'bg-[#e7edf4] text-[#74777f]',
+                      'rounded-[0.2rem] px-1.5 text-[10px] font-bold tabular-nums',
+                      active
+                        ? 'bg-white/15 text-white'
+                        : 'bg-[#e7edf4] text-[#74777f]',
                     )}
                   >
                     {segment.count}

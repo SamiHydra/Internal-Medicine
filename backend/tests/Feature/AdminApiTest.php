@@ -159,6 +159,61 @@ class AdminApiTest extends TestCase
         $this->assertLessThanOrEqual(10, $queryCount, "User directory executed {$queryCount} queries.");
     }
 
+    public function test_user_directory_filters_by_the_role_workspace(): void
+    {
+        $resident = User::factory()->role('resident', 'Resident')->create(['full_name' => 'Rita Resident']);
+        $consultant = User::factory()->role('consultant', 'Consultant')->create(['full_name' => 'Carl Consultant']);
+        $studentRep = User::factory()->role('student_rep', 'Student representative')->create(['full_name' => 'Sara Rep']);
+
+        $academic = $this->actingAs($this->admin)
+            ->getJson('/api/admin/users?workspace=academic')
+            ->assertOk()
+            ->json('data.*.id');
+
+        $this->assertEqualsCanonicalizing(
+            [$this->superadmin->id, $this->admin->id, $resident->id, $consultant->id, $studentRep->id],
+            $academic,
+        );
+
+        $clinical = $this->actingAs($this->admin)
+            ->getJson('/api/admin/users?workspace=clinical')
+            ->assertOk()
+            ->json('data.*.id');
+
+        $this->assertEqualsCanonicalizing(
+            [$this->superadmin->id, $this->admin->id, $this->nurse->id],
+            $clinical,
+        );
+    }
+
+    public function test_user_directory_workspace_filter_composes_with_the_active_filter(): void
+    {
+        $resident = User::factory()->role('resident', 'Resident')->create(['full_name' => 'Rita Resident']);
+        User::factory()->role('consultant', 'Consultant')->inactive()->create(['full_name' => 'Carl Consultant']);
+
+        $active = $this->actingAs($this->admin)
+            ->getJson('/api/admin/users?workspace=academic&active=1')
+            ->assertOk()
+            ->json('data.*.id');
+
+        $this->assertEqualsCanonicalizing(
+            [$this->superadmin->id, $this->admin->id, $resident->id],
+            $active,
+        );
+    }
+
+    public function test_user_directory_rejects_an_unknown_workspace(): void
+    {
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/users?workspace=surgery')
+            ->assertStatus(422);
+
+        // `both` is a property a role carries, never something to filter by.
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/users?workspace=both')
+            ->assertStatus(422);
+    }
+
     public function test_access_request_review_and_assignment_admin_endpoints(): void
     {
         $request = $this->createAccessRequest($this->nurse, 'gi_neuro_inpatient');

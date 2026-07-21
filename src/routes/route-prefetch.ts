@@ -2,7 +2,7 @@
  * Warm a route's lazy chunk before the user clicks it.
  *
  * Every page in `App.tsx` is `React.lazy`, so the first visit to a route pays the
- * cost of fetching (prod) or on-demand compiling (Vite dev) its chunk — which is
+ * cost of fetching (prod) or on-demand compiling (Vite dev) its chunk - which is
  * why a fresh navigation can sit on the old page for a beat. Calling the matching
  * dynamic `import()` on hover/focus resolves the *same* chunk React.lazy uses, so
  * by click time it's already in memory and the navigation is instant.
@@ -59,7 +59,7 @@ export function prefetchRoute(href: string): void {
 
   warmed.add(href)
   void loader().catch(() => {
-    // Network/compile hiccup — drop the flag so a real navigation can retry.
+    // Network/compile hiccup - drop the flag so a real navigation can retry.
     warmed.delete(href)
   })
 }

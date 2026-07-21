@@ -2,6 +2,7 @@
 
 namespace App\Support\Import;
 
+use App\Support\Export\XlsxWriter;
 use RuntimeException;
 use SimpleXMLElement;
 use ZipArchive;
@@ -9,7 +10,7 @@ use ZipArchive;
 /**
  * Minimal, dependency-free .xlsx reader. Parses the first worksheet into rows of
  * string cells, resolving the shared-strings table that Excel uses when it saves
- * a workbook. Pairs with {@see \App\Support\Export\XlsxWriter}.
+ * a workbook. Pairs with {@see XlsxWriter}.
  *
  * Hardened against hostile uploads: per-part uncompressed-size cap (zip bomb),
  * DTD rejection (billion-laughs entity expansion), and no external entities.
@@ -20,11 +21,11 @@ class XlsxReader
     private const MAX_PART_BYTES = 64 * 1024 * 1024;
 
     /**
-     * @return array<int, array<int, string>>  rows of string cells (header first)
+     * @return array<int, array<int, string>> rows of string cells (header first)
      */
     public function rows(string $path): array
     {
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
 
         if ($zip->open($path) !== true) {
             throw new RuntimeException('Unable to open the spreadsheet file.');

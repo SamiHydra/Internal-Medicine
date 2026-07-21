@@ -14,7 +14,7 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Loads an offline-edited spreadsheet (CSV or .xlsx, in the round-trippable
- * import-template layout) back into the system — the "roll forward" half of the
+ * import-template layout) back into the system - the "roll forward" half of the
  * outage-continuity loop. Every imported report goes through the same
  * ReportSubmissionService validation as a live submission, so offline edits can
  * never bypass the coercion/cross-field/quality rules.
@@ -135,7 +135,7 @@ class ReportImportService
 
     /**
      * @param  array<string, mixed>  $group
-     * @return true|string  true on success, or a human error message
+     * @return true|string true on success, or a human error message
      */
     private function importGroup(array $group, User $actor, bool $submit): bool|string
     {
@@ -144,7 +144,7 @@ class ReportImportService
 
         // An Excel date serial arrives as a number; never silently coerce it.
         if (is_numeric($week)) {
-            return "Week start '{$week}' is not a date — format the column as text/date in Excel.";
+            return "Week start '{$week}' is not a date - format the column as text/date in Excel.";
         }
 
         $period = ReportingPeriod::query()

@@ -82,7 +82,7 @@ function recordScore(record: AcademicEvaluationRecord): number {
 
 function toDateLabel(value: string | null): string {
   if (!value) {
-    return '—'
+    return '-'
   }
   const date = new Date(value)
   return Number.isNaN(date.getTime())
@@ -98,7 +98,7 @@ function initialsFor(fullName: string | null): string {
       .filter(Boolean)
       .join('')
       .slice(0, 2)
-      .toUpperCase() || '—'
+      .toUpperCase() || '-'
   )
 }
 
@@ -554,17 +554,17 @@ export function AcademicPersonDetailPage() {
                         </span>
                         <span className="min-w-0">
                           <span className="block truncate font-semibold text-[#000a1e]">
-                            {record.authorName ?? '—'}
+                            {record.authorName ?? '-'}
                           </span>
                           <span className="block truncate text-xs text-[#74777f] sm:hidden">
-                            {toDateLabel(record.evaluationDate)} · {record.wardName ?? '—'}
+                            {toDateLabel(record.evaluationDate)} · {record.wardName ?? '-'}
                           </span>
                         </span>
                       </span>
                       <span className="hidden min-w-0 sm:block">
                         <span className="inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-[#e3e9f1] bg-[#f4f7fb] px-2.5 py-1 text-xs font-medium text-[#44474e]">
                           <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#005db6]" />
-                          <span className="truncate">{record.wardName ?? '—'}</span>
+                          <span className="truncate">{record.wardName ?? '-'}</span>
                         </span>
                       </span>
                       <span className="flex items-center justify-end gap-2">

@@ -79,7 +79,7 @@ class DevUserSeeder extends Seeder
 
         $this->seedAcademicData();
 
-        $this->command?->info('Dev users ready — login: admin@stpaulos.local / '.self::DEV_PASSWORD.' (superadmin), plus nurses, residents and consultants.');
+        $this->command?->info('Dev users ready - login: admin@stpaulos.local / '.self::DEV_PASSWORD.' (superadmin), plus nurses, residents and consultants.');
     }
 
     /**

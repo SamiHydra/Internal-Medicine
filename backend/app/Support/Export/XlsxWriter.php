@@ -7,7 +7,7 @@ use ZipArchive;
 /**
  * Minimal, dependency-free .xlsx writer (Office Open XML). Builds a single-sheet
  * workbook using inline strings (no shared-strings table) so it needs no external
- * library — just PHP's bundled ZipArchive. The sheet XML is streamed to a temp
+ * library - just PHP's bundled ZipArchive. The sheet XML is streamed to a temp
  * file row-by-row, so peak memory stays flat regardless of row count.
  */
 class XlsxWriter
@@ -37,7 +37,7 @@ class XlsxWriter
         fclose($sheet);
 
         $xlsxPath = $this->tempPath('xlsx');
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         $zip->open($xlsxPath, ZipArchive::OVERWRITE);
         $zip->addFromString('[Content_Types].xml', $this->contentTypes());
         $zip->addFromString('_rels/.rels', $this->rootRels());

@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             // Optional roster/pre-fill ward for residents & consultants. NOT an
-            // analytics source of truth — evaluation.ward_id is (rotation-proof).
+            // analytics source of truth - evaluation.ward_id is (rotation-proof).
             $table->foreignUuid('home_ward_id')->nullable()->constrained('departments')->nullOnDelete();
         });
     }

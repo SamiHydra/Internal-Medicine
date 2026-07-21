@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Services\Academic\MorningSessionService;
+use App\Support\HospitalClock;
 use Illuminate\Console\Command;
 
 class OpenMorningSession extends Command
@@ -13,7 +14,9 @@ class OpenMorningSession extends Command
 
     public function handle(MorningSessionService $morningSessions): int
     {
-        $date = $this->option('date') ? now()->parse($this->option('date')) : now();
+        $date = $this->option('date')
+            ? HospitalClock::parseDate((string) $this->option('date'))
+            : HospitalClock::today();
 
         $session = $morningSessions->openFor($date);
 

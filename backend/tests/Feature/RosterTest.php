@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Models\DutyAssignment;
 use App\Models\DutyType;
-use App\Models\RotationCalendar;
 use App\Models\Section;
 use App\Models\User;
 use App\Models\Ward;
@@ -293,6 +292,10 @@ class RosterTest extends TestCase
     public function test_duty_roster_month_read_and_writes(): void
     {
         $consultant = User::factory()->role('consultant', 'Consultant')->create(['full_name' => 'Dr. Roster Target']);
+        $intern = User::factory()->role('resident', 'Resident')->create(['title' => 'Intern']);
+        $internist = User::factory()->role('consultant', 'Consultant')->create(['title' => 'Internist']);
+        $firstYearFellow = User::factory()->role('resident', 'Resident')->create(['title' => 'F1']);
+        $secondYearFellow = User::factory()->role('resident', 'Resident')->create(['title' => 'Fellow 2']);
 
         $nephrologyService = $this->dutyType('nephrology_ward_service');
 
@@ -343,6 +346,11 @@ class RosterTest extends TestCase
 
         $this->assertCount(1, $person['monthly']);
         $this->assertCount(1, $person['daily']);
+        $this->assertSame('Consultant', $person['title']);
+        $this->assertSame('Intern', collect($month['people'])->firstWhere('id', $intern->id)['title']);
+        $this->assertSame('Internist', collect($month['people'])->firstWhere('id', $internist->id)['title']);
+        $this->assertSame('F1', collect($month['people'])->firstWhere('id', $firstYearFellow->id)['title']);
+        $this->assertSame('Fellow 2', collect($month['people'])->firstWhere('id', $secondYearFellow->id)['title']);
 
         // A month cell rejects a daily-granularity duty type.
         $this->actingAs($this->admin)
@@ -352,6 +360,79 @@ class RosterTest extends TestCase
                 ],
             ])
             ->assertStatus(422);
+    }
+
+    public function test_rotation_managed_resident_requires_a_reasoned_roster_override(): void
+    {
+        $calendar = $this->calendars->createCalendar(
+            3,
+            '2026/27',
+            Carbon::parse('2026-07-01'),
+            'fixed_weeks',
+            8,
+            1,
+        );
+        $resident = User::factory()->role('resident', 'Resident')->create([
+            'training_year' => 3,
+            'rotation_group' => 'A',
+        ]);
+        $block = $calendar->blocks[0];
+
+        $this->roster->createAssignment(
+            $resident,
+            $this->dutyType('cardiology_ward_service'),
+            $block->starts_on,
+            $block->ends_on,
+            'rotation_planner',
+            $this->admin,
+        );
+
+        $person = collect($this->actingAs($this->admin)
+            ->getJson('/api/admin/roster/2026/7')
+            ->assertOk()
+            ->json('people'))
+            ->firstWhere('id', $resident->id);
+
+        $this->assertTrue($person['rotationManaged']);
+        $this->assertCount(1, $person['rotationBlocks']);
+        $this->assertSame('rotation_planner', $person['monthly'][0]['source']);
+
+        $this->actingAs($this->admin)
+            ->putJson('/api/admin/roster/2026/7', [
+                'assignments' => [
+                    ['userId' => $resident->id, 'dutyTypeId' => $this->dutyType('opd')->id],
+                ],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['assignments.0.overrideReason']);
+
+        $reason = 'Temporary service coverage required for the July staffing gap.';
+        $response = $this->actingAs($this->admin)
+            ->putJson('/api/admin/roster/2026/7', [
+                'assignments' => [
+                    [
+                        'userId' => $resident->id,
+                        'dutyTypeId' => $this->dutyType('opd')->id,
+                        'overrideReason' => $reason,
+                    ],
+                ],
+            ])
+            ->assertOk();
+
+        $saved = DutyAssignment::query()
+            ->where('user_id', $resident->id)
+            ->whereDate('starts_on', '2026-07-01')
+            ->whereDate('ends_on', '2026-07-31')
+            ->firstOrFail();
+        $this->assertSame('admin', $saved->source);
+        $this->assertSame(RosterService::ROTATION_OVERRIDE_NOTE_PREFIX.$reason, $saved->note);
+
+        $responsePerson = collect($response->json('people'))->firstWhere('id', $resident->id);
+        $this->assertTrue($responsePerson['monthly'][0]['isRotationOverride']);
+        $this->assertDatabaseHas('admin_audit_logs', [
+            'entity_type' => 'duty_roster',
+            'action' => 'save_roster_month',
+        ]);
     }
 
     public function test_workspace_bootstrap_carries_placement_and_setup_signals(): void
@@ -371,6 +452,9 @@ class RosterTest extends TestCase
         // The unassigned consultant (no section, no duty) is counted in both signals.
         $this->assertGreaterThanOrEqual(1, $adminAcademic['academicSetup']['consultantsWithoutSection']);
         $this->assertGreaterThanOrEqual(1, $adminAcademic['academicSetup']['peopleWithoutAssignment']);
+        $this->assertArrayHasKey('mixedRotationCells', $adminAcademic['academicSetup']);
+        $this->assertArrayHasKey('rotationCellsNeedingReview', $adminAcademic['academicSetup']);
+        $this->assertArrayHasKey('activeRotationOverrides', $adminAcademic['academicSetup']);
 
         $head = User::factory()->role('consultant', 'Consultant')->create();
         Section::query()->where('slug', 'nephrology')->update(['head_user_id' => $head->id]);

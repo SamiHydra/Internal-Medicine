@@ -10,7 +10,7 @@
 # Then set QUEUE_WORKER_MODE=daemon in backend/.env (disables the cron-tick
 # fallback) and run: php artisan config:cache
 #
-# app:launch-check verifies this unit is active.
+# app:launch-readiness verifies this unit is active.
 
 [Unit]
 Description=St Paul IM reporting queue worker
@@ -20,7 +20,7 @@ After=network.target mariadb.service
 Type=simple
 User=www-data
 Group=www-data
-WorkingDirectory=/opt/imreport/backend
+WorkingDirectory=/opt/imreport/current/backend
 ExecStart=/usr/bin/php artisan queue:work --tries=3 --backoff=10 --max-time=3600
 Restart=always
 RestartSec=5

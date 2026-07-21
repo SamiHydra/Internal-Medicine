@@ -8,8 +8,10 @@ use App\Models\MorningSession;
 use App\Models\User;
 use App\Services\Academic\MorningSessionService;
 use App\Services\Admin\AdminAuditService;
+use App\Support\HospitalClock;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 
@@ -29,22 +31,38 @@ class MorningSessionController extends Controller
     /** Today's session with the auto-generated roster (or recorded snapshot). */
     public function today(Request $request): JsonResponse
     {
-        // Opened lazily too, so the page works even before the 00:05 tick.
-        $session = $this->morningSessions->openFor(now())
-            ?? MorningSession::query()->whereDate('session_date', now()->toDateString())->first();
+        Gate::authorize('viewToday', MorningSession::class);
+
+        $today = HospitalClock::today();
+        $session = MorningSession::query()
+            ->whereDate('session_date', $today->toDateString())
+            ->first();
+
+        // Only someone allowed to operate the recorder surface may trigger the
+        // lazy-open fallback. Other academics receive a safe availability state
+        // without creating data or seeing the expected-person roster.
+        if (
+            $session === null
+            && ($this->morningSessions->isRecorder($request->user())
+                || $request->user()->can('manage', MorningSession::class))
+        ) {
+            $session = $this->morningSessions->openFor($today);
+        }
 
         if ($session === null) {
             return response()->json([
                 'session' => null,
-                'isSessionDay' => false,
+                'isSessionDay' => $this->morningSessions->isSessionDay($today),
                 'canRecord' => false,
             ]);
         }
 
+        $canRecord = $request->user()->can('record', $session);
+
         return response()->json([
-            'session' => $this->serialize($session, withPeople: true),
+            'session' => $this->serialize($session, withPeople: $canRecord),
             'isSessionDay' => true,
-            'canRecord' => $request->user()->can('record', $session),
+            'canRecord' => $canRecord,
         ]);
     }
 
@@ -66,6 +84,29 @@ class MorningSessionController extends Controller
             $validated['actualStartAt'] ?? null,
             $validated['presence'],
             $request->user(),
+        );
+
+        // The primary daily write, and previously the only morning path with
+        // no trail: a correction was audited but the original recording was
+        // not, so "who first said this started late" was unanswerable.
+        $presence = $validated['presence'];
+        $this->auditService->record(
+            $request->user(),
+            'record',
+            'morning_session',
+            $session->id,
+            null,
+            [
+                'sessionDate' => $session->session_date?->toDateString(),
+                'startedOnTime' => $session->started_on_time,
+                'actualStartAt' => $session->actual_start_at !== null
+                    ? substr((string) $session->actual_start_at, 0, 5)
+                    : null,
+                'delayMinutes' => $session->delayMinutes(),
+                'presentCount' => count(array_filter($presence)),
+                'expectedCount' => count($presence),
+            ],
+            $request,
         );
 
         return response()->json($this->serialize($session, withPeople: true));
@@ -127,17 +168,23 @@ class MorningSessionController extends Controller
 
     public function cancel(Request $request, MorningSession $morningSession): JsonResponse
     {
-        Gate::authorize('manage', $morningSession);
+        Gate::authorize('cancel', $morningSession);
 
         $validated = $request->validate([
             'reason' => ['required', 'string', 'max:1000'],
         ]);
 
-        $session = $this->morningSessions->cancel($morningSession, $validated['reason'], $request->user());
+        $session = DB::transaction(function () use ($morningSession, $validated, $request): MorningSession {
+            $result = $this->morningSessions->cancel($morningSession, $validated['reason'], $request->user());
 
-        $this->auditService->record($request->user(), 'cancel', 'morning_session', $session->id, null, [
-            'reason' => $validated['reason'],
-        ], $request);
+            if ($result['transitioned']) {
+                $this->auditService->record($request->user(), 'cancel', 'morning_session', $result['session']->id, null, [
+                    'reason' => trim($validated['reason']),
+                ], $request);
+            }
+
+            return $result['session'];
+        });
 
         return response()->json($this->serialize($session));
     }

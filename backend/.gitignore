@@ -15,6 +15,7 @@
 /auth.json
 /composer.phar
 /database/imports
+/database/e2e.sqlite
 /node_modules
 /public/build
 /public/fonts-manifest.dev.json

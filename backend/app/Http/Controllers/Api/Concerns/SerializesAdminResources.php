@@ -16,9 +16,11 @@ use App\Models\ReportAssignment;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportingPeriod;
 use App\Models\ReportTemplate;
+use App\Models\Student;
 use App\Models\User;
 use App\Support\Academic\EvaluationScoring;
-use Illuminate\Database\Eloquent\Model;
+use App\Support\Audit\AuditRegistry;
+use Illuminate\Support\Str;
 
 trait SerializesAdminResources
 {
@@ -321,14 +323,14 @@ trait SerializesAdminResources
     protected function serializeStudentEvaluation(Evaluation $evaluation): array
     {
         $evaluation->loadMissing(['author', 'ward', 'answers', 'form.fields']);
-        $student = \App\Models\Student::query()->with('batch')->find($evaluation->subject_student_id);
+        $student = Student::query()->with('batch')->find($evaluation->subject_student_id);
 
         $answers = [];
         foreach ($evaluation->form?->fields ?? [] as $field) {
             if ($field->key === 'comment') {
                 continue;
             }
-            $answers[\Illuminate\Support\Str::camel($field->key)] = $evaluation->answer($field->key);
+            $answers[Str::camel($field->key)] = $evaluation->answer($field->key);
         }
 
         return [
@@ -428,7 +430,13 @@ trait SerializesAdminResources
             'userId' => $auditLog->user_id,
             'userName' => $auditLog->user_name,
             'action' => $auditLog->action,
+            // Labels and workspace come from the registry rather than the
+            // client, so a newly audited surface reads correctly the moment it
+            // is registered - no matching change in the SPA.
+            'actionLabel' => AuditRegistry::actionLabelFor($auditLog->action),
             'entityType' => $auditLog->entity_type,
+            'entityLabel' => AuditRegistry::labelFor($auditLog->entity_type),
+            'workspace' => AuditRegistry::workspaceFor($auditLog->entity_type),
             'entityId' => $auditLog->entity_id,
             'oldValues' => $auditLog->old_values,
             'newValues' => $auditLog->new_values,

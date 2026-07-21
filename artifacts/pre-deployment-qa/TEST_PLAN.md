@@ -89,6 +89,6 @@ npx playwright test
 
 ## 7. Risks
 
-- Tests share **one** API + **one** SQLite DB; the suite runs single-worker for determinism. A few specs create data — all marked `QA_TEST_DO_NOT_DEPLOY` and soft-deactivated afterward (see test-data notes in `PLAYWRIGHT_TESTS/`).
+- Tests share **one** API + **one** SQLite DB; the suite runs single-worker for determinism. A few specs create data, all marked `QA_TEST_DO_NOT_DEPLOY` and soft-deactivated afterward (see `tests/e2e/TEST_DATA_NOTES.md`).
 - Data-dependent UI tests (clinical report form, IDOR) skip gracefully when the relevant seed data is absent, rather than producing false failures.
 - `APP_DEBUG=true` and a real `APP_KEY`/Reverb secret are present in the **local** `backend/.env`; these must not ship (see `FINAL_DEPLOYMENT_READINESS.md`).

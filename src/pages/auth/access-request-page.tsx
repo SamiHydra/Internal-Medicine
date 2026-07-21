@@ -349,10 +349,14 @@ export function AccessRequestPage() {
         homeWardId: values.homeWard ? values.homeWard : null,
         notes: values.notes ? values.notes : null,
       })
-      setSuccessMessage('Academic account created. Sign in to start submitting evaluations.')
+      setSuccessMessage(
+        'Academic enrollment request submitted. An administrator will review it before your account is created.',
+      )
       academicForm.reset(academicDefaults)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to create your account.')
+      toast.error(
+        error instanceof Error ? error.message : 'Unable to submit your enrollment request.',
+      )
     }
   })
 
@@ -490,10 +494,11 @@ export function AccessRequestPage() {
                     </>
                   ) : showAcademic ? (
                     <>
-                      Single approval
-                      {selectedWard ? (
-                        <span className="text-[#c6d3e4]"> · {selectedWard.name}</span>
-                      ) : null}
+                      Pending approval
+                      <span className="text-[#c6d3e4]">
+                        {' · created after an admin reviews it'}
+                        {selectedWard ? ` · ${selectedWard.name}` : ''}
+                      </span>
                     </>
                   ) : selectedCount ? (
                     <>
@@ -537,13 +542,11 @@ export function AccessRequestPage() {
         style={{ fontFamily: 'Manrope, sans-serif' }}
       >
         {submitting
-          ? showAcademic
-            ? 'Creating account...'
-            : 'Submitting...'
+          ? 'Submitting...'
           : showAdmin
             ? 'Request admin access'
             : showAcademic
-              ? 'Create academic account'
+              ? 'Request academic account'
               : 'Submit access request'}
         <Send className="h-3.5 w-3.5" />
       </button>
@@ -567,7 +570,7 @@ export function AccessRequestPage() {
   const headerTitle = showAdmin
     ? 'Request an admin account'
     : showAcademic
-      ? 'Create your academic profile'
+      ? 'Request an academic account'
       : isNewAccountFlow
         ? 'Request reporting access'
         : 'Request additional access'
@@ -576,7 +579,7 @@ export function AccessRequestPage() {
     <div className="relative min-h-screen overflow-x-clip bg-[#f8f9fa] px-3 py-3 sm:px-4 sm:py-4 md:px-5 md:py-5 xl:px-6 xl:py-6">
       <main className="relative mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[1460px] items-start">
         <div className="grid w-full rounded-[0.35rem] bg-[#04162f] shadow-[0_28px_60px_rgba(0,33,71,0.12)] outline outline-1 outline-[#c8d5e6]/30 md:grid-cols-[minmax(0,1fr)_minmax(520px,590px)] xl:grid-cols-[minmax(0,1.04fr)_minmax(560px,640px)]">
-          {/* LEFT — navy hero; sticks while the form scrolls, holds the submit */}
+          {/* LEFT - navy hero; sticks while the form scrolls, holds the submit */}
           <section className="relative hidden overflow-hidden rounded-l-[0.35rem] bg-[#04162f] text-white md:sticky md:top-5 md:flex md:min-h-[calc(100vh-2.5rem)] md:flex-col md:self-start md:p-12 lg:p-14 xl:p-16">
             <div className="absolute inset-y-0 left-0 w-px bg-white/10" />
             <div className="absolute inset-y-0 right-0 w-px bg-white/8" />
@@ -644,7 +647,7 @@ export function AccessRequestPage() {
             </motion.div>
           </section>
 
-          {/* RIGHT — white scrolling form panel */}
+          {/* RIGHT - white scrolling form panel */}
           <section className="relative flex overflow-hidden rounded-[0.35rem] bg-white md:rounded-l-none">
             <div className="absolute inset-x-0 top-0 z-20 h-1 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_72%,#f0b429_100%)]" />
             <div
@@ -1130,6 +1133,15 @@ export function AccessRequestPage() {
                                     <span>{academicNotes.length}/240</span>
                                   </div>
                                 </div>
+                              </div>
+
+                              <div className="flex items-start gap-2.5 rounded-[0.4rem] border border-[#c9d7e8] bg-[#edf4fb] p-3.5">
+                                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#005db6]" />
+                                <p className="text-[0.82rem] leading-5 text-[#244261]">
+                                  Academic accounts require approval. An administrator reviews your
+                                  enrollment request before your account is created, so you will not
+                                  be able to sign in until then.
+                                </p>
                               </div>
                             </div>
                           </motion.section>

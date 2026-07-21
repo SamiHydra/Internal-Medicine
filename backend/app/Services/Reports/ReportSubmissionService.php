@@ -426,7 +426,7 @@ class ReportSubmissionService
         // Single bulk INSERT instead of one query per admin. This runs inside the
         // submit transaction (which holds a row lock), so minimizing round-trips
         // directly shortens lock-hold time during end-of-week submission spikes.
-        $model = new Notification();
+        $model = new Notification;
         $rows = $adminIds->map(fn (string $adminId): array => [
             'id' => $model->newUniqueId(),
             'recipient_id' => $adminId,

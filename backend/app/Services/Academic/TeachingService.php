@@ -9,6 +9,7 @@ use App\Models\SubgroupPlacement;
 use App\Models\TeachingActivitySchedule;
 use App\Models\TeachingSession;
 use App\Models\User;
+use App\Support\HospitalClock;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -41,10 +42,6 @@ final class TeachingService
             ->whereDate('ends_on', '>=', $date->toDateString())
             ->get();
 
-        if ($batches->isEmpty()) {
-            return 0;
-        }
-
         $schedules = TeachingActivitySchedule::query()
             ->where('active', true)
             ->where('weekday', $weekday)
@@ -54,31 +51,42 @@ final class TeachingService
         // One query each for the day's placements and existing sessions:
         // the loop below is per batch x activity x subgroup and must not
         // query per cell.
-        $placements = SubgroupPlacement::query()
-            ->whereIn('batch_id', $batches->pluck('id'))
-            ->whereDate('week_starts_on', '<=', $date->toDateString())
-            ->whereDate('week_ends_on', '>=', $date->toDateString())
-            ->get()
-            ->keyBy(fn (SubgroupPlacement $placement) => $placement->batch_id.'|'.$placement->subgroup);
+        $placements = $batches->isEmpty()
+            ? collect()
+            : SubgroupPlacement::query()
+                ->whereIn('batch_id', $batches->pluck('id'))
+                ->whereDate('week_starts_on', '<=', $date->toDateString())
+                ->whereDate('week_ends_on', '>=', $date->toDateString())
+                ->get()
+                ->keyBy(fn (SubgroupPlacement $placement) => $placement->batch_id.'|'.$placement->subgroup);
 
-        $existingSessions = TeachingSession::query()
-            ->whereIn('batch_id', $batches->pluck('id'))
-            ->whereDate('scheduled_date', $date->toDateString())
-            ->get()
-            ->keyBy(fn (TeachingSession $session) => $session->batch_id.'|'.$session->subgroup.'|'.$session->activity_type);
+        $existingSessions = $batches->isEmpty()
+            ? collect()
+            : TeachingSession::query()
+                ->whereIn('batch_id', $batches->pluck('id'))
+                ->whereDate('scheduled_date', $date->toDateString())
+                ->get()
+                ->keyBy(fn (TeachingSession $session) => $this->sessionKey(
+                    $session->batch_id,
+                    $session->subgroup,
+                    $session->activity_type,
+                ));
 
         $generated = 0;
+        $expectedKeys = [];
 
         foreach ($batches as $batch) {
             foreach ($schedules->get($batch->cohort, collect()) as $schedule) {
                 $subgroups = $schedule->scope === 'cohort' ? [null] : ['A', 'B'];
 
                 foreach ($subgroups as $subgroup) {
+                    $sessionKey = $this->sessionKey($batch->id, $subgroup, $schedule->activity_type);
+                    $expectedKeys[$sessionKey] = true;
                     $wardId = $subgroup === null
                         ? null
                         : $placements->get($batch->id.'|'.$subgroup)?->ward_id;
 
-                    $existing = $existingSessions->get($batch->id.'|'.$subgroup.'|'.$schedule->activity_type);
+                    $existing = $existingSessions->get($sessionKey);
 
                     if ($existing !== null) {
                         // Refresh the ward snapshot only while nothing has
@@ -100,6 +108,14 @@ final class TeachingService
                     $generated++;
                 }
             }
+        }
+
+        // Schedule lifecycle changes reconcile the coming range through this
+        // same path. Past pending rows remain evidence of activities that were
+        // never recorded, while current/future pending rows with no active
+        // schedule backing are safe to remove.
+        if ($date->toDateString() >= HospitalClock::today()->toDateString()) {
+            $this->removeObsoletePendingSessions($date, $expectedKeys);
         }
 
         return $generated;
@@ -134,14 +150,50 @@ final class TeachingService
             ]);
         }
 
-        $session->forceFill([
-            'status' => $status,
-            'reason' => $status === 'held' ? null : $reason,
-            'recorded_by' => $by->id,
-            'recorded_at' => now(),
-        ])->save();
+        return DB::transaction(function () use ($session, $status, $reason, $by): TeachingSession {
+            $locked = TeachingSession::query()->lockForUpdate()->find($session->id);
 
-        return $session;
+            if ($locked === null) {
+                throw ValidationException::withMessages([
+                    'session' => ['This teaching session is no longer available.'],
+                ]);
+            }
+
+            if ($locked->status === 'pending' && ! $this->isBackedByActiveSchedule($locked)) {
+                throw ValidationException::withMessages([
+                    'session' => ['This teaching session is no longer part of the active schedule.'],
+                ]);
+            }
+
+            $locked->forceFill([
+                'status' => $status,
+                'reason' => $status === 'held' ? null : $reason,
+                'recorded_by' => $by->id,
+                'recorded_at' => now(),
+            ])->save();
+
+            return $locked;
+        });
+    }
+
+    /** Whether a session still corresponds to the active batch program. */
+    public function isBackedByActiveSchedule(TeachingSession $session): bool
+    {
+        $batch = $session->batch()->first();
+
+        if ($batch === null || ! $batch->active
+            || $session->scheduled_date->lt($batch->starts_on)
+            || $session->scheduled_date->gt($batch->ends_on)) {
+            return false;
+        }
+
+        return TeachingActivitySchedule::query()
+            ->where('active', true)
+            ->where('cohort', $batch->cohort)
+            ->where('activity_type', $session->activity_type)
+            ->where('weekday', $session->scheduled_date->isoWeekday())
+            ->where('scope', $session->subgroup === null ? 'cohort' : 'subgroup')
+            ->exists();
     }
 
     /**
@@ -152,15 +204,29 @@ final class TeachingService
      */
     public function recordAttendance(TeachingSession $session, array $presence, User $by): TeachingSession
     {
-        if ($session->status === 'cancelled') {
-            throw ValidationException::withMessages([
-                'session' => ['A cancelled session has no attendance.'],
-            ]);
-        }
+        return DB::transaction(function () use ($session, $presence, $by): TeachingSession {
+            $locked = TeachingSession::query()->lockForUpdate()->find($session->id);
 
-        $roster = $this->rosterFor($session)->keyBy('id');
+            if ($locked === null) {
+                throw ValidationException::withMessages([
+                    'session' => ['This teaching session is no longer available.'],
+                ]);
+            }
 
-        DB::transaction(function () use ($session, $presence, $by, $roster): void {
+            if ($locked->status === 'cancelled') {
+                throw ValidationException::withMessages([
+                    'session' => ['A cancelled session has no attendance.'],
+                ]);
+            }
+
+            if ($locked->status === 'pending' && ! $this->isBackedByActiveSchedule($locked)) {
+                throw ValidationException::withMessages([
+                    'session' => ['This teaching session is no longer part of the active schedule.'],
+                ]);
+            }
+
+            $roster = $this->rosterFor($locked)->keyBy('id');
+
             foreach ($presence as $studentId => $present) {
                 if (! $roster->has($studentId)) {
                     throw ValidationException::withMessages([
@@ -169,21 +235,21 @@ final class TeachingService
                 }
 
                 StudentAttendance::query()->updateOrCreate(
-                    ['teaching_session_id' => $session->id, 'student_id' => $studentId],
+                    ['teaching_session_id' => $locked->id, 'student_id' => $studentId],
                     ['present' => (bool) $present, 'recorded_by' => $by->id],
                 );
             }
 
-            if ($session->status === 'pending') {
-                $session->forceFill([
+            if ($locked->status === 'pending') {
+                $locked->forceFill([
                     'status' => 'held',
-                    'recorded_by' => $session->recorded_by ?? $by->id,
-                    'recorded_at' => $session->recorded_at ?? now(),
+                    'recorded_by' => $locked->recorded_by ?? $by->id,
+                    'recorded_at' => $locked->recorded_at ?? now(),
                 ])->save();
             }
-        });
 
-        return $session->refresh();
+            return $locked->refresh();
+        });
     }
 
     /**
@@ -200,5 +266,33 @@ final class TeachingService
             ->when($session->subgroup !== null, fn ($query) => $query->where('subgroup', $session->subgroup))
             ->orderBy('full_name')
             ->get();
+    }
+
+    /**
+     * @param  array<string, true>  $expectedKeys
+     */
+    private function removeObsoletePendingSessions(CarbonInterface $date, array $expectedKeys): void
+    {
+        TeachingSession::query()
+            ->whereDate('scheduled_date', $date->toDateString())
+            ->where('status', 'pending')
+            ->get()
+            ->each(function (TeachingSession $session) use ($expectedKeys): void {
+                $key = $this->sessionKey($session->batch_id, $session->subgroup, $session->activity_type);
+
+                if (! isset($expectedKeys[$key])) {
+                    // Include status in the DELETE predicate: if a recorder
+                    // wins the race, their completed evidence is preserved.
+                    TeachingSession::query()
+                        ->whereKey($session->id)
+                        ->where('status', 'pending')
+                        ->delete();
+                }
+            });
+    }
+
+    private function sessionKey(string $batchId, ?string $subgroup, string $activityType): string
+    {
+        return $batchId.'|'.($subgroup ?? '-').'|'.$activityType;
     }
 }

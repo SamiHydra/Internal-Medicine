@@ -30,6 +30,10 @@ class DatabaseSeeder extends Seeder
             // procedure unit so the dashboards render with believable shape.
             // Self-guards against production/testing.
             DevClinicalDataSeeder::class,
+            // Operational demo rows for the V2 academic module (roster, rotations,
+            // morning session, undergraduate) so those surfaces are explorable
+            // instead of empty. Self-guards against production/testing.
+            DevAcademicDataSeeder::class,
         ]);
     }
 }

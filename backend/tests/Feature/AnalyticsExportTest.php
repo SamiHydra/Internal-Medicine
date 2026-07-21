@@ -99,7 +99,7 @@ class AnalyticsExportTest extends TestCase
         $file = $response->baseResponse->getFile()->getPathname();
         $this->assertTrue(is_file($file));
 
-        $zip = new \ZipArchive();
+        $zip = new \ZipArchive;
         $this->assertTrue($zip->open($file) === true);
         $sheet = (string) $zip->getFromName('xl/worksheets/sheet1.xml');
         $zip->close();

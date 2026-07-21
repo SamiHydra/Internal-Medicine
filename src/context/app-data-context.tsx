@@ -12,6 +12,7 @@ import {
 import { toast } from 'sonner'
 
 import { createEmptyAppState } from '@/lib/app-state'
+import { clearAuthenticatedQueryCache } from '@/lib/query-client'
 import { departmentMap, templateMap } from '@/config/templates'
 import type {
   AcademicWorkspaceState,
@@ -137,6 +138,7 @@ type AppDataContextValue = {
     options?: EnsureReportDetailsOptions,
   ) => Promise<Record<string, ReportDetailRecord>>
   reportPeriodWindow: NonNullable<LiveAppStateLoadOptions['reportPeriodWindow']>
+  resolveDepartmentSlug: (departmentIdOrSlug: string) => string | null
   refreshData: (options?: LiveAppStateLoadOptions) => Promise<void>
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>
 }
@@ -145,7 +147,7 @@ const AppDataContext = createContext<AppDataContextValue | null>(null)
 
 // isSyncing/isDataRefreshing live in a separate context so the frequent
 // background-sync flag flips (20s poll, sync indicator) do not re-render every
-// useAppData() consumer — only components that actually read the sync status.
+// useAppData() consumer - only components that actually read the sync status.
 type AppSyncContextValue = {
   isSyncing: boolean
   isDataRefreshing: boolean
@@ -498,6 +500,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const applyWorkspaceCache = useCallback(
     (cacheRecord: WorkspaceCacheRecord) => {
+      // Records written before the role registry existed are still on disk and are
+      // applied ahead of the network load, so backfill the key rather than trust it.
+      const cachedState = {
+        ...cacheRecord.state,
+        roles: cacheRecord.state.roles ?? [],
+      }
       profileDirectoryLoadedRef.current = cacheRecord.profileDirectoryLoaded
       accessRequestDataLoadedRef.current = cacheRecord.accessRequestDataLoaded
       historyDataLoadedRef.current = cacheRecord.historyDataLoaded
@@ -511,9 +519,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           ]),
         ),
       )
-      setState(cacheRecord.state)
-      currentUserIdRef.current = cacheRecord.state.currentUserId
-      currentStateRef.current = cacheRecord.state
+      setState(cachedState)
+      currentUserIdRef.current = cachedState.currentUserId
+      currentStateRef.current = cachedState
       setError(null)
       setIsBootstrapping(false)
     },
@@ -533,6 +541,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     setAcademic(null)
     resetDeferredDataState()
     clearWorkspaceCache()
+    clearAuthenticatedQueryCache()
     setError(null)
     setIsBootstrapping(false)
     setIsSyncing(false)
@@ -688,6 +697,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         const nextState = {
           ...result.state,
           profiles: mergedProfiles,
+          roles: result.state.roles ?? currentStateRef.current.roles,
           reports: mergedReports,
           accessRequests: includeAccessRequests
             ? result.state.accessRequests
@@ -1073,13 +1083,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
     const userId = sessionUserId(session)
     if (!userId) {
-      referencesRef.current = createEmptyReferenceState()
-      setState(createEmptyAppState())
-      resetDeferredDataState()
-      clearWorkspaceCache()
-      setError(null)
-      setIsBootstrapping(false)
-      setIsDataRefreshing(false)
+      clearSignedOutState()
       return
     }
 
@@ -1100,7 +1104,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         toast.error(getMessage(refreshError, 'Unable to refresh the live dashboard data.'))
       }
     }
-  }, [client, loadUserState, resetDeferredDataState, warmAdminReportDetails])
+  }, [client, clearSignedOutState, loadUserState, warmAdminReportDetails])
 
   const scheduleAdminLiveRefresh = useCallback(
     (delayMs = 700) => {
@@ -1301,7 +1305,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   // Batched variant of applyServerSavedReport for flushing the offline queue: one
   // workspace refresh and one detail fetch for the whole batch, instead of a full
-  // refresh per queued save (which was O(N) refreshes on a slow reconnect — the
+  // refresh per queued save (which was O(N) refreshes on a slow reconnect - the
   // exact scenario the offline queue is built for).
   const applyServerSavedReports = useCallback(
     async (saves: Array<{ payload: SaveReportPayload; reportId: string | null }>) => {
@@ -1413,7 +1417,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             }
 
             // A non-offline failure (e.g. the report was locked or the
-            // assignment removed) will never succeed on retry — count attempts
+            // assignment removed) will never succeed on retry - count attempts
             // and dead-letter after the cap instead of retrying forever.
             const updated = await recordQueuedReportSaveFailure(
               queuedSave.id,
@@ -1696,9 +1700,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         await reviewAdminAccessRequestMutation(client, requestId, 'approved')
         await refreshAdminAccessRequests()
         await refreshDataWithOptions({ includeProfiles: profileDirectoryLoadedRef.current })
-        toast.success('Admin account approved.')
+        toast.success('Account request approved.')
       } catch (reviewError) {
-        toast.error(getMessage(reviewError, 'Unable to approve the admin request.'))
+        toast.error(getMessage(reviewError, 'Unable to approve the account request.'))
       }
     },
     [client, refreshAdminAccessRequests, refreshDataWithOptions],
@@ -1713,9 +1717,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       try {
         await reviewAdminAccessRequestMutation(client, requestId, 'rejected')
         await refreshAdminAccessRequests()
-        toast.success('Admin request rejected.')
+        toast.success('Account request rejected.')
       } catch (reviewError) {
-        toast.error(getMessage(reviewError, 'Unable to reject the admin request.'))
+        toast.error(getMessage(reviewError, 'Unable to reject the account request.'))
       }
     },
     [client, refreshAdminAccessRequests],
@@ -2100,6 +2104,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [client, loadUserState],
   )
 
+  const resolveDepartmentSlug = useCallback((departmentIdOrSlug: string): string | null => {
+    if (departmentMap[departmentIdOrSlug]) {
+      return departmentIdOrSlug
+    }
+
+    return Object.entries(referencesRef.current.departmentDbIdBySlug).find(
+      ([, databaseId]) => databaseId === departmentIdOrSlug,
+    )?.[0] ?? null
+  }, [])
+
   const value = useMemo<AppDataContextValue>(
     () => ({
       state,
@@ -2140,6 +2154,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       ensureHistoryData,
       ensureReportDetails,
       reportPeriodWindow: reportPeriodWindowRef.current,
+      resolveDepartmentSlug,
       refreshData: refreshDataWithOptions,
       changePassword,
     }),
@@ -2180,6 +2195,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       ensureUserManagementData,
       ensureHistoryData,
       ensureReportDetails,
+      resolveDepartmentSlug,
       refreshDataWithOptions,
     ],
   )

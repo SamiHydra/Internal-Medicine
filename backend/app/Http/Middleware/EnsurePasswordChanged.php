@@ -12,8 +12,8 @@ class EnsurePasswordChanged
      * Block app access for a user who still owes a password change (a new account
      * or an admin-reset temporary password). They may only reach /api/auth/me,
      * /api/auth/logout and /api/auth/change-password (none of which carry this
-     * middleware) until they rotate the temporary password. Returns 403 — never
-     * 401 — so the SPA shows the forced change-password screen instead of signing
+     * middleware) until they rotate the temporary password. Returns 403 - never
+     * 401 - so the SPA shows the forced change-password screen instead of signing
      * the user out.
      *
      * @param  Closure(Request): Response  $next

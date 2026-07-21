@@ -54,8 +54,9 @@ export function fetchMyAcademicPerformance(client: LaravelApiClient) {
 }
 
 /**
- * Public self-enrollment for residents and consultants. Creates an active
- * academic account and notifies admins (mirrors the nurse access-request flow).
+ * Public self-enrollment for residents and consultants. Creates a pending
+ * request only, on the same queue as admin signups; no account exists until an
+ * approver approves it.
  */
 export function submitAcademicRegistration(
   client: LaravelApiClient,

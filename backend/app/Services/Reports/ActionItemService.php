@@ -9,7 +9,7 @@ use Illuminate\Support\Carbon;
 /**
  * Turns a fired critical-event alert into a trackable follow-up task so a bad
  * outcome (death, HAI, pressure ulcer, ...) is not just recorded but driven to
- * resolution — something a spreadsheet cannot do.
+ * resolution - something a spreadsheet cannot do.
  */
 class ActionItemService
 {
@@ -37,7 +37,7 @@ class ActionItemService
             'source_key' => $report->id,
         ]);
 
-        // A clinician already closed this out — leave it resolved.
+        // A clinician already closed this out - leave it resolved.
         if ($item->exists && $item->status === 'resolved') {
             return $item;
         }

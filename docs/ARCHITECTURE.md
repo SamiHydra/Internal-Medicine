@@ -2,7 +2,7 @@
 
 **St Paul Internal Medicine Weekly Reporting** is a hospital clinical-operations reporting platform. Nurses are assigned to (department × report-template) pairs; each ISO week a *reporting period* opens, and assigned nurses fill in per-day field values for their departments. Reports move through a status lifecycle (draft → submitted → edited-after-submission → locked); the system computes inpatient bed metrics (BOR / BTR / ALOS), aggregates analytics across three service-line "families" (inpatient / outpatient / procedure), raises overdue and critical-event alerts, and maintains two audit trails. Admins (superadmin / admin) review submissions, lock/unlock reports, manage users, departments, templates, and settings, and view aggregated analytics dashboards.
 
-**Tech stack.** A **React 19 + TypeScript + Vite 8** single-page app (repo root) talks to a **Laravel 11/12-style API** (`backend/`, modern `bootstrap/app.php` config, no `Kernel.php`). Authentication is **Laravel Sanctum SPA cookie-session** mode (first-party session cookies + CSRF token, *not* bearer tokens). The frontend has **no external state library** — all global state lives in one React context (`AppDataContext`). UI is **Tailwind CSS v4** (theme via the `@theme` directive, no `tailwind.config.js`) over shadcn/ui-style Radix primitives, re-skinned to a navy/blue/gold hospital theme. The data store is **SQLite** locally and **MariaDB/MySQL** in production. The frontend deploys to **Cloudflare Pages**; the backend deploys to a separate Laravel host.
+**Tech stack.** A **React 19 + TypeScript + Vite 8** single-page app talks to a **Laravel API** in `backend/`. Authentication uses **Laravel Sanctum SPA cookie sessions**. TanStack Query owns remote server state while `AppDataContext` retains the existing cross-domain workspace model. UI is Tailwind CSS v4 over Radix primitives. The data store is SQLite locally and MariaDB in production. V2 production runs the SPA and API from one Nginx HTTPS origin on the hospital LAN.
 
 ```
                               Browser (SPA, http://localhost:5173)
@@ -41,14 +41,14 @@
                               └───────────────────────────────────────────────┘
 ```
 
-In production there is no Vite proxy: the SPA is served as static assets from Cloudflare Pages and `VITE_API_BASE_URL` points at the real same-origin/same-site API host.
+In production there is no Vite proxy. Nginx serves the SPA and Laravel from the same origin, and `VITE_API_BASE_URL` points at that origin.
 
 ---
 
 # Repository Layout
 
 ```
-/  (frontend SPA — repo root)
+/  (frontend SPA - repo root)
 ├── src/
 │   ├── main.tsx                     # React 19 createRoot entry; mounts <AppProviders><App/></AppProviders>
 │   ├── App.tsx                      # BrowserRouter + full route table; HomeRedirect; lazy routes
@@ -79,7 +79,7 @@ In production there is no Vite proxy: the SPA is served as static assets from Cl
 ├── public/manifest.webmanifest      # PWA manifest (theme #002147, "St Paul")
 ├── index.html                       # PWA shell
 ├── vite.config.ts                   # proxy, alias @ -> src, manualChunks, vitest config
-├── wrangler.toml                    # Cloudflare Pages (pages_build_output_dir = ./dist)
+├── wrangler.toml                    # Optional Cloudflare preview build config only
 ├── package.json
 │
 ├── backend/  (Laravel API)
@@ -163,36 +163,36 @@ The User model (`backend/app/Models/User.php`) uses `HasUuids` (UUID string PKs)
 
 ### Sanctum SPA cookie sequence (end to end)
 
-1. **`GET /sanctum/csrf-cookie`** — Sanctum's built-in route (registered by the package, *not* in `routes/api.php`). Sets the `XSRF-TOKEN` cookie; the SPA must echo its value as `X-XSRF-TOKEN` on subsequent mutating requests or CSRF validation fails.
-2. **`POST /api/auth/login`** (`AuthController@login`) — validates `identifier`, `password`, optional `remember`. Lowercases/trims `identifier`; `findUserForIdentifier` matches `lower(email)` OR `lower(coalesce(username,''))`, preferring an email match. Bad credentials throw `ValidationException` (`identifier => auth.failed`, 422); an existing-but-inactive user gets 403. On success: `Auth::guard('web')->login($user, $remember)`, `session()->regenerate()` (fixation protection), stamps `last_login_at = now()`, returns `sessionPayload($user)` (200) = `{ user: {...camelCase profile incl. role, roleLabel, title, passwordChangeRequired, lastLoginAt}, assignments: [...active assignments with dept/template names+slugs], permissions: Permissions::forUser($user) }`.
+1. **`GET /sanctum/csrf-cookie`** - Sanctum's built-in route (registered by the package, *not* in `routes/api.php`). Sets the `XSRF-TOKEN` cookie; the SPA must echo its value as `X-XSRF-TOKEN` on subsequent mutating requests or CSRF validation fails.
+2. **`POST /api/auth/login`** (`AuthController@login`) - validates `identifier`, `password`, optional `remember`. Lowercases/trims `identifier`; `findUserForIdentifier` matches `lower(email)` OR `lower(coalesce(username,''))`, preferring an email match. Bad credentials throw `ValidationException` (`identifier => auth.failed`, 422); an existing-but-inactive user gets 403. On success: `Auth::guard('web')->login($user, $remember)`, `session()->regenerate()` (fixation protection), stamps `last_login_at = now()`, returns `sessionPayload($user)` (200) = `{ user: {...camelCase profile incl. role, roleLabel, title, passwordChangeRequired, lastLoginAt}, assignments: [...active assignments with dept/template names+slugs], permissions: Permissions::forUser($user) }`.
 3. **Authenticated requests** carry the session cookie + `X-XSRF-TOKEN`; `auth:sanctum` resolves the user.
 4. **`GET /api/auth/me`** (`auth:sanctum` + `active`) returns the same `sessionPayload` for session rehydration on app load.
-5. **`POST /api/auth/logout`** (`auth:sanctum`) — `Auth::guard('web')->logout()`, `session()->invalidate()`, `session()->regenerateToken()`, `Auth::forgetGuards()`; returns **204**.
+5. **`POST /api/auth/logout`** (`auth:sanctum`) - `Auth::guard('web')->logout()`, `session()->invalidate()`, `session()->regenerateToken()`, `Auth::forgetGuards()`; returns **204**.
 
 `sessionPayload`/`defaultTitle` map `role_key` to display titles: superadmin → "Maintenance", admin → "Administrator", resident → "Resident", consultant → "Consultant", else "Nurse".
 
 ### Password reset (`PasswordResetController`)
 
 Uses Laravel's `Password::broker()` (`password_reset_tokens` table, 60-min expiry, 60-sec throttle).
-- **`POST /api/auth/forgot-password`** — validates `email`, finds user by `lower(email)`, **always returns 202** (enumeration-safe). If the user exists, creates a token and emails a raw link to `FRONTEND_URL/reset-password?token=...&email=...` via `Mail::raw`.
-- **`POST /api/auth/reset-password`** — validates `email`, `token`, `password` (min 8, `confirmed`). On success hashes the password, sets `password_change_required = false`, rotates `remember_token`, deletes the token.
+- **`POST /api/auth/forgot-password`** - validates `email`, finds user by `lower(email)`, **always returns 202** (enumeration-safe). If the user exists, creates a token and emails a raw link to `FRONTEND_URL/reset-password?token=...&email=...` via `Mail::raw`.
+- **`POST /api/auth/reset-password`** - validates `email`, `token`, `password` (min 8, `confirmed`). On success hashes the password, sets `password_change_required = false`, rotates `remember_token`, deletes the token.
 
 ### Superadmin bootstrap
 
-- **CLI** — `php artisan app:create-superadmin` (`CreateSuperadmin`): for a fresh DB; **refuses if any superadmin already exists**. Options `--email --username --full-name --title --password` (prompts if omitted; generates a 16-char password and sets `password_change_required=true` if none given). Creates `role_key=superadmin`, `active=true`, stamps `email_verified_at`.
-- **API** — `POST /api/admin/claim-superadmin` (`ClaimSuperadminController@store`, middleware `permission:users.manage`): one-time bootstrap / self-update. If a superadmin already exists AND the actor is not that superadmin → ValidationException (closes a self-promotion hole). Requires admin-like role; force-fills the **actor's own** record to superadmin + records a `claim_superadmin` admin-audit entry.
+- **CLI** - `php artisan app:create-superadmin` (`CreateSuperadmin`): for a fresh DB; **refuses if any superadmin already exists**. Options `--email --username --full-name --title --password` (prompts if omitted; generates a 16-char password and sets `password_change_required=true` if none given). Creates `role_key=superadmin`, `active=true`, stamps `email_verified_at`.
+- **API** - `POST /api/admin/claim-superadmin` (`ClaimSuperadminController@store`, middleware `permission:users.manage`): one-time bootstrap / self-update. If a superadmin already exists AND the actor is not that superadmin → ValidationException (closes a self-promotion hole). Requires admin-like role; force-fills the **actor's own** record to superadmin + records a `claim_superadmin` admin-audit entry.
 
 ## Authorization Model
 
 Three layers combine, in order, on a typical request:
 
-1. **`auth:sanctum`** — resolves the session-authenticated user or 401.
-2. **`active` middleware** — rejects inactive accounts (403) before any controller runs.
-3. **`permission:<key>` middleware** (coarse, role→permission) and/or **`Gate::authorize(...)` inside the controller** (fine-grained, instance/ownership-aware via policies). For admin routes the route enforces `permission:<key>` *and* the controller also calls `Gate::authorize(...)` — the middleware is coarse (role grants), the in-controller Gate adds instance-level checks (e.g. "admin can only edit nurses", "cannot deactivate a superadmin"). **Both must pass.**
+1. **`auth:sanctum`** - resolves the session-authenticated user or 401.
+2. **`active` middleware** - rejects inactive accounts (403) before any controller runs.
+3. **`permission:<key>` middleware** (coarse, role→permission) and/or **`Gate::authorize(...)` inside the controller** (fine-grained, instance/ownership-aware via policies). For admin routes the route enforces `permission:<key>` *and* the controller also calls `Gate::authorize(...)` - the middleware is coarse (role grants), the in-controller Gate adds instance-level checks (e.g. "admin can only edit nurses", "cannot deactivate a superadmin"). **Both must pass.**
 
 ### Roles
 
-Five roles (`roles` table / `RoleSeeder`): **`superadmin`** ("Maintenance" — the single protected owner, created only via the `app:create-superadmin` console command / DB; never via any app flow; approves/provisions admins), **`admin`** ("Admin", the administrative doctors, full platform admin), **`nurse`** (reporting only), **`resident`** and **`consultant`** (academic evaluations only). The pair superadmin/admin is the **admin-like** set (`Permissions::ADMIN_ROLES`, `User::isAdminLike()`).
+Five roles (`roles` table / `RoleSeeder`): **`superadmin`** ("Maintenance" - the single protected owner, created only via the `app:create-superadmin` console command / DB; never via any app flow; approves/provisions admins), **`admin`** ("Admin", the administrative doctors, full platform admin), **`nurse`** (reporting only), **`resident`** and **`consultant`** (academic evaluations only). The pair superadmin/admin is the **admin-like** set (`Permissions::ADMIN_ROLES`, `User::isAdminLike()`).
 
 ### Permission matrix (`app/Support/Authorization/Permissions.php`)
 
@@ -201,22 +201,22 @@ A static, hard-coded role→permission matrix (no DB-driven permissions). 17 con
 | Permission | superadmin | admin | nurse |
 |---|:--:|:--:|:--:|
 | `auth.viewSelf` | ✓ | ✓ | ✓ |
-| `users.view` | ✓ | ✓ | — |
-| `users.manage` | ✓ | ✓ | — |
-| `admins.manage` | ✓ | — | — |
-| `admins.approve` | ✓ | ✓ | — |
-| `departments.manage` | ✓ | ✓ | — |
-| `templates.manage` | ✓ | ✓ | — |
-| `assignments.manage` | ✓ | ✓ | — |
-| `accessRequests.create` | — | — | ✓ |
-| `accessRequests.review` | ✓ | ✓ | — |
-| `reports.viewAssigned` | — | — | ✓ |
-| `reports.viewAny` | ✓ | ✓ | — |
+| `users.view` | ✓ | ✓ | - |
+| `users.manage` | ✓ | ✓ | - |
+| `admins.manage` | ✓ | - | - |
+| `admins.approve` | ✓ | ✓ | - |
+| `departments.manage` | ✓ | ✓ | - |
+| `templates.manage` | ✓ | ✓ | - |
+| `assignments.manage` | ✓ | ✓ | - |
+| `accessRequests.create` | - | - | ✓ |
+| `accessRequests.review` | ✓ | ✓ | - |
+| `reports.viewAssigned` | - | - | ✓ |
+| `reports.viewAny` | ✓ | ✓ | - |
 | `reports.submit` | ✓ | ✓ | ✓ |
-| `reports.lock` | ✓ | ✓ | — |
-| `analytics.view` | ✓ | ✓ | — |
-| `audit.view` | ✓ | ✓ | — |
-| `settings.manage` | ✓ | ✓ | — |
+| `reports.lock` | ✓ | ✓ | - |
+| `analytics.view` | ✓ | ✓ | - |
+| `audit.view` | ✓ | ✓ | - |
+| `settings.manage` | ✓ | ✓ | - |
 | `notifications.view` | ✓ | ✓ | ✓ |
 
 `resident` and `consultant` hold only `auth.viewSelf` + `academic.submit`; the admin-like roles additionally hold `academic.view` + `academic.manage`.
@@ -225,8 +225,8 @@ Only `admins.manage` distinguishes superadmin from admin (admin holds `admins.ap
 
 ### Gate registration (`AppServiceProvider::boot()`)
 
-- **`Gate::before(fn (User $user) => $user->active ? null : false)`** — globally denies all gates/policies for inactive users, regardless of role.
-- For every permission string, `Gate::define($permission, fn (User $user) => Permissions::userCan($user, $permission))` — so `Gate::allows('users.manage')` mirrors the permission middleware.
+- **`Gate::before(fn (User $user) => $user->active ? null : false)`** - globally denies all gates/policies for inactive users, regardless of role.
+- For every permission string, `Gate::define($permission, fn (User $user) => Permissions::userCan($user, $permission))` - so `Gate::allows('users.manage')` mirrors the permission middleware.
 - Per-model policies are bound via `Gate::policy(Model::class, Policy::class)`.
 
 ### Policies (`app/Policies/*`) and the ownership trait
@@ -266,25 +266,25 @@ All policies use **`HandlesDomainAuthorization`** (`app/Policies/Concerns/Handle
 
 ### Non-admin controllers (`app/Http/Controllers/Api/`)
 
-- **`AuthController`** — `login`, `me`, `logout` (see Authentication Flow).
-- **`PasswordResetController`** — `forgot`, `reset` (enumeration-safe).
-- **`AccessRequestSubmissionController`** (uses `SerializesAdminResources`) — public `store`. Adapts validation by `Auth::guard('web')->user()`: when unauthenticated, `full_name/email/password` are required; when authenticated they are `sometimes` and the actor is reused. In a `DB::transaction`: creates an applicant nurse user if anonymous (rejects duplicate email), creates the `AccessRequest` + `AccessRequestItem`s (each requested dept/template validated by id-or-slug, must be active + family-matched, de-duplicated), then `notifyAdmins` (a `nurse_access_request` notification for every active admin-like user). Returns `{ signedIn, data: serializeAccessRequest(...) }` 201.
-- **`WorkspaceController`** — `show`. Builds the entire SPA initial state in one response (see API surface). Role-scopes every collection. Computes `visibleReportingPeriodIds` between `LIVE_REPORTING_START = '2026-03-02'` and the current period. Reports here are **shells** (`values` is `{}`); full values come from `/reports`.
-- **`ReportWorkflowController`** — `index/show/store/update/submit/lock/unlock`. Constructor-injects `ReportSubmissionService` + `ReportLockingService`. `store`/`update`/`submit` delegate to `submissionService->save(...)`; `lock`/`unlock` to `lockingService->setLockState(...)`. `show/update/submit/lock/unlock` call `Gate::authorize`. Private serializers turn `ReportFieldValue` rows into `{ fieldKey: { fieldId, dailyValues: { day: value } } }` (picking the typed column) plus `calculatedMetrics`.
-- **`AnalyticsController`** — thin façade over five analytics services; each endpoint validates filters into an `AnalyticsFilters` DTO. `export` returns a `StreamedResponse` CSV.
-- **`NotificationController`** — `index/markRead/markAllRead/destroy/restore`. Admins can target another `recipient_id`; nurses are forced to their own. `restore` has explicit IDOR protection (won't overwrite a row owned by a different recipient).
+- **`AuthController`** - `login`, `me`, `logout` (see Authentication Flow).
+- **`PasswordResetController`** - `forgot`, `reset` (enumeration-safe).
+- **`AccessRequestSubmissionController`** (uses `SerializesAdminResources`) - public `store`. Adapts validation by `Auth::guard('web')->user()`: when unauthenticated, `full_name/email/password` are required; when authenticated they are `sometimes` and the actor is reused. In a `DB::transaction`: creates an applicant nurse user if anonymous (rejects duplicate email), creates the `AccessRequest` + `AccessRequestItem`s (each requested dept/template validated by id-or-slug, must be active + family-matched, de-duplicated), then `notifyAdmins` (a `nurse_access_request` notification for every active admin-like user). Returns `{ signedIn, data: serializeAccessRequest(...) }` 201.
+- **`WorkspaceController`** - `show`. Builds the entire SPA initial state in one response (see API surface). Role-scopes every collection. Computes `visibleReportingPeriodIds` between `LIVE_REPORTING_START = '2026-03-02'` and the current period. Reports here are **shells** (`values` is `{}`); full values come from `/reports`.
+- **`ReportWorkflowController`** - `index/show/store/update/submit/lock/unlock`. Constructor-injects `ReportSubmissionService` + `ReportLockingService`. `store`/`update`/`submit` delegate to `submissionService->save(...)`; `lock`/`unlock` to `lockingService->setLockState(...)`. `show/update/submit/lock/unlock` call `Gate::authorize`. Private serializers turn `ReportFieldValue` rows into `{ fieldKey: { fieldId, dailyValues: { day: value } } }` (picking the typed column) plus `calculatedMetrics`.
+- **`AnalyticsController`** - thin façade over five analytics services; each endpoint validates filters into an `AnalyticsFilters` DTO. `export` returns a `StreamedResponse` CSV.
+- **`NotificationController`** - `index/markRead/markAllRead/destroy/restore`. Admins can target another `recipient_id`; nurses are forced to their own. `restore` has explicit IDOR protection (won't overwrite a row owned by a different recipient).
 
-### Admin controllers (`app/Http/Controllers/Api/Admin/`) — all use `SerializesAdminResources`
+### Admin controllers (`app/Http/Controllers/Api/Admin/`) - all use `SerializesAdminResources`
 
-- **`UserController`** (DI `AdminAuditService`) — CRUD-ish over users; every write records an admin-audit entry. `store` chooses `createAdmin` vs `create` ability by target role (admins cannot mint admins). `destroy` is a soft deactivate.
-- **`ReportAssignmentController`** (DI `AdminAuditService`) — `index/store/update/destroy`. `store` upserts keyed on (nurse, department, template); enforces nurse role + dept/template family match; stamps `approved_at`/`approved_by`.
-- **`ReferenceDataController`** (DI `AdminAuditService`) — templates + departments + wards. Largest validator set (`validateTemplate`, `validateDepartment`). Template create/update is transactional and calls `syncFields` (upsert field defs keyed on template+field_key, auto `display_order = (index+1)*10`). Delete guards block deletion when referenced. `wards()` merges `family=inpatient` and reuses `departments()`.
-- **`SettingsController`** (DI `AppSettingsService`, `AdminAuditService`) — `show`/`update`; validates a fixed schema; delegates persistence to `AppSettingsService::update`.
-- **`AccessRequestController`** (DI `AccessRequestReviewService`) — `index/show/review/approve/reject`; delegates side effects to the review service.
-- **`AuditLogController`** — `cellEdits` (report `AuditLog`) and `adminActions` (`AdminAuditLog`); read-only, admin-only, rich filters, `limit` cap 500.
-- **`ClaimSuperadminController`** (DI `AdminAuditService`) — `store` (see Superadmin bootstrap).
+- **`UserController`** (DI `AdminAuditService`) - CRUD-ish over users; every write records an admin-audit entry. `store` chooses `createAdmin` vs `create` ability by target role (admins cannot mint admins). `destroy` is a soft deactivate.
+- **`ReportAssignmentController`** (DI `AdminAuditService`) - `index/store/update/destroy`. `store` upserts keyed on (nurse, department, template); enforces nurse role + dept/template family match; stamps `approved_at`/`approved_by`.
+- **`ReferenceDataController`** (DI `AdminAuditService`) - templates + departments + wards. Largest validator set (`validateTemplate`, `validateDepartment`). Template create/update is transactional and calls `syncFields` (upsert field defs keyed on template+field_key, auto `display_order = (index+1)*10`). Delete guards block deletion when referenced. `wards()` merges `family=inpatient` and reuses `departments()`.
+- **`SettingsController`** (DI `AppSettingsService`, `AdminAuditService`) - `show`/`update`; validates a fixed schema; delegates persistence to `AppSettingsService::update`.
+- **`AccessRequestController`** (DI `AccessRequestReviewService`) - `index/show/review/approve/reject`; delegates side effects to the review service.
+- **`AuditLogController`** - `cellEdits` (report `AuditLog`) and `adminActions` (`AdminAuditLog`); read-only, admin-only, rich filters, `limit` cap 500.
+- **`ClaimSuperadminController`** (DI `AdminAuditService`) - `store` (see Superadmin bootstrap).
 
-### Shared serialization trait — `SerializesAdminResources`
+### Shared serialization trait - `SerializesAdminResources`
 
 Provides `serializeUser`, `serializeAssignment`, `serializeDepartment`, `serializeTemplate`, `serializeFieldDefinition`, `serializeAccessRequest`, `serializeAuditLog`, `serializeAdminAuditLog`, `serializeAppSetting`, `serializeReportingPeriod`. All emit camelCase keys, eager-`loadMissing` related models, render timestamps via `?->toJSON()`.
 
@@ -293,19 +293,19 @@ Provides `serializeUser`, `serializeAssignment`, `serializeDepartment`, `seriali
 | Service | Responsibility |
 |---|---|
 | **Reports\ReportSubmissionService** | The submit/draft engine. `save(actor, assignment, period, values, submit)` runs in a transaction: authorizes the edit, finds the report for (assignment, period) with `lockForUpdate()` (rejects locked reports), creates it if missing, `persistValues` writes EAV rows (coercing by `field_kind`, validating day ∈ template `active_days`, logging `audit_logs` for post-submission changes), computes `nextStatus`, records `report_status_history`, notifies admins (`new_report_submitted` / `submitted_report_edited`), fires `CriticalEventAlertService::notify`, then recomputes metrics via `ReportCalculationService::upsertForReport`. |
-| **Reports\ReportLockingService** | `setLockState(actor, report, locked)` — active-admin only; transactional `lockForUpdate`, idempotent. Lock sets `status=locked`/`locked_at`; unlock restores `edited_after_submission` or `submitted` and clears `locked_at`. Notifies the nurse (`report_locked`/`report_unlocked`). |
-| **Reports\ReportCalculationService** | `upsertForReport(report)` — inpatient BOR% = `patientDays / (bedCount × 30) × 100`, BTR = `(discharged_home + discharged_ama) / bedCount`, ALOS = `patientDays / totalDischarge`. Null when `bed_count` is falsy. Non-inpatient ⇒ null metrics. |
-| **Reports\OverdueReportService** | `sync()` (cron `hourly`) — upserts `overdue_report` notifications for active assignments lacking a submitted report past the deadline (live periods only, `week_start >= 2026-03-02`); deletes stale ones; no-ops if deadline enforcement is off. |
-| **Reports\CriticalEventAlertService** | `detect`/`notify` — sums configured `critical_non_zero_fields` (default `new_deaths`, `new_pressure_ulcer`, `total_hai`, `hai_clabsi`, `hai_cauti`, `hai_vap`); creates `critical_value_alert` notifications to admins when any weekly total > 0. |
-| **Reports\ReportReminderService** | `sendDue()` (cron `hourly`) — sends one in-app/email/SMS reminder per configured tier for active assignments with no submitted report near `deadline_at`; delivery goes through the database queue. |
-| **Reports\ReportingPeriodService** | `ensureRollingWindow(pastWeeks=26, futureWeeks=52)` (cron `weekly`, Sundays at 00:05) — `firstOrNew` a `reporting_periods` row per Monday in the window; fills week_end, deadline, labels. |
+| **Reports\ReportLockingService** | `setLockState(actor, report, locked)` - active-admin only; transactional `lockForUpdate`, idempotent. Lock sets `status=locked`/`locked_at`; unlock restores `edited_after_submission` or `submitted` and clears `locked_at`. Notifies the nurse (`report_locked`/`report_unlocked`). |
+| **Reports\ReportCalculationService** | `upsertForReport(report)` - inpatient BOR% = `patientDays / (bedCount × 30) × 100`, BTR = `(discharged_home + discharged_ama) / bedCount`, ALOS = `patientDays / totalDischarge`. Null when `bed_count` is falsy. Non-inpatient ⇒ null metrics. |
+| **Reports\OverdueReportService** | `sync()` (cron `hourly`) - upserts `overdue_report` notifications for active assignments lacking a submitted report past the deadline (live periods only, `week_start >= 2026-03-02`); deletes stale ones; no-ops if deadline enforcement is off. |
+| **Reports\CriticalEventAlertService** | `detect`/`notify` - sums configured `critical_non_zero_fields` (default `new_deaths`, `new_pressure_ulcer`, `total_hai`, `hai_clabsi`, `hai_cauti`, `hai_vap`); creates `critical_value_alert` notifications to admins when any weekly total > 0. |
+| **Reports\ReportReminderService** | `sendDue()` (cron `hourly`) - sends one in-app/email/SMS reminder per configured tier for active assignments with no submitted report near `deadline_at`; delivery goes through the database queue. |
+| **Reports\ReportingPeriodService** | `ensureRollingWindow(pastWeeks=26, futureWeeks=52)` (cron `weekly`, Sundays at 00:05) - `firstOrNew` a `reporting_periods` row per Monday in the window; fills week_end, deadline, labels. |
 | **Analytics\AnalyticsService** | Central read-side aggregator. Request-scoped memo collapses repeated report queries. `reports(filters, family?)`, `summary(...)` (totalReports, expectedReports, missingReports, statusCounts, totals, occupancy), `occupancy(...)` (analytics BOR uses actual covered days = `max(periods×7, 30)`), `weekly`/`monthly`/`departmentSummaries`, `outpatientExtras`, `procedureExtras` (driven by `PROCEDURE_SERVICES`), `scope`. |
 | **Analytics\{Inpatient,Outpatient,Procedure}AnalyticsService** | Thin family façades merging `familySummary(...)` with the relevant extras. |
 | **Analytics\AnalyticsFilters** | Immutable VO; `fromArray` accepts snake+camel, normalizes dates/months. |
 | **Analytics\AnalyticsExportService** | `streamCallback(periods)` streams long-format CSV via `lazy(500)`; `sanitizeCell` neutralizes CSV formula injection (important: values include nurse free text). |
 | **Admin\AppSettingsService** | `structured()` reads the 5 setting rows into a defaulted array; `update(...)` upserts and **recalculates `deadline_at` on every reporting period**. |
 | **Admin\AdminAuditService** | `record(actor, action, entityType, entityId?, old?, new?, request?)` inserts an `admin_audit_logs` row with IP/user-agent snapshots. |
-| **Admin\AccessRequestReviewService** | `review(actor, request, decision)` (transactional) — sets status/reviewer; on approval upserts `report_assignment`s; notifies the requester (`access_request_reviewed`); records an admin audit entry. |
+| **Admin\AccessRequestReviewService** | `review(actor, request, decision)` (transactional) - sets status/reviewer; on approval upserts `report_assignment`s; notifies the requester (`access_request_reviewed`); records an admin audit entry. |
 
 ## Console / Scheduling (`routes/console.php`)
 
@@ -330,7 +330,7 @@ Commands: `SyncOverdueReports`, `EnsureReportingPeriods` (`--past`/`--future`), 
 | POST | `/auth/reset-password` | `PasswordResetController@reset` | `throttle:5,1` |
 | GET | `/auth/me` | `AuthController@me` | `auth:sanctum`, `active` |
 | POST | `/auth/logout` | `AuthController@logout` | `auth:sanctum` |
-| GET | `/sanctum/csrf-cookie` | (Sanctum package route) | — |
+| GET | `/sanctum/csrf-cookie` | (Sanctum package route) | - |
 
 ### Public submission & workspace
 
@@ -351,7 +351,7 @@ Commands: `SyncOverdueReports`, `EnsureReportingPeriods` (`--past`/`--future`), 
 | POST | `/reports/{report}/lock` | `ReportWorkflowController@lock` | `Gate::authorize('lock')` (admin-like) |
 | POST | `/reports/{report}/unlock` | `ReportWorkflowController@unlock` | `Gate::authorize('unlock')` (admin-like) |
 
-### Notifications — all `permission:notifications.view`
+### Notifications - all `permission:notifications.view`
 
 | Method | Path | Controller@method | Gate |
 |---|---|---|---|
@@ -361,7 +361,7 @@ Commands: `SyncOverdueReports`, `EnsureReportingPeriods` (`--past`/`--future`), 
 | DELETE | `/notifications` | `NotificationController@destroy` | per-item `delete`; `ids[]` |
 | POST | `/notifications/restore` | `NotificationController@restore` | IDOR-guarded inline; re-creates up to 50 client notifications |
 
-### Analytics — prefix `/analytics`, all `permission:analytics.view`
+### Analytics - prefix `/analytics`, all `permission:analytics.view`
 
 | Method | Path | Controller@method | Purpose |
 |---|---|---|---|
@@ -375,9 +375,9 @@ Commands: `SyncOverdueReports`, `EnsureReportingPeriods` (`--past`/`--future`), 
 | GET | `/analytics/wards` | `wards` | as departments, `family=inpatient` |
 | GET | `/analytics/export` | `export` | streams CSV; selects period by `period`/`periodId`, `month` (`Y-m`), or latest ≤ today; 404 if none |
 
-Non-export endpoints build `AnalyticsFilters` from a large optional-filter set (`period_id`, `week_start`/`week`, `month`, `year`, `date_from`/`date_to`, `department_id`/`department`, `ward_id`/`ward`, `family` ∈ {inpatient,outpatient,procedure}, `report_type`, `procedure_category` — each snake/camel).
+Non-export endpoints build `AnalyticsFilters` from a large optional-filter set (`period_id`, `week_start`/`week`, `month`, `year`, `date_from`/`date_to`, `department_id`/`department`, `ward_id`/`ward`, `family` ∈ {inpatient,outpatient,procedure}, `report_type`, `procedure_category` - each snake/camel).
 
-### Admin — prefix `/admin`
+### Admin - prefix `/admin`
 
 | Method | Path | Controller@method | Permission | Gate |
 |---|---|---|---|---|
@@ -428,7 +428,7 @@ All domain tables use **UUID string primary keys** (`$table->uuid('id')->primary
 Lookup table of the five roles. `role_key` string(32) **PK**, `label` string(64), `description` text, timestamps. Values: `superadmin`, `admin`, `nurse`, `resident`, `consultant`.
 
 ### `users`
-`id` uuid PK; `email` (unique); `username` string(64) (unique, lowercased by mutator); `password` (hashed); `full_name`; `title`; `role_key` string(32) **FK → roles** (RESTRICT, indexed); `phone`; `active` bool (default true — inactive users denied everything); `email_verified_at`; `remember_token`; `last_login_at`; `password_change_required` bool (default false — forces reset on first login); timestamps. The same migration creates framework `password_reset_tokens` (PK `email`) and `sessions` (PK `id`, nullable `user_id`, payload, last_activity).
+`id` uuid PK; `email` (unique); `username` string(64) (unique, lowercased by mutator); `password` (hashed); `full_name`; `title`; `role_key` string(32) **FK → roles** (RESTRICT, indexed); `phone`; `active` bool (default true - inactive users denied everything); `email_verified_at`; `remember_token`; `last_login_at`; `password_change_required` bool (default false - forces reset on first login); timestamps. The same migration creates framework `password_reset_tokens` (PK `email`) and `sessions` (PK `id`, nullable `user_id`, payload, last_activity).
 
 ### `report_templates`
 The shape of a report. `id` uuid PK; `slug` string(64) unique (e.g. `inpatient_weekly`); `family` enum `inpatient|outpatient|procedure`; `name`; `description`; `active_days` json (weekday names the template collects); `metadata` json (`ui_family`, `supports_metrics`); `active` bool; timestamps.
@@ -437,7 +437,7 @@ The shape of a report. `id` uuid PK; `slug` string(64) unique (e.g. `inpatient_w
 A reporting unit (ward/clinic/lab), each bound to exactly one template. `id` uuid PK; `slug` unique; `family` enum (indexed); `template_id` uuid **FK → report_templates** (RESTRICT); `name`; `description`; `accent_color` string(16); `bed_count` int (drives BOR/BTR/ALOS; null for non-inpatient); `active` bool; timestamps.
 
 ### `report_field_definitions`
-The field catalog per template — the "schema" half of the EAV model. `id` uuid PK; `template_id` uuid **FK → report_templates** (**cascade**); `section_key` string(64) (UI grouping); `field_key` string(64); `label`; `field_kind` enum `integer|decimal|time|text|choice`; `aggregate_type` enum `sum|average|latest|none` (default sum); `display_order` int; `metadata` json (e.g. choice `options`); timestamps. Indexes: **unique `(template_id, field_key)`**, index `(template_id, display_order)`.
+The field catalog per template - the "schema" half of the EAV model. `id` uuid PK; `template_id` uuid **FK → report_templates** (**cascade**); `section_key` string(64) (UI grouping); `field_key` string(64); `label`; `field_kind` enum `integer|decimal|time|text|choice`; `aggregate_type` enum `sum|average|latest|none` (default sum); `display_order` int; `metadata` json (e.g. choice `options`); timestamps. Indexes: **unique `(template_id, field_key)`**, index `(template_id, display_order)`.
 
 ### `reporting_periods`
 One row per ISO week (Monday-start); `timestamps = false`. `id` uuid PK; `week_start` date unique (Monday); `week_end` date (Sunday); `deadline_at` timestamp (computed from app settings); `month_label` string(16) (`Mar 2026`); `quarter_label` string(8) (`Q1 2026`); `year_num` smallint; `created_at useCurrent()`. Index `(year_num, month_label)`.
@@ -452,10 +452,10 @@ A nurse's request for reporting access. `id` uuid PK; `user_id` uuid **FK → us
 The (department, template) pairs a request asks for; `timestamps = false`. `id` uuid PK; `access_request_id` uuid **FK → access_requests** (**cascade**); `department_id` uuid **FK → departments** (**cascade**); `template_id` uuid **FK → report_templates** (**cascade**); `created_at useCurrent()`. **Unique `(access_request_id, department_id, template_id)`**.
 
 ### `reports`
-The aggregate root of a weekly submission — one report = one assignment × one period. `id` uuid PK; `assignment_id` uuid **FK → report_assignments** (**cascade**); `department_id` uuid **FK → departments** (**cascade**, denormalized from assignment); `template_id` uuid **FK → report_templates** (**cascade**, denormalized); `reporting_period_id` uuid **FK → reporting_periods** (**cascade**); `status` enum `not_started|draft|submitted|edited_after_submission|locked|overdue` (default draft); `submitted_at` (set on first submit, preserved); `locked_at` (non-null ⇒ read-only); `created_by`/`updated_by` uuid **FK → users** (RESTRICT); timestamps. Indexes: **unique `(assignment_id, reporting_period_id)`**, `(reporting_period_id, template_id)`, `(status, locked_at, submitted_at)`, `(department_id, reporting_period_id)`, and `(assignment_id, updated_at)` for the report-listing sort.
+The aggregate root of a weekly submission - one report = one assignment × one period. `id` uuid PK; `assignment_id` uuid **FK → report_assignments** (**cascade**); `department_id` uuid **FK → departments** (**cascade**, denormalized from assignment); `template_id` uuid **FK → report_templates** (**cascade**, denormalized); `reporting_period_id` uuid **FK → reporting_periods** (**cascade**); `status` enum `not_started|draft|submitted|edited_after_submission|locked|overdue` (default draft); `submitted_at` (set on first submit, preserved); `locked_at` (non-null ⇒ read-only); `created_by`/`updated_by` uuid **FK → users** (RESTRICT); timestamps. Indexes: **unique `(assignment_id, reporting_period_id)`**, `(reporting_period_id, template_id)`, `(status, locked_at, submitted_at)`, `(department_id, reporting_period_id)`, and `(assignment_id, updated_at)` for the report-listing sort.
 
 ### `report_field_values` (the EAV "value" table)
-One row per (report, field, weekday) — the entity-attribute-value store; the *attribute* is `field_definition_id`, the value lands in one of four typed columns. `id` uuid PK; `report_id` uuid **FK → reports** (**cascade**); `field_definition_id` uuid **FK → report_field_definitions** (**cascade**); `day_name` enum `monday…sunday`; `value_number` **decimal(14,4)** (integers and decimals both); `value_text` text (text + choice); `value_time` time (`HH:MM`); `value_json` json (reserved); timestamps. **Unique `(report_id, field_definition_id, day_name)`**. (The earlier `(report_id, field_definition_id)` index was dropped as a redundant strict prefix of the unique key on this highest-volume table.)
+One row per (report, field, weekday) - the entity-attribute-value store; the *attribute* is `field_definition_id`, the value lands in one of four typed columns. `id` uuid PK; `report_id` uuid **FK → reports** (**cascade**); `field_definition_id` uuid **FK → report_field_definitions** (**cascade**); `day_name` enum `monday…sunday`; `value_number` **decimal(14,4)** (integers and decimals both); `value_text` text (text + choice); `value_time` time (`HH:MM`); `value_json` json (reserved); timestamps. **Unique `(report_id, field_definition_id, day_name)`**. (The earlier `(report_id, field_definition_id)` index was dropped as a redundant strict prefix of the unique key on this highest-volume table.)
 
 ### `calculated_metrics`
 One-to-one with a report; computed inpatient metrics. `id` uuid PK; `report_id` uuid unique **FK → reports** (**cascade**); `bor_percent`/`btr`/`alos` **decimal(7,3)**; `metric_payload` json (`total_patient_days`, `total_discharge`); timestamps.
@@ -505,7 +505,7 @@ roles          FK target for users.role_key and the basis of the permission matr
 
 A `report` denormalizes `department_id` and `template_id` from its assignment, so analytics / audit / export can filter without joining through the assignment.
 
-**onDelete summary.** Deleting a `report` cascades to its field values, status history, audit logs, and calculated metric. Deleting a `report_assignment`, `department`, `report_template`, `reporting_period`, or `user` (nurse) cascades to dependent `reports`. `approved_by`/`reviewed_by`/`app_settings.updated_by` null out on user deletion; `report.created_by`/`updated_by` and the `changed_by` columns are RESTRICT — a user referenced there cannot be hard-deleted, so the app **deactivates** instead.
+**onDelete summary.** Deleting a `report` cascades to its field values, status history, audit logs, and calculated metric. Deleting a `report_assignment`, `department`, `report_template`, `reporting_period`, or `user` (nurse) cascades to dependent `reports`. `approved_by`/`reviewed_by`/`app_settings.updated_by` null out on user deletion; `report.created_by`/`updated_by` and the `changed_by` columns are RESTRICT - a user referenced there cannot be hard-deleted, so the app **deactivates** instead.
 
 **EAV read/write note.** Reads (analytics, export, serialization) join `report_field_definitions` to recover `field_key`/`field_kind`/`aggregate_type`, then pick the populated value column. Writes choose the column from the definition's `field_kind` (see `ReportSubmissionService::coerceValue`).
 
@@ -518,10 +518,10 @@ draft ──submit──► submitted ──edit──► edited_after_submissio
                               (restores edited_after_submission, else submitted)
 ```
 
-- **One report per (assignment, period)** — enforced by the unique index and a `lockForUpdate` lookup.
+- **One report per (assignment, period)** - enforced by the unique index and a `lockForUpdate` lookup.
 - **`not_started`/`overdue`** exist in the enum, but overdue is surfaced via notifications by the every-minute sync job rather than persisted as a stored status. The frontend *derives* `not_started`/`overdue` for display.
 - **Lock = read-only.** The submission service rejects edits to a locked report; only active admins lock/unlock.
-- **Audit trail starts at first submission** — value changes are logged to `audit_logs` only once `submitted_at` is set.
+- **Audit trail starts at first submission** - value changes are logged to `audit_logs` only once `submitted_at` is set.
 - **Metrics:** per-report BOR uses a fixed 30-day denominator; analytics occupancy uses actual covered days (`max(periods×7, 30)`). Metrics are inpatient-only and depend on `department.bed_count`.
 - **Deadlines/overdue:** governed by `app_settings`; the sync job runs every minute, only for live periods (`week_start >= 2026-03-02`).
 - **Inactive users get zero access** at every layer (Gate::before, `Permissions::forUser`, the `active` middleware, every policy ownership check).
@@ -529,12 +529,12 @@ draft ──submit──► submitted ──edit──► edited_after_submissio
 ## Seeders (`database/seeders/`)
 
 `DatabaseSeeder` runs (all idempotent): **RoleSeeder → ReportTemplateSeeder → DepartmentSeeder → ReportFieldDefinitionSeeder → AppSettingSeeder → ReportingPeriodSeeder → DevUserSeeder**.
-- **ReportTemplateSeeder** — 9 templates: 1 inpatient (`inpatient_weekly`, Mon–Sun, supports BOR/BTR/ALOS), 1 outpatient (`outpatient_weekly` "ART", Mon–Fri), 7 procedure (EEG, Echocardiography, Endoscopy, Hematology procedures, Bronchoscopy, Renal procedures Mon–Sun, Dialysis Mon–Sun).
-- **DepartmentSeeder** — 27 departments: 8 inpatient wards (bed_count GI/Neuro 26, Cardiac 22, Nephrology 20, Chest 18, Hematology 16, Oncology 24, HDU 12, Transition null), 12 outpatient clinics, 7 procedure labs.
-- **ReportFieldDefinitionSeeder** — ~85 field definitions. Inpatient includes `total_patient_days`, `discharged_home`, `discharged_ama` (metrics) and the critical fields. Only `senior_physician_availability` (outpatient `choice`) carries `metadata.options` = Full day / Partial day / Unavailable.
-- **AppSettingSeeder** — `workflow_controls={deadline_enforced:true}`, `weekly_deadline={day:monday, time:10:00}`, `locking_rules={auto_lock_hours_after_deadline:36}`, `insight_thresholds={rise_percent:10, drop_percent:10}`, `critical_non_zero_fields=[new_deaths, new_pressure_ulcer, total_hai, hai_clabsi, hai_cauti, hai_vap]`.
-- **ReportingPeriodSeeder** — 53 weekly periods from −26 to +52 weeks.
-- **DevUserSeeder** — **local-dev only; self-guards with `app()->environment('production','testing') → return`.** Creates superadmin `admin@stpaulos.local` / `admin1` and two nurses, all password **`StPaul2026!`**. Production must create its superadmin via `php artisan app:create-superadmin`.
+- **ReportTemplateSeeder** - 9 templates: 1 inpatient (`inpatient_weekly`, Mon–Sun, supports BOR/BTR/ALOS), 1 outpatient (`outpatient_weekly` "ART", Mon–Fri), 7 procedure (EEG, Echocardiography, Endoscopy, Hematology procedures, Bronchoscopy, Renal procedures Mon–Sun, Dialysis Mon–Sun).
+- **DepartmentSeeder** - 27 departments: 8 inpatient wards (bed_count GI/Neuro 26, Cardiac 22, Nephrology 20, Chest 18, Hematology 16, Oncology 24, HDU 12, Transition null), 12 outpatient clinics, 7 procedure labs.
+- **ReportFieldDefinitionSeeder** - ~85 field definitions. Inpatient includes `total_patient_days`, `discharged_home`, `discharged_ama` (metrics) and the critical fields. Only `senior_physician_availability` (outpatient `choice`) carries `metadata.options` = Full day / Partial day / Unavailable.
+- **AppSettingSeeder** - `workflow_controls={deadline_enforced:true}`, `weekly_deadline={day:monday, time:10:00}`, `locking_rules={auto_lock_hours_after_deadline:36}`, `insight_thresholds={rise_percent:10, drop_percent:10}`, `critical_non_zero_fields=[new_deaths, new_pressure_ulcer, total_hai, hai_clabsi, hai_cauti, hai_vap]`.
+- **ReportingPeriodSeeder** - 53 weekly periods from −26 to +52 weeks.
+- **DevUserSeeder** - **local-dev only; self-guards with `app()->environment('production','testing') → return`.** Creates superadmin `admin@stpaulos.local` / `admin1` and two nurses, all password **`StPaul2026!`**. Production must create its superadmin via `php artisan app:create-superadmin`.
 
 ---
 
@@ -544,16 +544,16 @@ A React 19 + Vite + TypeScript SPA with **no external state library** (no Redux/
 
 ## Bootstrap & Routing
 
-- **`src/main.tsx`** — mounts React 19 via `createRoot` into `#root`, wrapping `<App/>` in `<AppProviders>`.
-- **`src/app/providers.tsx`** — `AppProviders` = `<AppDataProvider>{children}<Toaster richColors position="top-right"/></AppDataProvider>`. `AppDataProvider` is the *only* state provider; `Toaster` (sonner) renders the `toast.error(...)` calls made throughout the data layer.
-- **`src/App.tsx`** — `BrowserRouter` + `Routes`. **Every page except `LoginPage` and `HomeRedirect` is `React.lazy`-loaded** with named-export unwrapping. `renderLazyRoute(node, fallback)` wraps each lazy element in `<Suspense>` with `'page'` (full-screen `AppStateScreen`) or `'inline'` (`InlineRouteFallback`, an in-shell card). Routes inside the authenticated shell use `'inline'` so the chrome stays put while a chunk loads.
+- **`src/main.tsx`** - mounts React 19 via `createRoot` into `#root`, wrapping `<App/>` in `<AppProviders>`.
+- **`src/app/providers.tsx`** - `AppProviders` = `<AppDataProvider>{children}<Toaster richColors position="top-right"/></AppDataProvider>`. `AppDataProvider` is the *only* state provider; `Toaster` (sonner) renders the `toast.error(...)` calls made throughout the data layer.
+- **`src/App.tsx`** - `BrowserRouter` + `Routes`. **Every page except `LoginPage` and `HomeRedirect` is `React.lazy`-loaded** with named-export unwrapping. `renderLazyRoute(node, fallback)` wraps each lazy element in `<Suspense>` with `'page'` (full-screen `AppStateScreen`) or `'inline'` (`InlineRouteFallback`, an in-shell card). Routes inside the authenticated shell use `'inline'` so the chrome stays put while a chunk loads.
 
 ### Route table
 
 | Path | Component | Lazy | Fallback | Guard / role |
 |---|---|---|---|---|
-| `/` | `HomeRedirect` (in App.tsx) | no | — | none (redirect logic) |
-| `/login` | `LoginPage` | **no** (eager) | — | public |
+| `/` | `HomeRedirect` (in App.tsx) | no | - | none (redirect logic) |
+| `/login` | `LoginPage` | **no** (eager) | - | public |
 | `/forgot-password` | `ForgotPasswordPage` | yes | page | public |
 | `/reset-password` | `ResetPasswordPage` | yes | page | public |
 | `/register` | `AccessRequestPage` | yes | page | public |
@@ -575,11 +575,11 @@ A React 19 + Vite + TypeScript SPA with **no external state library** (no Redux/
 
 **Guard layering.** A double-`ProtectedRoute` pattern: the outer `<ProtectedRoute/>` enforces authentication and renders the bootstrap/error/unconfigured screens once; `<ProtectedShell/>` wraps the `<Outlet/>` in `<AppShell>` (persistent chrome that does not unmount across navigation); the inner `<ProtectedRoute roles={[...]}/>` enforces the role check (user already known authenticated).
 
-**`route-guards.tsx`.** `ProtectedRoute({roles?})` decision order: `!isConfigured` → config screen; `isBootstrapping` → loading screen; `error && !currentUser` → error screen; `!currentUser` → `<Navigate to="/login" state={{from}}/>`; `roles && !roles.includes(currentUser.role)` → role-based redirect (nurse → `/nurse`, admins → `/admin`); else `<Outlet/>`. **Frontend role guards are UX only — server-side authorization is the source of truth.**
+**`route-guards.tsx`.** `ProtectedRoute({roles?})` decision order: `!isConfigured` → config screen; `isBootstrapping` → loading screen; `error && !currentUser` → error screen; `!currentUser` → `<Navigate to="/login" state={{from}}/>`; `roles && !roles.includes(currentUser.role)` → role-based redirect (nurse → `/nurse`, admins → `/admin`); else `<Outlet/>`. **Frontend role guards are UX only - server-side authorization is the source of truth.**
 
 **`HomeRedirect`** at `/` is a state machine over `useAppData()`: config-required → bootstrapping → error → `!currentUser` → `/login` → role-based landing (`currentUser.role === 'nurse' ? '/nurse' : '/admin'`).
 
-## The AppDataContext data layer — `src/context/app-data-context.tsx`
+## The AppDataContext data layer - `src/context/app-data-context.tsx`
 
 This ~1700-line file is the single source of truth, exposing **two** React contexts plus five hooks.
 
@@ -601,7 +601,7 @@ interface AppState {
 }
 ```
 
-The current user is *not* stored as an object — it is `currentUserId`, resolved against `state.profiles` via `getCurrentUser(state)`. `settings` defaults to `defaultAppSettings`.
+The current user is *not* stored as an object - it is `currentUserId`, resolved against `state.profiles` via `getCurrentUser(state)`. `settings` defaults to `defaultAppSettings`.
 
 ### Context API (`AppDataContextValue`, memoized)
 
@@ -628,7 +628,7 @@ A single large `useEffect`. `isBootstrapping` initial value is `isApiConfigured`
 
 **Concurrency guards (refs):** `loadVersionRef` (monotonic; bails out of applying superseded loads), `currentUserIdRef`/`currentStateRef` (stale-closure-safe), `isSigningOutRef`, `suppressNextSignedInLoadRef`, `pendingExplicitAuthUserIdRef`.
 
-### `loadUserState` — core fetch + merge
+### `loadUserState` - core fetch + merge
 
 Behind bootstrap, refresh, and every `ensure*`. Calls `fetchLiveAppState(client, userId, {include*})` → `GET /api/workspace?...`. Stale-guard via `loadVersionRef`.
 - **Smart merge:** workspace returns reports *without* heavy cell `values`/`calculatedMetrics`. For each incoming report, if a previously-loaded report with the same `id` and **identical `updatedAt`** exists, it reuses the cached detail (avoids blanking on every poll).
@@ -637,21 +637,21 @@ Behind bootstrap, refresh, and every `ensure*`. Calls `fetchLiveAppState(client,
 
 ### The 20s admin live-refresh poll
 
-A `useEffect` running only for admins: subscribes to a (no-op) realtime channel, adds `window` `focus` + `document` `visibilitychange` listeners (`refreshWhenVisible`, 150ms debounce), and **`window.setInterval(refreshWhenVisible, 20_000)`** — the live-dashboard heartbeat. `scheduleAdminLiveRefresh(delayMs=700)` debounces and guards re-entrancy, calling `refreshDataWithOptions(...)` preserving already-loaded deferred slices.
+A `useEffect` running only for admins: subscribes to a (no-op) realtime channel, adds `window` `focus` + `document` `visibilitychange` listeners (`refreshWhenVisible`, 150ms debounce), and **`window.setInterval(refreshWhenVisible, 20_000)`** - the live-dashboard heartbeat. `scheduleAdminLiveRefresh(delayMs=700)` debounces and guards re-entrancy, calling `refreshDataWithOptions(...)` preserving already-loaded deferred slices.
 
-### Deferred loading — the `ensure*` family
+### Deferred loading - the `ensure*` family
 
 The workspace payload is kept lean; expensive slices load on demand, gated by ref flags so they load **once**:
 - `ensureProfileDirectoryData()` (`profileDirectoryLoadedRef`, `{includeProfiles:true}`; pre-set true for non-admins).
 - `ensureAccessRequestData()` (`accessRequestDataLoadedRef`, `{includeAccessRequests:true}`).
 - `ensureHistoryData()` (`historyDataLoadedRef`, `{includeHistory:true}`).
-- `ensureReportDetails(reportIds, {force?})` — per-report cell-value loader: computes missing ids, marks them `loading`, `fetchReportDetails(client, ids)` (parallel `GET /api/reports/:id`), merges `values`/`calculatedMetrics`, marks `loaded`, persists cache; rolls back + toasts on error. Admin dashboard warming uses `getAdminDashboardWarmReportIds(state)` (reports in the last 8 visible periods).
+- `ensureReportDetails(reportIds, {force?})` - per-report cell-value loader: computes missing ids, marks them `loading`, `fetchReportDetails(client, ids)` (parallel `GET /api/reports/:id`), merges `values`/`calculatedMetrics`, marks `loaded`, persists cache; rolls back + toasts on error. Admin dashboard warming uses `getAdminDashboardWarmReportIds(state)` (reports in the last 8 visible periods).
 
 ### sessionStorage workspace cache
 
-Key `'stpaul:workspace-state:v3'`. Record `{ version:3, userId, state, profileDirectoryLoaded, accessRequestDataLoaded, historyDataLoaded }`. `readWorkspaceCache(userId)` validates `version===3` AND `userId` match. `applyWorkspaceCache(record)` synchronously rehydrates — instant UI on reload before network revalidation returns.
+Key `'stpaul:workspace-state:v3'`. Record `{ version:3, userId, state, profileDirectoryLoaded, accessRequestDataLoaded, historyDataLoaded }`. `readWorkspaceCache(userId)` validates `version===3` AND `userId` match. `applyWorkspaceCache(record)` synchronously rehydrates - instant UI on reload before network revalidation returns.
 
-### Optimistic saves — `applySavedReportDetails`
+### Optimistic saves - `applySavedReportDetails`
 
 After `saveReport`, cell values are patched directly into state (matched by `id` OR by `(assignmentId, reportingPeriodId)` so a server-created report still matches). `saveReport` flow: `POST /api/reports`, invalidate history, full `refreshDataWithOptions()`, find the saved report, `fetchReportDetails` for it to get authoritative values, then `applySavedReportDetails` (falling back to the optimistic payload if the detail fetch fails).
 
@@ -659,31 +659,31 @@ After `saveReport`, cell values are patched directly into state (matched by `id`
 
 `useAppData()` (full context; throws outside provider), `useAppSync()` (`{isSyncing, isDataRefreshing}`), `useAppState()` (= `useAppData().state`), `useCurrentUserProfile()`, `useCurrentReportingPeriod()`.
 
-## The API client — `src/lib/api/*`
+## The API client - `src/lib/api/*`
 
 A hand-rolled typed client shaped like the old Supabase client to minimize migration churn, but speaking the Laravel/Sanctum REST API.
 
-- **`client.ts` — `LaravelApiClient`.** `getApiBrowserClient()` returns `null` if `!isApiConfigured`, else memoizes a single `LaravelApiClient(apiEnv.baseUrl)`; `export const api = getApiBrowserClient()`.
+- **`client.ts` - `LaravelApiClient`.** `getApiBrowserClient()` returns `null` if `!isApiConfigured`, else memoizes a single `LaravelApiClient(apiEnv.baseUrl)`; `export const api = getApiBrowserClient()`.
   - **CSRF:** `ensureCsrfCookie()` runs before any unsafe method (`GET /sanctum/csrf-cookie`, caches `csrfReady`), then reads the `XSRF-TOKEN` cookie and sets `X-XSRF-TOKEN` (URL-decoded). All requests set `Accept: application/json`, `X-Requested-With: XMLHttpRequest`, and **`credentials: 'include'`**.
-  - **`request<T>`:** JSON-encodes object bodies; passes FormData/string through; serializes query params (**booleans → `1`/`0`** because Laravel's `boolean` rule rejects `"true"`/`"false"` — regression-tested in `client.test.ts`); drops null/undefined; `204` → `null`.
+  - **`request<T>`:** JSON-encodes object bodies; passes FormData/string through; serializes query params (**booleans → `1`/`0`** because Laravel's `boolean` rule rejects `"true"`/`"false"` - regression-tested in `client.test.ts`); drops null/undefined; `204` → `null`.
   - **401 self-heal:** a 401 on any non-`/api/auth/` path calls `markSignedOut()` (clears `csrfReady`, emits a synthetic `SIGNED_OUT` event). All failures throw `ApiError(message, status, payload)`; `errorMessage()` extracts `payload.message` or the first validation error.
   - **Faux auth/realtime surface:** `auth.getSession()` maps `GET /api/auth/me`; `auth.onAuthStateChange(listener)` registers in-memory; `channel()`/`removeChannel()` are **stubs** (realtime not wired).
-- **`env.ts`** — reads `import.meta.env.VITE_API_BASE_URL`, trims trailing slashes; `missingApiEnvKeys`, `isApiConfigured`, `apiEnvSetupHint`.
-- **`helpers.ts`** — `isAdminRole(role)`, `resolveAssignmentReference(references, deptSlug, templateSlug)` (slug → DB ids via `departmentDbIdBySlug`/`templateDbIdBySlug`), `getErrorMessage`.
-- **`auth.ts`** — `loginWithPassword` (field is `identifier`, supports email-or-username), `signOut`, `fetchSession`, `claimSuperadmin`, `sessionUserId`.
-- **`workspace.ts`** — `fetchCurrentUserProfile` (throws if inactive), `fetchLiveAppState` (→ `GET /api/workspace?...` → `{ currentUser, references, state }`).
-- **`reports.ts`** — `fetchReportDetails` (parallel `GET /api/reports/:id`), `saveReport` (`POST /api/reports`), `setReportLockState`, `listReports`. `syncOverdueNotifications` is a **no-op** (sync moved to the Laravel scheduler).
-- **`analytics.ts`** — `fetchAnalytics<T>(client, endpoint, query?)`.
-- **`admin.ts`** — `createAdminAccount` (forces `passwordChangeRequired: true`), `updateUserActiveState`, `updateAssignmentActiveState`, `reviewAccessRequest`, `ensureDepartmentReferenceData` (lazily creates template + department), `assignUserToDepartment`.
-- **`access-requests.ts`**, **`notifications.ts`**, **`settings.ts`**, **`passwords.ts`** — domain mutations (the password client maps camelCase `passwordConfirmation` → snake_case `password_confirmation`).
-- **`realtime.ts`** — a Laravel **Reverb** Echo client (`VITE_REVERB_*`), **deliberately NOT re-exported from `index.ts`** (it would pull `laravel-echo` + `pusher-js`, ~40KB gz, into the main bundle for a feature with no callers). The context's channel calls use the client *stub*; **the 20s poll is the actual live-update mechanism.**
+- **`env.ts`** - reads `import.meta.env.VITE_API_BASE_URL`, trims trailing slashes; `missingApiEnvKeys`, `isApiConfigured`, `apiEnvSetupHint`.
+- **`helpers.ts`** - `isAdminRole(role)`, `resolveAssignmentReference(references, deptSlug, templateSlug)` (slug → DB ids via `departmentDbIdBySlug`/`templateDbIdBySlug`), `getErrorMessage`.
+- **`auth.ts`** - `loginWithPassword` (field is `identifier`, supports email-or-username), `signOut`, `fetchSession`, `claimSuperadmin`, `sessionUserId`.
+- **`workspace.ts`** - `fetchCurrentUserProfile` (throws if inactive), `fetchLiveAppState` (→ `GET /api/workspace?...` → `{ currentUser, references, state }`).
+- **`reports.ts`** - `fetchReportDetails` (parallel `GET /api/reports/:id`), `saveReport` (`POST /api/reports`), `setReportLockState`, `listReports`. `syncOverdueNotifications` is a **no-op** (sync moved to the Laravel scheduler).
+- **`analytics.ts`** - `fetchAnalytics<T>(client, endpoint, query?)`.
+- **`admin.ts`** - `createAdminAccount` (forces `passwordChangeRequired: true`), `updateUserActiveState`, `updateAssignmentActiveState`, `reviewAccessRequest`, `ensureDepartmentReferenceData` (lazily creates template + department), `assignUserToDepartment`.
+- **`access-requests.ts`**, **`notifications.ts`**, **`settings.ts`**, **`passwords.ts`** - domain mutations (the password client maps camelCase `passwordConfirmation` → snake_case `password_confirmation`).
+- **`realtime.ts`** - a Laravel **Reverb** Echo client (`VITE_REVERB_*`), **deliberately NOT re-exported from `index.ts`** (it would pull `laravel-echo` + `pusher-js`, ~40KB gz, into the main bundle for a feature with no callers). The context's channel calls use the client *stub*; **the 20s poll is the actual live-update mechanism.**
 - **`index.ts`** re-exports every module except `realtime`. **`types.ts`** defines `SaveReportPayload`, `AccessRequestPayload`, `ClaimSuperadminPayload`/`Result`, `CreateAdminAccountPayload`, `ApiReferenceState`, `LiveAppStateLoadOptions`, `ReportDetailRecord`, `WorkspacePayload`, `SessionPayload`, `ReportResponse`, `ListResponse<T>`, `SettingsResponse`, `DepartmentReferencePayload`, `NotificationRestorePayload`.
 
 ## Types, selectors, config
 
-**`src/types/domain.ts`** — `UserRole = 'superadmin'|'admin'|'nurse'|'resident'|'consultant'`; `ReportFamily = 'inpatient'|'outpatient'|'procedure'`; `ReportStatus = 'not_started'|'draft'|'submitted'|'edited_after_submission'|'locked'|'overdue'` (UI/derived; `StoredReportStatus` is the persisted subset); `FieldKind`, `FieldAggregate`, `MetricFormat`; entities `UserProfile`, `Department` (`family`, `templateId`, `accent`, optional `bedCount`), template-config types (`ReportTemplateField`, `TemplateSection`, `SummaryCardConfig`, `ChartMappingConfig`, `ChangeWatchRule`, `ReportTemplateConfig`), `ReportAssignment`, `AccessRequest`, `ReportingPeriod`, `ReportFieldValue` (`dailyValues: Partial<Record<Weekday, CellValue>>`, `CellValue = number|string|null`), `CalculatedMetricSet`, `ReportRecord` (incl. `values: Record<fieldId, ReportFieldValue>` and `calculatedMetrics`), `NotificationItem`, `AppSettings`, `AppState`.
+**`src/types/domain.ts`** - `UserRole = 'superadmin'|'admin'|'nurse'|'resident'|'consultant'`; `ReportFamily = 'inpatient'|'outpatient'|'procedure'`; `ReportStatus = 'not_started'|'draft'|'submitted'|'edited_after_submission'|'locked'|'overdue'` (UI/derived; `StoredReportStatus` is the persisted subset); `FieldKind`, `FieldAggregate`, `MetricFormat`; entities `UserProfile`, `Department` (`family`, `templateId`, `accent`, optional `bedCount`), template-config types (`ReportTemplateField`, `TemplateSection`, `SummaryCardConfig`, `ChartMappingConfig`, `ChangeWatchRule`, `ReportTemplateConfig`), `ReportAssignment`, `AccessRequest`, `ReportingPeriod`, `ReportFieldValue` (`dailyValues: Partial<Record<Weekday, CellValue>>`, `CellValue = number|string|null`), `CalculatedMetricSet`, `ReportRecord` (incl. `values: Record<fieldId, ReportFieldValue>` and `calculatedMetrics`), `NotificationItem`, `AppSettings`, `AppState`.
 
-**`src/data/selectors.ts`** — pure functions over `AppState`; the model is weekly (each `ReportFieldValue` holds a Mon–Sun `dailyValues` map; selectors aggregate via `sumField`/`computeWeeklyValue`). A hard floor `liveReportingStartDate = 2026-03-02` excludes legacy periods.
+**`src/data/selectors.ts`** - pure functions over `AppState`; the model is weekly (each `ReportFieldValue` holds a Mon–Sun `dailyValues` map; selectors aggregate via `sumField`/`computeWeeklyValue`). A hard floor `liveReportingStartDate = 2026-03-02` excludes legacy periods.
 - **Periods:** `getSortedReportingPeriods`, `getCurrentPeriod`, `getVisibleReportingPeriods`, `getPreviousPeriod`, `getReportingPeriodsForRange(range, anchor)` where `range: 'current'|'last4'|'last8'|'all'`.
 - **Lookups:** `getCurrentUser`, `getAssignmentsForUser`, `getReportForAssignmentPeriod`, `getAssignmentCardsForPeriod`/`getCurrentWeekAssignmentCards`.
 - **Status derivation:** `deriveReportStatusForPeriod`/`deriveReportStatus` encode the rules (no period→not_started; deadline-enforced past deadline via `isPastDeadline`; locked→locked; draft past deadline→overdue; else stored status).
@@ -691,7 +691,7 @@ A hand-rolled typed client shaped like the old Supabase client to minimize migra
 - **Trends/charts:** inpatient/outpatient/procedure weekly+monthly series + mix breakdowns driven by `PROCEDURE_SERVICE_DEFINITIONS`; generic `getTrendSeries`, `getDepartmentComparisonData`.
 - **Insights/detail:** `getWhatChangedThisWeek`, `getRecentNotifications`, `getUnreadNotificationCount`, `getDepartmentDetail`, `getLockDeadlineNote`.
 
-**`src/config/templates.ts`** — the static, **slug-based** catalog of 9 report templates and 27 departments (matching the seeded backend). Field builders (`numericField`, `decimalAverageField`, `timeField`, `textField`, `choiceField`) keep definitions DRY. `templateMap`/`departmentMap` are id→config lookups. These maps bridge **slug-based** client identifiers (selectors, routing params, `assignUserToDepartment`) to the Laravel DB ids (resolved at runtime via `ApiReferenceState`/`resolveAssignmentReference`).
+**`src/config/templates.ts`** - the static, **slug-based** catalog of 9 report templates and 27 departments (matching the seeded backend). Field builders (`numericField`, `decimalAverageField`, `timeField`, `textField`, `choiceField`) keep definitions DRY. `templateMap`/`departmentMap` are id→config lookups. These maps bridge **slug-based** client identifiers (selectors, routing params, `assignUserToDepartment`) to the Laravel DB ids (resolved at runtime via `ApiReferenceState`/`resolveAssignmentReference`).
 
 ---
 
@@ -709,13 +709,13 @@ Tailwind CSS v4 via `@tailwindcss/vite` (no `tailwind.config.js`; tokens in `src
 
 | Token | Hex | Role |
 |---|---|---|
-| brand-primary / admin-blue | `#005db6` | Primary blue — buttons, eyebrows, links, accents |
+| brand-primary / admin-blue | `#005db6` | Primary blue - buttons, eyebrows, links, accents |
 | brand-primary-strong | `#00468c` | Hover/darker blue |
 | admin-navy | `#002147` | Deep navy (PWA theme, dark buttons, CSV export) |
-| admin-ink | `#000a1e` | Near-black — headings, sidebar gradient start, dark panels |
-| brand-accent / admin-gold | `#f0b429` | Gold accent — active nav, request-access CTA, chart highlight |
+| admin-ink | `#000a1e` | Near-black - headings, sidebar gradient start, dark panels |
+| brand-accent / admin-gold | `#f0b429` | Gold accent - active nav, request-access CTA, chart highlight |
 | brand-accent-strong | `#dea11b` | Gold hover |
-| admin-blue-soft | `#63a1ff` | Light blue — gradient mids |
+| admin-blue-soft | `#63a1ff` | Light blue - gradient mids |
 | admin-bg | `#f8f9fa` | App background |
 | section panel | `#eef2f6` / `#f1f4f7` | Dominant card surface for page sections |
 | admin-surface | `#ffffff` | White cards/inner surfaces |
@@ -723,9 +723,9 @@ Tailwind CSS v4 via `@tailwindcss/vite` (no `tailwind.config.js`; tokens in `src
 | body text | `#091223` / `#000a1e` | Primary text |
 | borders | `#d4dde8`, `#d9e0e7`, `#c4c6cf` | Hairline borders/outlines |
 
-**Status semantic colors** (consistent across `Badge`/`StatusBadge`/tiles): Not started — bg `#edf1f5` text `#44474e`; Draft (info) — bg `#edf4fb` text `#005db6` border `#cfe0f4`; Submitted (success) — bg `#edf7f0` text `#1f6b3b` border `#cfe7d9`; Edited (warning) — bg `#fbf4e6` text `#8a5a00` border `#edd9b0`; Overdue (danger) — bg `#fff1f1` text `#b42318`/`#ba1a1a` border `#f1d1d1`. `#ba1a1a` is the canonical error red; emerald/rose denote Active/Inactive users.
+**Status semantic colors** (consistent across `Badge`/`StatusBadge`/tiles): Not started - bg `#edf1f5` text `#44474e`; Draft (info) - bg `#edf4fb` text `#005db6` border `#cfe0f4`; Submitted (success) - bg `#edf7f0` text `#1f6b3b` border `#cfe7d9`; Edited (warning) - bg `#fbf4e6` text `#8a5a00` border `#edd9b0`; Overdue (danger) - bg `#fff1f1` text `#b42318`/`#ba1a1a` border `#f1d1d1`. `#ba1a1a` is the canonical error red; emerald/rose denote Active/Inactive users.
 
-**Light mode only** — no dark toggle. "Dark" surfaces are intentional emphasis: navy sidebar, `InsightPanel` (`bg-[#000a1e]`), `AdminPageHero` stats panel, login left panel, access-request hero. The global `body` has a layered aurora background (radial gradients over a light blue linear gradient), a faint 72px grid (`body::before`), drifting blobs (`body::after`, `@keyframes aurora-drift`), and custom thin scrollbars. Login-only keyframes drive ambient effects. **All decorative motion is disabled under `@media (prefers-reduced-motion: reduce)`.** Two global button classes `.auth-primary-button` (blue) and `.auth-accent-button` (gold) are reused by the cva `Button` default and auth pages.
+**Light mode only** - no dark toggle. "Dark" surfaces are intentional emphasis: navy sidebar, `InsightPanel` (`bg-[#000a1e]`), `AdminPageHero` stats panel, login left panel, access-request hero. The global `body` has a layered aurora background (radial gradients over a light blue linear gradient), a faint 72px grid (`body::before`), drifting blobs (`body::after`, `@keyframes aurora-drift`), and custom thin scrollbars. Login-only keyframes drive ambient effects. **All decorative motion is disabled under `@media (prefers-reduced-motion: reduce)`.** Two global button classes `.auth-primary-button` (blue) and `.auth-accent-button` (gold) are reused by the cva `Button` default and auth pages.
 
 **Shape language.** Corners are deliberately **small/squared**: `rounded-[0.35rem]` (sections/cards), `rounded-[0.25rem]` (buttons/chips/inputs/badges), `rounded-[0.5rem]` (a few larger panels); login inputs are `rounded-none` with a bottom border only. **Avoid pill / `rounded-2xl` for new primitives.** Surfaces favor `outline outline-1 outline-[#d4dde8]/65` over `border`; shadows are soft, navy-tinted, "lifted from below" (e.g. `shadow-[0_24px_60px_-42px_rgba(0,33,71,0.45)]`).
 
@@ -747,20 +747,20 @@ All accept `className` merged via `cn()`. Radix-based ones forward props through
 | `sheet.tsx` | Radix Dialog | side drawer, **navy gradient bg, white text**; used for mobile nav. |
 | `avatar.tsx` | Radix Avatar | fallback initials; shell overrides to `rounded-[0.35rem]` light-blue. |
 
-**No Dialog/Modal, Table, Tooltip, Popover, Progress, or DropdownMenu primitive is in active use** — tables are hand-built CSS `grid` layouts, tooltips are Recharts-only. New screens should follow the **grid-as-table** and **section-panel** patterns.
+**No Dialog/Modal, Table, Tooltip, Popover, Progress, or DropdownMenu primitive is in active use** - tables are hand-built CSS `grid` layouts, tooltips are Recharts-only. New screens should follow the **grid-as-table** and **section-panel** patterns.
 
 ## Layout shell (`src/components/layout/`)
 
-**`app-shell.tsx`** — the authenticated chrome (renders only when `currentUser` exists; otherwise passes children through, so auth pages render full-bleed).
+**`app-shell.tsx`** - the authenticated chrome (renders only when `currentUser` exists; otherwise passes children through, so auth pages render full-bleed).
 - **Sidebar (`<aside>`):** fixed left, `hidden sm:block`, navy gradient `linear-gradient(150deg,#000a1e,#07162f,#002147)`. Width animates `w-[292px]` ↔ `w-[84px]`; collapse state persists in `localStorage` key `stpaul:sidebar-collapsed`. Contains the **BrandLockup** (St Paulos logo + "St. Paul Hospital" / "Internal Medicine"), **SidebarNav** (maps `navigationByRole[role]`; active = left gold border `#f0b429`, white text, gold icon, `bg-white/[0.04]`), and a reporting-week footer.
 - **Header (`<header>`):** sticky, `bg-[#f8f9fa]/96 backdrop-blur-sm`. Left: mobile hamburger (opens left `Sheet`), desktop collapse toggle, a "Live reporting period" chip. Right: **Sync indicator** (chip + animated ping dot when `isSyncing`, via `useAppSync()`), **Notifications bell** (unread `bg-[#ba1a1a]` `pulse-ring` badge), **User chip** (avatar initials + name + uppercase title + `LogOut`).
 - **Main:** `<main className="min-w-0 flex-1">`; content wrapper left padding animates with the sidebar.
 - **Dev only:** `ViewportDebugReadout` (gated by `import.meta.env.DEV`).
 - **Breakpoints:** phone `<640` (mobile nav via Sheet), tablet `640–1024`, desktop `≥1024`. `sm:` (640) toggles the sidebar; admin two-column grids collapse at `xl` (1280).
 
-**`app-state-screen.tsx`** — full-screen status card (loading / config-required / error / info) with a gradient top bar `linear-gradient(90deg,#005db6,#63a1ff,#f0b429)`, logo lockup, tone-colored eyebrow + icon (`CircleDashed`/`Wrench`/`AlertTriangle`/`ShieldCheck`), display `<h1>`, description, optional `detail` block. Tone inferred from the title text.
+**`app-state-screen.tsx`** - full-screen status card (loading / config-required / error / info) with a gradient top bar `linear-gradient(90deg,#005db6,#63a1ff,#f0b429)`, logo lockup, tone-colored eyebrow + icon (`CircleDashed`/`Wrench`/`AlertTriangle`/`ShieldCheck`), display `<h1>`, description, optional `detail` block. Tone inferred from the title text.
 
-**`src/config/navigation.ts`** — `navigationByRole: Record<UserRole, NavigationItem[]>` (`{label, href, icon}`).
+**`src/config/navigation.ts`** - `navigationByRole: Record<UserRole, NavigationItem[]>` (`{label, href, icon}`).
 - superadmin/admin (identical): Dashboard `/admin`, Submissions `/admin/submissions`, Users & Access `/admin/users`, Templates `/admin/templates`, Audit Log `/admin/audit`, Settings `/admin/settings`.
 - nurse: Home `/nurse`, My Reports `/nurse/reports`, Access Request `/register`, Activity `/nurse/activity`.
 - `/admin/manual-admin-setup` is intentionally **not** in nav (hidden bootstrap route).
@@ -776,41 +776,41 @@ All accept `className` merged via `cn()`. Radix-based ones forward props through
 
 ## Key feature components
 
-- **`reports/report-form.tsx`** — the core weekly data-entry experience (`ReportFormPage` reads `:assignmentId/:periodId`). Per-field Zod schema from the template (`createTemplateSchema`; numerics non-negative ≤1e9, `time` `HH:MM`, `choice` ∈ options, text ≤120), `mode: 'onChange'`. Header section (status chip + 4-tile summary). **Autosave** debounces 1400ms (saves `{submit:false}` when dirty+valid+editable, resets the form, sets a "Draft autosaved" label; `beforeunload` guard). The grid per template section has **two layouts**: desktop (`hidden xl:block`) horizontally-scrollable CSS grid `minmax(220px,2fr) repeat(activeDays, minmax(76px,0.9fr)) minmax(96px,0.95fr)`; mobile (`xl:hidden`) stacked cards. `FieldInput` picks the control by `field.kind` (choice→Select, name-text→Input, text→Textarea, integer/decimal→numeric Input, time→`<input type="time">`). Sticky footer `sticky bottom-4`. `ReportStatePanel` covers loading/restricted/no-report states.
-- **`dashboard/chart-card.tsx` (`ChartCard`)** — `motion.div` over a `Card` (`bg-[#eef2f6] shadow-none`) with a white inner box; generic chart container.
-- **`dashboard/status-badge.tsx` (`StatusBadge`)** — the single source of truth mapping each `ReportStatus` to a `Badge` variant + lucide icon + label.
-- **`dashboard/insight-panel.tsx` (`InsightPanel`)** — dark navy card (`bg-[#000a1e] text-white`) with a gold `Lightbulb` and a stagger-animated list of "what changed" strings.
-- **`dashboard/submission-board-grid.tsx` (`SubmissionBoardGrid`)** — the matrix board (admin Submissions + nurse selection). `md+` CSS grid `minmax(180px,1.2fr) minmax(160px,1fr) repeat(4, minmax(120px,1fr))`; each cell is a `<Link>` to the report, status-tinted with a `StatusBadge`.
-- **`admin/admin-page-hero.tsx` (`AdminPageHero`)** — large hero (`#eef2f6`) in `grid xl:grid-cols-[1fr_320px]`; left eyebrow + big display title + description + optional `meta`/`actions`; right optional dark navy "Weekly posture" stats panel. `PageHeader` (`layout/page-header.tsx`) is a thin wrapper.
-- **`admin/reporting-scope-panel.tsx` (`ReportingScopePanel`)** — the standard filter bar: `#f8fafc` outlined box of labeled `Select`s (auto-fit columns) + optional tone-colored metric tiles. Used by admin Dashboard, Submissions, Audit, Department Detail. **New admin filter UIs should reuse this.**
-- **`reports/report-assignment-card.tsx`** — the nurse's report tile: white card with hover lift, period eyebrow, display department name, template, `StatusBadge`, state chips, "Last update" box, and an "Open report"/"View report" `Button asChild` `<Link>`.
+- **`reports/report-form.tsx`** - the core weekly data-entry experience (`ReportFormPage` reads `:assignmentId/:periodId`). Per-field Zod schema from the template (`createTemplateSchema`; numerics non-negative ≤1e9, `time` `HH:MM`, `choice` ∈ options, text ≤120), `mode: 'onChange'`. Header section (status chip + 4-tile summary). **Autosave** debounces 1400ms (saves `{submit:false}` when dirty+valid+editable, resets the form, sets a "Draft autosaved" label; `beforeunload` guard). The grid per template section has **two layouts**: desktop (`hidden xl:block`) horizontally-scrollable CSS grid `minmax(220px,2fr) repeat(activeDays, minmax(76px,0.9fr)) minmax(96px,0.95fr)`; mobile (`xl:hidden`) stacked cards. `FieldInput` picks the control by `field.kind` (choice→Select, name-text→Input, text→Textarea, integer/decimal→numeric Input, time→`<input type="time">`). Sticky footer `sticky bottom-4`. `ReportStatePanel` covers loading/restricted/no-report states.
+- **`dashboard/chart-card.tsx` (`ChartCard`)** - `motion.div` over a `Card` (`bg-[#eef2f6] shadow-none`) with a white inner box; generic chart container.
+- **`dashboard/status-badge.tsx` (`StatusBadge`)** - the single source of truth mapping each `ReportStatus` to a `Badge` variant + lucide icon + label.
+- **`dashboard/insight-panel.tsx` (`InsightPanel`)** - dark navy card (`bg-[#000a1e] text-white`) with a gold `Lightbulb` and a stagger-animated list of "what changed" strings.
+- **`dashboard/submission-board-grid.tsx` (`SubmissionBoardGrid`)** - the matrix board (admin Submissions + nurse selection). `md+` CSS grid `minmax(180px,1.2fr) minmax(160px,1fr) repeat(4, minmax(120px,1fr))`; each cell is a `<Link>` to the report, status-tinted with a `StatusBadge`.
+- **`admin/admin-page-hero.tsx` (`AdminPageHero`)** - large hero (`#eef2f6`) in `grid xl:grid-cols-[1fr_320px]`; left eyebrow + big display title + description + optional `meta`/`actions`; right optional dark navy "Weekly posture" stats panel. `PageHeader` (`layout/page-header.tsx`) is a thin wrapper.
+- **`admin/reporting-scope-panel.tsx` (`ReportingScopePanel`)** - the standard filter bar: `#f8fafc` outlined box of labeled `Select`s (auto-fit columns) + optional tone-colored metric tiles. Used by admin Dashboard, Submissions, Audit, Department Detail. **New admin filter UIs should reuse this.**
+- **`reports/report-assignment-card.tsx`** - the nurse's report tile: white card with hover lift, period eyebrow, display department name, template, `StatusBadge`, state chips, "Last update" box, and an "Open report"/"View report" `Button asChild` `<Link>`.
 
 ## Page-by-page map
 
 **Auth (public, full-bleed, no shell)**
-- **Login** `src/pages/auth/login-page.tsx` · `/login` — signature split-screen: navy gradient left panel with a Manrope headline "Weekly Reporting **& Review Dashboard**", white right form with **underline-style inputs** (`rounded-none border-b-2`) for username/email + password (show/hide), "Forgot password?" link, blue submit, gold "Request access", technical-support footer (`src/config/support.ts`). Preloads dashboards on idle.
-- **Forgot password** `forgot-password-page.tsx` · `/forgot-password` — centered white card, one email input, "Send reset link".
-- **Reset password** `reset-password-page.tsx` · `/reset-password` — new + confirm password (validates length ≥8 and match), navigates to `/login` on success.
-- **Access request** `access-request-page.tsx` · `/register` — public (new account) and signed-in (request more). Elaborate: `xl:grid-cols-[1fr_380px]` with a dark navy "01 Profile / 02 Assignments / 03 Review" hero, a Profile panel, a department chooser grouped by service line (accent-topped checkbox cards), an optional reviewer note, and a sticky right "Review and submit" summary with the gold submit CTA.
+- **Login** `src/pages/auth/login-page.tsx` · `/login` - signature split-screen: navy gradient left panel with a Manrope headline "Weekly Reporting **& Review Dashboard**", white right form with **underline-style inputs** (`rounded-none border-b-2`) for username/email + password (show/hide), "Forgot password?" link, blue submit, gold "Request access", technical-support footer (`src/config/support.ts`). Preloads dashboards on idle.
+- **Forgot password** `forgot-password-page.tsx` · `/forgot-password` - centered white card, one email input, "Send reset link".
+- **Reset password** `reset-password-page.tsx` · `/reset-password` - new + confirm password (validates length ≥8 and match), navigates to `/login` on success.
+- **Access request** `access-request-page.tsx` · `/register` - public (new account) and signed-in (request more). Elaborate: `xl:grid-cols-[1fr_380px]` with a dark navy "01 Profile / 02 Assignments / 03 Review" hero, a Profile panel, a department chooser grouped by service line (accent-topped checkbox cards), an optional reviewer note, and a sticky right "Review and submit" summary with the gold submit CTA.
 
 **Nurse**
-- **Dashboard** `nurse/nurse-dashboard-page.tsx` · `/nurse` — hero + 4-tile summary (Assigned/Drafts/Locked/Unread), `xl:grid-cols-[1.08fr_0.92fr]` (assigned-reports grid of `ReportAssignmentCard`s + latest-activity notifications list), access CTA strip.
-- **My Reports** `report-selection-page.tsx` · `/nurse/reports` — hero with service-line filter buttons + 4-tile summary, period `Select` + `ReportAssignmentCard` grid, a `SubmissionBoardGrid` of the nurse's own rows.
-- **Activity** `activity-page.tsx` · `/nurse/activity` — hero + 4-tile summary, a "Recent changes" timeline (`lg:grid-cols-[1fr_220px]` rows with service `Badge` + `StatusBadge` + change note + actor + timestamp).
+- **Dashboard** `nurse/nurse-dashboard-page.tsx` · `/nurse` - hero + 4-tile summary (Assigned/Drafts/Locked/Unread), `xl:grid-cols-[1.08fr_0.92fr]` (assigned-reports grid of `ReportAssignmentCard`s + latest-activity notifications list), access CTA strip.
+- **My Reports** `report-selection-page.tsx` · `/nurse/reports` - hero with service-line filter buttons + 4-tile summary, period `Select` + `ReportAssignmentCard` grid, a `SubmissionBoardGrid` of the nurse's own rows.
+- **Activity** `activity-page.tsx` · `/nurse/activity` - hero + 4-tile summary, a "Recent changes" timeline (`lg:grid-cols-[1fr_220px]` rows with service `Badge` + `StatusBadge` + change note + actor + timestamp).
 
 **Admin (superadmin/admin)**
-- **Dashboard** `admin/admin-dashboard-page.tsx` · `/admin` — the analytics centerpiece (~2400 lines). Hero with status pills + a navy **Export CSV** link (`<a>` to `${apiEnv.baseUrl}/api/analytics/export`); a `ReportingScopePanel` (Time range / Ending period / Service line) + a Weekly/Monthly segmented toggle. **Submission pulse**: donut `PieChart` (animated center `AnimatedMetric`) + status ledger + delivered/open/overdue trend (`AreaChart`/`BarChart`). **Per-service-line sections** (Inpatient: ward movement + BOR/BTR/ALOS; Outpatient: seen vs not-seen, follow-up wait, availability stacked bars; Procedures: throughput, dialysis split, endoscopy mix) in white-gradient `chartPanelClass` panels with the restrained blue/navy/gold/steel palette.
-- **Submissions** `submission-board-page.tsx` · `/admin/submissions` — `ReportingScopePanel` (+ Status) + 4-tile summary + full-org `SubmissionBoardGrid`.
-- **Users & Access** `user-management-page.tsx` · `/admin/users` — hero + 4-tile summary; **Access requests** queue (Approve secondary / Reject destructive) + **Assignment studio** (two `Select`s + preview + "Add assignment"); **Active roster** cards (role `Badge`, Active/Inactive emerald/rose chip, assignment `Checkbox` toggles, Deactivate/Activate protected for admins unless superadmin).
-- **Templates** `template-management-page.tsx` · `/admin/templates` — `Tabs` (Inpatient/Outpatient/Procedures, navy-active squared); per-template `xl:grid-cols-[1.2fr_0.8fr]` panel (day chips, sections, summary-metric `Badge`s; signal rules with gold % chips). Read-only display of config.
-- **Department detail** `department-detail-page.tsx` · `/admin/departments/:departmentId` — `PageHeader` + `ReportingScopePanel` + 4-up summary `Card`s + `2xl:grid-cols-[1.35fr_1fr]` (historical trend `LineChart` beside the dark `InsightPanel`) + current report state + audit highlights.
-- **Audit log** `audit-log-page.tsx` · `/admin/audit` — hero + 4-tile summary + `ReportingScopePanel` (Department); "Audit stream" rows (`lg:grid-cols-[1.2fr_0.95fr_180px]`) with Before/After boxes (`ArrowRightLeft`).
-- **Settings** `settings-page.tsx` · `/admin/settings` — hero + 4-tile summary; `xl:grid-cols-[1.05fr_0.95fr]` (Rule settings form: `Switch` enforce-deadlines, deadline day/time `Select`s, auto-lock hours, rise/drop thresholds, live "Unsaved/Saved" chip, "Save settings"; right Current-week preview panel + critical-fields coverage).
-- **Manual admin setup** `manual-admin-setup-page.tsx` · `/admin/manual-admin-setup` (hidden, redirects ineligible users) — **Claim superadmin** form (shown only when no superadmin exists) and, for superadmins, a **Create admin user** form + restricted admin roster.
+- **Dashboard** `admin/admin-dashboard-page.tsx` · `/admin` - the analytics centerpiece (~2400 lines). Hero with status pills + a navy **Export CSV** link (`<a>` to `${apiEnv.baseUrl}/api/analytics/export`); a `ReportingScopePanel` (Time range / Ending period / Service line) + a Weekly/Monthly segmented toggle. **Submission pulse**: donut `PieChart` (animated center `AnimatedMetric`) + status ledger + delivered/open/overdue trend (`AreaChart`/`BarChart`). **Per-service-line sections** (Inpatient: ward movement + BOR/BTR/ALOS; Outpatient: seen vs not-seen, follow-up wait, availability stacked bars; Procedures: throughput, dialysis split, endoscopy mix) in white-gradient `chartPanelClass` panels with the restrained blue/navy/gold/steel palette.
+- **Submissions** `submission-board-page.tsx` · `/admin/submissions` - `ReportingScopePanel` (+ Status) + 4-tile summary + full-org `SubmissionBoardGrid`.
+- **Users & Access** `user-management-page.tsx` · `/admin/users` - hero + 4-tile summary; **Access requests** queue (Approve secondary / Reject destructive) + **Assignment studio** (two `Select`s + preview + "Add assignment"); **Active roster** cards (role `Badge`, Active/Inactive emerald/rose chip, assignment `Checkbox` toggles, Deactivate/Activate protected for admins unless superadmin).
+- **Templates** `template-management-page.tsx` · `/admin/templates` - `Tabs` (Inpatient/Outpatient/Procedures, navy-active squared); per-template `xl:grid-cols-[1.2fr_0.8fr]` panel (day chips, sections, summary-metric `Badge`s; signal rules with gold % chips). Read-only display of config.
+- **Department detail** `department-detail-page.tsx` · `/admin/departments/:departmentId` - `PageHeader` + `ReportingScopePanel` + 4-up summary `Card`s + `2xl:grid-cols-[1.35fr_1fr]` (historical trend `LineChart` beside the dark `InsightPanel`) + current report state + audit highlights.
+- **Audit log** `audit-log-page.tsx` · `/admin/audit` - hero + 4-tile summary + `ReportingScopePanel` (Department); "Audit stream" rows (`lg:grid-cols-[1.2fr_0.95fr_180px]`) with Before/After boxes (`ArrowRightLeft`).
+- **Settings** `settings-page.tsx` · `/admin/settings` - hero + 4-tile summary; `xl:grid-cols-[1.05fr_0.95fr]` (Rule settings form: `Switch` enforce-deadlines, deadline day/time `Select`s, auto-lock hours, rise/drop thresholds, live "Unsaved/Saved" chip, "Save settings"; right Current-week preview panel + critical-fields coverage).
+- **Manual admin setup** `manual-admin-setup-page.tsx` · `/admin/manual-admin-setup` (hidden, redirects ineligible users) - **Claim superadmin** form (shown only when no superadmin exists) and, for superadmins, a **Create admin user** form + restricted admin roster.
 
 **Top-level**
-- **Notifications** `notifications-page.tsx` · `/notifications` and `/admin/notifications` — hero with Mark all read / Restore last clear / Clear inbox + 4-tile summary; inbox of `<Link>` cards routed by `notification.relatedRoute`, each with a type-specific icon tile (`notificationMeta` maps the 8 `NotificationType`s). Clearing snapshots to `sessionStorage` for restore.
-- **Not found** `not-found-page.tsx` · `*` — centered `Card` with "Return to login".
+- **Notifications** `notifications-page.tsx` · `/notifications` and `/admin/notifications` - hero with Mark all read / Restore last clear / Clear inbox + 4-tile summary; inbox of `<Link>` cards routed by `notification.relatedRoute`, each with a type-specific icon tile (`notificationMeta` maps the 8 `NotificationType`s). Clearing snapshots to `sessionStorage` for restore.
+- **Not found** `not-found-page.tsx` · `*` - centered `Card` with "Return to login".
 
 ## Visual identity summary (for matching new screens)
 
@@ -831,7 +831,7 @@ server: {
 },
 ```
 
-**Why it exists.** Sanctum SPA auth is cookie + session based. After `GET /sanctum/csrf-cookie`, Laravel sets the session cookie (e.g. `st-paul-reporting-api-session`, `HttpOnly`) and `XSRF-TOKEN` (JS-readable). Both are `SameSite=lax` (`config/session.php → same_site = 'lax'`). A `SameSite=lax` cookie is only sent on **same-site** requests, and **`localhost` and `127.0.0.1` are different sites to the browser** even though they resolve to the same host. The dev SPA runs on `http://localhost:5173`, the API on `http://127.0.0.1:8000` — a direct cross-origin XHR would drop the cookie or be blocked. The proxy fixes this: the browser only talks to the **Vite origin**, and Vite forwards `/api/*` and `/sanctum/*` server-side, so from the browser's perspective SPA and API are the *same origin* and cookies "just work." `changeOrigin: false` keeps the `Host` header as the Vite origin so Sanctum still recognizes the stateful domain.
+**Why it exists.** Sanctum SPA auth is cookie + session based. After `GET /sanctum/csrf-cookie`, Laravel sets the session cookie (e.g. `st-paul-reporting-api-session`, `HttpOnly`) and `XSRF-TOKEN` (JS-readable). Both are `SameSite=lax` (`config/session.php → same_site = 'lax'`). A `SameSite=lax` cookie is only sent on **same-site** requests, and **`localhost` and `127.0.0.1` are different sites to the browser** even though they resolve to the same host. The dev SPA runs on `http://localhost:5173`, the API on `http://127.0.0.1:8000` - a direct cross-origin XHR would drop the cookie or be blocked. The proxy fixes this: the browser only talks to the **Vite origin**, and Vite forwards `/api/*` and `/sanctum/*` server-side, so from the browser's perspective SPA and API are the *same origin* and cookies "just work." `changeOrigin: false` keeps the `Host` header as the Vite origin so Sanctum still recognizes the stateful domain.
 
 `manualChunks` (in `build.rollupOptions.output`) splits vendor code: `recharts`→`charts`, `framer-motion`→`motion`, `@radix-ui`→`radix-ui`, react/react-dom/react-router→`react-core`, rest of `node_modules`→`vendor`.
 
@@ -843,11 +843,11 @@ export const apiEnv = { baseUrl: rawApiBaseUrl?.trim().replace(/\/+$/, '') || nu
 export const isApiConfigured = !!apiEnv.baseUrl
 ```
 
-- **Locally** set to the **Vite origin** (e.g. `http://localhost:5173`), *not* the Laravel port — the client issues requests to `http://localhost:5173/api/...` which the proxy forwards. Pointing it at `:8000` would reintroduce the cross-site cookie problem.
+- **Locally** set to the **Vite origin** (e.g. `http://localhost:5173`), *not* the Laravel port - the client issues requests to `http://localhost:5173/api/...` which the proxy forwards. Pointing it at `:8000` would reintroduce the cross-site cookie problem.
 - **In production** it points at the real same-origin/same-site API host.
 - If unset, `isApiConfigured` is false, `getApiBrowserClient()` returns `null`, every context handler early-returns, and the app renders the "Laravel API Configuration Required" `AppStateScreen`.
 
-## API client behaviors (Sanctum/CSRF) — see also Frontend → API client
+## API client behaviors (Sanctum/CSRF) - see also Frontend → API client
 
 CSRF priming before unsafe methods; `credentials: 'include'` always; `X-XSRF-TOKEN` echoed from the cookie; query booleans serialized as `1`/`0`; mid-session 401 → `markSignedOut()` → `SIGNED_OUT` → redirect to `/login`; failures throw `ApiError`; `errorMessage()` surfaces `{message}` or the first `{errors:{...}}` entry into toasts.
 
@@ -859,7 +859,7 @@ CSRF priming before unsafe methods; `credentials: 'include'` always; `X-XSRF-TOK
 'allowed_origins' => explode(',', env('CORS_ALLOWED_ORIGINS', env('FRONTEND_URL', 'http://localhost:5173'))),
 'supports_credentials' => true,
 ```
-`supports_credentials => true` is **mandatory** for cookie auth (emits `Access-Control-Allow-Credentials: true`). Because credentials are on, `allowed_origins` **cannot be `*`** — it's an explicit list from `CORS_ALLOWED_ORIGINS` (defaults to `FRONTEND_URL`). In dev the proxy means CORS rarely triggers, but the config must still be correct for production.
+`supports_credentials => true` is **mandatory** for cookie auth (emits `Access-Control-Allow-Credentials: true`). Because credentials are on, `allowed_origins` **cannot be `*`** - it's an explicit list from `CORS_ALLOWED_ORIGINS` (defaults to `FRONTEND_URL`). In dev the proxy means CORS rarely triggers, but the config must still be correct for production.
 
 **`backend/config/sanctum.php`**
 ```php
@@ -867,9 +867,9 @@ CSRF priming before unsafe methods; `credentials: 'include'` always; `X-XSRF-TOK
   'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,::1'.Sanctum::currentApplicationUrlWithPort())),
 'guard' => ['web'],
 ```
-`SANCTUM_STATEFUL_DOMAINS` lists every origin that should get **stateful session-cookie auth** (`.env.example` sets `localhost:5173,127.0.0.1:5173,localhost,127.0.0.1`). **In production drop the localhost entries and add the real frontend host** — a request from a non-listed domain falls back to bearer-token auth and the SPA session won't work. `guard => ['web']` ties Sanctum to the web session guard.
+`SANCTUM_STATEFUL_DOMAINS` lists every origin that should get **stateful session-cookie auth** (`.env.example` sets `localhost:5173,127.0.0.1:5173,localhost,127.0.0.1`). **In production drop the localhost entries and add the real frontend host** - a request from a non-listed domain falls back to bearer-token auth and the SPA session won't work. `guard => ['web']` ties Sanctum to the web session guard.
 
-**`backend/config/session.php`** — `driver` = `SESSION_DRIVER` (`database` in `.env.example`, `array` in phpunit); `same_site = 'lax'`; `secure` = `SESSION_SECURE_COOKIE` (false local http, **must be true in production https**); `http_only = true` (session cookie not JS-readable; `XSRF-TOKEN` is the JS-readable one); `domain` = `SESSION_DOMAIN` (set in prod if SPA + API share a parent domain).
+**`backend/config/session.php`** - `driver` = `SESSION_DRIVER` (`database` in `.env.example`, `array` in phpunit); `same_site = 'lax'`; `secure` = `SESSION_SECURE_COOKIE` (false local http, **must be true in production https**); `http_only = true` (session cookie not JS-readable; `XSRF-TOKEN` is the JS-readable one); `domain` = `SESSION_DOMAIN` (set in prod if SPA + API share a parent domain).
 
 ---
 
@@ -905,16 +905,15 @@ Set `VITE_API_BASE_URL=http://localhost:5173` (the Vite origin).
 
 Frontend combined gate: `npm run verify` = `lint` + `test:run` + `build`. Backend feature tests use `RefreshDatabase`, seed the domain, and drive endpoints with `$this->actingAs($user)->getJson(...)->assertJsonPath(...)` (canonical pattern: `tests/Feature/WorkspaceApiTest.php`).
 
-## Build & Deploy (two independent deploys)
+## Build and deploy
 
-- **Frontend → Cloudflare Pages.** `npm run build` = `tsc -b && vite build` → `dist/`. `wrangler.toml` sets `pages_build_output_dir = "./dist"` (project `st-paul`). Set `VITE_API_BASE_URL` to the production API origin at build time; PWA assets ship with the build.
-- **Backend → separate Laravel host.** Standard deploy: install deps, `php artisan migrate --force`, `DB_CONNECTION=mariadb`, `SESSION_SECURE_COOKIE=true`, production `SANCTUM_STATEFUL_DOMAINS`/`CORS_ALLOWED_ORIGINS`, `APP_DEBUG=false`. Scheduled work (overdue reports, reminders, reporting-period creation, and queue draining) runs via the Laravel scheduler.
+Production uses one atomic on-premises release. `deploy/deploy.sh` creates an immutable release directory, installs dependencies, runs validation, verifies a pre-migration backup, migrates during maintenance mode, switches `/opt/imreport/current` atomically, and fails closed on health or readiness errors. Nginx serves `current/dist` and forwards API requests to `current/backend/public/index.php`.
 
 ---
 
 # Conventions & Gotchas
 
-**File organization & naming.** Frontend files are **kebab-case** (`app-data-context.tsx`); components/types PascalCase; `@/` → `src/`. The API layer is split by domain in `src/lib/api/*` with a barrel at `src/lib/api/index.ts` — **one deliberate exception: `realtime.ts` is NOT re-exported** (it statically imports `laravel-echo` + `pusher-js` ~40KB gz for an unwired feature). Backend follows Laravel conventions; models use `HasUuids` (string UUID PKs); serialization lives in `SerializesAdminResources` (snake_case columns → camelCase JSON).
+**File organization & naming.** Frontend files are **kebab-case** (`app-data-context.tsx`); components/types PascalCase; `@/` → `src/`. The API layer is split by domain in `src/lib/api/*` with a barrel at `src/lib/api/index.ts` - **one deliberate exception: `realtime.ts` is NOT re-exported** (it statically imports `laravel-echo` + `pusher-js` ~40KB gz for an unwired feature). Backend follows Laravel conventions; models use `HasUuids` (string UUID PKs); serialization lives in `SerializesAdminResources` (snake_case columns → camelCase JSON).
 
 **Validation.** Frontend: **Zod** + `react-hook-form` `zodResolver`; cross-field rules Zod can't express (password confirm) checked imperatively via `form.setError`. Backend: **inline `$request->validate([...])`** at the top of each action (no FormRequest classes), accepting **both** snake_case and camelCase keys (`'full_name'`/`'fullName'`, `required_without` pairs).
 
@@ -926,28 +925,28 @@ Frontend combined gate: `npm run verify` = `lint` + `test:run` + `build`. Backen
 
 ### Consolidated gotchas checklist
 
-1. **`useMemo` dep array** (`app-data-context.tsx`): every context handler must appear in **both** the `value` object AND that `useMemo`'s deps array — forgetting the dep array yields stale closures.
+1. **`useMemo` dep array** (`app-data-context.tsx`): every context handler must appear in **both** the `value` object AND that `useMemo`'s deps array - forgetting the dep array yields stale closures.
 2. **Barrel re-export:** add new `src/lib/api/*` modules to `index.ts`, but **never** let the barrel pull in `realtime.ts`.
 3. **The proxy / `VITE_API_BASE_URL`:** locally points at the **Vite origin** (`localhost:5173`), not the Laravel port, so `SameSite=lax` cookies stay same-site. Don't "fix" it to `:8000`.
 4. **Server-side authz is mandatory:** `permission:` route middleware + `Gate::authorize` in the action. Frontend guards/nav are UX only.
 5. **Two contexts:** data/handlers in `AppDataContext` (`useAppData`); only sync flags in `AppSyncContext` (`useAppSync`).
 6. **camelCase contract:** the backend serializer emits camelCase; the frontend `domain.ts` type must match exactly. Controllers accept both cases on input, but responses are camelCase.
-7. **Permission registration:** a new permission constant in `Permissions.php` auto-wires as a Gate via `AppServiceProvider::boot()` (`Permissions::all()`) — but you still must add it to the relevant `ROLE_PERMISSIONS` arrays, and **manually register new policies** with `Gate::policy(...)`.
+7. **Permission registration:** a new permission constant in `Permissions.php` auto-wires as a Gate via `AppServiceProvider::boot()` (`Permissions::all()`) - but you still must add it to the relevant `ROLE_PERMISSIONS` arrays, and **manually register new policies** with `Gate::policy(...)`.
 8. **Boolean query params** serialize as `1`/`0` (Laravel rejects `"true"`/`"false"`); the client does this automatically.
 9. **Realtime is unwired:** "live" admin refresh is a 20s poll + focus/visibility listener, not WebSockets.
-10. **Prod config:** `SESSION_SECURE_COOKIE=true`, real `SANCTUM_STATEFUL_DOMAINS`/`CORS_ALLOWED_ORIGINS`, `APP_DEBUG=false` (boot throws otherwise), `DB_CONNECTION=mariadb`. Frontend → Cloudflare Pages; backend → separate Laravel host.
+10. **Production config:** `SESSION_SECURE_COOKIE=true`, the internal HTTPS hostname in Sanctum and CORS configuration, `APP_DEBUG=false`, `DB_CONNECTION=mariadb`, `APP_TIMEZONE=UTC`, and `HOSPITAL_TIMEZONE=Africa/Nairobi`. SPA and API share the Nginx origin; hospital calendar dates and wall-clock schedules use Nairobi time while stored timestamps remain UTC.
 
 ---
 
 # How to Add a Feature (end-to-end playbook)
 
-The canonical, ordered recipe, using a running example: **"Incident Reports"** — a new entity `incidents`, admin-only CRUD, a new `/admin/incidents` page. The access-request flow (public submission + admin review) and the report flow are the two best end-to-end references.
+The canonical, ordered recipe, using a running example: **"Incident Reports"** - a new entity `incidents`, admin-only CRUD, a new `/admin/incidents` page. The access-request flow (public submission + admin review) and the report flow are the two best end-to-end references.
 
 > **Golden rule:** do the **backend first** and verify with a PHPUnit feature test before touching the frontend. The frontend is a thin client over the API.
 
-## PART A — Backend
+## PART A - Backend
 
-### A1. Migration — `backend/database/migrations/`
+### A1. Migration - `backend/database/migrations/`
 Copy `2026_05_25_180070_create_access_requests_table.php`. Use a UUID PK, `foreignUuid(...)->constrained(...)`, and the indexes you'll query on.
 ```php
 Schema::create('incidents', function (Blueprint $table) {
@@ -962,7 +961,7 @@ Schema::create('incidents', function (Blueprint $table) {
 ```
 Run `php artisan migrate`.
 
-### A2. Model — `backend/app/Models/`
+### A2. Model - `backend/app/Models/`
 Copy `AccessRequest.php`. Add `use HasUuids;`, `$fillable`, `casts()`, relationships.
 ```php
 class Incident extends Model {
@@ -972,7 +971,7 @@ class Incident extends Model {
 }
 ```
 
-### A3. Permission entries — `backend/app/Support/Authorization/Permissions.php`
+### A3. Permission entries - `backend/app/Support/Authorization/Permissions.php`
 Add constants and grant them in `ROLE_PERMISSIONS`. (`Permissions::all()` auto-registers every permission as a Gate in `AppServiceProvider::boot()`.)
 ```php
 public const INCIDENTS_VIEW   = 'incidents.view';
@@ -980,7 +979,7 @@ public const INCIDENTS_MANAGE = 'incidents.manage';
 // add to the 'superadmin','admin' arrays (and 'nurse' if applicable)
 ```
 
-### A4. Policy — `backend/app/Policies/`
+### A4. Policy - `backend/app/Policies/`
 Copy `AccessRequestPolicy.php` (uses `HandlesDomainAuthorization` → `isAdminLike($user)`).
 ```php
 class IncidentPolicy {
@@ -999,10 +998,10 @@ Gate::policy(Incident::class, IncidentPolicy::class);
 (`Gate::before` already short-circuits inactive users to `false`.)
 
 ### A5. Service (only if non-trivial logic)
-For multi-step write logic (transactions, notifications, side effects), extract a service like `App\Services\Admin\AccessRequestReviewService` and inject it into the controller constructor. Simple CRUD can live directly in the controller. (The access-request *review* delegates to a service; the *submission* controller does its transaction inline — both patterns are acceptable.)
+For multi-step write logic (transactions, notifications, side effects), extract a service like `App\Services\Admin\AccessRequestReviewService` and inject it into the controller constructor. Simple CRUD can live directly in the controller. (The access-request *review* delegates to a service; the *submission* controller does its transaction inline - both patterns are acceptable.)
 
-### A6. Controller — `backend/app/Http/Controllers/Api/Admin/`
-Copy `AccessRequestController.php`. Use `SerializesAdminResources` (add `serializeIncident()` — see A8), call `Gate::authorize(...)` at the top of every action, validate inline, return camelCase JSON under a `data` key (lists) or the bare object (show).
+### A6. Controller - `backend/app/Http/Controllers/Api/Admin/`
+Copy `AccessRequestController.php`. Use `SerializesAdminResources` (add `serializeIncident()` - see A8), call `Gate::authorize(...)` at the top of every action, validate inline, return camelCase JSON under a `data` key (lists) or the bare object (show).
 ```php
 class IncidentController extends Controller {
     use SerializesAdminResources;
@@ -1025,7 +1024,7 @@ class IncidentController extends Controller {
 }
 ```
 
-### A7. Routes — `backend/routes/api.php`
+### A7. Routes - `backend/routes/api.php`
 Add inside the `['auth:sanctum','active']` group → `admin` prefix block, guarding each route with `permission:`. View vs. manage map to the two permissions.
 ```php
 Route::prefix('admin')->group(function (): void {
@@ -1038,7 +1037,7 @@ Route::prefix('admin')->group(function (): void {
 ```
 **Two layers of authz on purpose:** `permission:` middleware gates the route by role-permission; `Gate::authorize` gates the specific record/ability. Keep both.
 
-### A8. Serializer — `backend/app/Http/Controllers/Api/Concerns/SerializesAdminResources.php`
+### A8. Serializer - `backend/app/Http/Controllers/Api/Concerns/SerializesAdminResources.php`
 Add a method converting snake_case → camelCase, dates via `?->toJSON()`, booleans via `(bool)`. This is the shape the frontend type in B2 must mirror.
 ```php
 protected function serializeIncident(Incident $i): array {
@@ -1053,12 +1052,12 @@ protected function serializeIncident(Incident $i): array {
 ```
 *If the entity belongs in the initial workspace hydration* (rather than lazily fetched), also add it to `WorkspaceController::show()` and `WorkspacePayload`/`AppState`. For an admin-fetched list, a dedicated endpoint (above) is simpler.
 
-### A9. Feature test — `backend/tests/Feature/`
+### A9. Feature test - `backend/tests/Feature/`
 Copy the `WorkspaceApiTest.php`/`AdminApiTest.php` pattern: `use RefreshDatabase`, seed roles + domain, build a user (`User::factory()->role('admin','Administrator')->create()`), then `$this->actingAs($admin)->postJson('/api/admin/incidents', [...])->assertCreated()->assertJsonPath('severity','high')`. Also assert a non-admin gets `assertForbidden()`. Run `php artisan test`.
 
-## PART B — Frontend
+## PART B - Frontend
 
-### B1. API client function + barrel export — `src/lib/api/`
+### B1. API client function + barrel export - `src/lib/api/`
 Create `src/lib/api/incidents.ts` (copy `reports.ts`/`access-requests.ts`). Each function takes the `LaravelApiClient` first and uses `client.get/post/patch/delete` with `/api/...` paths.
 ```ts
 import type { LaravelApiClient } from '@/lib/api/client'
@@ -1074,14 +1073,14 @@ export async function createIncident(client: LaravelApiClient, payload: SaveInci
 ```
 **Add the re-export** to `src/lib/api/index.ts`: `export * from '@/lib/api/incidents'` (keep alphabetical; do **not** add anything that statically pulls in `realtime.ts`).
 
-### B2. Types — `src/types/domain.ts` (+ payload types in `src/lib/api/types.ts`)
+### B2. Types - `src/types/domain.ts` (+ payload types in `src/lib/api/types.ts`)
 Add the `Incident` domain type **matching the serializer's camelCase shape exactly** (A8). Put request/response payload shapes (`SaveIncidentPayload`) in `src/lib/api/types.ts` next to `SaveReportPayload`/`AccessRequestPayload`. If incidents join `AppState`, add `incidents: Incident[]` to the `AppState` type and to `createEmptyAppState()` in `src/lib/app-state.ts`.
 
-### B3. Context handler — `src/context/app-data-context.tsx` ← **the most error-prone step**
+### B3. Context handler - `src/context/app-data-context.tsx` ← **the most error-prone step**
 1. Import your mutation from `@/lib/api`.
 2. Add the method signature to the `AppDataContextValue` type.
 3. Define a `useCallback` handler (copy `submitAccessRequest`/`approveAccessRequest`): guard `if (!client) return`, optionally check `isAdminRole(currentUser.role)`, `try { await createIncident(client, payload); await refreshDataWithOptions({...}) } catch (e) { toast.error(getMessage(e, '...')) }`.
-4. **Add it to BOTH the `value` `useMemo` object AND that `useMemo`'s dependency array.** This is the classic bug: add the function to the returned object but forget the dep array → consumers get a stale closure. Every handler appears in both places — match that exactly.
+4. **Add it to BOTH the `value` `useMemo` object AND that `useMemo`'s dependency array.** This is the classic bug: add the function to the returned object but forget the dep array → consumers get a stale closure. Every handler appears in both places - match that exactly.
 ```ts
 const createIncident = useCallback(async (payload: SaveIncidentPayload): Promise<boolean> => {
   if (!client) { toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`); return false }
@@ -1092,10 +1091,10 @@ const createIncident = useCallback(async (payload: SaveIncidentPayload): Promise
 ```
 If your entity is **lazily fetched** rather than carried in the workspace payload, add an `ensureIncidentData()` loader (copy `ensureAccessRequestData`/`ensureHistoryData`) with a `loadedRef` flag so it fetches once, and call it from the page's `useEffect`.
 
-### B4. Selector (if derived/filtered data is needed) — `src/data/selectors.ts`
+### B4. Selector (if derived/filtered data is needed) - `src/data/selectors.ts`
 Pure functions over `AppState` (e.g. `getOpenIncidents(state)`), matching `getCurrentUser`/`getVisibleReportingPeriods`. Skip if the page just renders the raw list.
 
-### B5. Page + lazy route + role guard — `src/pages/` and `src/App.tsx`
+### B5. Page + lazy route + role guard - `src/pages/` and `src/App.tsx`
 Create `src/pages/admin/incident-management-page.tsx` (copy `user-management-page.tsx`). Consume `const { state, createIncident, ensureIncidentData } = useAppData()`; build forms with **Zod + react-hook-form** (copy `access-request-page.tsx`'s `requestSchema`/`zodResolver`); use `components/ui` primitives and the section-panel composition patterns; surface errors via the context handlers' toasts.
 
 In `src/App.tsx`:
@@ -1106,7 +1105,7 @@ In `src/App.tsx`:
 ```
 **Frontend guards are UX only.** `ProtectedRoute roles={...}` only hides/redirects in the browser; it is **not** security. The real gate is the backend `permission:` middleware + `Gate::authorize` (A7/A6).
 
-### B6. Nav entry — `src/config/navigation.ts`
+### B6. Nav entry - `src/config/navigation.ts`
 Add a `NavigationItem` (`label`, `href`, lucide `icon`) to the relevant role arrays. For admin-only features add to both `superadmin` and `admin` (maintained as parallel lists). Import the icon at the top.
 ```ts
 { label: 'Incidents', href: '/admin/incidents', icon: AlertTriangle },

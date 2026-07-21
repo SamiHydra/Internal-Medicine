@@ -29,6 +29,7 @@ export function createEmptyAppState(): AppState {
   return {
     currentUserId: null,
     profiles: [],
+    roles: [],
     assignments: [],
     accessRequests: [],
     reportingPeriods: [],

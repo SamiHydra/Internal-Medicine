@@ -65,7 +65,12 @@ return [
     |
     */
 
-    'timezone' => 'UTC',
+    // Keep storage and timestamp interpretation in UTC for compatibility with
+    // the existing clinical pillar. Hospital wall-clock schedules use the
+    // separate business timezone below.
+    'timezone' => env('APP_TIMEZONE', 'UTC'),
+
+    'business_timezone' => env('HOSPITAL_TIMEZONE', 'Africa/Nairobi'),
 
     /*
     |--------------------------------------------------------------------------

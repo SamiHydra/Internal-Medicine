@@ -75,7 +75,7 @@ class CreateSuperadmin extends Command
         $this->info("Superadmin created: {$user->email} (username: {$user->username})");
         if ($generated) {
             $this->warn("Generated password: {$password}");
-            $this->warn('Store it now — it will not be shown again. You will be asked to change it on first login.');
+            $this->warn('Store it now - it will not be shown again. You will be asked to change it on first login.');
         }
 
         return self::SUCCESS;

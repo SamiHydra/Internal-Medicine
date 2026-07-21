@@ -5,7 +5,6 @@ use App\Http\Controllers\Api\AcademicEvaluationController;
 use App\Http\Controllers\Api\AcademicOperationsAnalyticsController;
 use App\Http\Controllers\Api\AcademicRegistrationController;
 use App\Http\Controllers\Api\AccessRequestSubmissionController;
-use App\Http\Controllers\Api\AdminRegistrationController;
 use App\Http\Controllers\Api\Admin\AcademicEvaluationController as AdminAcademicEvaluationController;
 use App\Http\Controllers\Api\Admin\AcademicStructureController;
 use App\Http\Controllers\Api\Admin\AccessRequestController;
@@ -15,13 +14,14 @@ use App\Http\Controllers\Api\Admin\AuditLogController;
 use App\Http\Controllers\Api\Admin\DutyRosterController;
 use App\Http\Controllers\Api\Admin\EvaluationFormController;
 use App\Http\Controllers\Api\Admin\ReferenceDataController;
-use App\Http\Controllers\Api\Admin\ReportImportController;
 use App\Http\Controllers\Api\Admin\ReportAssignmentController;
+use App\Http\Controllers\Api\Admin\ReportImportController;
 use App\Http\Controllers\Api\Admin\RotationController;
 use App\Http\Controllers\Api\Admin\SettingsController;
 use App\Http\Controllers\Api\Admin\TransferRequestController as AdminTransferRequestController;
 use App\Http\Controllers\Api\Admin\UndergraduateAdminController;
 use App\Http\Controllers\Api\Admin\UserController;
+use App\Http\Controllers\Api\AdminRegistrationController;
 use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\MorningSessionController;
@@ -52,8 +52,8 @@ Route::post('/access-requests', [AccessRequestSubmissionController::class, 'stor
 Route::post('/academic-access-requests', [AcademicRegistrationController::class, 'store'])->middleware('throttle:10,1');
 Route::post('/admin-access-requests', [AdminRegistrationController::class, 'store'])->middleware('throttle:10,1');
 
-// A generous per-user ceiling (300/min) — far above any legitimate session
-// (the admin dashboard's burst + 20s poll is a fraction of this) — so a single
+// A generous per-user ceiling (300/min) - far above any legitimate session
+// (the admin dashboard's burst + 20s poll is a fraction of this) - so a single
 // compromised or runaway client cannot hammer the read/analytics endpoints.
 Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1'])->group(function (): void {
     // Workspace bootstrap stays reachable even with password_change_required set,
@@ -119,6 +119,7 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         // coarse permission to the designated recorders (same-day) and admins.
         Route::get('/morning-sessions/today', [MorningSessionController::class, 'today'])->middleware('permission:morningAttendance.record');
         Route::post('/morning-sessions/{morningSession}/record', [MorningSessionController::class, 'record'])->middleware('permission:morningAttendance.record');
+        Route::post('/morning-sessions/{morningSession}/cancel', [MorningSessionController::class, 'cancel'])->middleware('permission:morningAttendance.record');
 
         // Student evaluations (V2 Phase 5): any consultant, any student, one-way.
         Route::get('/students', [AcademicEvaluationController::class, 'students'])->middleware('permission:academic.submit');
@@ -249,23 +250,36 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::middleware('permission:students.manage')->group(function (): void {
             Route::get('/student-batches', [UndergraduateAdminController::class, 'batches']);
             Route::post('/student-batches', [UndergraduateAdminController::class, 'storeBatch']);
+            Route::get('/student-batches/{batch}', [UndergraduateAdminController::class, 'showBatch']);
             Route::patch('/student-batches/{batch}', [UndergraduateAdminController::class, 'updateBatch']);
+            Route::delete('/student-batches/{batch}', [UndergraduateAdminController::class, 'destroyBatch']);
 
             Route::get('/students', [UndergraduateAdminController::class, 'students']);
             Route::post('/students', [UndergraduateAdminController::class, 'storeStudent']);
             Route::post('/students/import', [UndergraduateAdminController::class, 'importStudents']);
+            Route::get('/students/{student}', [UndergraduateAdminController::class, 'showStudent']);
             Route::patch('/students/{student}', [UndergraduateAdminController::class, 'updateStudent']);
+            Route::delete('/students/{student}', [UndergraduateAdminController::class, 'destroyStudent']);
 
             Route::get('/subgroup-placements', [UndergraduateAdminController::class, 'placements']);
             Route::post('/subgroup-placements', [UndergraduateAdminController::class, 'storePlacement']);
+            Route::get('/subgroup-placements/{placement}', [UndergraduateAdminController::class, 'showPlacement']);
+            Route::patch('/subgroup-placements/{placement}', [UndergraduateAdminController::class, 'updatePlacement']);
             Route::delete('/subgroup-placements/{placement}', [UndergraduateAdminController::class, 'destroyPlacement']);
 
             Route::get('/teaching-schedules', [UndergraduateAdminController::class, 'schedules']);
+            Route::post('/teaching-schedules', [UndergraduateAdminController::class, 'storeSchedule']);
+            Route::get('/teaching-schedules/{schedule}', [UndergraduateAdminController::class, 'showSchedule']);
+            Route::patch('/teaching-schedules/{schedule}', [UndergraduateAdminController::class, 'updateSchedule']);
             Route::patch('/teaching-schedules/{schedule}/active', [UndergraduateAdminController::class, 'setScheduleActive']);
+            Route::delete('/teaching-schedules/{schedule}', [UndergraduateAdminController::class, 'destroySchedule']);
 
             Route::get('/rep-assignments', [UndergraduateAdminController::class, 'repAssignments']);
             Route::post('/rep-assignments', [UndergraduateAdminController::class, 'storeRepAssignment']);
+            Route::get('/rep-assignments/{repAssignment}', [UndergraduateAdminController::class, 'showRepAssignment']);
+            Route::patch('/rep-assignments/{repAssignment}', [UndergraduateAdminController::class, 'updateRepAssignment']);
             Route::patch('/rep-assignments/{repAssignment}/active', [UndergraduateAdminController::class, 'setRepAssignmentActive']);
+            Route::delete('/rep-assignments/{repAssignment}', [UndergraduateAdminController::class, 'destroyRepAssignment']);
 
             Route::get('/teaching-sessions', [UndergraduateAdminController::class, 'sessions']);
             Route::post('/teaching-sessions/{teachingSession}/cancel', [UndergraduateAdminController::class, 'cancelSession']);

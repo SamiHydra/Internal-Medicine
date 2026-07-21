@@ -6,10 +6,15 @@ use App\Models\RepAssignment;
 use App\Models\TeachingSession;
 use App\Models\User;
 use App\Policies\Concerns\HandlesDomainAuthorization;
+use App\Services\Academic\TeachingService;
 
 class TeachingSessionPolicy
 {
     use HandlesDomainAuthorization;
+
+    public function __construct(
+        private readonly TeachingService $teachingService,
+    ) {}
 
     public function viewAny(User $user): bool
     {
@@ -25,6 +30,22 @@ class TeachingSessionPolicy
     public function manage(User $user): bool
     {
         return $this->isAdminLike($user);
+    }
+
+    /** A representative may read only the session collection for an active assignment. */
+    public function viewMine(User $user): bool
+    {
+        return $user->active && ($this->isAdminLike($user) || RepAssignment::query()
+            ->where('user_id', $user->id)
+            ->where('active', true)
+            ->whereHas('batch', fn ($query) => $query->where('active', true))
+            ->exists());
+    }
+
+    /** Today's attendance roster is visible only to active consultants or admins. */
+    public function viewToday(User $user): bool
+    {
+        return $user->active && ($this->isAdminLike($user) || $user->role_key === 'consultant');
     }
 
     /**
@@ -44,10 +65,15 @@ class TeachingSessionPolicy
             return true;
         }
 
+        if (! $this->teachingService->isBackedByActiveSchedule($session)) {
+            return false;
+        }
+
         return RepAssignment::query()
             ->where('user_id', $user->id)
             ->where('batch_id', $session->batch_id)
             ->where('active', true)
+            ->whereHas('batch', fn ($query) => $query->where('active', true))
             ->get()
             ->contains(function (RepAssignment $assignment) use ($session) {
                 if (! in_array($session->activity_type, $assignment->recordableActivities(), true)) {

@@ -119,7 +119,7 @@ function SectionEyebrow({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-2">
       <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">{label}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#005db6]">{label}</p>
     </div>
   )
 }
@@ -190,7 +190,7 @@ function CategoryTick({
   return (
     <g transform={`translate(${x ?? 0},${y ?? 0})`}>
       <title>{full}</title>
-      <text dx={-4} dy={4} textAnchor="end" fontSize={11} fontWeight={500} fill="#5b6169">
+      <text dx={-4} dy={4} textAnchor="end" fontSize={12} fontWeight={500} fill="#5b6169">
         {shown}
       </text>
     </g>
@@ -404,12 +404,12 @@ export function AcademicDashboardPage() {
         { label: 'Evaluations', value: String(summary?.evaluationCount ?? 0), note: 'Filed in range' },
         {
           label: 'Avg performance',
-          value: summary ? `${Math.round(summary.averageScore)}%` : '—',
+          value: summary ? `${Math.round(summary.averageScore)}%` : '-',
           note: 'Indicators met',
         },
         {
           label: 'Avg rating',
-          value: summary?.avgOverallRating != null ? `${summary.avgOverallRating.toFixed(1)}/5` : '—',
+          value: summary?.avgOverallRating != null ? `${summary.avgOverallRating.toFixed(1)}/5` : '-',
           note: 'Overall, out of 5',
         },
         { label: 'Residents', value: String(leaderboard.length), note: 'With evaluations' },
@@ -418,17 +418,17 @@ export function AcademicDashboardPage() {
         { label: 'Evaluations', value: String(summary?.evaluationCount ?? 0), note: 'Filed in range' },
         {
           label: 'Avg round quality',
-          value: summary ? `${Math.round(summary.averageScore)}%` : '—',
+          value: summary ? `${Math.round(summary.averageScore)}%` : '-',
           note: 'Indicators met',
         },
         {
           label: 'Senior presence',
-          value: summary?.seniorPresenceRate != null ? `${Math.round(summary.seniorPresenceRate * 100)}%` : '—',
+          value: summary?.seniorPresenceRate != null ? `${Math.round(summary.seniorPresenceRate * 100)}%` : '-',
           note: 'Rounds with a senior',
         },
         {
           label: 'Patients seen',
-          value: summary?.avgPctSeen != null ? `${Math.round(summary.avgPctSeen)}%` : '—',
+          value: summary?.avgPctSeen != null ? `${Math.round(summary.avgPctSeen)}%` : '-',
           note: 'Average coverage',
         },
       ]
@@ -483,14 +483,14 @@ export function AcademicDashboardPage() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#f0b429]">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#f0b429]">
                 Academic review
               </p>
             </div>
             <h1 className="mt-2 font-display text-[1.6rem] font-bold leading-tight tracking-[-0.02em] text-white md:text-[1.95rem]">
               {isResident ? 'Resident performance trends' : 'Consultant round quality'}
             </h1>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-[#9fb0c6]">
+            <p className="mt-2 max-w-xl text-[15px] leading-6 text-[#b6c5d8]">
               {isResident
                 ? 'Performance evaluations of residents filed by consultants after MDT rounds.'
                 : 'MDT daily round evaluations of consultants filed by residents.'}
@@ -515,13 +515,13 @@ export function AcademicDashboardPage() {
         <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-5 border-t border-white/10 pt-5 lg:grid-cols-4">
           {summaryMetrics.map((metric) => (
             <div key={metric.label} className="min-w-0">
-              <p className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-[#f0b429]">
+              <p className="min-h-8 text-xs font-semibold uppercase leading-4 tracking-[0.14em] text-[#f0b429]">
                 {metric.label}
               </p>
               <p className="mt-1.5 font-display text-[1.9rem] font-bold leading-none tabular-nums text-white md:text-[2.1rem]">
                 {metric.value}
               </p>
-              <p className="mt-1 truncate text-xs text-[#9fb0c6]">{metric.note}</p>
+              <p className="mt-1 text-[13px] leading-5 text-[#b6c5d8]">{metric.note}</p>
             </div>
           ))}
         </div>
@@ -623,7 +623,7 @@ export function AcademicDashboardPage() {
                         position="right"
                         formatter={(value: unknown) => `${Math.round(Number(value) || 0)}%`}
                         fill="#1d3047"
-                        fontSize={11}
+                        fontSize={12}
                         fontWeight={600}
                       />
                     </Bar>
@@ -674,7 +674,7 @@ export function AcademicDashboardPage() {
                         position="right"
                         formatter={(value: unknown) => String(value ?? '')}
                         fill="#1d3047"
-                        fontSize={11}
+                        fontSize={12}
                         fontWeight={600}
                       />
                     </Bar>
@@ -704,7 +704,7 @@ export function AcademicDashboardPage() {
 
             {leaderboard.length ? (
               <div className="mt-5 overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
-                <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)_90px_90px_44px] gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f] sm:grid">
+                <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)_90px_90px_44px] gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-[#74777f] sm:grid">
                   <span>Name</span>
                   <span>Home ward</span>
                   <span className="text-right">Evals</span>
@@ -721,12 +721,12 @@ export function AcademicDashboardPage() {
                       <span className="block truncate font-semibold text-[#000a1e]">
                         {entry.subjectName ?? 'Unknown'}
                       </span>
-                      <span className="block truncate text-xs text-[#74777f] sm:hidden">
-                        {entry.homeWardName ?? '—'} · {entry.evaluationCount} evals · {Math.round(entry.averageScore)}%
+                      <span className="block truncate text-[13px] text-[#74777f] sm:hidden">
+                        {entry.homeWardName ?? '-'} · {entry.evaluationCount} evals · {Math.round(entry.averageScore)}%
                       </span>
                     </span>
                     <span className="hidden min-w-0 truncate text-[#5b6169] sm:block">
-                      {entry.homeWardName ?? '—'}
+                      {entry.homeWardName ?? '-'}
                     </span>
                     <span className="hidden text-right font-semibold tabular-nums text-[#1d3047] sm:block">
                       {entry.evaluationCount}

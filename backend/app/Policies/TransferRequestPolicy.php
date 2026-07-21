@@ -31,6 +31,12 @@ class TransferRequestPolicy
         return $user->active && $user->role_key === 'consultant';
     }
 
+    /** The consultant-side collection contains only the authenticated owner's requests. */
+    public function viewMine(User $user): bool
+    {
+        return $user->active && $user->role_key === 'consultant';
+    }
+
     /**
      * The data-driven designation rule: approval authority sits with the head
      * of the DESTINATION section (they accept the member), or an admin. There

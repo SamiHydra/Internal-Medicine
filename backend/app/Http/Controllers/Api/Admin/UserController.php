@@ -4,13 +4,16 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Api\Concerns\SerializesAdminResources;
 use App\Http\Controllers\Controller;
+use App\Models\Role;
 use App\Models\User;
 use App\Services\Admin\AdminAuditService;
 use App\Support\Authorization\Permissions;
+use App\Support\Authorization\Workspaces;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 
 class UserController extends Controller
 {
@@ -26,6 +29,7 @@ class UserController extends Controller
 
         $validated = $request->validate([
             'role' => ['sometimes', Rule::in(['superadmin', 'admin', 'nurse', 'resident', 'consultant', 'student_rep'])],
+            'workspace' => ['sometimes', Rule::in(Workspaces::selectable())],
             'active' => ['sometimes', 'boolean'],
             'q' => ['sometimes', 'string', 'max:100'],
         ]);
@@ -41,6 +45,14 @@ class UserController extends Controller
 
         if (isset($validated['role'])) {
             $query->where('role_key', $validated['role']);
+        }
+
+        // The roles table is the source of truth for the clinical/academic split,
+        // so the roster never needs a hardcoded role list to stay in sync.
+        if (isset($validated['workspace'])) {
+            $query->whereIn('role_key', Role::query()
+                ->whereIn('workspace', [$validated['workspace'], Workspaces::BOTH])
+                ->select('role_key'));
         }
 
         if (array_key_exists('active', $validated)) {
@@ -68,7 +80,7 @@ class UserController extends Controller
             'fullName' => ['required_without:full_name', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'username' => ['nullable', 'string', 'min:3', 'max:64', 'regex:/^[a-zA-Z0-9._-]+$/', 'unique:users,username'],
-            'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::defaults()],
+            'password' => ['required', 'string', Password::defaults()],
             'role_key' => ['required_without:role', Rule::in(['admin', 'nurse', 'student_rep'])],
             'role' => ['required_without:role_key', Rule::in(['admin', 'nurse', 'student_rep'])],
             'title' => ['nullable', 'string', 'max:255'],
@@ -199,7 +211,7 @@ class UserController extends Controller
         Gate::authorize('update', $user);
 
         $validated = $request->validate([
-            'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::defaults()],
+            'password' => ['required', 'string', Password::defaults()],
             'password_change_required' => ['sometimes', 'boolean'],
             'passwordChangeRequired' => ['sometimes', 'boolean'],
         ]);
@@ -259,6 +271,7 @@ class UserController extends Controller
     {
         return match ($roleKey) {
             'admin' => 'Administrator',
+            'student_rep' => 'Student representative',
             default => 'Nurse',
         };
     }

@@ -4,15 +4,16 @@ A Vite + React frontend for St Paul Internal Medicine weekly reporting, backed b
 
 ## Stack
 
-- Frontend: React, Vite, TypeScript, Tailwind CSS, React Router, React Hook Form, Zod, Recharts
+- Frontend: React, Vite, TypeScript, Tailwind CSS, React Router, TanStack Query, React Hook Form, Zod, Recharts
 - Backend: Laravel (PHP), Sanctum SPA cookie auth, Eloquent ORM, policy-based authorization
 - Database: SQLite for local dev; MariaDB/MySQL for staging/production
 - Package managers: `npm` (frontend), Composer (backend)
-- Deployment target: Cloudflare Pages (frontend) + a Laravel host (backend)
+- Runtime baseline: Node.js 22.12.0 or newer (matching CI and Vite 8), PHP 8.3
+- Deployment target: same-origin Nginx and Laravel on the hospital's on-premises Ubuntu server
 
 ## Architecture
 
-The browser SPA talks only to the Laravel API. Authentication uses Sanctum's SPA cookie flow: the client requests `/sanctum/csrf-cookie`, then calls `/api/*` endpoints with credentials. All authorization is enforced server-side via permission middleware and policies (`backend/app/Policies`, `backend/app/Support/Authorization/Permissions.php`) — the frontend role checks are UX only.
+The browser SPA talks only to the Laravel API. Authentication uses Sanctum's SPA cookie flow: the client requests `/sanctum/csrf-cookie`, then calls `/api/*` endpoints with credentials. All authorization is enforced server-side via permission middleware and policies (`backend/app/Policies`, `backend/app/Support/Authorization/Permissions.php`) - the frontend role checks are UX only.
 
 In local development, `vite.config.ts` proxies `/api` and `/sanctum` to the Laravel backend so the SPA and API are same-origin. This is required for Sanctum's `SameSite` session/XSRF cookies (using `localhost` for the app and `127.0.0.1` for the API directly would be treated as cross-site and fail with a CSRF error).
 
@@ -51,22 +52,22 @@ cd backend && php artisan test # backend test suite
 
 ### Frontend (browser, `VITE_`-prefixed)
 
-Only `VITE_API_BASE_URL` is required. Locally it is the Vite origin (`http://localhost:5173`) because requests are proxied to Laravel. In production set it to the real API origin. Optional `VITE_REVERB_*` vars configure realtime (Laravel Reverb) if enabled. See `.env.local.example`.
+Only `VITE_API_BASE_URL` is required. Locally it is the Vite origin (`http://localhost:5173`) because requests are proxied to Laravel. In production it is the same HTTPS origin that serves the SPA. Optional `VITE_REVERB_*` vars configure realtime if enabled. See `.env.local.example`.
 
 ### Backend (Laravel, `backend/.env`)
 
 See `backend/.env.example`. Key settings: `APP_KEY` (via `php artisan key:generate`), `DB_CONNECTION` (sqlite locally, mariadb/mysql for prod), `SANCTUM_STATEFUL_DOMAINS` and `CORS_ALLOWED_ORIGINS` (must list every origin the browser uses), and `APP_DEBUG=false` for any non-local environment.
 
-Real `.env` files are never committed — only `*.example` templates are tracked.
+Real `.env` files are never committed - only `*.example` templates are tracked.
 
 ## Repo Layout
 
-- `src/` — application UI and the live Laravel API client (`src/lib/api/`) + data provider (`src/context/app-data-context.tsx`)
-- `src/data/selectors.ts` — client-side dashboard/report aggregation
-- `backend/` — Laravel API (controllers, models, policies, services, migrations, seeders)
-- `public/_redirects` — SPA routing for Cloudflare Pages
-- `wrangler.toml` — Cloudflare Pages build output config
-- `docs/migration/` — historical migration notes (the app was migrated from Supabase to Laravel)
+- `src/` - application UI and the live Laravel API client (`src/lib/api/`) + data provider (`src/context/app-data-context.tsx`)
+- `src/data/selectors.ts` - client-side dashboard/report aggregation
+- `backend/` - Laravel API (controllers, models, policies, services, migrations, seeders)
+- `deploy/` - atomic on-premises release, Nginx, queue, backup, firewall, and log configuration
+- `public/_redirects` and `wrangler.toml` - optional preview-hosting configuration, not production
+- `docs/migration/` - historical migration notes (the app was migrated from Supabase to Laravel)
 
 ## Local Commands
 
@@ -91,17 +92,14 @@ php artisan test
 php artisan app:create-superadmin
 ```
 
-## Cloudflare Pages Deployment (frontend)
+## Production deployment
 
-- Build command: `npm run build`
-- Output directory: `dist` (set in `wrangler.toml` via `pages_build_output_dir`)
-- Set `VITE_API_BASE_URL` to the production API origin in Pages → Settings → Environment Variables.
-- `public/_redirects` (`/* /index.html 200`) keeps deep links like `/admin` and `/reports/:assignmentId/:periodId` working.
+Production is a same-origin installation on the department server. Nginx serves the built SPA and forwards `/api` and `/sanctum` to Laravel. Use the locked, versioned release process in `deploy/deploy.sh`; do not copy `dist/` or migrate the live checkout manually.
 
-Deploy the Laravel backend (`backend/`) to a PHP host separately, configure its database and `SANCTUM_STATEFUL_DOMAINS`/`CORS_ALLOWED_ORIGINS` for the production frontend origin, and ensure `APP_DEBUG=false`.
+The deployment builds and validates an immutable release, takes and verifies a database backup, applies migrations in maintenance mode, atomically switches `/opt/imreport/current`, checks the auth wall, and runs `php artisan app:launch-readiness --strict`. See `deploy/README.md` and `docs/OPERATIONS.md`.
 
-Before launch, complete the hardening steps in `docs/PRODUCTION_LAUNCH_CHECKLIST.md`: disable Reverb unless it is actually hosted, enable secure cookies, wire `php artisan schedule:run` via cron, use MariaDB/MySQL, and test backups.
+Before launch, complete `docs/PRODUCTION_LAUNCH_CHECKLIST.md`: disable Reverb unless it is hosted, enable secure cookies, wire the scheduler through cron, use MariaDB, test restoration, and provision internal TLS.
 
 ## Core Flows
 
-Login/logout, session restore, protected + role-aware routes, access requests, admin approve/reject, draft save, submit, edit-after-submit (audit-logged), lock/unlock, notifications, analytics, and CSV export — all backed by the Laravel API with server-side authorization.
+Login/logout, session restore, protected + role-aware routes, access requests, admin approve/reject, draft save, submit, edit-after-submit (audit-logged), lock/unlock, notifications, analytics, and CSV export - all backed by the Laravel API with server-side authorization.

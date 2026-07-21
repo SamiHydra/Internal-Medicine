@@ -14,7 +14,7 @@ return new class extends Migration
             $table->foreignUuid('department_id')->nullable()->constrained('departments')->nullOnDelete();
             // "critical_event" (auto, from a fired alert) or "manual".
             $table->string('source', 32)->default('critical_event');
-            // Dedup key — for critical events this is the report id, so re-submitting
+            // Dedup key - for critical events this is the report id, so re-submitting
             // a report with the same critical values does not spawn duplicates.
             $table->string('source_key', 191)->nullable();
             $table->string('title');

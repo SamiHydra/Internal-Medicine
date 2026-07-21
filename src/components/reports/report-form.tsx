@@ -413,7 +413,7 @@ function FieldInput({
       type={isTime ? 'time' : 'number'}
       // No step on time inputs: a step under 60 makes the browser render a
       // seconds sub-field (HH:MM:SS), which overflows the cell and clips the
-      // AM/PM marker — and the form only validates HH:MM, so seconds can't save.
+      // AM/PM marker - and the form only validates HH:MM, so seconds can't save.
       step={isTime ? undefined : field.kind === 'decimal' ? '0.1' : '1'}
       value={value}
       onChange={(event) => onChange(event.target.value)}
@@ -1146,7 +1146,7 @@ function ResolvedReportForm({
               </ul>
             ) : null}
             <p className="text-xs text-[#74777f]">
-              Warnings are advisory — you can still submit. Errors must be corrected before the report is accepted.
+              Warnings are advisory - you can still submit. Errors must be corrected before the report is accepted.
             </p>
           </div>
         </motion.section>
@@ -1286,7 +1286,7 @@ function ResolvedReportForm({
                                   key={day}
                                   field={field}
                                   value={fieldValues[day] ?? ''}
-                                  ariaLabel={`${field.label} — ${day}`}
+                                  ariaLabel={`${field.label} - ${day}`}
                                   onChange={(nextValue) =>
                                     form.setValue(
                                       `values.${field.id}.${day}` as const,

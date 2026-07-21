@@ -1,26 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
-import { CalendarRange, Loader2, Network, Plus, Trash2 } from 'lucide-react'
-import { toast } from 'sonner'
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
+import { CalendarRange, Loader2, Network, Plus, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+} from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AcademicWorkspaceHero } from '@/components/admin/academic-workspace-hero';
 import {
   SectionEmptyState,
-  SectionHeader,
   panelClass,
-} from '@/components/dashboard/section-panel'
-import { useAppData } from '@/context/app-data-context'
+} from '@/components/dashboard/section-panel';
+import { useAppData } from '@/context/app-data-context';
 import {
   createAcademicDutyType,
   createAcademicSection,
@@ -43,11 +43,11 @@ import {
   type DutyTypeCategory,
   type DutyTypeGranularity,
   type RotationCalendarSummary,
-} from '@/lib/api'
-import { getApiBrowserClient } from '@/lib/api/client'
-import { getErrorMessage } from '@/lib/api/helpers'
+} from '@/lib/api';
+import { getApiBrowserClient } from '@/lib/api/client';
+import { getErrorMessage } from '@/lib/api/helpers';
 
-const NONE = 'none'
+const NONE = 'none';
 
 const categoryOptions: Array<{ value: DutyTypeCategory; label: string }> = [
   { value: 'ward_service', label: 'Ward service' },
@@ -55,44 +55,53 @@ const categoryOptions: Array<{ value: DutyTypeCategory; label: string }> = [
   { value: 'on_call', label: 'On call' },
   { value: 'external', label: 'External rotation' },
   { value: 'leave', label: 'Leave' },
-]
+];
 
-const granularityOptions: Array<{ value: DutyTypeGranularity; label: string }> = [
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'daily', label: 'Daily' },
-]
+const granularityOptions: Array<{ value: DutyTypeGranularity; label: string }> =
+  [
+    { value: 'monthly', label: 'Monthly' },
+    { value: 'daily', label: 'Daily' },
+  ];
 
 /** Row shell shared by every tab: content left, controls right, hairline divider. */
-function StructureRow({ children, controls }: { children: ReactNode; controls: ReactNode }) {
+function StructureRow({
+  children,
+  controls,
+}: {
+  children: ReactNode;
+  controls: ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-3 border-b border-[#eef2f6] py-3.5 last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">{children}</div>
       <div className="flex shrink-0 items-center gap-3">{controls}</div>
     </div>
-  )
+  );
 }
 
 function InactiveBadge({ active }: { active: boolean }) {
   if (active) {
-    return null
+    return null;
   }
 
-  return <Badge variant="neutral">Inactive</Badge>
+  return <Badge variant="neutral">Inactive</Badge>;
 }
 
 export function AcademicStructurePage() {
-  const client = getApiBrowserClient()
-  const { state, ensureProfileDirectoryData } = useAppData()
+  const client = getApiBrowserClient();
+  const { state, ensureProfileDirectoryData } = useAppData();
 
-  const [wards, setWards] = useState<AcademicWard[] | null>(null)
-  const [sections, setSections] = useState<AcademicSection[] | null>(null)
-  const [dutyTypes, setDutyTypes] = useState<AcademicDutyType[] | null>(null)
-  const [calendars, setCalendars] = useState<RotationCalendarSummary[] | null>(null)
-  const [loadError, setLoadError] = useState(false)
+  const [wards, setWards] = useState<AcademicWard[] | null>(null);
+  const [sections, setSections] = useState<AcademicSection[] | null>(null);
+  const [dutyTypes, setDutyTypes] = useState<AcademicDutyType[] | null>(null);
+  const [calendars, setCalendars] = useState<RotationCalendarSummary[] | null>(
+    null,
+  );
+  const [loadError, setLoadError] = useState(false);
 
   // Create-form state, one small draft per tab.
-  const [wardName, setWardName] = useState('')
-  const [sectionName, setSectionName] = useState('')
+  const [wardName, setWardName] = useState('');
+  const [sectionName, setSectionName] = useState('');
   const [dutyDraft, setDutyDraft] = useState({
     name: '',
     category: 'clinical_duty' as DutyTypeCategory,
@@ -102,7 +111,7 @@ export function AcademicStructurePage() {
     pairsForEvaluation: false,
     pairingGroup: '',
     countsForMorningRoster: true,
-  })
+  });
   const [calendarDraft, setCalendarDraft] = useState({
     trainingYear: '1',
     academicYearLabel: '',
@@ -110,8 +119,8 @@ export function AcademicStructurePage() {
     blockKind: 'calendar_month' as RotationCalendarSummary['blockKind'],
     blockLengthWeeks: '8',
     blocksCount: '12',
-  })
-  const [busy, setBusy] = useState<string | null>(null)
+  });
+  const [busy, setBusy] = useState<string | null>(null);
 
   const consultants = useMemo(
     () =>
@@ -119,52 +128,57 @@ export function AcademicStructurePage() {
         .filter((profile) => profile.role === 'consultant' && profile.active)
         .sort((a, b) => a.fullName.localeCompare(b.fullName)),
     [state.profiles],
-  )
+  );
 
   const loadAll = useCallback(async () => {
     if (!client) {
-      setLoadError(true)
-      return
+      setLoadError(true);
+      return;
     }
 
     try {
-      const [wardData, sectionData, dutyTypeData, calendarData] = await Promise.all([
-        fetchAcademicWards(client),
-        fetchAcademicSections(client),
-        fetchAcademicDutyTypes(client),
-        fetchRotationCalendars(client),
-      ])
-      setWards(wardData)
-      setSections(sectionData)
-      setDutyTypes(dutyTypeData)
-      setCalendars(calendarData)
-      setLoadError(false)
+      const [wardData, sectionData, dutyTypeData, calendarData] =
+        await Promise.all([
+          fetchAcademicWards(client),
+          fetchAcademicSections(client),
+          fetchAcademicDutyTypes(client),
+          fetchRotationCalendars(client),
+        ]);
+      setWards(wardData);
+      setSections(sectionData);
+      setDutyTypes(dutyTypeData);
+      setCalendars(calendarData);
+      setLoadError(false);
     } catch {
-      setLoadError(true)
-      toast.error('Unable to load the academic structure.')
+      setLoadError(true);
+      toast.error('Unable to load the academic structure.');
     }
-  }, [client])
+  }, [client]);
 
   useEffect(() => {
-    void loadAll()
+    void loadAll();
     // The section head picker needs the full user directory.
-    void ensureProfileDirectoryData()
-  }, [loadAll, ensureProfileDirectoryData])
+    void ensureProfileDirectoryData();
+  }, [loadAll, ensureProfileDirectoryData]);
 
-  const run = async (key: string, action: () => Promise<void>, failure: string) => {
+  const run = async (
+    key: string,
+    action: () => Promise<void>,
+    failure: string,
+  ) => {
     if (!client) {
-      return
+      return;
     }
 
-    setBusy(key)
+    setBusy(key);
     try {
-      await action()
+      await action();
     } catch (error) {
-      toast.error(getErrorMessage(error, failure))
+      toast.error(getErrorMessage(error, failure));
     } finally {
-      setBusy(null)
+      setBusy(null);
     }
-  }
+  };
 
   if (!client || loadError) {
     return (
@@ -177,30 +191,66 @@ export function AcademicStructurePage() {
           />
         </section>
       </div>
-    )
+    );
   }
 
-  const loading = wards === null || sections === null || dutyTypes === null || calendars === null
+  const loading =
+    wards === null ||
+    sections === null ||
+    dutyTypes === null ||
+    calendars === null;
 
   return (
-    <div className="space-y-6 px-4 py-6 md:px-8">
-      <section className={panelClass}>
-        <SectionHeader
-          eyebrow="Academic structure"
-          description="Teaching wards, specialty sections, the duty catalog, and rotation calendars. Everything here is reference data the department can extend without a developer."
-        />
+    <div className="space-y-5 px-4 py-6 md:px-8">
+      <AcademicWorkspaceHero
+        eyebrow="Academic structure"
+        title="Reference structure"
+        description="Manage the wards, specialty sections, duty catalogue, and training calendars used across academic operations."
+        metrics={[
+          {
+            label: 'Wards',
+            value: wards ? String(wards.length) : '-',
+            note: 'Teaching locations',
+          },
+          {
+            label: 'Sections',
+            value: sections ? String(sections.length) : '-',
+            note: 'Specialty groups',
+          },
+          {
+            label: 'Duty types',
+            value: dutyTypes ? String(dutyTypes.length) : '-',
+            note: 'Roster options',
+          },
+          {
+            label: 'Calendars',
+            value: calendars ? String(calendars.length) : '-',
+            note: 'Training years',
+          },
+        ]}
+      />
 
+      <section className={panelClass}>
         {loading ? (
           <div className="flex min-h-[240px] items-center justify-center text-[#74777f]">
-            <Loader2 className="h-5 w-5 animate-spin" aria-label="Loading structure" />
+            <Loader2
+              className="h-5 w-5 animate-spin"
+              aria-label="Loading structure"
+            />
           </div>
         ) : (
-          <Tabs defaultValue="wards" className="mt-5">
-            <TabsList>
+          <Tabs defaultValue="wards">
+            <TabsList className="max-w-full justify-start overflow-x-auto [&>button]:shrink-0 [&>button]:whitespace-nowrap">
               <TabsTrigger value="wards">Wards ({wards.length})</TabsTrigger>
-              <TabsTrigger value="sections">Sections ({sections.length})</TabsTrigger>
-              <TabsTrigger value="duty-types">Duty types ({dutyTypes.length})</TabsTrigger>
-              <TabsTrigger value="calendars">Rotation calendars ({calendars.length})</TabsTrigger>
+              <TabsTrigger value="sections">
+                Sections ({sections.length})
+              </TabsTrigger>
+              <TabsTrigger value="duty-types">
+                Duty types ({dutyTypes.length})
+              </TabsTrigger>
+              <TabsTrigger value="calendars">
+                Rotation calendars ({calendars.length})
+              </TabsTrigger>
             </TabsList>
 
             {/* ---- Wards ---- */}
@@ -208,21 +258,25 @@ export function AcademicStructurePage() {
               <form
                 className="flex flex-wrap items-end gap-3"
                 onSubmit={(event) => {
-                  event.preventDefault()
-                  const name = wardName.trim()
+                  event.preventDefault();
+                  const name = wardName.trim();
                   if (!name) {
-                    return
+                    return;
                   }
                   void run(
                     'ward-create',
                     async () => {
-                      const created = await createAcademicWard(client, { name })
-                      setWards((prev) => (prev ? [...prev, created] : [created]))
-                      setWardName('')
-                      toast.success(`Ward "${created.name}" created.`)
+                      const created = await createAcademicWard(client, {
+                        name,
+                      });
+                      setWards((prev) =>
+                        prev ? [...prev, created] : [created],
+                      );
+                      setWardName('');
+                      toast.success(`Ward "${created.name}" created.`);
                     },
                     'Unable to create the ward.',
-                  )
+                  );
                 }}
               >
                 <div className="w-full max-w-xs">
@@ -233,7 +287,10 @@ export function AcademicStructurePage() {
                     aria-label="New ward name"
                   />
                 </div>
-                <Button type="submit" disabled={busy === 'ward-create' || !wardName.trim()}>
+                <Button
+                  type="submit"
+                  disabled={busy === 'ward-create' || !wardName.trim()}
+                >
                   <Plus className="mr-1.5 h-4 w-4" /> Add ward
                 </Button>
               </form>
@@ -253,10 +310,18 @@ export function AcademicStructurePage() {
                             void run(
                               `ward-${ward.id}`,
                               async () => {
-                                const updated = await updateAcademicWard(client, ward.id, { active })
+                                const updated = await updateAcademicWard(
+                                  client,
+                                  ward.id,
+                                  { active },
+                                );
                                 setWards((prev) =>
-                                  prev ? prev.map((item) => (item.id === ward.id ? updated : item)) : prev,
-                                )
+                                  prev
+                                    ? prev.map((item) =>
+                                        item.id === ward.id ? updated : item,
+                                      )
+                                    : prev,
+                                );
                               },
                               'Unable to update the ward.',
                             )
@@ -272,9 +337,13 @@ export function AcademicStructurePage() {
                             void run(
                               `ward-${ward.id}`,
                               async () => {
-                                await deleteAcademicWard(client, ward.id)
-                                setWards((prev) => (prev ? prev.filter((item) => item.id !== ward.id) : prev))
-                                toast.success(`Ward "${ward.name}" deleted.`)
+                                await deleteAcademicWard(client, ward.id);
+                                setWards((prev) =>
+                                  prev
+                                    ? prev.filter((item) => item.id !== ward.id)
+                                    : prev,
+                                );
+                                toast.success(`Ward "${ward.name}" deleted.`);
                               },
                               'This ward is referenced by duty types or departments. Deactivate it instead.',
                             )
@@ -285,8 +354,10 @@ export function AcademicStructurePage() {
                       </>
                     }
                   >
-                    <p className="text-sm font-semibold text-[#000a1e]">{ward.name}</p>
-                    <p className="text-xs text-[#74777f]">{ward.slug}</p>
+                    <p className="text-[15px] font-semibold text-[#000a1e]">
+                      {ward.name}
+                    </p>
+                    <p className="text-[13px] font-medium text-[#657180]">{ward.slug}</p>
                   </StructureRow>
                 ))}
               </div>
@@ -297,21 +368,25 @@ export function AcademicStructurePage() {
               <form
                 className="flex flex-wrap items-end gap-3"
                 onSubmit={(event) => {
-                  event.preventDefault()
-                  const name = sectionName.trim()
+                  event.preventDefault();
+                  const name = sectionName.trim();
                   if (!name) {
-                    return
+                    return;
                   }
                   void run(
                     'section-create',
                     async () => {
-                      const created = await createAcademicSection(client, { name })
-                      setSections((prev) => (prev ? [...prev, created] : [created]))
-                      setSectionName('')
-                      toast.success(`Section "${created.name}" created.`)
+                      const created = await createAcademicSection(client, {
+                        name,
+                      });
+                      setSections((prev) =>
+                        prev ? [...prev, created] : [created],
+                      );
+                      setSectionName('');
+                      toast.success(`Section "${created.name}" created.`);
                     },
                     'Unable to create the section.',
-                  )
+                  );
                 }}
               >
                 <div className="w-full max-w-xs">
@@ -322,7 +397,10 @@ export function AcademicStructurePage() {
                     aria-label="New section name"
                   />
                 </div>
-                <Button type="submit" disabled={busy === 'section-create' || !sectionName.trim()}>
+                <Button
+                  type="submit"
+                  disabled={busy === 'section-create' || !sectionName.trim()}
+                >
                   <Plus className="mr-1.5 h-4 w-4" /> Add section
                 </Button>
               </form>
@@ -340,14 +418,20 @@ export function AcademicStructurePage() {
                             void run(
                               `section-${section.id}`,
                               async () => {
-                                const updated = await updateAcademicSection(client, section.id, {
-                                  headUserId: value === NONE ? null : value,
-                                })
+                                const updated = await updateAcademicSection(
+                                  client,
+                                  section.id,
+                                  {
+                                    headUserId: value === NONE ? null : value,
+                                  },
+                                );
                                 setSections((prev) =>
                                   prev
-                                    ? prev.map((item) => (item.id === section.id ? updated : item))
+                                    ? prev.map((item) =>
+                                        item.id === section.id ? updated : item,
+                                      )
                                     : prev,
-                                )
+                                );
                               },
                               'Unable to set the section head.',
                             )
@@ -360,9 +444,14 @@ export function AcademicStructurePage() {
                             <SelectValue placeholder="Section head" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value={NONE}>No head assigned</SelectItem>
+                            <SelectItem value={NONE}>
+                              No head assigned
+                            </SelectItem>
                             {consultants.map((consultant) => (
-                              <SelectItem key={consultant.id} value={consultant.id}>
+                              <SelectItem
+                                key={consultant.id}
+                                value={consultant.id}
+                              >
                                 {consultant.fullName}
                               </SelectItem>
                             ))}
@@ -377,12 +466,18 @@ export function AcademicStructurePage() {
                             void run(
                               `section-${section.id}`,
                               async () => {
-                                const updated = await updateAcademicSection(client, section.id, { active })
+                                const updated = await updateAcademicSection(
+                                  client,
+                                  section.id,
+                                  { active },
+                                );
                                 setSections((prev) =>
                                   prev
-                                    ? prev.map((item) => (item.id === section.id ? updated : item))
+                                    ? prev.map((item) =>
+                                        item.id === section.id ? updated : item,
+                                      )
                                     : prev,
-                                )
+                                );
                               },
                               'Unable to update the section.',
                             )
@@ -398,11 +493,17 @@ export function AcademicStructurePage() {
                             void run(
                               `section-${section.id}`,
                               async () => {
-                                await deleteAcademicSection(client, section.id)
+                                await deleteAcademicSection(client, section.id);
                                 setSections((prev) =>
-                                  prev ? prev.filter((item) => item.id !== section.id) : prev,
-                                )
-                                toast.success(`Section "${section.name}" deleted.`)
+                                  prev
+                                    ? prev.filter(
+                                        (item) => item.id !== section.id,
+                                      )
+                                    : prev,
+                                );
+                                toast.success(
+                                  `Section "${section.name}" deleted.`,
+                                );
                               },
                               'This section is referenced by duty types or consultants. Deactivate it instead.',
                             )
@@ -413,11 +514,16 @@ export function AcademicStructurePage() {
                       </>
                     }
                   >
-                    <p className="text-sm font-semibold text-[#000a1e]">{section.name}</p>
-                    <p className="text-xs text-[#74777f]">
-                      {section.headName ? `Head: ${section.headName}` : 'No head assigned'}
+                    <p className="text-[15px] font-semibold text-[#000a1e]">
+                      {section.name}
+                    </p>
+                    <p className="text-sm leading-5 text-[#5f6670]">
+                      {section.headName
+                        ? `Head: ${section.headName}`
+                        : 'No head assigned'}
                       {' · '}
-                      {section.consultantCount} consultant{section.consultantCount === 1 ? '' : 's'}
+                      {section.consultantCount} consultant
+                      {section.consultantCount === 1 ? '' : 's'}
                     </p>
                   </StructureRow>
                 ))}
@@ -429,10 +535,10 @@ export function AcademicStructurePage() {
               <form
                 className="grid gap-3 rounded-[0.4rem] border border-[#eef2f6] bg-[#f8fafc] p-4 sm:grid-cols-2 lg:grid-cols-4"
                 onSubmit={(event) => {
-                  event.preventDefault()
-                  const name = dutyDraft.name.trim()
+                  event.preventDefault();
+                  const name = dutyDraft.name.trim();
                   if (!name) {
-                    return
+                    return;
                   }
                   void run(
                     'duty-create',
@@ -441,23 +547,39 @@ export function AcademicStructurePage() {
                         name,
                         category: dutyDraft.category,
                         granularity: dutyDraft.granularity,
-                        sectionId: dutyDraft.sectionId === NONE ? null : dutyDraft.sectionId,
-                        wardId: dutyDraft.wardId === NONE ? null : dutyDraft.wardId,
+                        sectionId:
+                          dutyDraft.sectionId === NONE
+                            ? null
+                            : dutyDraft.sectionId,
+                        wardId:
+                          dutyDraft.wardId === NONE ? null : dutyDraft.wardId,
                         pairsForEvaluation: dutyDraft.pairsForEvaluation,
                         pairingGroup: dutyDraft.pairingGroup.trim() || null,
-                        countsForMorningRoster: dutyDraft.countsForMorningRoster,
-                      })
-                      setDutyTypes((prev) => (prev ? [...prev, created] : [created]))
-                      setDutyDraft((prev) => ({ ...prev, name: '', pairingGroup: '' }))
-                      toast.success(`Duty type "${created.name}" created.`)
+                        countsForMorningRoster:
+                          dutyDraft.countsForMorningRoster,
+                      });
+                      setDutyTypes((prev) =>
+                        prev ? [...prev, created] : [created],
+                      );
+                      setDutyDraft((prev) => ({
+                        ...prev,
+                        name: '',
+                        pairingGroup: '',
+                      }));
+                      toast.success(`Duty type "${created.name}" created.`);
                     },
                     'Unable to create the duty type.',
-                  )
+                  );
                 }}
               >
                 <Input
                   value={dutyDraft.name}
-                  onChange={(event) => setDutyDraft((prev) => ({ ...prev, name: event.target.value }))}
+                  onChange={(event) =>
+                    setDutyDraft((prev) => ({
+                      ...prev,
+                      name: event.target.value,
+                    }))
+                  }
                   placeholder="Duty name"
                   aria-label="New duty type name"
                   className="lg:col-span-2"
@@ -465,7 +587,10 @@ export function AcademicStructurePage() {
                 <Select
                   value={dutyDraft.category}
                   onValueChange={(value) =>
-                    setDutyDraft((prev) => ({ ...prev, category: value as DutyTypeCategory }))
+                    setDutyDraft((prev) => ({
+                      ...prev,
+                      category: value as DutyTypeCategory,
+                    }))
                   }
                 >
                   <SelectTrigger aria-label="Duty category">
@@ -482,7 +607,10 @@ export function AcademicStructurePage() {
                 <Select
                   value={dutyDraft.granularity}
                   onValueChange={(value) =>
-                    setDutyDraft((prev) => ({ ...prev, granularity: value as DutyTypeGranularity }))
+                    setDutyDraft((prev) => ({
+                      ...prev,
+                      granularity: value as DutyTypeGranularity,
+                    }))
                   }
                 >
                   <SelectTrigger aria-label="Duty granularity">
@@ -498,7 +626,9 @@ export function AcademicStructurePage() {
                 </Select>
                 <Select
                   value={dutyDraft.sectionId}
-                  onValueChange={(value) => setDutyDraft((prev) => ({ ...prev, sectionId: value }))}
+                  onValueChange={(value) =>
+                    setDutyDraft((prev) => ({ ...prev, sectionId: value }))
+                  }
                 >
                   <SelectTrigger aria-label="Owning section">
                     <SelectValue placeholder="Section" />
@@ -514,7 +644,9 @@ export function AcademicStructurePage() {
                 </Select>
                 <Select
                   value={dutyDraft.wardId}
-                  onValueChange={(value) => setDutyDraft((prev) => ({ ...prev, wardId: value }))}
+                  onValueChange={(value) =>
+                    setDutyDraft((prev) => ({ ...prev, wardId: value }))
+                  }
                 >
                   <SelectTrigger aria-label="Ward">
                     <SelectValue placeholder="Ward" />
@@ -531,7 +663,10 @@ export function AcademicStructurePage() {
                 <Input
                   value={dutyDraft.pairingGroup}
                   onChange={(event) =>
-                    setDutyDraft((prev) => ({ ...prev, pairingGroup: event.target.value }))
+                    setDutyDraft((prev) => ({
+                      ...prev,
+                      pairingGroup: event.target.value,
+                    }))
                   }
                   placeholder="Pairing group (e.g. opd)"
                   aria-label="Pairing group"
@@ -544,17 +679,24 @@ export function AcademicStructurePage() {
                       setDutyDraft((prev) => ({ ...prev, pairsForEvaluation }))
                     }
                   />
-                  <span className="text-xs font-medium text-[#44474e]">Pairs for evaluation</span>
+                  <span className="text-[13px] font-medium text-[#44474e]">
+                    Pairs for evaluation
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Switch
                     checked={dutyDraft.countsForMorningRoster}
                     aria-label="Counts for the morning roster"
                     onCheckedChange={(countsForMorningRoster) =>
-                      setDutyDraft((prev) => ({ ...prev, countsForMorningRoster }))
+                      setDutyDraft((prev) => ({
+                        ...prev,
+                        countsForMorningRoster,
+                      }))
                     }
                   />
-                  <span className="text-xs font-medium text-[#44474e]">Morning roster</span>
+                  <span className="text-[13px] font-medium text-[#44474e]">
+                    Morning roster
+                  </span>
                 </div>
                 <Button
                   type="submit"
@@ -580,14 +722,22 @@ export function AcademicStructurePage() {
                             void run(
                               `duty-${dutyType.id}`,
                               async () => {
-                                const updated = await updateAcademicDutyType(client, dutyType.id, {
-                                  active,
-                                })
+                                const updated = await updateAcademicDutyType(
+                                  client,
+                                  dutyType.id,
+                                  {
+                                    active,
+                                  },
+                                );
                                 setDutyTypes((prev) =>
                                   prev
-                                    ? prev.map((item) => (item.id === dutyType.id ? updated : item))
+                                    ? prev.map((item) =>
+                                        item.id === dutyType.id
+                                          ? updated
+                                          : item,
+                                      )
                                     : prev,
-                                )
+                                );
                               },
                               'Unable to update the duty type.',
                             )
@@ -603,11 +753,20 @@ export function AcademicStructurePage() {
                             void run(
                               `duty-${dutyType.id}`,
                               async () => {
-                                await deleteAcademicDutyType(client, dutyType.id)
+                                await deleteAcademicDutyType(
+                                  client,
+                                  dutyType.id,
+                                );
                                 setDutyTypes((prev) =>
-                                  prev ? prev.filter((item) => item.id !== dutyType.id) : prev,
-                                )
-                                toast.success(`Duty type "${dutyType.name}" deleted.`)
+                                  prev
+                                    ? prev.filter(
+                                        (item) => item.id !== dutyType.id,
+                                      )
+                                    : prev,
+                                );
+                                toast.success(
+                                  `Duty type "${dutyType.name}" deleted.`,
+                                );
                               },
                               'This duty type has assignments on the roster. Deactivate it instead.',
                             )
@@ -618,21 +777,39 @@ export function AcademicStructurePage() {
                       </>
                     }
                   >
-                    <p className="text-sm font-semibold text-[#000a1e]">{dutyType.name}</p>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[#74777f]">
+                    <p className="text-[15px] font-semibold text-[#000a1e]">
+                      {dutyType.name}
+                    </p>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-sm leading-5 text-[#5f6670]">
                       <Badge variant="neutral">
-                        {categoryOptions.find((option) => option.value === dutyType.category)?.label ??
-                          dutyType.category}
+                        {categoryOptions.find(
+                          (option) => option.value === dutyType.category,
+                        )?.label ?? dutyType.category}
                       </Badge>
                       <Badge variant="neutral">
-                        {dutyType.granularity === 'monthly' ? 'Monthly' : 'Daily'}
+                        {dutyType.granularity === 'monthly'
+                          ? 'Monthly'
+                          : 'Daily'}
                       </Badge>
-                      {dutyType.sectionName ? <span>{dutyType.sectionName}</span> : <span>Department-wide</span>}
-                      {dutyType.wardName ? <span>· {dutyType.wardName}</span> : null}
-                      {dutyType.pairsForEvaluation ? (
-                        <span>· pairs{dutyType.pairingGroup ? ` (${dutyType.pairingGroup})` : ''}</span>
+                      {dutyType.sectionName ? (
+                        <span>{dutyType.sectionName}</span>
+                      ) : (
+                        <span>Department-wide</span>
+                      )}
+                      {dutyType.wardName ? (
+                        <span>· {dutyType.wardName}</span>
                       ) : null}
-                      {dutyType.countsForMorningRoster ? null : <span>· off morning roster</span>}
+                      {dutyType.pairsForEvaluation ? (
+                        <span>
+                          · pairs
+                          {dutyType.pairingGroup
+                            ? ` (${dutyType.pairingGroup})`
+                            : ''}
+                        </span>
+                      ) : null}
+                      {dutyType.countsForMorningRoster ? null : (
+                        <span>· off morning roster</span>
+                      )}
                     </div>
                   </StructureRow>
                 ))}
@@ -644,16 +821,20 @@ export function AcademicStructurePage() {
               <form
                 className="grid gap-3 rounded-[0.4rem] border border-[#eef2f6] bg-[#f8fafc] p-4 sm:grid-cols-2 lg:grid-cols-3"
                 onSubmit={(event) => {
-                  event.preventDefault()
-                  if (!calendarDraft.academicYearLabel.trim() || !calendarDraft.startsOn) {
-                    return
+                  event.preventDefault();
+                  if (
+                    !calendarDraft.academicYearLabel.trim() ||
+                    !calendarDraft.startsOn
+                  ) {
+                    return;
                   }
                   void run(
                     'calendar-create',
                     async () => {
                       const created = await createRotationCalendar(client, {
                         trainingYear: Number(calendarDraft.trainingYear),
-                        academicYearLabel: calendarDraft.academicYearLabel.trim(),
+                        academicYearLabel:
+                          calendarDraft.academicYearLabel.trim(),
                         startsOn: calendarDraft.startsOn,
                         blockKind: calendarDraft.blockKind,
                         blockLengthWeeks:
@@ -661,14 +842,16 @@ export function AcademicStructurePage() {
                             ? Number(calendarDraft.blockLengthWeeks)
                             : null,
                         blocksCount: Number(calendarDraft.blocksCount),
-                      })
-                      setCalendars((prev) => (prev ? [created, ...prev] : [created]))
+                      });
+                      setCalendars((prev) =>
+                        prev ? [created, ...prev] : [created],
+                      );
                       toast.success(
                         `Year ${created.trainingYear} calendar ${created.academicYearLabel} created with ${created.blocks.length} blocks.`,
-                      )
+                      );
                     },
                     'Unable to create the rotation calendar.',
-                  )
+                  );
                 }}
               >
                 <Select
@@ -678,7 +861,8 @@ export function AcademicStructurePage() {
                       ...prev,
                       trainingYear: value,
                       // Year 3 runs continuous 8-week blocks by program design.
-                      blockKind: value === '3' ? 'fixed_weeks' : 'calendar_month',
+                      blockKind:
+                        value === '3' ? 'fixed_weeks' : 'calendar_month',
                     }))
                   }
                 >
@@ -694,7 +878,10 @@ export function AcademicStructurePage() {
                 <Input
                   value={calendarDraft.academicYearLabel}
                   onChange={(event) =>
-                    setCalendarDraft((prev) => ({ ...prev, academicYearLabel: event.target.value }))
+                    setCalendarDraft((prev) => ({
+                      ...prev,
+                      academicYearLabel: event.target.value,
+                    }))
                   }
                   placeholder="Academic year (e.g. 2026/27)"
                   aria-label="Academic year label"
@@ -703,7 +890,10 @@ export function AcademicStructurePage() {
                   type="date"
                   value={calendarDraft.startsOn}
                   onChange={(event) =>
-                    setCalendarDraft((prev) => ({ ...prev, startsOn: event.target.value }))
+                    setCalendarDraft((prev) => ({
+                      ...prev,
+                      startsOn: event.target.value,
+                    }))
                   }
                   aria-label="Calendar start date"
                 />
@@ -720,8 +910,12 @@ export function AcademicStructurePage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="calendar_month">Calendar months</SelectItem>
-                    <SelectItem value="fixed_weeks">Fixed-week blocks</SelectItem>
+                    <SelectItem value="calendar_month">
+                      Calendar months
+                    </SelectItem>
+                    <SelectItem value="fixed_weeks">
+                      Fixed-week blocks
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 {calendarDraft.blockKind === 'fixed_weeks' ? (
@@ -731,7 +925,10 @@ export function AcademicStructurePage() {
                     max={52}
                     value={calendarDraft.blockLengthWeeks}
                     onChange={(event) =>
-                      setCalendarDraft((prev) => ({ ...prev, blockLengthWeeks: event.target.value }))
+                      setCalendarDraft((prev) => ({
+                        ...prev,
+                        blockLengthWeeks: event.target.value,
+                      }))
                     }
                     aria-label="Block length in weeks"
                   />
@@ -742,7 +939,10 @@ export function AcademicStructurePage() {
                   max={24}
                   value={calendarDraft.blocksCount}
                   onChange={(event) =>
-                    setCalendarDraft((prev) => ({ ...prev, blocksCount: event.target.value }))
+                    setCalendarDraft((prev) => ({
+                      ...prev,
+                      blocksCount: event.target.value,
+                    }))
                   }
                   aria-label="Number of blocks"
                 />
@@ -780,16 +980,21 @@ export function AcademicStructurePage() {
                               void run(
                                 `calendar-${calendar.id}`,
                                 async () => {
-                                  const updated = await setRotationCalendarActive(
-                                    client,
-                                    calendar.id,
-                                    active,
-                                  )
+                                  const updated =
+                                    await setRotationCalendarActive(
+                                      client,
+                                      calendar.id,
+                                      active,
+                                    );
                                   setCalendars((prev) =>
                                     prev
-                                      ? prev.map((item) => (item.id === calendar.id ? updated : item))
+                                      ? prev.map((item) =>
+                                          item.id === calendar.id
+                                            ? updated
+                                            : item,
+                                        )
                                       : prev,
-                                  )
+                                  );
                                 },
                                 'Unable to update the calendar.',
                               )
@@ -798,10 +1003,11 @@ export function AcademicStructurePage() {
                         </>
                       }
                     >
-                      <p className="text-sm font-semibold text-[#000a1e]">
-                        Year {calendar.trainingYear} · {calendar.academicYearLabel}
+                      <p className="text-[15px] font-semibold text-[#000a1e]">
+                        Year {calendar.trainingYear} ·{' '}
+                        {calendar.academicYearLabel}
                       </p>
-                      <p className="text-xs text-[#74777f]">
+                      <p className="text-sm leading-5 text-[#5f6670]">
                         {calendar.blocks.length} blocks ·{' '}
                         {calendar.blockKind === 'fixed_weeks'
                           ? `${calendar.blockLengthWeeks} weeks each`
@@ -818,5 +1024,5 @@ export function AcademicStructurePage() {
         )}
       </section>
     </div>
-  )
+  );
 }

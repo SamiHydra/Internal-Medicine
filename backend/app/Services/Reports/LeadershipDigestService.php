@@ -12,7 +12,7 @@ use App\Models\TeachingSession;
 use Illuminate\Support\Collection;
 
 /**
- * Builds the weekly leadership digest — a single at-a-glance summary of the most
+ * Builds the weekly leadership digest - a single at-a-glance summary of the most
  * recent reporting period, mailed to leadership so they never have to assemble
  * it from a spreadsheet by hand.
  */
@@ -44,8 +44,9 @@ class LeadershipDigestService
 
         return [
             'hasData' => true,
+            'periodId' => $period->id,
             'periodLabel' => sprintf(
-                '%s – %s',
+                '%s - %s',
                 $period->week_start?->format('M j'),
                 $period->week_end?->format('M j, Y'),
             ),

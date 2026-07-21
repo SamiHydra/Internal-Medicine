@@ -1,0 +1,48 @@
+# Build context trimming for the docker/ production-parity stack.
+# Everything here is either rebuilt inside the image, host-specific, or a
+# security hazard (real env files, the dev SQLite database).
+
+.git
+.github
+.claude
+.agents
+.codex-temp
+.playwright-cli
+
+# Rebuilt inside the image.
+node_modules
+**/node_modules
+backend/vendor
+dist
+dist-*
+backend/public/build
+backend/bootstrap/cache/*.php
+
+# Host env files must never reach the image: the containers get their own
+# env file (.env.docker) via compose at RUNTIME, so it is deliberately excluded
+# from the build context too. Copying .env.local in here would also bake
+# VITE_API_BASE_URL=http://localhost:5173 into the SPA bundle.
+**/.env
+**/.env.*
+
+# The dev SQLite database must never end up in a container.
+backend/database/*.sqlite
+backend/database/*.sqlite-*
+backend/database/imports
+
+# Generated evidence, reports and scratch output.
+artifacts
+output
+test-results
+playwright-report
+tools/shots
+design-reference
+files
+files.zip
+*.log
+.phpunit.result.cache
+backend/.phpunit.cache
+backend/storage/logs/*
+backend/storage/framework/cache/data/*
+backend/storage/framework/sessions/*
+backend/storage/framework/views/*

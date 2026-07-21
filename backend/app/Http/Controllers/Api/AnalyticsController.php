@@ -5,18 +5,19 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\ReportingPeriod;
 use App\Services\Analytics\AnalyticsExportService;
-use App\Support\Export\XlsxWriter;
 use App\Services\Analytics\AnalyticsFilters;
 use App\Services\Analytics\AnalyticsService;
 use App\Services\Analytics\DashboardAnalyticsService;
 use App\Services\Analytics\InpatientAnalyticsService;
 use App\Services\Analytics\OutpatientAnalyticsService;
 use App\Services\Analytics\ProcedureAnalyticsService;
+use App\Support\Export\XlsxWriter;
+use App\Support\HospitalClock;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
-use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\HttpFoundation\Response;
 
 class AnalyticsController extends Controller
 {
@@ -114,7 +115,7 @@ class AnalyticsController extends Controller
         ]);
     }
 
-    public function export(Request $request): \Symfony\Component\HttpFoundation\Response
+    public function export(Request $request): Response
     {
         $validated = $request->validate([
             'period' => ['sometimes', 'uuid', 'exists:reporting_periods,id'],
@@ -134,7 +135,7 @@ class AnalyticsController extends Controller
             : ($validated['month'] ?? 'periods');
 
         if (($validated['format'] ?? 'csv') === 'xlsx') {
-            $path = (new XlsxWriter())->toTempFile(
+            $path = (new XlsxWriter)->toTempFile(
                 $this->exportService->header(),
                 $this->exportService->lazyRows($periods),
             );
@@ -175,7 +176,7 @@ class AnalyticsController extends Controller
         }
 
         return ReportingPeriod::query()
-            ->whereDate('week_start', '<=', now()->toDateString())
+            ->whereDate('week_start', '<=', HospitalClock::today()->toDateString())
             ->orderByDesc('week_start')
             ->limit(1)
             ->get();

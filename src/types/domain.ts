@@ -6,6 +6,15 @@ export type UserRole =
   | 'consultant'
   | 'student_rep'
 
+export type RoleWorkspace = 'clinical' | 'academic' | 'both'
+
+// Server-owned role registry, so adding a role never means editing a frontend list.
+export interface RoleDefinition {
+  key: UserRole
+  label: string
+  workspace: RoleWorkspace
+}
+
 export type ReportFamily = 'inpatient' | 'outpatient' | 'procedure'
 
 export type ReportStatus =
@@ -295,6 +304,7 @@ export interface PendingDraftState {
 export interface AppState {
   currentUserId: string | null
   profiles: UserProfile[]
+  roles: RoleDefinition[]
   assignments: ReportAssignment[]
   accessRequests: AccessRequest[]
   reportingPeriods: ReportingPeriod[]

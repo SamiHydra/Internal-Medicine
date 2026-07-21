@@ -36,7 +36,15 @@ import { formatTimestamp } from '@/lib/dates'
 
 export function DepartmentDetailPage() {
   const { departmentId = '' } = useParams()
-  const { state, ensureHistoryData, ensureReportDetails, reportPeriodWindow, refreshData } = useAppData()
+  const {
+    state,
+    ensureHistoryData,
+    ensureReportDetails,
+    reportPeriodWindow,
+    refreshData,
+    resolveDepartmentSlug,
+  } = useAppData()
+  const resolvedDepartmentId = resolveDepartmentSlug(departmentId) ?? departmentId
   const [timeRange, setTimeRange] = useState<ReportingTimeRange>('last8')
   const [selectedPeriodId, setSelectedPeriodId] = useState('')
   const requestedReportWindowRef = useRef<'default' | 'all' | null>(null)
@@ -54,7 +62,7 @@ export function DepartmentDetailPage() {
   const departmentReportIdsKey = state.reports
     .filter(
       (report) =>
-        report.departmentId === departmentId &&
+        report.departmentId === resolvedDepartmentId &&
         reportingPeriodIds.has(report.reportingPeriodId),
     )
     .map((report) => report.id)
@@ -88,7 +96,7 @@ export function DepartmentDetailPage() {
     void ensureReportDetails(departmentReportIds)
   }, [departmentReportIdsKey, ensureReportDetails])
 
-  const detail = getDepartmentDetail(state, departmentId, {
+  const detail = getDepartmentDetail(state, resolvedDepartmentId, {
     anchorPeriodId: effectivePeriodId,
     range: timeRange,
   })

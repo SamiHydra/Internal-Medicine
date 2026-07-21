@@ -35,6 +35,14 @@ export class ApiError extends Error {
   }
 }
 
+function isInactiveAccountError(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    error.message.toLowerCase().includes('account is inactive')
+  )
+}
+
 function readCookie(name: string) {
   if (typeof document === 'undefined') {
     return null
@@ -76,7 +84,14 @@ export class LaravelApiClient {
           error: null,
         }
       } catch (error) {
-        if (error instanceof ApiError && error.status === 401) {
+        if (
+          error instanceof ApiError &&
+          (error.status === 401 || isInactiveAccountError(error))
+        ) {
+          if (isInactiveAccountError(error)) {
+            this.markSignedOut()
+          }
+
           return { data: { session: null }, error: null }
         }
 
@@ -221,17 +236,28 @@ export class LaravelApiClient {
         const payload = await this.parseResponse(response)
 
         if (!response.ok) {
+          const apiError = new ApiError(
+            this.errorMessage(payload, response),
+            response.status,
+            payload,
+          )
           // A mid-session 401 (session expired) or 419 (CSRF/session token mismatch)
-          // on a non-auth endpoint means the Sanctum session is no longer valid.
+          // or the explicit inactive-account 403 on a non-auth endpoint means the
+          // Sanctum session is no longer usable.
           // markSignedOut() drops the cached CSRF readiness (so the next unsafe
           // request re-primes /sanctum/csrf-cookie) and redirects to /login, instead
           // of stranding the user on an authenticated shell where every write 401/419s.
           // Auth endpoints (/api/auth/me, /login) handle their own statuses.
-          if ((response.status === 401 || response.status === 419) && !path.startsWith('/api/auth/')) {
+          if (
+            (response.status === 401 ||
+              response.status === 419 ||
+              isInactiveAccountError(apiError)) &&
+            !path.startsWith('/api/auth/')
+          ) {
             this.markSignedOut()
           }
 
-          throw new ApiError(this.errorMessage(payload, response), response.status, payload)
+          throw apiError
         }
 
         return payload as T

@@ -140,7 +140,7 @@ export function RepLogPage() {
                         {ACTIVITY_LABELS[session.activityType]}
                         {session.subgroup ? ` · Subgroup ${session.subgroup}` : ''}
                       </p>
-                      <p className="mt-0.5 text-xs text-[#74777f]">
+                      <p className="mt-0.5 text-[13px] leading-5 text-[#5f6670]">
                         {dateLabel(session.scheduledDate)}
                         {session.wardName ? ` · ${session.wardName}` : ''}
                         {session.status === 'not_held' && session.reason ? ` · "${session.reason}"` : ''}

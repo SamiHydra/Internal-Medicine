@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2, Save, Sunrise } from 'lucide-react'
+import { Loader2, Save, Sunrise, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -12,6 +12,7 @@ import {
   panelClass,
 } from '@/components/dashboard/section-panel'
 import {
+  cancelOwnMorningSession,
   fetchTodayMorningSession,
   recordMorningSession,
   type MorningSessionRecord,
@@ -34,6 +35,8 @@ export function MorningAttendancePage() {
   const [canRecord, setCanRecord] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
+  const [cancelReason, setCancelReason] = useState('')
 
   const [onTime, setOnTime] = useState(true)
   const [actualStart, setActualStart] = useState('')
@@ -94,6 +97,24 @@ export function MorningAttendancePage() {
 
   const presentCount = Object.values(presence).filter(Boolean).length
 
+  const cancel = async () => {
+    if (!client || !session || !cancelReason.trim()) {
+      return
+    }
+
+    setIsCancelling(true)
+    try {
+      await cancelOwnMorningSession(client, session.id, cancelReason.trim())
+      toast.success('Morning session cancelled.')
+      setCancelReason('')
+      await load()
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Unable to cancel the session.'))
+    } finally {
+      setIsCancelling(false)
+    }
+  }
+
   return (
     <div className="space-y-6 px-4 py-6 md:px-6 md:py-8">
       <section className={panelClass}>
@@ -115,7 +136,7 @@ export function MorningAttendancePage() {
           <div className="flex min-h-[220px] items-center justify-center text-[#74777f]">
             <Loader2 className="h-5 w-5 animate-spin" aria-label="Loading session" />
           </div>
-        ) : !isSessionDay || !session ? (
+        ) : !isSessionDay ? (
           <div className="mt-5">
             <SectionEmptyState
               icon={<Sunrise className="h-6 w-6" />}
@@ -123,7 +144,7 @@ export function MorningAttendancePage() {
               description="Sessions run on the configured days (Monday, Wednesday, Friday by default)."
             />
           </div>
-        ) : session.status === 'cancelled' ? (
+        ) : session?.status === 'cancelled' ? (
           <div className="mt-5">
             <SectionEmptyState
               icon={<Sunrise className="h-6 w-6" />}
@@ -139,11 +160,19 @@ export function MorningAttendancePage() {
               description="Contact an administrator if you should be recording the morning sessions."
             />
           </div>
+        ) : !session ? (
+          <div className="mt-5">
+            <SectionEmptyState
+              icon={<Sunrise className="h-6 w-6" />}
+              title="Morning session is not open yet"
+              description="Refresh shortly, or contact an administrator if the session should already be available."
+            />
+          </div>
         ) : (
           <div className="mt-5 space-y-5">
             {session.status === 'recorded' ? (
               <Badge variant="success">
-                Recorded{session.delayMinutes ? ` · started ${session.delayMinutes} min late` : ' · on time'}
+                Recorded{session.delayMinutes ? `, started ${session.delayMinutes} min late` : ', on time'}
               </Badge>
             ) : null}
 
@@ -170,7 +199,7 @@ export function MorningAttendancePage() {
 
             <div>
               <p className="mb-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-[#74777f]">
-                Expected attendees · {presentCount} of {session.people?.length ?? 0} present
+                Expected attendees, {presentCount} of {session.people?.length ?? 0} present
               </p>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {(session.people ?? []).map((person) => {
@@ -203,6 +232,29 @@ export function MorningAttendancePage() {
                 })}
               </div>
             </div>
+
+            {session.status === 'pending' ? (
+              <div className="flex flex-col gap-3 border-t border-[#eef2f6] pt-5 sm:flex-row sm:items-end">
+                <label className="flex-1 text-sm font-medium text-[#000a1e]">
+                  Cancellation reason
+                  <Input
+                    className="mt-1.5"
+                    value={cancelReason}
+                    maxLength={1000}
+                    placeholder="Required when the session will not take place"
+                    onChange={(event) => setCancelReason(event.target.value)}
+                  />
+                </label>
+                <Button
+                  variant="destructive"
+                  onClick={() => void cancel()}
+                  disabled={isCancelling || !cancelReason.trim()}
+                >
+                  {isCancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                  Cancel session
+                </Button>
+              </div>
+            ) : null}
           </div>
         )}
       </section>

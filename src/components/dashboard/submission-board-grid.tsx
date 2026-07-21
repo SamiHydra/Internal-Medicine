@@ -52,7 +52,7 @@ export function SubmissionBoardGrid({
 
         {/* Each row is an info column + a self-labeled grid of weekly status cards.
             Cards carry their own week label, so no global week-column header is needed. */}
-        <div className="hidden gap-5 px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#74777f] md:grid md:grid-cols-[minmax(190px,250px)_1fr]">
+        <div className="hidden gap-5 px-1 text-xs font-bold uppercase tracking-[0.12em] text-[#526171] md:grid md:grid-cols-[minmax(190px,250px)_1fr]">
           <span>Department</span>
           <span>Reporting weeks · newest first</span>
         </div>

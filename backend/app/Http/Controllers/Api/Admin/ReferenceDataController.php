@@ -94,7 +94,7 @@ class ReferenceDataController extends Controller
 
             // Preserve sibling metadata keys the editor never sends. The template form
             // only submits metadata.presentation, so a plain content save must merge
-            // over the stored metadata — otherwise it wipes metadata.validation_rules
+            // over the stored metadata - otherwise it wipes metadata.validation_rules
             // (drives clinical quality scoring) and metadata.ui_family. Top-level
             // array_merge replaces `presentation` wholesale (the form owns it) while
             // keeping untouched siblings, mirroring the field-level merge in syncFields.
@@ -408,7 +408,7 @@ class ReferenceDataController extends Controller
     /**
      * Enforce the content/structure permission split. Admins (templates.edit-content)
      * may edit safe attributes; only Maintenance (templates.edit-structure) may make
-     * structural changes — rename the slug/family, add a new field, or change a field
+     * structural changes - rename the slug/family, add a new field, or change a field
      * type. Field keys with saved values stay immutable regardless (protects history).
      */
     private function guardStructuralChanges(Request $request, ReportTemplate $template, array $validated): void

@@ -4,12 +4,11 @@ namespace App\Services\Reports;
 
 use App\Models\Department;
 use App\Models\Report;
-use App\Models\ReportFieldDefinition;
 use App\Models\ReportFieldValue;
 use App\Models\ReportingPeriod;
 
 /**
- * Produces the round-trippable import template — a per-day grid keyed by
+ * Produces the round-trippable import template - a per-day grid keyed by
  * department slug + field key, pre-filled with the period's current values. Staff
  * fill it offline during an outage; {@see ReportImportService} reads it back
  * losslessly.
@@ -79,7 +78,7 @@ class ReportImportTemplateService
     }
 
     /**
-     * @return array<string, array<string, string>>  [fieldKey][day] => value
+     * @return array<string, array<string, string>> [fieldKey][day] => value
      */
     private function valueMap(?Report $report): array
     {

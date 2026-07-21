@@ -88,7 +88,7 @@ class ReportCommentTest extends TestCase
     {
         $this->actingAs($this->admin)
             ->postJson("/api/reports/{$this->report->id}/comments", [
-                'body' => 'Thanks — can you confirm the discharge count?',
+                'body' => 'Thanks, can you confirm the discharge count?',
             ])
             ->assertCreated()
             ->assertJsonPath('authorRole', 'admin');

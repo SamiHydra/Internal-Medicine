@@ -135,7 +135,7 @@ class AnalyticsTest extends TestCase
             ->assertOk();
 
         // warm() (what the after-response hook calls) rebuilds the slice ahead of
-        // the next viewer, and it must reflect the post-write data — never stale.
+        // the next viewer, and it must reflect the post-write data, never stale.
         $service->warm();
 
         $sourceQueries = [];

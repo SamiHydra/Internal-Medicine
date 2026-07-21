@@ -26,7 +26,7 @@ class ReportQualityService
 
         // Outlier (trend) warnings require a few extra queries to build the
         // baseline, so they are only computed for single-report contexts
-        // (form load, save response) — never for the 100-report details batch.
+        // (form load, save response) - never for the 100-report details batch.
         if ($withTrends) {
             $warnings = $warnings->merge($this->outlierWarnings($report));
         }
@@ -42,7 +42,7 @@ class ReportQualityService
     }
 
     /**
-     * Blocking validation only — the cheap path used inside the submit
+     * Blocking validation only - the cheap path used inside the submit
      * transaction. Never runs the historical outlier queries.
      */
     public function assertValid(Report $report): void
@@ -71,7 +71,7 @@ class ReportQualityService
     private function completeness(Report $report): array
     {
         // Free-text fields (notes/names) are optional and not expected daily, so
-        // they are excluded from the completeness denominator — otherwise a report
+        // they are excluded from the completeness denominator - otherwise a report
         // could never reach 100% on templates that carry a comment field.
         $fieldDefinitions = $report->template?->fieldDefinitions
             ->filter(fn (ReportFieldDefinition $field): bool => (bool) $field->active && $field->field_kind !== 'text')
@@ -141,7 +141,7 @@ class ReportQualityService
 
     /**
      * Flag weekly totals that deviate sharply from the assignment's recent
-     * baseline. These are soft (warning) signals — "confirm this is right?" —
+     * baseline. These are soft (warning) signals - "confirm this is right?" -
      * not blocking errors.
      *
      * @return Collection<int, array<string, mixed>>

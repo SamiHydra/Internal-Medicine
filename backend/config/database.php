@@ -41,7 +41,7 @@ return [
             // WAL lets readers and a writer proceed concurrently. Without it
             // (rollback "delete" journal), a long-running read (e.g. the cold
             // analytics aggregation) holds a shared lock that blocks any other
-            // request's session/cache write for the duration — which is what made
+            // request's session/cache write for the duration, which is what made
             // /api/workspace appear ~5s while the dashboard built. WAL removes that
             // contention. No-op for the in-memory test DB. Prod should use MySQL/Postgres.
             'busy_timeout' => env('DB_BUSY_TIMEOUT', 5000),

@@ -121,7 +121,7 @@ class AppSettingsService
 
         // Only rewrite every period's deadline when the deadline policy (day or time)
         // actually changed. A no-op save (e.g. an admin tweaks an unrelated metric
-        // target) must not silently shift existing deadlines — that previously moved
+        // target) must not silently shift existing deadlines - that previously moved
         // the visible close date a week and could mark current reports overdue early.
         $deadlinePolicyChanged =
             strtolower((string) $current['weeklyDeadlineDay']) !== $next['weeklyDeadlineDay']

@@ -10,14 +10,16 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Public self-signup for ADMIN accounts. Unlike academic enrollment (which is
- * instant), an admin signup creates only a PENDING request — no account exists
- * until a superadmin or admin approves it, so the applicant cannot log in or act
- * until then. The requested role is always 'admin'; the maintenance owner
- * (superadmin) can never be created through any app flow.
+ * Public self-signup for ADMIN accounts. It creates only a PENDING request - no
+ * account exists until a superadmin or admin approves it, so the applicant
+ * cannot log in or act until then. The requested role is always 'admin'; the
+ * maintenance owner (superadmin) can never be created through any app flow.
+ * The queue is shared with academic enrollment (the admin_access_requests table
+ * name is historical), which is why requested_role is written explicitly.
  */
 class AdminRegistrationController extends Controller
 {
@@ -26,7 +28,7 @@ class AdminRegistrationController extends Controller
         $validated = Validator::make($this->normalize($request), [
             'full_name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255'],
-            'password' => ['required', 'string', \Illuminate\Validation\Rules\Password::defaults()],
+            'password' => ['required', 'string', Password::defaults()],
             'notes' => ['nullable', 'string', 'max:1000'],
         ])->validate();
 

@@ -85,6 +85,31 @@ class AuthorizationTest extends TestCase
         $this->assertFalse(Gate::forUser($superadmin)->allows('setActive', $superadmin));
     }
 
+    public function test_user_policy_lets_admins_edit_the_accounts_they_can_deactivate(): void
+    {
+        $superadmin = User::factory()->role('superadmin', 'Superadmin')->create();
+        $admin = User::factory()->role('admin', 'Administrator')->create();
+        $otherAdmin = User::factory()->role('admin', 'Administrator')->create();
+        $nurse = User::factory()->create();
+        $resident = User::factory()->role('resident', 'Resident')->create();
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+        $studentRep = User::factory()->role('student_rep', 'Student representative')->create();
+
+        foreach ([$nurse, $resident, $consultant, $studentRep] as $target) {
+            $this->assertTrue(Gate::forUser($admin)->allows('update', $target));
+        }
+
+        $this->assertFalse(Gate::forUser($admin)->allows('update', $otherAdmin));
+        $this->assertFalse(Gate::forUser($admin)->allows('update', $superadmin));
+
+        $this->assertTrue(Gate::forUser($superadmin)->allows('update', $admin));
+        $this->assertTrue(Gate::forUser($superadmin)->allows('update', $resident));
+
+        // Self-edit stays open for everyone, including the accounts admins cannot touch.
+        $this->assertTrue(Gate::forUser($admin)->allows('update', $admin));
+        $this->assertTrue(Gate::forUser($nurse)->allows('update', $nurse));
+    }
+
     public function test_report_policy_scopes_nurses_to_active_unlocked_assignments(): void
     {
         $nurse = User::factory()->create();

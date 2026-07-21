@@ -116,7 +116,7 @@ class ReportCommentController extends Controller
             return;
         }
 
-        $model = new Notification();
+        $model = new Notification;
         $rows = $recipientIds->map(fn (string $recipientId): array => [
             'id' => $model->newUniqueId(),
             'recipient_id' => $recipientId,

@@ -10,27 +10,23 @@ use Illuminate\Support\Facades\Schema;
 
 class LaunchReadinessCheck extends Command
 {
-    protected $signature = 'app:launch-check {--strict : Return a failing exit code when warnings are present.}';
+    protected $signature = 'app:launch-readiness {--strict : Return a failing exit code when warnings are present.}';
+
+    /** @var list<string> */
+    protected $aliases = ['app:launch-check'];
 
     protected $description = 'Check production launch readiness settings and host prerequisites.';
 
     /**
      * @var array<int, array{status: string, check: string, detail: string}>
      */
-    private array $results = [];
+    protected array $results = [];
 
     public function handle(): int
     {
         $this->results = [];
 
-        $this->checkProductionEnvironment();
-        $this->checkDatabase();
-        $this->checkQueue();
-        $this->checkMailAndSms();
-        $this->checkPerformance();
-        $this->checkSameOriginCookieSettings();
-        $this->checkBackupsAndErrors();
-        $this->checkOnPremHost();
+        $this->runChecks();
 
         $this->newLine();
         $this->table(['Status', 'Check', 'Detail'], $this->results);
@@ -55,6 +51,22 @@ class LaunchReadinessCheck extends Command
         ));
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Kept as one overridable seam so command-level tests can prove strict
+     * exit semantics without impersonating Linux/systemd/TLS on every CI OS.
+     */
+    protected function runChecks(): void
+    {
+        $this->checkProductionEnvironment();
+        $this->checkDatabase();
+        $this->checkQueue();
+        $this->checkMailAndSms();
+        $this->checkPerformance();
+        $this->checkSameOriginCookieSettings();
+        $this->checkOperationalAttestations();
+        $this->checkOnPremHost();
     }
 
     private function checkProductionEnvironment(): void
@@ -211,7 +223,7 @@ class LaunchReadinessCheck extends Command
         );
 
         $this->record(
-            filled(env('TRUSTED_PROXIES')),
+            filled(config('operations.trusted_proxies')),
             'Trusted proxies configured',
             'TRUSTED_PROXIES is set.',
             'Set TRUSTED_PROXIES="*" if TLS terminates at a host proxy.',
@@ -219,21 +231,32 @@ class LaunchReadinessCheck extends Command
         );
     }
 
-    private function checkBackupsAndErrors(): void
+    private function checkOperationalAttestations(): void
     {
-            $this->recordWarning(
-                'Database backup restore verified',
-                'Manual check: create daily mysqldump outside web root and test a restore.',
-            );
+        $verifiedAt = config('operations.backup_restore_verified_at');
+        $maxAgeDays = (int) config('operations.backup_restore_max_age_days', 90);
 
-        $this->recordWarning(
-            'Production error visibility configured',
-            'Manual check: configure Sentry or a scheduled storage/logs review.',
+        try {
+            $verifiedAtDate = filled($verifiedAt) ? Carbon::parse((string) $verifiedAt) : null;
+        } catch (\Throwable) {
+            $verifiedAtDate = null;
+        }
+
+        $this->record(
+            $verifiedAtDate !== null && $verifiedAtDate->greaterThanOrEqualTo(now()->subDays($maxAgeDays)),
+            'Database restore drill is current',
+            sprintf('Last verified restore: %s.', $verifiedAtDate?->toIso8601String()),
+            sprintf('Set BACKUP_RESTORE_VERIFIED_AT after a successful restore drill within the last %d days.', $maxAgeDays),
+            warn: true,
         );
 
-        $this->recordWarning(
-            'Host cron installed',
-            'Manual check: * * * * * cd /path/to/backend && php artisan schedule:run >> storage/logs/schedule.log 2>&1',
+        $monitoringChannel = trim((string) config('operations.error_monitoring_channel'));
+        $this->record(
+            $monitoringChannel !== '',
+            'Production error visibility configured',
+            sprintf('Operational channel: %s.', $monitoringChannel),
+            'Set ERROR_MONITORING_CHANNEL to the configured alerting or scheduled log-review channel.',
+            warn: true,
         );
     }
 
@@ -246,7 +269,7 @@ class LaunchReadinessCheck extends Command
     private function checkOnPremHost(): void
     {
         // Last backup fresher than 26 hours (a daily 02:00 dump plus slack).
-        $backupDir = (string) env('BACKUP_DIR', '/var/backups/imreport');
+        $backupDir = (string) config('operations.backup_dir', '/var/backups/imreport');
         $newestBackup = collect(is_dir($backupDir) ? (glob($backupDir.'/*.sql.gz') ?: []) : [])
             ->map(fn (string $path) => filemtime($path))
             ->max();
@@ -266,8 +289,28 @@ class LaunchReadinessCheck extends Command
             );
         }
 
+        $secondaryDir = (string) config('operations.secondary_backup_dir', '/mnt/backup/imreport');
+        $newestSecondary = collect(is_dir($secondaryDir) ? (glob($secondaryDir.'/*.sql.gz') ?: []) : [])
+            ->map(fn (string $path) => filemtime($path))
+            ->max();
+
+        if ($newestSecondary === null) {
+            $this->recordWarning(
+                'Secondary backup fresher than 26h',
+                sprintf('No off-box *.sql.gz found in %s. Mount the secondary disk/NAS and run deploy/backup.sh.', $secondaryDir),
+            );
+        } else {
+            $ageHours = (now()->getTimestamp() - $newestSecondary) / 3600;
+            $this->record(
+                $ageHours <= 26,
+                'Secondary backup fresher than 26h',
+                sprintf('Newest off-box dump is %.1f hours old.', $ageHours),
+                sprintf('Newest off-box dump is %.1f hours old. Check the mount and deploy/backup.sh cron.', $ageHours),
+            );
+        }
+
         // The persistent queue worker unit (replaces the cron-tick worker).
-        $unit = (string) env('QUEUE_WORKER_SERVICE', 'imreport-queue.service');
+        $unit = (string) config('operations.queue_worker_service', 'imreport-queue.service');
 
         if (config('queue.worker_mode') !== 'daemon') {
             $this->recordWarning(
@@ -304,7 +347,7 @@ class LaunchReadinessCheck extends Command
         );
 
         // Free disk above threshold (dumps + logs need headroom).
-        $minFreeGb = (float) env('MIN_FREE_DISK_GB', 5);
+        $minFreeGb = (float) config('operations.min_free_disk_gb', 5);
         $freeBytes = @disk_free_space(base_path());
 
         if ($freeBytes === false) {
@@ -408,12 +451,12 @@ class LaunchReadinessCheck extends Command
         $this->recordFailure($check, $failureDetail);
     }
 
-    private function pass(string $check, string $detail): void
+    protected function pass(string $check, string $detail): void
     {
         $this->results[] = ['status' => 'PASS', 'check' => $check, 'detail' => $detail];
     }
 
-    private function recordWarning(string $check, string $detail): void
+    protected function recordWarning(string $check, string $detail): void
     {
         $this->results[] = ['status' => 'WARN', 'check' => $check, 'detail' => $detail];
     }

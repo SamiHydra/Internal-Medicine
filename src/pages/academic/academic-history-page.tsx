@@ -23,7 +23,7 @@ function getMessage(error: unknown, fallback: string) {
 
 function toDateLabel(value: string | null | undefined) {
   if (!value) {
-    return '—'
+    return '-'
   }
   try {
     return format(parseISO(value), 'MMM d, yyyy')
@@ -122,7 +122,7 @@ export function AcademicHistoryPage() {
           className={panelClass}
         >
           <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
-            <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f] sm:grid-cols-[1.4fr_1fr_auto]">
+            <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.12em] text-[#526171] sm:grid-cols-[1.4fr_1fr_auto]">
               <span>{subjectLabel} evaluated</span>
               <span className="hidden sm:block">Ward · date</span>
               <span className="text-right">Score</span>
@@ -139,12 +139,12 @@ export function AcademicHistoryPage() {
                     <p className="truncate text-sm font-semibold text-[#000a1e]">
                       {record.subjectName ?? 'Unknown'}
                     </p>
-                    <p className="text-xs text-[#74777f] sm:hidden">
-                      {record.wardName ?? '—'} · {toDateLabel(record.evaluationDate)}
+                    <p className="text-[13px] leading-5 text-[#5f6670] sm:hidden">
+                      {record.wardName ?? '-'} · {toDateLabel(record.evaluationDate)}
                     </p>
                   </div>
                   <p className="hidden text-sm text-[#5b6169] sm:block">
-                    {record.wardName ?? '—'} · {toDateLabel(record.evaluationDate)}
+                    {record.wardName ?? '-'} · {toDateLabel(record.evaluationDate)}
                   </p>
                   <div className="flex items-center justify-end gap-2">
                     {rating != null ? (

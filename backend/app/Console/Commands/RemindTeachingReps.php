@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Notification;
 use App\Models\RepAssignment;
 use App\Models\TeachingSession;
+use App\Support\HospitalClock;
 use Illuminate\Console\Command;
 
 class RemindTeachingReps extends Command
@@ -15,8 +16,9 @@ class RemindTeachingReps extends Command
 
     public function handle(): int
     {
+        $today = HospitalClock::today();
         $pendingToday = TeachingSession::query()
-            ->whereDate('scheduled_date', now()->toDateString())
+            ->whereDate('scheduled_date', $today->toDateString())
             ->where('status', 'pending')
             ->get();
 

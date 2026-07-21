@@ -2,22 +2,32 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\Api\Admin\UndergraduateAdminController;
+use App\Models\DutyType;
 use App\Models\Evaluation;
+use App\Models\EvaluationForm;
+use App\Models\MorningSession;
 use App\Models\RepAssignment;
+use App\Models\Section;
 use App\Models\Student;
 use App\Models\StudentBatch;
 use App\Models\SubgroupPlacement;
 use App\Models\TeachingActivitySchedule;
 use App\Models\TeachingSession;
+use App\Models\TransferRequest;
 use App\Models\User;
 use App\Models\Ward;
 use App\Services\Academic\TeachingService;
 use App\Support\Authorization\Permissions;
 use Database\Seeders\DepartmentSeeder;
+use Database\Seeders\DevAcademicDataSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class UndergraduateModuleTest extends TestCase
@@ -194,6 +204,384 @@ class UndergraduateModuleTest extends TestCase
         $this->assertNotContains('bedside', array_column($mine['data'], 'activityType'));
     }
 
+    public function test_only_one_active_representative_can_be_created_for_each_batch_scope(): void
+    {
+        $batch = $this->makeBatch();
+        $first = User::factory()->role('student_rep', 'Student representative')->create();
+        $second = User::factory()->role('student_rep', 'Student representative')->create();
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/rep-assignments', [
+                'userId' => $first->id,
+                'batchId' => $batch->id,
+                'scope' => 'group',
+            ])
+            ->assertCreated();
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/rep-assignments', [
+                'userId' => $second->id,
+                'batchId' => $batch->id,
+                'scope' => 'group',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['scope']);
+
+        $this->assertSame(1, RepAssignment::query()
+            ->where('batch_id', $batch->id)
+            ->where('scope', 'group')
+            ->where('active', true)
+            ->count());
+
+        // The generated-column unique index is the final guard for stale or
+        // non-HTTP writers that bypass the controller locks.
+        try {
+            RepAssignment::query()->create([
+                'user_id' => $second->id,
+                'batch_id' => $batch->id,
+                'scope' => 'group',
+                'active' => true,
+            ]);
+            $this->fail('The database accepted a second active group representative.');
+        } catch (QueryException $exception) {
+            $this->assertStringContainsString('unique', strtolower($exception->getMessage()));
+        }
+    }
+
+    public function test_representative_can_have_only_one_active_assignment_globally(): void
+    {
+        $firstBatch = $this->makeBatch('C1', 'C1 2026-A');
+        $secondBatch = $this->makeBatch('C1', 'C1 2026-B');
+        $rep = User::factory()->role('student_rep', 'Student representative')->create();
+
+        $activeAssignmentId = $this->actingAs($this->admin)
+            ->postJson('/api/admin/rep-assignments', [
+                'userId' => $rep->id,
+                'batchId' => $firstBatch->id,
+                'scope' => 'group',
+            ])
+            ->assertCreated()
+            ->json('id');
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/rep-assignments', [
+                'userId' => $rep->id,
+                'batchId' => $secondBatch->id,
+                'scope' => 'subgroup_a',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['userId']);
+
+        try {
+            RepAssignment::query()->create([
+                'user_id' => $rep->id,
+                'batch_id' => $secondBatch->id,
+                'scope' => 'subgroup_a',
+                'active' => true,
+            ]);
+            $this->fail('The database accepted a second active assignment for one representative.');
+        } catch (QueryException $exception) {
+            $this->assertStringContainsString('unique', strtolower($exception->getMessage()));
+        }
+
+        $inactive = RepAssignment::query()->create([
+            'user_id' => $rep->id,
+            'batch_id' => $secondBatch->id,
+            'scope' => 'subgroup_a',
+            'active' => false,
+        ]);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/rep-assignments/{$inactive->id}", ['active' => true])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['userId']);
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/rep-assignments/{$inactive->id}/active", ['active' => true])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['userId']);
+
+        $this->assertFalse($inactive->refresh()->active);
+        $this->assertSame(1, RepAssignment::query()
+            ->where('user_id', $rep->id)
+            ->where('active', true)
+            ->count());
+
+        $secondBatch->forceFill(['active' => false])->save();
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/rep-assignments/{$activeAssignmentId}", ['batchId' => $secondBatch->id])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['batchId']);
+        $this->assertSame($firstBatch->id, RepAssignment::query()->findOrFail($activeAssignmentId)->batch_id);
+
+        $otherRep = User::factory()->role('student_rep', 'Student representative')->create();
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/rep-assignments', [
+                'userId' => $otherRep->id,
+                'batchId' => $secondBatch->id,
+                'scope' => 'subgroup_b',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['batchId']);
+    }
+
+    public function test_update_and_reactivation_reject_an_occupied_batch_scope(): void
+    {
+        $batch = $this->makeBatch();
+        $groupRep = User::factory()->role('student_rep', 'Student representative')->create();
+        $subgroupRep = User::factory()->role('student_rep', 'Student representative')->create();
+        $inactiveRep = User::factory()->role('student_rep', 'Student representative')->create();
+
+        $group = RepAssignment::query()->create([
+            'user_id' => $groupRep->id,
+            'batch_id' => $batch->id,
+            'scope' => 'group',
+            'active' => true,
+        ]);
+        $subgroup = RepAssignment::query()->create([
+            'user_id' => $subgroupRep->id,
+            'batch_id' => $batch->id,
+            'scope' => 'subgroup_a',
+            'active' => true,
+        ]);
+        $inactive = RepAssignment::query()->create([
+            'user_id' => $inactiveRep->id,
+            'batch_id' => $batch->id,
+            'scope' => 'group',
+            'active' => false,
+        ]);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/rep-assignments/{$subgroup->id}", ['scope' => 'group'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['scope']);
+        $this->assertSame('subgroup_a', $subgroup->refresh()->scope);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/rep-assignments/{$inactive->id}/active", ['active' => true])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['scope']);
+        $this->assertFalse($inactive->refresh()->active);
+
+        // Once the incumbent is deactivated, reactivation is legal and the
+        // same invariant still leaves exactly one active row.
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/rep-assignments/{$group->id}/active", ['active' => false])
+            ->assertOk();
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/rep-assignments/{$inactive->id}/active", ['active' => true])
+            ->assertOk()
+            ->assertJsonPath('active', true);
+
+        $this->assertSame(1, RepAssignment::query()
+            ->where('batch_id', $batch->id)
+            ->where('scope', 'group')
+            ->where('active', true)
+            ->count());
+    }
+
+    public function test_update_reloads_stale_assignment_state_before_reactivation(): void
+    {
+        $batch = $this->makeBatch();
+        $incumbent = User::factory()->role('student_rep', 'Student representative')->create();
+        $candidate = User::factory()->role('student_rep', 'Student representative')->create();
+
+        RepAssignment::query()->create([
+            'user_id' => $incumbent->id,
+            'batch_id' => $batch->id,
+            'scope' => 'group',
+            'active' => true,
+        ]);
+        $assignment = RepAssignment::query()->create([
+            'user_id' => $candidate->id,
+            'batch_id' => $batch->id,
+            'scope' => 'subgroup_a',
+            'active' => false,
+        ]);
+        $staleBoundModel = $assignment->fresh();
+
+        // Simulate a route-bound model becoming stale before the controller
+        // acquires its lock. The fresh row now targets the occupied scope.
+        $assignment->forceFill(['scope' => 'group'])->save();
+
+        $request = Request::create(
+            "/api/admin/rep-assignments/{$assignment->id}",
+            'PATCH',
+            ['active' => true],
+        );
+        $request->setUserResolver(fn () => $this->admin);
+        $this->actingAs($this->admin);
+
+        try {
+            app(UndergraduateAdminController::class)->updateRepAssignment($request, $staleBoundModel);
+            $this->fail('A stale model bypassed the occupied-scope check.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('scope', $exception->errors());
+        }
+
+        $assignment->refresh();
+        $this->assertSame('group', $assignment->scope);
+        $this->assertFalse($assignment->active);
+    }
+
+    public function test_dev_seeder_rerun_reactivates_stable_rep_after_deactivating_competitor(): void
+    {
+        $batch = $this->makeBatch();
+        $stableRep = User::factory()->role('student_rep', 'Student representative')->create([
+            'email' => 'student.rep.group@stpaulos.local',
+            'active' => true,
+        ]);
+        $alternateRep = User::factory()->role('student_rep', 'Student representative')->create();
+        $stable = RepAssignment::query()->create([
+            'user_id' => $stableRep->id,
+            'batch_id' => $batch->id,
+            'scope' => 'group',
+            'active' => false,
+        ]);
+        $alternate = RepAssignment::query()->create([
+            'user_id' => $alternateRep->id,
+            'batch_id' => $batch->id,
+            'scope' => 'group',
+            'active' => true,
+        ]);
+
+        $method = new \ReflectionMethod(DevAcademicDataSeeder::class, 'ensureStableRepresentativeAssignment');
+        $seeder = app(DevAcademicDataSeeder::class);
+
+        // Invoke twice to model a true rerun from the previously problematic
+        // inactive-stable/active-alternate state and then its settled state.
+        $method->invoke($seeder, $batch, 'group');
+        $method->invoke($seeder, $batch, 'group');
+
+        $this->assertTrue($stable->refresh()->active);
+        $this->assertFalse($alternate->refresh()->active);
+        $this->assertSame(1, RepAssignment::query()
+            ->where('batch_id', $batch->id)
+            ->where('scope', 'group')
+            ->where('active', true)
+            ->count());
+        $this->assertSame('student.rep.group', $stableRep->refresh()->username);
+    }
+
+    public function test_dev_seeder_activates_stable_rep_only_for_the_current_batch(): void
+    {
+        $historicalBatch = $this->makeBatch('C1', 'C1 Historical');
+        $currentBatch = $this->makeBatch('C1', 'C1 Current');
+        $stableRep = User::factory()->role('student_rep', 'Student representative')->create([
+            'email' => 'student.rep.group@stpaulos.local',
+            'active' => true,
+        ]);
+        $historical = RepAssignment::query()->create([
+            'user_id' => $stableRep->id,
+            'batch_id' => $historicalBatch->id,
+            'scope' => 'group',
+            'active' => true,
+        ]);
+
+        $method = new \ReflectionMethod(DevAcademicDataSeeder::class, 'ensureStableRepresentativeAssignment');
+        $seeder = app(DevAcademicDataSeeder::class);
+        $method->invoke($seeder, $historicalBatch, 'group', false);
+        $current = $method->invoke($seeder, $currentBatch, 'group', true);
+
+        $this->assertFalse($historical->refresh()->active);
+        $this->assertTrue($current->refresh()->active);
+        $this->assertSame($currentBatch->id, RepAssignment::query()
+            ->where('user_id', $stableRep->id)
+            ->where('active', true)
+            ->sole()
+            ->batch_id);
+    }
+
+    public function test_dev_seeder_retires_legacy_generated_rep_login_without_deleting_history(): void
+    {
+        $batch = $this->makeBatch();
+        $legacyRep = User::factory()->role('student_rep', 'Student representative')->create([
+            'email' => "demo.batch{$batch->id}.r1@stpaulos.local",
+            'username' => "demo.batch{$batch->id}.r1",
+            'active' => true,
+        ]);
+        $legacyAssignment = RepAssignment::query()->create([
+            'user_id' => $legacyRep->id,
+            'batch_id' => $batch->id,
+            'scope' => 'group',
+            'active' => true,
+        ]);
+        $unrelatedRep = User::factory()->role('student_rep', 'Student representative')->create([
+            'email' => 'student.rep.group@stpaulos.local',
+            'username' => 'student.rep.group',
+            'active' => true,
+        ]);
+
+        $method = new \ReflectionMethod(DevAcademicDataSeeder::class, 'retireLegacyRepresentativeAccounts');
+        $method->invoke(app(DevAcademicDataSeeder::class));
+
+        $this->assertFalse($legacyRep->refresh()->active);
+        $this->assertFalse($legacyAssignment->refresh()->active);
+        $this->assertTrue($unrelatedRep->refresh()->active);
+        $this->assertDatabaseHas('users', ['id' => $legacyRep->id]);
+        $this->assertDatabaseHas('rep_assignments', ['id' => $legacyAssignment->id]);
+    }
+
+    public function test_batch_deactivation_atomically_revokes_representative_scope(): void
+    {
+        $batch = $this->makeBatch();
+        app(TeachingService::class)->generateSessions(Carbon::parse('2026-09-14'));
+        $rep = $this->makeRep($batch, 'group');
+        $assignment = RepAssignment::query()->where('user_id', $rep->id)->firstOrFail();
+        $lecture = TeachingSession::query()->where('batch_id', $batch->id)->where('activity_type', 'lecture')->firstOrFail();
+
+        $this->actingAs($rep)
+            ->getJson('/api/teaching/my-sessions')
+            ->assertOk();
+        $this->actingAs($rep)
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->assertJsonPath('academic.repScope.batchId', $batch->id);
+
+        $this->actingAs($this->admin)
+            ->deleteJson("/api/admin/student-batches/{$batch->id}")
+            ->assertNoContent();
+
+        $this->assertFalse($batch->refresh()->active);
+        $this->assertFalse($assignment->refresh()->active);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/rep-assignments/{$assignment->id}/active", ['active' => true])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['batchId']);
+        $this->assertFalse($assignment->refresh()->active);
+
+        // Even an out-of-band write cannot restore authority for an inactive
+        // batch because every operational read also checks batch.active.
+        $assignment->forceFill(['active' => true])->save();
+        $this->actingAs($rep)
+            ->getJson('/api/teaching/my-sessions')
+            ->assertForbidden();
+        $this->actingAs($rep)
+            ->postJson("/api/teaching/sessions/{$lecture->id}/record", ['status' => 'held'])
+            ->assertForbidden();
+        $this->actingAs($rep)
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->assertJsonPath('academic.repScope', null);
+    }
+
+    public function test_batch_update_deactivation_also_revokes_representative_scope(): void
+    {
+        $batch = $this->makeBatch();
+        $rep = $this->makeRep($batch, 'group');
+        $assignment = RepAssignment::query()->where('user_id', $rep->id)->firstOrFail();
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/student-batches/{$batch->id}", ['active' => false])
+            ->assertOk()
+            ->assertJsonPath('active', false);
+
+        $this->assertFalse($assignment->refresh()->active);
+        $this->actingAs($rep)
+            ->getJson('/api/teaching/my-sessions')
+            ->assertForbidden();
+    }
+
     // ---- Attendance ----
 
     public function test_consultant_attendance_flips_a_pending_session_to_held(): void
@@ -356,14 +744,14 @@ class UndergraduateModuleTest extends TestCase
         // Real ids for parameterized routes, so route-model binding succeeds
         // and it is the AUTHORIZATION layer that answers, not a 404.
         $consultant = User::factory()->role('consultant', 'Consultant')->create([
-            'section_id' => \App\Models\Section::query()->where('slug', 'nephrology')->value('id'),
+            'section_id' => Section::query()->where('slug', 'nephrology')->value('id'),
         ]);
-        $transferRequest = \App\Models\TransferRequest::query()->create([
+        $transferRequest = TransferRequest::query()->create([
             'user_id' => $consultant->id,
-            'from_section_id' => \App\Models\Section::query()->where('slug', 'nephrology')->value('id'),
-            'to_section_id' => \App\Models\Section::query()->where('slug', 'cardiology')->value('id'),
+            'from_section_id' => Section::query()->where('slug', 'nephrology')->value('id'),
+            'to_section_id' => Section::query()->where('slug', 'cardiology')->value('id'),
         ]);
-        $formId = \App\Models\EvaluationForm::query()->where('key', 'consultant_mdt')->value('id');
+        $formId = EvaluationForm::query()->where('key', 'consultant_mdt')->value('id');
 
         // Asserted against the live route list, not a hand-maintained one:
         // every AUTHENTICATED /api/academic and /api/admin/academic route must
@@ -376,7 +764,7 @@ class UndergraduateModuleTest extends TestCase
 
         $this->assertNotEmpty($routes);
 
-        $morningSession = \App\Models\MorningSession::query()->create([
+        $morningSession = MorningSession::query()->create([
             'session_date' => '2026-09-14',
             'scheduled_start_at' => '08:00',
         ]);
@@ -386,8 +774,8 @@ class UndergraduateModuleTest extends TestCase
             '{transferRequest}' => $transferRequest->id,
             '{evaluationForm}' => $formId,
             '{ward}' => Ward::query()->value('id'),
-            '{section}' => \App\Models\Section::query()->value('id'),
-            '{dutyType}' => \App\Models\DutyType::query()->value('id'),
+            '{section}' => Section::query()->value('id'),
+            '{dutyType}' => DutyType::query()->value('id'),
             '{morningSession}' => $morningSession->id,
         ];
 
@@ -416,9 +804,9 @@ class UndergraduateModuleTest extends TestCase
         $this->actingAs($this->admin)
             ->postJson('/api/admin/students/import', [
                 'batchId' => $batch->id,
-                'csv' => "Alem Kebede,ETS0101,A
+                'csv' => 'Alem Kebede,ETS0101,A
 Alem Kebede,ETS0202,B
-Alem Kebede,ETS0101,A",
+Alem Kebede,ETS0101,A',
             ])
             ->assertCreated()
             ->assertJsonPath('created', 2)
@@ -428,8 +816,8 @@ Alem Kebede,ETS0101,A",
         $this->actingAs($this->admin)
             ->postJson('/api/admin/students/import', [
                 'batchId' => $batch->id,
-                'csv' => "Birtukan Mengistu
-Birtukan Mengistu",
+                'csv' => 'Birtukan Mengistu
+Birtukan Mengistu',
             ])
             ->assertCreated()
             ->assertJsonPath('created', 1)
@@ -522,5 +910,197 @@ Birtukan Mengistu",
                 ->whereDate('scheduled_date', '2026-09-21')
                 ->count(),
         );
+    }
+
+    public function test_schedule_deactivation_reconciles_pending_rows_and_preserves_recorded_history(): void
+    {
+        $batch = $this->makeBatch();
+        $service = app(TeachingService::class);
+        $service->generateRange(Carbon::parse('2026-09-14'), Carbon::parse('2026-09-21'));
+
+        $today = TeachingSession::query()
+            ->where('batch_id', $batch->id)
+            ->where('activity_type', 'lecture')
+            ->whereDate('scheduled_date', '2026-09-14')
+            ->firstOrFail();
+        $nextWeek = TeachingSession::query()
+            ->where('batch_id', $batch->id)
+            ->where('activity_type', 'lecture')
+            ->whereDate('scheduled_date', '2026-09-21')
+            ->firstOrFail();
+        $rep = $this->makeRep($batch, 'group');
+
+        $this->actingAs($rep)
+            ->postJson("/api/teaching/sessions/{$today->id}/record", ['status' => 'held'])
+            ->assertOk();
+
+        $lectureRow = TeachingActivitySchedule::query()
+            ->where('cohort', 'C1')
+            ->where('weekday', 1)
+            ->where('activity_type', 'lecture')
+            ->firstOrFail();
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/teaching-schedules/{$lectureRow->id}/active", ['active' => false])
+            ->assertOk();
+
+        $this->assertDatabaseHas('teaching_sessions', [
+            'id' => $today->id,
+            'status' => 'held',
+        ]);
+        $this->assertDatabaseMissing('teaching_sessions', ['id' => $nextWeek->id]);
+    }
+
+    public function test_obsolete_pending_teaching_rows_are_hidden_and_cannot_be_recorded(): void
+    {
+        $batch = $this->makeBatch();
+        $student = Student::query()->create([
+            'batch_id' => $batch->id,
+            'full_name' => 'Schedule Guard Student',
+            'external_id' => 'SG-001',
+            'subgroup' => 'A',
+        ]);
+        $rep = $this->makeRep($batch, 'group');
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+
+        // This row deliberately simulates an out-of-band write after cleanup:
+        // Monday seminars are not part of C1's active program.
+        $obsolete = TeachingSession::query()->create([
+            'batch_id' => $batch->id,
+            'subgroup' => null,
+            'activity_type' => 'seminar',
+            'scheduled_date' => '2026-09-14',
+        ]);
+
+        $this->actingAs($rep)
+            ->getJson('/api/teaching/my-sessions')
+            ->assertOk()
+            ->assertJsonMissing(['id' => $obsolete->id]);
+        $this->actingAs($rep)
+            ->postJson("/api/teaching/sessions/{$obsolete->id}/record", ['status' => 'held'])
+            ->assertForbidden();
+        $this->actingAs($consultant)
+            ->getJson('/api/teaching/today')
+            ->assertOk()
+            ->assertJsonMissing(['id' => $obsolete->id]);
+        $this->actingAs($consultant)
+            ->putJson("/api/teaching/sessions/{$obsolete->id}/attendance", [
+                'presence' => [$student->id => true],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['session']);
+
+        $this->assertDatabaseMissing('student_attendance', [
+            'teaching_session_id' => $obsolete->id,
+        ]);
+        $this->assertSame('pending', $obsolete->refresh()->status);
+    }
+
+    public function test_admin_resource_lifecycle_routes_are_complete_and_history_safe(): void
+    {
+        $batch = $this->makeBatch();
+        $student = Student::query()->create([
+            'batch_id' => $batch->id,
+            'full_name' => 'Lifecycle Student',
+            'external_id' => 'LC-001',
+            'subgroup' => 'A',
+        ]);
+        $ward = Ward::query()->where('slug', 'nephrology_ward')->firstOrFail();
+        $otherWard = Ward::query()->where('id', '!=', $ward->id)->firstOrFail();
+
+        $this->actingAs($this->admin)
+            ->getJson("/api/admin/student-batches/{$batch->id}")
+            ->assertOk()
+            ->assertJsonPath('studentCount', 1);
+        $this->actingAs($this->admin)
+            ->getJson("/api/admin/students/{$student->id}")
+            ->assertOk()
+            ->assertJsonPath('externalId', 'LC-001');
+
+        $placementId = $this->actingAs($this->admin)
+            ->postJson('/api/admin/subgroup-placements', [
+                'batchId' => $batch->id,
+                'subgroup' => 'A',
+                'wardId' => $ward->id,
+                'weekStartsOn' => '2026-09-14',
+            ])
+            ->assertCreated()
+            ->json('id');
+        $this->actingAs($this->admin)
+            ->getJson("/api/admin/subgroup-placements/{$placementId}")
+            ->assertOk()
+            ->assertJsonPath('wardId', $ward->id);
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/subgroup-placements/{$placementId}", ['wardId' => $otherWard->id])
+            ->assertOk()
+            ->assertJsonPath('wardId', $otherWard->id);
+
+        $scheduleCombination = collect(StudentBatch::COHORTS)
+            ->crossJoin(TeachingActivitySchedule::ACTIVITY_TYPES, range(1, 7))
+            ->first(fn (array $parts) => ! TeachingActivitySchedule::query()
+                ->where('cohort', $parts[0])
+                ->where('activity_type', $parts[1])
+                ->where('weekday', $parts[2])
+                ->exists());
+        $this->assertNotNull($scheduleCombination);
+        [$cohort, $activityType, $weekday] = $scheduleCombination;
+        $scope = in_array($activityType, ['lecture', 'seminar'], true) ? 'cohort' : 'subgroup';
+
+        $scheduleId = $this->actingAs($this->admin)
+            ->postJson('/api/admin/teaching-schedules', [
+                'cohort' => $cohort,
+                'activityType' => $activityType,
+                'weekday' => $weekday,
+                'scope' => $scope,
+            ])
+            ->assertCreated()
+            ->json('id');
+        $this->actingAs($this->admin)
+            ->getJson("/api/admin/teaching-schedules/{$scheduleId}")
+            ->assertOk();
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/teaching-schedules/{$scheduleId}", ['active' => false])
+            ->assertOk()
+            ->assertJsonPath('active', false);
+        $this->actingAs($this->admin)
+            ->deleteJson("/api/admin/teaching-schedules/{$scheduleId}")
+            ->assertNoContent();
+
+        $rep = User::factory()->role('student_rep', 'Student representative')->create();
+        $assignmentId = $this->actingAs($this->admin)
+            ->postJson('/api/admin/rep-assignments', [
+                'userId' => $rep->id,
+                'batchId' => $batch->id,
+                'scope' => 'group',
+            ])
+            ->assertCreated()
+            ->json('id');
+        $this->actingAs($this->admin)
+            ->getJson("/api/admin/rep-assignments/{$assignmentId}")
+            ->assertOk()
+            ->assertJsonPath('scope', 'group');
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/rep-assignments/{$assignmentId}", ['scope' => 'subgroup_a'])
+            ->assertOk()
+            ->assertJsonPath('scope', 'subgroup_a');
+        $this->actingAs($this->admin)
+            ->deleteJson("/api/admin/rep-assignments/{$assignmentId}")
+            ->assertNoContent();
+        $this->assertFalse(RepAssignment::query()->findOrFail($assignmentId)->active);
+
+        $this->actingAs($this->admin)
+            ->deleteJson("/api/admin/students/{$student->id}")
+            ->assertNoContent();
+        $this->actingAs($this->admin)
+            ->deleteJson("/api/admin/student-batches/{$batch->id}")
+            ->assertNoContent();
+
+        $this->assertFalse($student->refresh()->active);
+        $this->assertFalse($batch->refresh()->active);
+
+        $nurse = User::factory()->role('nurse', 'Nurse')->create();
+        $this->actingAs($nurse)
+            ->getJson("/api/admin/student-batches/{$batch->id}")
+            ->assertForbidden();
     }
 }

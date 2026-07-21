@@ -6,6 +6,7 @@ use App\Models\Notification;
 use App\Models\StudentBatch;
 use App\Models\SubgroupPlacement;
 use App\Models\User;
+use App\Support\HospitalClock;
 use Illuminate\Console\Command;
 
 class CheckSubgroupPlacements extends Command
@@ -16,7 +17,7 @@ class CheckSubgroupPlacements extends Command
 
     public function handle(): int
     {
-        $nextMonday = now()->next('Monday');
+        $nextMonday = HospitalClock::today()->next('Monday');
 
         $gaps = [];
 

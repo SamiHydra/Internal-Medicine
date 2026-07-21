@@ -63,6 +63,8 @@ class TransferRequestController extends Controller
 
     public function mine(Request $request): JsonResponse
     {
+        Gate::authorize('viewMine', TransferRequest::class);
+
         return response()->json([
             'data' => TransferRequest::query()
                 ->with(['fromSection', 'toSection', 'decidedBy'])
@@ -78,7 +80,7 @@ class TransferRequestController extends Controller
     {
         Gate::authorize('cancel', $transferRequest);
 
-        $cancelled = $this->transferService->cancel($transferRequest);
+        $cancelled = $this->transferService->cancel($transferRequest, $request->user());
 
         return response()->json($this->serialize($cancelled));
     }

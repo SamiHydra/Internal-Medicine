@@ -33,16 +33,16 @@ export function ReportAssignmentCard({
           >
             {departmentName}
           </h3>
-          <p className="mt-1 truncate text-[13px] text-[#5b6169]">{templateName}</p>
+          <p className="mt-1 truncate text-sm leading-5 text-[#45566a]">{templateName}</p>
         </div>
         <StatusBadge status={status} />
       </div>
 
-      <p className="mt-2.5 text-[12px] font-medium text-[#9aa7b8]">{periodLabel}</p>
+      <p className="mt-2.5 text-[13px] font-medium leading-5 text-[#657180]">{periodLabel}</p>
 
       <div className="mt-auto flex items-center justify-between gap-3 border-t border-[#eef2f6] pt-3.5">
-        <span className="inline-flex min-w-0 items-center gap-1.5 text-[12px] text-[#74777f]">
-          <Clock3 className="h-3.5 w-3.5 shrink-0 text-[#9aa7b8]" />
+        <span className="inline-flex min-w-0 items-center gap-1.5 text-[13px] font-medium text-[#5f6d7c]">
+          <Clock3 className="h-3.5 w-3.5 shrink-0 text-[#738194]" />
           <span className="truncate">
             {lastUpdatedAt ? formatTimestamp(lastUpdatedAt) : 'Not started'}
           </span>

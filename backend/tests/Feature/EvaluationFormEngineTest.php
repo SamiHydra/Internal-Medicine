@@ -8,15 +8,22 @@ use App\Models\DutyAssignment;
 use App\Models\DutyType;
 use App\Models\Evaluation;
 use App\Models\EvaluationForm;
+use App\Models\Student;
+use App\Models\StudentBatch;
 use App\Models\User;
 use App\Services\Academic\AcademicAnalyticsFilters;
 use App\Services\Academic\AcademicAnalyticsService;
+use App\Services\Academic\EvaluationFormService;
 use App\Services\Academic\EvaluationMigrationService;
+use App\Support\Academic\EvaluationScoring;
 use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Cache\CacheManager;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 /**
@@ -86,6 +93,22 @@ class EvaluationFormEngineTest extends TestCase
         ];
     }
 
+    /** @return list<array<string, mixed>> */
+    private function structurePayload(EvaluationForm $form): array
+    {
+        return $form->fields()->get()->map(fn ($field) => [
+            'key' => $field->key,
+            'section' => $field->section,
+            'label' => $field->label,
+            'helpText' => $field->help_text,
+            'type' => $field->type,
+            'options' => $field->options,
+            'required' => $field->required,
+            'sortOrder' => $field->sort_order,
+            'active' => $field->active,
+        ])->values()->all();
+    }
+
     // ---- Validation from the form definition ----
 
     public function test_validation_rules_come_from_the_form_definition(): void
@@ -128,7 +151,7 @@ class EvaluationFormEngineTest extends TestCase
 
     // ---- Content vs structural edits ----
 
-    public function test_content_edit_applies_in_place_without_a_new_version(): void
+    public function test_content_edit_applies_atomically_to_the_current_published_version(): void
     {
         $form = EvaluationForm::query()->where('key', 'consultant_mdt')->where('status', 'published')->firstOrFail();
 
@@ -149,6 +172,27 @@ class EvaluationFormEngineTest extends TestCase
             ->assertJsonPath('version', 1)
             ->assertJsonFragment(['label' => 'VTE prophylaxis assessed']);
 
+        // Content editing cannot deactivate a core field or invent one.
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/academic/evaluation-forms/{$form->id}/content", [
+                'fields' => [['key' => 'senior_present', 'active' => false]],
+            ])
+            ->assertStatus(422);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/academic/evaluation-forms/{$form->id}/content", [
+                'fields' => [
+                    ['key' => 'vte_assessed', 'label' => 'Must roll back'],
+                    ['key' => 'brand_new_field', 'label' => 'Nope'],
+                ],
+            ])
+            ->assertStatus(422);
+
+        $this->assertSame(
+            'VTE prophylaxis assessed',
+            $form->fields()->where('key', 'vte_assessed')->value('label'),
+        );
+
         // ...and so do the analytics labels (no code-side label map).
         $this->actingAs($this->resident)
             ->postJson('/api/academic/consultant-evaluations', $this->validConsultantPayload())
@@ -165,19 +209,6 @@ class EvaluationFormEngineTest extends TestCase
             'entity_type' => 'evaluation_form',
             'action' => 'update_content',
         ]);
-
-        // Content editing cannot deactivate a core field or invent one.
-        $this->actingAs($this->admin)
-            ->patchJson("/api/admin/academic/evaluation-forms/{$form->id}/content", [
-                'fields' => [['key' => 'senior_present', 'active' => false]],
-            ])
-            ->assertStatus(422);
-
-        $this->actingAs($this->admin)
-            ->patchJson("/api/admin/academic/evaluation-forms/{$form->id}/content", [
-                'fields' => [['key' => 'brand_new_field', 'label' => 'Nope']],
-            ])
-            ->assertStatus(422);
     }
 
     public function test_structural_edit_creates_a_new_version_and_old_evaluations_stay_pinned(): void
@@ -279,10 +310,20 @@ class EvaluationFormEngineTest extends TestCase
             ])
             ->values()
             ->all();
+        $originalFieldCount = count($draft['fields']);
 
         $this->actingAs($this->superadmin)
             ->putJson("/api/admin/academic/evaluation-forms/{$draft['id']}/structure", ['fields' => $withoutCore])
             ->assertStatus(422);
+
+        $this->assertSame($originalFieldCount, EvaluationForm::query()->findOrFail($draft['id'])->fields()->count());
+        $this->assertDatabaseHas('evaluation_form_fields', [
+            'form_id' => $draft['id'],
+            'key' => 'senior_present',
+            'type' => 'boolean',
+            'active' => true,
+            'is_core' => true,
+        ]);
 
         $typeChanged = collect($draft['fields'])
             ->map(fn (array $field) => [
@@ -299,6 +340,249 @@ class EvaluationFormEngineTest extends TestCase
         $this->actingAs($this->superadmin)
             ->putJson("/api/admin/academic/evaluation-forms/{$draft['id']}/structure", ['fields' => $typeChanged])
             ->assertStatus(422);
+
+        $this->assertSame($originalFieldCount, EvaluationForm::query()->findOrFail($draft['id'])->fields()->count());
+        $this->assertDatabaseHas('evaluation_form_fields', [
+            'form_id' => $draft['id'],
+            'key' => 'presence_minutes',
+            'type' => 'integer',
+            'active' => true,
+            'is_core' => true,
+        ]);
+        $this->assertDatabaseMissing('admin_audit_logs', [
+            'entity_type' => 'evaluation_form',
+            'entity_id' => $draft['id'],
+            'action' => 'update_structure',
+        ]);
+    }
+
+    public function test_structure_rejects_published_versions_and_both_edit_paths_reject_archives(): void
+    {
+        $published = EvaluationForm::query()
+            ->with('fields')
+            ->where('key', 'consultant_mdt')
+            ->where('status', 'published')
+            ->firstOrFail();
+        $structure = $this->structurePayload($published);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/academic/evaluation-forms/{$published->id}/content", [
+                'fields' => [['key' => 'vte_assessed', 'label' => 'Published mutation']],
+            ])
+            ->assertOk();
+
+        $this->actingAs($this->superadmin)
+            ->putJson("/api/admin/academic/evaluation-forms/{$published->id}/structure", ['fields' => $structure])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['form']);
+
+        $draft = app(EvaluationFormService::class)->createDraftFrom($published);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/academic/evaluation-forms/{$draft->id}/content", [
+                'fields' => [['key' => 'vte_assessed', 'label' => 'Draft mutation']],
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['form']);
+
+        app(EvaluationFormService::class)->publish($draft);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/academic/evaluation-forms/{$published->id}/content", [
+                'fields' => [['key' => 'vte_assessed', 'label' => 'Archived mutation']],
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['form']);
+
+        $this->actingAs($this->superadmin)
+            ->putJson("/api/admin/academic/evaluation-forms/{$published->id}/structure", ['fields' => $structure])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['form']);
+
+        $this->assertSame('archived', $published->refresh()->status);
+        $this->assertSame('Published mutation', $published->fields()->where('key', 'vte_assessed')->value('label'));
+    }
+
+    public function test_mutations_recheck_a_stale_form_status_under_lock(): void
+    {
+        $service = app(EvaluationFormService::class);
+        $firstPublished = EvaluationForm::query()->where('key', 'consultant_mdt')->where('status', 'published')->firstOrFail();
+        $originalLabel = $firstPublished->fields()->where('key', 'vte_assessed')->value('label');
+        $replacement = $service->createDraftFrom($firstPublished);
+        $service->publish($replacement);
+
+        try {
+            $service->updateContent($firstPublished, [
+                'fields' => [['key' => 'vte_assessed', 'label' => 'Stale mutation']],
+            ]);
+            $this->fail('Content editing trusted a form that was no longer current.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('form', $exception->errors());
+        }
+
+        $this->assertSame('archived', $firstPublished->refresh()->status);
+        $this->assertSame($originalLabel, $firstPublished->fields()->where('key', 'vte_assessed')->value('label'));
+
+        try {
+            $service->updateContent($replacement->refresh(), [
+                'fields' => [['key' => 'vte_assessed', 'label' => 'Current mutation']],
+            ]);
+            $this->addToAssertionCount(1);
+        } catch (ValidationException) {
+            $this->fail('Content editing rejected the new current published version.');
+        }
+
+        $secondPublished = EvaluationForm::query()->where('key', 'resident_acgme')->where('status', 'published')->firstOrFail();
+        $staleStructureDraft = $service->createDraftFrom($secondPublished);
+        $originalFieldCount = $staleStructureDraft->fields()->count();
+        $structure = $this->structurePayload($staleStructureDraft);
+        EvaluationForm::query()->whereKey($staleStructureDraft->id)->update(['status' => 'archived']);
+
+        try {
+            $service->updateStructure($staleStructureDraft, $structure);
+            $this->fail('Structure editing trusted a stale draft model.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('form', $exception->errors());
+        }
+
+        $this->assertSame($originalFieldCount, $staleStructureDraft->fields()->count());
+    }
+
+    public function test_database_allows_only_one_draft_and_one_published_version_per_form_key(): void
+    {
+        $published = EvaluationForm::query()
+            ->where('key', 'consultant_mdt')
+            ->where('status', 'published')
+            ->firstOrFail();
+
+        $this->assertUniqueActiveStatusRejects([
+            'key' => $published->key,
+            'name' => 'Duplicate published form',
+            'target' => $published->target,
+            'version' => 998,
+            'status' => 'published',
+        ]);
+
+        app(EvaluationFormService::class)->createDraftFrom($published);
+
+        $this->assertUniqueActiveStatusRejects([
+            'key' => $published->key,
+            'name' => 'Duplicate draft form',
+            'target' => $published->target,
+            'version' => 999,
+            'status' => 'draft',
+        ]);
+
+        $this->assertSame(1, EvaluationForm::query()->where('key', $published->key)->where('status', 'published')->count());
+        $this->assertSame(1, EvaluationForm::query()->where('key', $published->key)->where('status', 'draft')->count());
+    }
+
+    public function test_draft_creation_and_publish_retries_are_idempotent(): void
+    {
+        $published = EvaluationForm::query()
+            ->where('key', 'consultant_mdt')
+            ->where('status', 'published')
+            ->firstOrFail();
+        $service = app(EvaluationFormService::class);
+
+        $firstDraft = $service->createDraftFrom($published);
+        $retriedDraft = $service->createDraftFrom($published);
+
+        $this->assertSame($firstDraft->id, $retriedDraft->id);
+
+        $service->publish($firstDraft);
+        $service->publish($firstDraft);
+
+        $this->assertSame(1, EvaluationForm::query()->where('key', $published->key)->where('status', 'published')->count());
+        $this->assertSame(0, EvaluationForm::query()->where('key', $published->key)->where('status', 'draft')->count());
+        $this->assertSame('published', $firstDraft->refresh()->status);
+    }
+
+    public function test_draft_and_publish_http_retries_emit_one_audit_event_per_transition(): void
+    {
+        $firstDraft = $this->actingAs($this->superadmin)
+            ->postJson('/api/admin/academic/evaluation-forms/consultant_mdt/draft')
+            ->assertCreated()
+            ->json();
+
+        $retriedDraft = $this->actingAs($this->superadmin)
+            ->postJson('/api/admin/academic/evaluation-forms/consultant_mdt/draft')
+            ->assertOk()
+            ->json();
+
+        $this->assertSame($firstDraft['id'], $retriedDraft['id']);
+        $this->assertSame(1, DB::table('admin_audit_logs')
+            ->where('entity_type', 'evaluation_form')
+            ->where('action', 'create_draft')
+            ->count());
+
+        $this->actingAs($this->superadmin)
+            ->postJson("/api/admin/academic/evaluation-forms/{$firstDraft['id']}/publish")
+            ->assertOk()
+            ->assertJsonPath('status', 'published');
+
+        $this->actingAs($this->superadmin)
+            ->postJson("/api/admin/academic/evaluation-forms/{$firstDraft['id']}/publish")
+            ->assertOk()
+            ->assertJsonPath('status', 'published');
+
+        $this->assertSame(1, DB::table('admin_audit_logs')
+            ->where('entity_type', 'evaluation_form')
+            ->where('action', 'publish')
+            ->count());
+    }
+
+    public function test_database_rejects_ambiguous_evaluation_subjects_and_evaluator_sources(): void
+    {
+        $evaluationId = $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', $this->validConsultantPayload())
+            ->assertCreated()
+            ->json('id');
+
+        $batch = StudentBatch::query()->create([
+            'cohort' => 'C1',
+            'label' => 'Invariant test batch',
+            'starts_on' => now()->startOfMonth()->toDateString(),
+            'ends_on' => now()->addMonths(3)->toDateString(),
+            'active' => true,
+        ]);
+        $student = Student::query()->create([
+            'batch_id' => $batch->id,
+            'full_name' => 'Invariant Test Student',
+            'subgroup' => 'A',
+            'active' => true,
+        ]);
+
+        foreach ([
+            ['subject_user_id' => null],
+            ['subject_student_id' => $student->id],
+            ['author_id' => null],
+            ['external_evaluator_name' => 'External and internal at once'],
+        ] as $invalidUpdate) {
+            try {
+                DB::table('evaluations')->where('id', $evaluationId)->update($invalidUpdate);
+                $this->fail('The database accepted an evaluation with ambiguous subject or evaluator columns.');
+            } catch (QueryException $exception) {
+                $this->assertStringContainsString('exactly one subject', $exception->getMessage());
+            }
+        }
+
+        $evaluation = Evaluation::query()->findOrFail($evaluationId);
+        $this->assertSame($this->consultant->id, $evaluation->subject_user_id);
+        $this->assertNull($evaluation->subject_student_id);
+        $this->assertSame($this->resident->id, $evaluation->author_id);
+        $this->assertNull($evaluation->external_evaluator_name);
+    }
+
+    /** @param array<string, mixed> $attributes */
+    private function assertUniqueActiveStatusRejects(array $attributes): void
+    {
+        try {
+            EvaluationForm::query()->create($attributes);
+            $this->fail('The database accepted a second active form status for one key.');
+        } catch (QueryException) {
+            $this->addToAssertionCount(1);
+        }
     }
 
     // ---- Legacy migration verification + analytics parity ----
@@ -404,6 +688,60 @@ class EvaluationFormEngineTest extends TestCase
         $this->assertSame(2, $third['evaluationCount']);
     }
 
+    public function test_every_evaluation_analytics_database_cache_hit_contains_only_plain_data(): void
+    {
+        $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', $this->validConsultantPayload())
+            ->assertCreated();
+
+        /** @var CacheManager $cache */
+        $cache = app('cache');
+        $originalDriver = $cache->getDefaultDriver();
+        $cache->setDefaultDriver('database');
+        $cache->forgetDriver('database');
+
+        try {
+            $filters = new AcademicAnalyticsFilters(direction: 'consultant');
+            $calls = [
+                'summary' => fn (): array => app(AcademicAnalyticsService::class)->summary($filters),
+                'trend' => fn (): array => app(AcademicAnalyticsService::class)->trend($filters),
+                'people' => fn (): array => app(AcademicAnalyticsService::class)->people($filters),
+            ];
+
+            foreach ($calls as $operation => $call) {
+                $first = $call();
+                $second = $call();
+
+                $this->assertSame($first, $second, "{$operation} changed on its cache hit.");
+                $this->assertPlainCachePayload($second, $operation);
+                $this->assertStringNotContainsString('__PHP_Incomplete_Class', serialize($second));
+            }
+        } finally {
+            $cache->store('database')->flush();
+            $cache->setDefaultDriver($originalDriver);
+            $cache->forgetDriver('database');
+        }
+    }
+
+    private function assertPlainCachePayload(mixed $value, string $path): void
+    {
+        $this->assertNotInstanceOf(\__PHP_Incomplete_Class::class, $value, "Incomplete cache object at {$path}.");
+
+        if (is_array($value)) {
+            foreach ($value as $key => $item) {
+                $this->assertPlainCachePayload($item, $path.'.'.$key);
+            }
+
+            return;
+        }
+
+        $this->assertTrue(is_scalar($value) || $value === null, sprintf(
+            'Cache value at %s must be plain; %s found.',
+            $path,
+            get_debug_type($value),
+        ));
+    }
+
     // ---- Review-pass regressions ----
 
     public function test_the_form_endpoint_serves_every_published_form_key(): void
@@ -422,27 +760,42 @@ class EvaluationFormEngineTest extends TestCase
             ->assertStatus(422);
     }
 
-    public function test_score_item_fields_are_core_and_cannot_be_deactivated(): void
+    public function test_only_contract_fields_are_core_and_scores_follow_active_indicators(): void
     {
         foreach ([
-            'consultant_mdt' => \App\Support\Academic\EvaluationScoring::CONSULTANT_SCORE_ITEMS,
-            'resident_acgme' => \App\Support\Academic\EvaluationScoring::RESIDENT_SCORE_ITEMS,
-        ] as $key => $items) {
+            'consultant_mdt' => ['senior_present', 'senior_joined_at', 'presence_minutes'],
+            'resident_acgme' => ['overall_rating'],
+        ] as $key => $expectedCore) {
             $form = EvaluationForm::query()->where('key', $key)->where('status', 'published')->firstOrFail();
             $coreKeys = $form->fields()->where('is_core', true)->pluck('key')->all();
 
-            foreach ($items as $item) {
-                $this->assertContains($item, $coreKeys, "{$key}.{$item} must be core");
-            }
-
-            // A content edit deactivating a score input would silently cap
-            // every future score below 100.
-            $this->actingAs($this->admin)
-                ->patchJson("/api/admin/academic/evaluation-forms/{$form->id}/content", [
-                    'fields' => [['key' => $items[0], 'active' => false]],
-                ])
-                ->assertStatus(422);
+            sort($coreKeys);
+            sort($expectedCore);
+            $this->assertSame($expectedCore, $coreKeys);
         }
+
+        $form = EvaluationForm::query()->where('key', 'consultant_mdt')->where('status', 'published')->firstOrFail();
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/academic/evaluation-forms/{$form->id}/content", [
+                'fields' => [['key' => 'all_patients_reviewed', 'active' => false]],
+            ])
+            ->assertOk();
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/academic/evaluation-forms/{$form->id}/content", [
+                'fields' => [['key' => 'senior_present', 'active' => false]],
+            ])
+            ->assertStatus(422);
+
+        $evaluationId = $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', $this->validConsultantPayload())
+            ->assertCreated()
+            ->json('id');
+        $evaluation = Evaluation::query()->with(['answers', 'form.fields'])->findOrFail($evaluationId);
+
+        $this->assertNull($evaluation->answer('all_patients_reviewed'));
+        $this->assertSame(100.0, EvaluationScoring::score($evaluation, 'consultant'));
     }
 
     public function test_structure_editor_rejects_reserved_keys_non_text_comment_and_choiceless_selects(): void

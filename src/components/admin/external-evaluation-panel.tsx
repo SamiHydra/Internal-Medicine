@@ -205,7 +205,7 @@ export function ExternalEvaluationPanel({ onRecorded }: { onRecorded: () => void
       <div className="mt-6 space-y-5">
         {RESIDENT_COMPETENCIES.map((group) => (
           <div key={group.group} className="space-y-2.5">
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#74777f]">
               {group.group}
             </p>
             <div className="grid gap-2.5 sm:grid-cols-2">

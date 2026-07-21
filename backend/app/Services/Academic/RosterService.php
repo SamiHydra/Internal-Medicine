@@ -22,6 +22,8 @@ use Illuminate\Validation\ValidationException;
  */
 final class RosterService
 {
+    public const ROTATION_OVERRIDE_NOTE_PREFIX = 'Rotation override: ';
+
     /** The user's monthly-granularity assignment covering $date, or null. */
     public function assignmentFor(User $user, CarbonInterface $date): ?DutyAssignment
     {
@@ -204,6 +206,7 @@ final class RosterService
         }
 
         return DB::transaction(function () use ($user, $type, $from, $to, $source, $by, $note): DutyAssignment {
+            $this->lockUsers([$user->id]);
             $this->assertNoMonthlyOverlap($user, $type, $from, $to);
 
             return DutyAssignment::query()->create([
@@ -235,6 +238,8 @@ final class RosterService
         }
 
         DB::transaction(function () use ($rows, $source, $by): void {
+            $this->lockUsers(array_column($rows, 'user_id'));
+
             $types = DutyType::query()
                 ->whereIn('id', array_unique(array_column($rows, 'duty_type_id')))
                 ->get()
@@ -250,7 +255,7 @@ final class RosterService
                 }
 
                 if ($type->granularity === 'monthly') {
-                    $this->carveMonthlyWindow($row['user_id'], $row['starts_on'], $row['ends_on']);
+                    $this->carveMonthlyWindowLocked($row['user_id'], $row['starts_on'], $row['ends_on']);
                 } else {
                     DutyAssignment::query()
                         ->where('user_id', $row['user_id'])
@@ -281,6 +286,14 @@ final class RosterService
      * two-month rotation, say) when an admin re-plans just one month of it.
      */
     public function carveMonthlyWindow(string $userId, string $from, string $to): void
+    {
+        DB::transaction(function () use ($userId, $from, $to): void {
+            $this->lockUsers([$userId]);
+            $this->carveMonthlyWindowLocked($userId, $from, $to);
+        });
+    }
+
+    private function carveMonthlyWindowLocked(string $userId, string $from, string $to): void
     {
         $windowStart = Carbon::parse($from);
         $windowEnd = Carbon::parse($to);
@@ -325,6 +338,33 @@ final class RosterService
             } else {
                 $assignment->forceFill(['starts_on' => $windowEnd->copy()->addDay()->toDateString()])->save();
             }
+        }
+    }
+
+    /**
+     * Serialize every roster mutation for the affected people. Locking the
+     * stable parent rows closes the empty-range race that an assignment-row
+     * lock cannot: two first assignments for one person now wait on the same
+     * users row before either checks for overlap. Sorting prevents bulk jobs
+     * that contain the same people in a different order from deadlocking.
+     *
+     * @param  list<string>  $userIds
+     */
+    private function lockUsers(array $userIds): void
+    {
+        $ids = array_values(array_unique($userIds));
+        sort($ids);
+
+        $locked = User::query()
+            ->whereIn('id', $ids)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->pluck('id');
+
+        if ($locked->count() !== count($ids)) {
+            throw ValidationException::withMessages([
+                'assignments' => ['One or more people in the assignment payload no longer exist.'],
+            ]);
         }
     }
 

@@ -6,6 +6,7 @@ use App\Models\DutyAssignment;
 use App\Models\DutyType;
 use App\Models\RotationCalendar;
 use App\Models\User;
+use App\Services\Academic\RosterService;
 use App\Services\Academic\RotationCalendarService;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -167,6 +168,74 @@ class RotationPlannerTest extends TestCase
             'daily',
             collect($plan['dutyTypes'])->pluck('granularity')->filter()->all(),
         );
+    }
+
+    public function test_mixed_block_is_visible_and_requires_confirmation_before_replacement(): void
+    {
+        $calendar = app(RotationCalendarService::class)
+            ->createCalendar(3, '2026/27', Carbon::parse('2026-01-01'), 'fixed_weeks', 8, 1);
+        $resident = User::factory()->role('resident', 'Resident')->create([
+            'training_year' => 3,
+            'rotation_group' => 'A',
+        ]);
+        $block = $calendar->blocks[0];
+        $roster = app(RosterService::class);
+
+        $roster->createAssignment(
+            $resident,
+            DutyType::query()->where('slug', 'cardiology_ward_service')->firstOrFail(),
+            Carbon::parse('2026-01-01'),
+            Carbon::parse('2026-01-31'),
+            'admin',
+            $this->admin,
+        );
+        $roster->createAssignment(
+            $resident,
+            DutyType::query()->where('slug', 'nephrology_ward_service')->firstOrFail(),
+            Carbon::parse('2026-02-01'),
+            $block->ends_on,
+            'admin',
+            $this->admin,
+        );
+
+        $cell = $this->actingAs($this->admin)
+            ->getJson("/api/admin/rotations/{$calendar->id}/plan")
+            ->assertOk()
+            ->json('assignments.0');
+
+        $this->assertSame('mixed', $cell['status']);
+        $this->assertNull($cell['dutyTypeId']);
+        $this->assertTrue($cell['fullyCovered']);
+        $this->assertTrue($cell['requiresOverwriteConfirmation']);
+        $this->assertCount(2, $cell['segments']);
+
+        $payload = [
+            'assignments' => [
+                [
+                    'userId' => $resident->id,
+                    'blockId' => $block->id,
+                    'dutyTypeId' => $this->dutyTypeId('opd'),
+                ],
+            ],
+        ];
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/admin/rotations/{$calendar->id}/plan", $payload)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['confirmOverwrite']);
+
+        $savedCell = $this->actingAs($this->admin)
+            ->postJson("/api/admin/rotations/{$calendar->id}/plan", [
+                ...$payload,
+                'confirmOverwrite' => true,
+            ])
+            ->assertOk()
+            ->json('assignments.0');
+
+        $this->assertSame('consistent', $savedCell['status']);
+        $this->assertSame($this->dutyTypeId('opd'), $savedCell['dutyTypeId']);
+        $this->assertFalse($savedCell['requiresOverwriteConfirmation']);
+        $this->assertSame('rotation_planner', $savedCell['segments'][0]['source']);
     }
 
     public function test_planner_rejects_daily_duty_types_and_foreign_blocks(): void

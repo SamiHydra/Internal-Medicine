@@ -5,9 +5,9 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Section;
 use App\Models\TransferRequest;
-use App\Models\User;
 use App\Services\Academic\TransferService;
 use App\Support\Authorization\Permissions;
+use App\Support\HospitalClock;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -70,7 +70,7 @@ class TransferRequestController extends Controller
         $effectiveOn = null;
 
         if ($validated['immediate'] ?? false) {
-            $effectiveOn = Carbon::today();
+            $effectiveOn = HospitalClock::today();
         } elseif (! empty($validated['effectiveOn'])) {
             $effectiveOn = Carbon::parse($validated['effectiveOn'])->startOfDay();
         }

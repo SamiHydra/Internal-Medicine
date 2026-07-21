@@ -14,7 +14,7 @@ export function SectionEyebrow({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-2">
       <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">{label}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#005db6]">{label}</p>
     </div>
   )
 }
@@ -51,7 +51,7 @@ export function SectionHeader({
           </h2>
         ) : null}
         {description ? (
-          <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[#74777f]">{description}</p>
+          <p className="mt-1.5 max-w-2xl text-[15px] leading-6 text-[#74777f]">{description}</p>
         ) : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-2.5">{actions}</div> : null}
@@ -62,7 +62,7 @@ export function SectionHeader({
 /** Small uppercase count/label chip used in panel headers. */
 export function HeaderChip({ children }: { children: ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-[#f8fafc] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#44474e]">
+    <span className="inline-flex items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-[#f8fafc] px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-[#44474e]">
       {children}
     </span>
   )
@@ -82,7 +82,7 @@ export function SectionEmptyState({
     <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f8fafc] px-6 text-center">
       <span className="text-[#005db6]">{icon}</span>
       <div className="space-y-1">
-        <p className="text-sm font-semibold text-[#1d3047]">{title}</p>
+        <p className="text-[15px] font-semibold text-[#1d3047]">{title}</p>
         <p className="max-w-sm text-sm leading-6 text-[#74777f]">{description}</p>
       </div>
     </div>

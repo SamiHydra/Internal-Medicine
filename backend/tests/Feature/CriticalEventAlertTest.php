@@ -104,7 +104,7 @@ class CriticalEventAlertTest extends TestCase
 
     public function test_no_alert_on_a_plain_draft_save(): void
     {
-        // Drafts are still being entered — admins should not be pinged until submit.
+        // Drafts are still being entered; admins should not be pinged until submit.
         $this->actingAs($this->nurse)->postJson('/api/reports', [
             'assignmentId' => $this->assignment->id,
             'reportingPeriodId' => $this->period->id,

@@ -13,12 +13,17 @@ each line. Nothing here can destroy data unless a step says so explicitly.
 ## Is everything healthy? (run this first, always)
 
 ```
-cd /opt/imreport/backend
-php artisan app:launch-check
+cd /opt/imreport/current/backend
+php artisan app:launch-readiness --strict
 ```
 
 You get a table of checks. Everything should say `PASS`. Each failing line
 includes its own instruction. Common ones:
+
+Production keeps application/storage timestamps in UTC (`APP_TIMEZONE=UTC`)
+and uses `HOSPITAL_TIMEZONE=Africa/Nairobi` for hospital calendar dates and
+wall-clock jobs such as the 08:15 and 17:00 reminders. Keep both settings as shown; changing
+the application timezone can reinterpret existing clinical timestamps.
 
 | Failing check | What it means | What to do |
 |---|---|---|
@@ -70,6 +75,10 @@ mysql -e "DROP DATABASE imreport_drill;"
 ```
 
 If the count looks like the number of reports you expect, the backup is good.
+Record that successful drill in `/opt/imreport/shared/backend.env` by setting
+`BACKUP_RESTORE_VERIFIED_AT` to the current ISO-8601 time (for example,
+`2026-07-17T12:00:00+03:00`), then run `php artisan config:cache`. Strict
+readiness deliberately fails after 90 days without another successful drill.
 
 **Real restore (ONLY after data loss, and preferably with Hospital IT on the
 phone):** the same `gunzip -c ... | mysql imreport` but into the live
@@ -80,19 +89,22 @@ backup was taken is lost.
 
 ## Certificate (HTTPS)
 
-The certificate renews automatically. If the health check warns it is
-expiring, renew by hand:
+The default `.internal` hostname uses the Hospital IT internal CA. Its renewal
+job writes the certificate and key under `/etc/imreport/tls`. If readiness
+warns that it is expiring, run the internal renewal command pinned on the
+server, then reload Nginx:
 
 ```
-sudo certbot renew
+sudo /root/renew-imreport-certificate.sh
 sudo systemctl reload nginx
 ```
 
-If the department uses the internal-CA setup instead, run the renewal command
-pinned on the server (`/root/renew-cert.sh`), then reload nginx as above.
+Only use Certbot when Hospital IT has assigned a real DNS domain and configured
+DNS-01 validation. Public certificate authorities do not issue certificates
+for `im.hospital.internal`.
 
-**Add a new device to the internal CA** (only for the internal-CA setup; not
-needed with certbot): copy `/opt/imreport/ca/rootCA.crt` to the device, then
+**Add a new device to the internal CA:** copy `/opt/imreport/ca/rootCA.crt` to
+the device, then
 - **Android**: Settings → Security → Install a certificate → CA certificate.
 - **iPhone/iPad**: AirDrop/email the file, install the profile, then Settings
   → General → About → Certificate Trust Settings → enable it.
@@ -106,11 +118,12 @@ needed with certbot): copy `/opt/imreport/ca/rootCA.crt` to the device, then
 When the developer tells you a new version is ready:
 
 ```
-sudo -u imreport /opt/imreport/deploy/deploy.sh
+sudo -u imreport /opt/imreport/source/deploy/deploy.sh
 ```
 
-It finishes with a health check. If it prints `HEALTH CHECK FAILED`, nothing
-is lost - call the developer before touching anything else.
+It builds a new release, verifies a pre-migration backup, and switches the
+active release atomically. If a post-switch check fails, it restores the
+previous code release and prints the database recovery warning.
 
 ---
 
@@ -118,13 +131,17 @@ is lost - call the developer before touching anything else.
 
 | Log | Path |
 |---|---|
-| Application errors | `/opt/imreport/backend/storage/logs/laravel.log` |
-| Scheduled jobs | `/opt/imreport/backend/storage/logs/schedule.log` |
+| Application errors | `/opt/imreport/shared/storage/logs/laravel.log` |
+| Scheduled jobs | `/opt/imreport/shared/storage/logs/schedule.log` |
 | Queue worker (emails/notifications) | `/var/log/imreport-queue.log` |
 | Nightly backups | `/var/log/imreport-backup.log` |
 | Web server | `/var/log/nginx/error.log` |
 
 `tail -50 <path>` shows the last 50 lines.
+
+Set `ERROR_MONITORING_CHANNEL` in `backend.env` to the real operational path
+that watches these errors, such as a Sentry project name or a named daily
+Hospital IT log-review procedure. Leaving it blank makes strict readiness fail.
 
 ---
 

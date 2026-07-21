@@ -3,6 +3,7 @@
 namespace App\Services\Academic;
 
 use App\Models\Evaluation;
+use App\Models\EvaluationFormField;
 use App\Services\Academic\Concerns\CachesByContentStamp;
 use App\Support\Academic\EvaluationScoring;
 use Illuminate\Support\Collection;
@@ -43,14 +44,17 @@ class AcademicAnalyticsService
     {
         return $this->cached('summary', $filters, function () use ($filters): array {
             $rows = $this->rows($filters);
-            $items = EvaluationScoring::itemsForDirection($filters->direction);
+            $items = EvaluationScoring::activeItems(
+                $this->forms->published(EvaluationScoring::formKeyForDirection($filters->direction)),
+                $filters->direction,
+            );
             $count = $rows->count();
 
             $indicatorCompliance = collect($items)->map(fn (string $item) => [
                 'key' => Str::camel($item),
                 'label' => $this->fieldLabel($filters->direction, $item),
                 'pct' => $count ? round($rows->avg(fn (Evaluation $row) => $row->answer($item) ? 100 : 0), 1) : 0.0,
-            ])->values();
+            ])->values()->all();
 
             $summary = [
                 'direction' => $filters->direction,
@@ -175,10 +179,13 @@ class AcademicAnalyticsService
             $stampQuery->whereDate('evaluation_date', '<=', $filters->dateTo);
         }
 
+        $publishedForm = $this->forms->published(EvaluationScoring::formKeyForDirection($filters->direction));
+        $formStamp = $this->contentStamp(EvaluationFormField::query()->where('form_id', $publishedForm->id));
+
         return $this->rememberByStamp(
             'academic:analytics',
             $operation,
-            $filters->memoKey().'|'.$this->contentStamp($stampQuery),
+            $filters->memoKey().'|'.$this->contentStamp($stampQuery).'|'.$formStamp,
             $build,
         );
     }
@@ -196,7 +203,7 @@ class AcademicAnalyticsService
 
         $query = Evaluation::query()
             ->forKey(EvaluationScoring::formKeyForDirection($filters->direction))
-            ->with(['subject.homeWard', 'answers']);
+            ->with(['subject.homeWard', 'answers', 'form.fields']);
 
         if ($filters->wardId) {
             $query->where('ward_id', $filters->wardId);

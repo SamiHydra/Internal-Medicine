@@ -12,6 +12,7 @@ use App\Support\Import\XlsxReader;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
 
 class ReportImportController extends Controller
 {
@@ -20,7 +21,7 @@ class ReportImportController extends Controller
         private readonly ReportImportService $importer,
     ) {}
 
-    public function template(Request $request): \Symfony\Component\HttpFoundation\Response
+    public function template(Request $request): Response
     {
         $validated = $request->validate([
             'period' => ['required', 'uuid', 'exists:reporting_periods,id'],
@@ -43,7 +44,7 @@ class ReportImportController extends Controller
             }, "st-paul-import-template-{$label}.csv", ['Content-Type' => 'text/csv; charset=UTF-8']);
         }
 
-        $path = (new XlsxWriter())->toTempFile($built['header'], $built['rows']);
+        $path = (new XlsxWriter)->toTempFile($built['header'], $built['rows']);
 
         return response()->download(
             $path,
@@ -80,7 +81,7 @@ class ReportImportController extends Controller
     private function parse(string $path, string $extension): array
     {
         if ($extension === 'xlsx') {
-            return (new XlsxReader())->rows($path);
+            return (new XlsxReader)->rows($path);
         }
 
         $rows = [];

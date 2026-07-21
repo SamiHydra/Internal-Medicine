@@ -80,7 +80,7 @@ export function ReportingScopePanel({
           </span>
           <span className="flex min-w-0 items-center gap-2">
             {summary ? (
-              <span className="max-w-[10rem] truncate text-xs text-[#74777f]">{summary}</span>
+              <span className="max-w-[12rem] truncate text-[13px] text-[#74777f]">{summary}</span>
             ) : null}
             <ChevronDown
               className={cn(
@@ -110,7 +110,7 @@ export function ReportingScopePanel({
       >
         {fields.map((field) => (
           <div key={field.label} className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#74777f]">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#74777f]">
               {field.label}
             </p>
             <Select value={field.value} onValueChange={field.onValueChange}>
@@ -160,12 +160,12 @@ export function ReportingScopePanel({
                   metricToneClasses[tone],
                 )}
               >
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em]">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em]">
                   {metric.label}
                 </p>
                 <p className="mt-2 break-words font-display text-[1.65rem] leading-[1.02]">{metric.value}</p>
                 {metric.note ? (
-                  <p className="mt-1 text-xs leading-5 text-current/75">{metric.note}</p>
+                  <p className="mt-1 text-[13px] leading-5 text-current/75">{metric.note}</p>
                 ) : null}
               </div>
             )

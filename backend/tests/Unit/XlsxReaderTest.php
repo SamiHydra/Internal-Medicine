@@ -11,12 +11,12 @@ class XlsxReaderTest extends TestCase
 {
     public function test_round_trips_a_workbook_written_by_xlsx_writer(): void
     {
-        $path = (new XlsxWriter())->toTempFile(
+        $path = (new XlsxWriter)->toTempFile(
             ['Field key', 'Monday'],
             [['total_admitted_patients', 5], ['new_deaths', 0]],
         );
 
-        $rows = (new XlsxReader())->rows($path);
+        $rows = (new XlsxReader)->rows($path);
         @unlink($path);
 
         $this->assertSame(['Field key', 'Monday'], $rows[0]);
@@ -28,7 +28,7 @@ class XlsxReaderTest extends TestCase
     {
         // Excel saves text via a shared-strings table (t="s" cells referencing it).
         $path = tempnam(sys_get_temp_dir(), 'xlsxr');
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         $zip->open($path, ZipArchive::OVERWRITE);
         $zip->addFromString(
             'xl/sharedStrings.xml',
@@ -46,7 +46,7 @@ class XlsxReaderTest extends TestCase
         );
         $zip->close();
 
-        $rows = (new XlsxReader())->rows($path);
+        $rows = (new XlsxReader)->rows($path);
         @unlink($path);
 
         // Shared strings resolved, and the gap at column B is densified to ''.
@@ -59,7 +59,7 @@ class XlsxReaderTest extends TestCase
         // Some non-Excel writers emit cells with no `r`; they must not all collapse
         // to column 0 (which would silently mis-map columns).
         $path = tempnam(sys_get_temp_dir(), 'xlsxr');
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         $zip->open($path, ZipArchive::OVERWRITE);
         $zip->addFromString(
             'xl/worksheets/sheet1.xml',
@@ -70,7 +70,7 @@ class XlsxReaderTest extends TestCase
         );
         $zip->close();
 
-        $rows = (new XlsxReader())->rows($path);
+        $rows = (new XlsxReader)->rows($path);
         @unlink($path);
 
         $this->assertSame(['a', 'b', '3'], $rows[0]);
@@ -80,7 +80,7 @@ class XlsxReaderTest extends TestCase
     {
         // A DTD in an OOXML part (billion-laughs vector) must be refused, not expanded.
         $path = tempnam(sys_get_temp_dir(), 'xlsxr');
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         $zip->open($path, ZipArchive::OVERWRITE);
         $zip->addFromString(
             'xl/worksheets/sheet1.xml',
@@ -91,7 +91,7 @@ class XlsxReaderTest extends TestCase
         $zip->close();
 
         // loadXml refuses the DTD, so the sheet yields no rows rather than expanding.
-        $rows = (new XlsxReader())->rows($path);
+        $rows = (new XlsxReader)->rows($path);
         @unlink($path);
 
         $this->assertSame([], $rows);

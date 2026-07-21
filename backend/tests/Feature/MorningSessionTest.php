@@ -9,12 +9,17 @@ use App\Models\MorningRosterOverride;
 use App\Models\MorningSession;
 use App\Models\User;
 use App\Services\Academic\MorningSessionService;
+use App\Services\Admin\AdminAuditService;
 use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Mockery\MockInterface;
 use Tests\TestCase;
 
 class MorningSessionTest extends TestCase
@@ -140,6 +145,62 @@ class MorningSessionTest extends TestCase
         $this->assertDatabaseCount('morning_sessions', 1);
     }
 
+    public function test_admin_can_change_the_start_time_for_future_sessions(): void
+    {
+        $existing = app(MorningSessionService::class)->openFor(Carbon::parse('2026-09-14'));
+        $this->assertSame('08:00', substr((string) $existing->scheduled_start_at, 0, 5));
+
+        $this->actingAs($this->admin)
+            ->patchJson('/api/admin/settings', ['morningSessionTime' => '07:30'])
+            ->assertOk()
+            ->assertJsonPath('settings.academic.morningSessionTime', '07:30');
+
+        $this->assertSame('07:30', AppSetting::query()
+            ->where('setting_key', 'academic_morning')
+            ->firstOrFail()
+            ->value_json['session_time']);
+
+        // Existing rows are historical snapshots; the next configured day uses
+        // the newly saved admin setting.
+        $this->assertSame('08:00', substr((string) $existing->refresh()->scheduled_start_at, 0, 5));
+        $next = app(MorningSessionService::class)->openFor(Carbon::parse('2026-09-16'));
+        $this->assertSame('07:30', substr((string) $next->scheduled_start_at, 0, 5));
+
+        $this->actingAs($this->admin)
+            ->patchJson('/api/admin/settings', ['morningSessionTime' => '25:99'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['morningSessionTime']);
+    }
+
+    public function test_reminder_follows_the_session_start_and_is_not_duplicated(): void
+    {
+        $session = app(MorningSessionService::class)->openFor(Carbon::parse('2026-09-14'));
+        $service = app(MorningSessionService::class);
+        $date = Carbon::parse('2026-09-14', 'Africa/Nairobi');
+
+        $this->assertSame(0, $service->remindRecorders(
+            $date,
+            Carbon::parse('2026-09-14 08:14', 'Africa/Nairobi'),
+        ));
+        $this->assertDatabaseMissing('notifications', [
+            'type' => 'morning_session_reminder',
+            'related_id' => $session->id,
+        ]);
+
+        $this->assertSame(1, $service->remindRecorders(
+            $date,
+            Carbon::parse('2026-09-14 08:15', 'Africa/Nairobi'),
+        ));
+        $this->assertSame(0, $service->remindRecorders(
+            $date,
+            Carbon::parse('2026-09-14 08:16', 'Africa/Nairobi'),
+        ));
+        $this->assertSame(1, DB::table('notifications')
+            ->where('type', 'morning_session_reminder')
+            ->where('related_id', $session->id)
+            ->count());
+    }
+
     // ---- Recording ----
 
     public function test_designated_recorder_records_and_delay_is_computed_server_side(): void
@@ -199,6 +260,15 @@ class MorningSessionTest extends TestCase
                 'presence' => [],
             ])
             ->assertForbidden();
+
+        // The shared academic page may show the safe session summary to a
+        // non-recorder, but must not expose the expected-person roster.
+        $this->actingAs($bystander)
+            ->getJson('/api/academic/morning-sessions/today')
+            ->assertOk()
+            ->assertJsonPath('isSessionDay', true)
+            ->assertJsonPath('canRecord', false)
+            ->assertJsonMissingPath('session.people');
 
         // A nurse lacks the permission outright.
         $nurse = User::factory()->role('nurse', 'Nurse')->create();
@@ -268,10 +338,19 @@ class MorningSessionTest extends TestCase
             ->assertOk()
             ->assertJsonPath('status', 'cancelled');
 
-        $this->assertDatabaseHas('admin_audit_logs', [
-            'entity_type' => 'morning_session',
-            'action' => 'cancel',
-        ]);
+        // An administrator retry is idempotent: it returns the committed
+        // state without rewriting its reason or emitting another audit.
+        $this->actingAs($this->admin)
+            ->postJson("/api/admin/morning-sessions/{$session->id}/cancel", ['reason' => 'Retry reason'])
+            ->assertOk()
+            ->assertJsonPath('status', 'cancelled')
+            ->assertJsonPath('reason', 'Public holiday');
+
+        $this->assertSame(1, DB::table('admin_audit_logs')
+            ->where('entity_type', 'morning_session')
+            ->where('entity_id', $session->id)
+            ->where('action', 'cancel')
+            ->count());
 
         // A cancelled session cannot be recorded over.
         $this->actingAs($this->admin)
@@ -290,6 +369,39 @@ class MorningSessionTest extends TestCase
         $this->assertSame('Public holiday', $sessions[0]['reason']);
     }
 
+    public function test_designated_recorder_can_cancel_only_todays_pending_session(): void
+    {
+        $session = app(MorningSessionService::class)->openFor(Carbon::parse('2026-09-14'));
+        $bystander = User::factory()->role('resident', 'Resident')->create();
+
+        $this->actingAs($bystander)
+            ->postJson("/api/academic/morning-sessions/{$session->id}/cancel", ['reason' => 'Not authorized'])
+            ->assertForbidden();
+
+        $this->travelTo(Carbon::parse('2026-09-15 08:00:00'));
+        $this->actingAs($this->recorder)
+            ->postJson("/api/academic/morning-sessions/{$session->id}/cancel", ['reason' => 'Too late'])
+            ->assertForbidden();
+
+        $this->travelTo(Carbon::parse('2026-09-14 08:05:00'));
+        $this->actingAs($this->recorder)
+            ->postJson("/api/academic/morning-sessions/{$session->id}/cancel", [])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['reason']);
+
+        $this->actingAs($this->recorder)
+            ->postJson("/api/academic/morning-sessions/{$session->id}/cancel", ['reason' => 'Department event'])
+            ->assertOk()
+            ->assertJsonPath('status', 'cancelled')
+            ->assertJsonPath('reason', 'Department event');
+
+        $this->assertDatabaseHas('admin_audit_logs', [
+            'user_id' => $this->recorder->id,
+            'entity_type' => 'morning_session',
+            'action' => 'cancel',
+        ]);
+    }
+
     public function test_workspace_flags_the_designated_recorder(): void
     {
         $this->assertTrue(
@@ -301,6 +413,72 @@ class MorningSessionTest extends TestCase
                 ->assertOk()
                 ->json('academic.isMorningRecorder'),
         );
+    }
+
+    public function test_record_and_cancel_recheck_stale_session_state_under_the_lock(): void
+    {
+        $service = app(MorningSessionService::class);
+        $cancelWins = $service->openFor(Carbon::parse('2026-09-14'));
+        $staleRecordAttempt = $cancelWins->fresh();
+
+        $cancelled = $service->cancel($cancelWins, 'Department event', $this->admin);
+        $this->assertTrue($cancelled['transitioned']);
+
+        try {
+            $service->record($staleRecordAttempt, true, null, [], $this->admin);
+            $this->fail('A stale record attempt overwrote a committed cancellation.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('session', $exception->errors());
+        }
+
+        $this->assertSame('cancelled', $cancelWins->refresh()->status);
+        $this->assertSame(0, $cancelWins->attendance()->count());
+
+        // The schema intentionally permits one session per calendar date;
+        // remove the completed fixture before exercising the opposite race.
+        $cancelWins->delete();
+
+        $recordWins = MorningSession::query()->create([
+            'session_date' => '2026-09-14',
+            'scheduled_start_at' => '09:00',
+        ]);
+        $staleCancelAttempt = $recordWins->fresh();
+
+        $service->record($recordWins, true, null, [], $this->recorder);
+
+        try {
+            $service->cancel($staleCancelAttempt, 'Stale cancellation', $this->recorder);
+            $this->fail('A designated recorder cancelled a session after it was recorded.');
+        } catch (AuthorizationException) {
+            $this->assertTrue(true);
+        }
+
+        $this->assertSame('recorded', $recordWins->refresh()->status);
+    }
+
+    public function test_cancel_state_and_audit_roll_back_together(): void
+    {
+        $session = app(MorningSessionService::class)->openFor(Carbon::parse('2026-09-14'));
+
+        $this->mock(AdminAuditService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('record')->once()->andThrow(new \RuntimeException('Simulated audit failure.'));
+        });
+        $this->withoutExceptionHandling();
+
+        try {
+            $this->actingAs($this->admin)
+                ->postJson("/api/admin/morning-sessions/{$session->id}/cancel", ['reason' => 'Public holiday']);
+            $this->fail('The simulated audit failure should abort the cancellation transaction.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Simulated audit failure.', $exception->getMessage());
+        }
+
+        $this->assertSame('pending', $session->refresh()->status);
+        $this->assertSame(0, DB::table('admin_audit_logs')
+            ->where('entity_type', 'morning_session')
+            ->where('entity_id', $session->id)
+            ->where('action', 'cancel')
+            ->count());
     }
 
     // ---- Review-pass regression: corrections edit the snapshot ----

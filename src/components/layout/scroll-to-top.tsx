@@ -7,7 +7,7 @@ import { useLocation } from 'react-router-dom'
  * scroll position. The window is the scroll container in this app (app-shell's
  * <main> is min-h-screen with a sticky header), so we scroll the window.
  *
- * Keyed on pathname only — in-page filter/query changes should not jump.
+ * Keyed on pathname only - in-page filter/query changes should not jump.
  */
 export function ScrollToTop() {
   const { pathname } = useLocation()

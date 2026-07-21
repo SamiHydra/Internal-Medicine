@@ -23,6 +23,8 @@ export type Workspace = 'clinical' | 'academic'
 
 export type NavigationItem = {
   label: string
+  /** Optional desktop-sidebar group label shown before this item. */
+  sectionLabel?: string
   /** Condensed label for the mobile bottom tab bar; falls back to `label`. */
   shortLabel?: string
   href: string
@@ -51,8 +53,8 @@ export const adminWorkspaceNav: Record<Workspace, NavigationItem[]> = {
   academic: [
     { label: 'Dashboard', href: '/admin/academic', icon: LayoutDashboard, end: true },
     { label: 'Submissions', href: '/admin/academic/submissions', icon: ClipboardCheck },
-    { label: 'Duty roster', shortLabel: 'Roster', href: '/admin/academic/roster', icon: CalendarDays },
-    { label: 'Rotations', href: '/admin/academic/rotations', icon: CalendarRange },
+    { label: 'Duty & coverage', sectionLabel: 'Scheduling', shortLabel: 'Roster', href: '/admin/academic/roster', icon: CalendarDays },
+    { label: 'Resident rotations', shortLabel: 'Rotations', href: '/admin/academic/rotations', icon: CalendarRange },
     { label: 'Forms', href: '/admin/academic/evaluation-forms', icon: FilePenLine },
     { label: 'Students', href: '/admin/academic/students', icon: GraduationCap },
     { label: 'Structure', href: '/admin/academic/structure', icon: Network },
@@ -141,7 +143,7 @@ export function workspaceForPath(pathname: string): Workspace | null {
   return null
 }
 
-/** Admin pages shared by both workspaces — switching workspace here re-scopes in place. */
+/** Admin pages shared by both workspaces - switching workspace here re-scopes in place. */
 export function isSharedAdminPath(pathname: string): boolean {
   return (
     pathname.startsWith('/admin/users') ||

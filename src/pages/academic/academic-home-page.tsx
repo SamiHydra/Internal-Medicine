@@ -29,7 +29,7 @@ function getMessage(error: unknown, fallback: string) {
 
 function toDateLabel(value: string | null | undefined) {
   if (!value) {
-    return '—'
+    return '-'
   }
   try {
     return format(parseISO(value), 'MMM d, yyyy')
@@ -98,7 +98,7 @@ export function AcademicHomePage() {
     submissions && submissions.direction !== null ? submissions.data : []
   const receivedCount = summary?.evaluationCount ?? 0
 
-  // Top indicators by compliance, descending — a quick "where you stand" read.
+  // Top indicators by compliance, descending - a quick "where you stand" read.
   const indicators = [...(summary?.indicatorCompliance ?? [])]
     .sort((left, right) => right.pct - left.pct)
     .slice(0, 6)
@@ -227,8 +227,8 @@ export function AcademicHomePage() {
                         <p className="truncate text-sm font-semibold text-[#000a1e]">
                           {record.subjectName ?? 'Unknown'}
                         </p>
-                        <p className="text-xs text-[#74777f]">
-                          {toDateLabel(record.evaluationDate)} · {record.wardName ?? '—'}
+                        <p className="text-[13px] leading-5 text-[#5f6670]">
+                          {toDateLabel(record.evaluationDate)} · {record.wardName ?? '-'}
                         </p>
                       </div>
                       <span className="shrink-0 rounded-[0.25rem] bg-[#edf4fb] px-2.5 py-1 text-xs font-bold tabular-nums text-[#005db6]">

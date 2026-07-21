@@ -494,3 +494,44 @@ a {
     animation: sheet-overlay-out 160ms ease-out !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Rating meter (student progress)
+
+   Five steps are always present: the unfilled ones are the reference that
+   makes a filled count read as a value. Steps grow from the baseline on mount,
+   staggered left to right, so the eye reads the scale in the direction it
+   fills. Predetermined entry, so keyframes (off the main thread) rather than
+   a JS-driven transition.
+--------------------------------------------------------------------------- */
+@keyframes rating-step-grow {
+  from {
+    opacity: 0;
+    transform: scaleY(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+.rating-step {
+  transform-origin: bottom;
+  animation: rating-step-grow 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@keyframes rating-step-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Reduced motion keeps the fade (it aids comprehension) and drops the growth. */
+@media (prefers-reduced-motion: reduce) {
+  .rating-step {
+    animation: rating-step-fade 180ms ease both;
+  }
+}

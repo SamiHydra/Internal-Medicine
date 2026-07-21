@@ -6,13 +6,14 @@ use App\Models\Report;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportFieldValue;
 use App\Models\ReportingPeriod;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 /**
  * Builds a tidy (long-format) CSV of submitted weekly values per department/field,
  * so leadership can pull a period's numbers without hand-compiling spreadsheets.
  *
- * Generic by design — maps cleanly onto a specific MoH/DHIS2 template later.
+ * Generic by design - maps cleanly onto a specific MoH/DHIS2 template later.
  */
 class AnalyticsExportService
 {
@@ -73,7 +74,7 @@ class AnalyticsExportService
 
     /**
      * @param  list<string>  $periodIds
-     * @return \Illuminate\Database\Eloquent\Builder<Report>
+     * @return Builder<Report>
      */
     private function exportQuery(array $periodIds)
     {

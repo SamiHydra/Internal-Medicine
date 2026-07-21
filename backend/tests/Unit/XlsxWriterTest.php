@@ -10,14 +10,14 @@ class XlsxWriterTest extends TestCase
 {
     public function test_builds_a_valid_single_sheet_workbook(): void
     {
-        $path = (new XlsxWriter())->toTempFile(
+        $path = (new XlsxWriter)->toTempFile(
             ['Department', 'Count'],
             [['Cardiac', 7], ['Neurology', 0]],
         );
 
         $this->assertTrue(is_file($path));
 
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         $this->assertTrue($zip->open($path) === true);
         $this->assertNotFalse($zip->getFromName('[Content_Types].xml'));
         $this->assertNotFalse($zip->getFromName('xl/workbook.xml'));
@@ -32,12 +32,12 @@ class XlsxWriterTest extends TestCase
 
     public function test_escapes_xml_special_characters_and_preserves_leading_zeros(): void
     {
-        $path = (new XlsxWriter())->toTempFile(
+        $path = (new XlsxWriter)->toTempFile(
             ['Value'],
             [['a & b <c>'], ['007']],
         );
 
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         $zip->open($path);
         $sheet = (string) $zip->getFromName('xl/worksheets/sheet1.xml');
         $zip->close();

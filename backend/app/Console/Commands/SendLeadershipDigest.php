@@ -6,7 +6,9 @@ use App\Mail\LeadershipDigestMail;
 use App\Models\User;
 use App\Services\Reports\LeadershipDigestService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 
 class SendLeadershipDigest extends Command
 {
@@ -28,7 +30,7 @@ class SendLeadershipDigest extends Command
             ->whereIn('role_key', ['superadmin', 'admin'])
             ->where('active', true)
             ->whereNotNull('email')
-            ->pluck('email');
+            ->get(['id', 'email']);
 
         if ($recipients->isEmpty()) {
             $this->info('No admin recipients with an email; leadership digest skipped.');
@@ -36,12 +38,31 @@ class SendLeadershipDigest extends Command
             return self::SUCCESS;
         }
 
-        foreach ($recipients as $email) {
-            // Queued (database queue) so shared hosting drains it via cron.
-            Mail::to($email)->queue(new LeadershipDigestMail($digest));
-        }
+        $queued = $recipients->sum(function (User $recipient) use ($digest): int {
+            return DB::transaction(function () use ($recipient, $digest): int {
+                $inserted = DB::table('leadership_digest_deliveries')->insertOrIgnore([
+                    'id' => (string) Str::uuid(),
+                    'reporting_period_id' => $digest['periodId'],
+                    'recipient_id' => $recipient->id,
+                    'recipient_email' => $recipient->email,
+                    'queued_at' => now(),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
 
-        $this->info(sprintf('Leadership digest queued for %d recipient(s).', $recipients->count()));
+                if ($inserted === 0) {
+                    return 0;
+                }
+
+                // Production uses the database queue, so the job insert and
+                // unique delivery marker commit in the same transaction.
+                Mail::to($recipient->email)->queue(new LeadershipDigestMail($digest));
+
+                return 1;
+            });
+        });
+
+        $this->info(sprintf('Leadership digest queued for %d recipient(s).', $queued));
 
         return self::SUCCESS;
     }

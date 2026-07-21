@@ -7,6 +7,8 @@ use App\Models\RepAssignment;
 use App\Models\Student;
 use App\Models\TeachingSession;
 use App\Services\Academic\TeachingService;
+use App\Services\Admin\AdminAuditService;
+use App\Support\HospitalClock;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,23 +25,27 @@ class TeachingSessionController extends Controller
 {
     public function __construct(
         private readonly TeachingService $teachingService,
+        private readonly AdminAuditService $auditService,
     ) {}
 
     /** The rep's sessions for this week, limited to their recording scope. */
     public function mySessions(Request $request): JsonResponse
     {
+        Gate::authorize('viewMine', TeachingSession::class);
+
         $assignments = RepAssignment::query()
             ->with('batch')
             ->where('user_id', $request->user()->id)
             ->where('active', true)
+            ->whereHas('batch', fn ($query) => $query->where('active', true))
             ->get();
 
         if ($assignments->isEmpty()) {
             return response()->json(['data' => [], 'scope' => null]);
         }
 
-        $weekStart = now()->startOfWeek();
-        $weekEnd = now()->endOfWeek();
+        $weekStart = HospitalClock::today()->startOfWeek();
+        $weekEnd = HospitalClock::today()->endOfWeek();
 
         $sessions = collect();
 
@@ -60,6 +66,13 @@ class TeachingSessionController extends Controller
                     ->get(),
             );
         }
+
+        // Cleanup normally removes obsolete pending rows when an admin edits
+        // the schedule. Keep this read boundary defensive against an
+        // out-of-band write or an interrupted reconciliation, while retaining
+        // already-recorded history.
+        $sessions = $sessions->filter(fn (TeachingSession $session) => $session->status !== 'pending'
+            || $this->teachingService->isBackedByActiveSchedule($session));
 
         $first = $assignments->first();
 
@@ -88,11 +101,32 @@ class TeachingSessionController extends Controller
             'reason' => ['sometimes', 'nullable', 'string', 'max:1000'],
         ]);
 
+        $previousStatus = $teachingSession->status;
+
         $session = $this->teachingService->record(
             $teachingSession,
             $validated['status'],
             $validated['reason'] ?? null,
             $request->user(),
+        );
+
+        // A not-held record is the start of a follow-up conversation, so the
+        // reason and who gave it need to survive a later re-record.
+        $this->auditService->record(
+            $request->user(),
+            'record',
+            'teaching_session',
+            $session->id,
+            ['status' => $previousStatus],
+            [
+                'status' => $session->status,
+                'reason' => $session->reason,
+                'activityType' => $session->activity_type,
+                'scheduledDate' => $session->scheduled_date?->toDateString(),
+                'batchLabel' => $session->batch?->label,
+                'subgroup' => $session->subgroup,
+            ],
+            $request,
         );
 
         return response()->json($this->serializeSession($session));
@@ -101,12 +135,17 @@ class TeachingSessionController extends Controller
     /** Today's sessions for the consultant recording attendance, rosters included. */
     public function today(Request $request): JsonResponse
     {
+        Gate::authorize('viewToday', TeachingSession::class);
+
+        $today = HospitalClock::today();
         $sessions = TeachingSession::query()
             ->with(['ward', 'batch', 'attendance'])
-            ->whereDate('scheduled_date', now()->toDateString())
+            ->whereDate('scheduled_date', $today->toDateString())
             ->whereIn('status', ['pending', 'held'])
             ->orderBy('activity_type')
-            ->get();
+            ->get()
+            ->filter(fn (TeachingSession $session) => $session->status !== 'pending'
+                || $this->teachingService->isBackedByActiveSchedule($session));
 
         return response()->json([
             'data' => $sessions->map(function (TeachingSession $session) {
@@ -141,6 +180,28 @@ class TeachingSessionController extends Controller
             $teachingSession,
             $validated['presence'],
             $request->user(),
+        );
+
+        // Counts rather than the per-student map: attendance drives a student's
+        // final result, so the trail records that a consultant marked the room
+        // and how many were in it, while the roster itself stays in
+        // student_attendance where it can be corrected.
+        $presence = $validated['presence'];
+        $this->auditService->record(
+            $request->user(),
+            'record_attendance',
+            'teaching_session',
+            $session->id,
+            null,
+            [
+                'activityType' => $session->activity_type,
+                'scheduledDate' => $session->scheduled_date?->toDateString(),
+                'batchLabel' => $session->batch?->label,
+                'subgroup' => $session->subgroup,
+                'presentCount' => count(array_filter($presence)),
+                'rosterCount' => count($presence),
+            ],
+            $request,
         );
 
         return response()->json($this->serializeSession($session));

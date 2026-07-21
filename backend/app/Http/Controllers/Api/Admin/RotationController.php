@@ -10,6 +10,7 @@ use App\Models\RotationCalendar;
 use App\Models\User;
 use App\Services\Academic\RosterService;
 use App\Services\Academic\RotationCalendarService;
+use App\Services\Academic\RotationPlanStateService;
 use App\Services\Admin\AdminAuditService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -28,6 +29,7 @@ class RotationController extends Controller
     public function __construct(
         private readonly RotationCalendarService $calendarService,
         private readonly RosterService $rosterService,
+        private readonly RotationPlanStateService $planStateService,
         private readonly AdminAuditService $auditService,
     ) {}
 
@@ -121,6 +123,7 @@ class RotationController extends Controller
         ];
 
         $assignments = DutyAssignment::query()
+            ->with('dutyType')
             ->whereIn('user_id', $residents->pluck('id'))
             ->whereDate('starts_on', '<=', $blockRange[1])
             ->whereDate('ends_on', '>=', $blockRange[0])
@@ -131,15 +134,13 @@ class RotationController extends Controller
 
         foreach ($calendar->blocks as $block) {
             foreach ($residents as $resident) {
-                $match = $assignments->first(fn (DutyAssignment $assignment) => $assignment->user_id === $resident->id
-                    && $assignment->starts_on->lessThanOrEqualTo($block->ends_on)
-                    && $assignment->ends_on->greaterThanOrEqualTo($block->starts_on));
+                $state = $this->planStateService->cell($assignments, $block, $resident->id);
 
-                if ($match !== null) {
+                if ($state['status'] !== 'empty') {
                     $cells[] = [
                         'userId' => $resident->id,
                         'blockId' => $block->id,
-                        'dutyTypeId' => $match->duty_type_id,
+                        ...$state,
                     ];
                 }
             }
@@ -180,6 +181,7 @@ class RotationController extends Controller
             'groupPlan.*.rotationGroup' => ['required_with:groupPlan', 'string', 'max:8'],
             'groupPlan.*.blockId' => ['required_with:groupPlan', 'string', Rule::exists('rotation_blocks', 'id')],
             'groupPlan.*.dutyTypeId' => ['required_with:groupPlan', 'string', Rule::exists('duty_types', 'id')],
+            'confirmOverwrite' => ['sometimes', 'boolean'],
         ]);
 
         $blocks = $calendar->blocks()->get()->keyBy('id');
@@ -201,6 +203,41 @@ class RotationController extends Controller
                     'dutyTypeId' => $groupEntry['dutyTypeId'],
                 ]);
             }
+        }
+
+        $residentIds = User::query()
+            ->where('role_key', 'resident')
+            ->where('active', true)
+            ->where('training_year', $calendar->training_year)
+            ->whereIn('id', $entries->pluck('userId')->unique()->values())
+            ->pluck('id')
+            ->all();
+
+        if (count($residentIds) !== $entries->pluck('userId')->unique()->count()) {
+            throw ValidationException::withMessages([
+                'assignments' => ['Every person must be an active resident in the selected training year.'],
+            ]);
+        }
+
+        $existingAssignments = DutyAssignment::query()
+            ->with('dutyType')
+            ->whereIn('user_id', $residentIds)
+            ->whereDate('starts_on', '<=', $calendar->blocks->max('ends_on'))
+            ->whereDate('ends_on', '>=', $calendar->blocks->min('starts_on'))
+            ->whereHas('dutyType', fn (Builder $query) => $query->where('granularity', 'monthly'))
+            ->get();
+
+        $requiresConfirmation = $entries->contains(function (array $entry) use ($blocks, $existingAssignments): bool {
+            $block = $blocks[$entry['blockId']] ?? null;
+
+            return $block !== null
+                && $this->planStateService->cell($existingAssignments, $block, $entry['userId'])['requiresOverwriteConfirmation'];
+        });
+
+        if ($requiresConfirmation && ! ($validated['confirmOverwrite'] ?? false)) {
+            throw ValidationException::withMessages([
+                'confirmOverwrite' => ['This change replaces duty-roster or mixed coverage. Confirm the overwrite after reviewing the affected cells.'],
+            ]);
         }
 
         $rows = [];
@@ -245,7 +282,11 @@ class RotationController extends Controller
             'rotation_calendar',
             $calendar->id,
             null,
-            ['assigned' => count($rows), 'cleared' => $cleared],
+            [
+                'assigned' => count($rows),
+                'cleared' => $cleared,
+                'confirmedOverwrite' => $requiresConfirmation,
+            ],
             $request,
         );
 

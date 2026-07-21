@@ -92,4 +92,55 @@ describe('LaravelApiClient query serialization', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('/sanctum/csrf-cookie')
     expect(String(fetchMock.mock.calls[1][0])).toContain('/api/reports')
   })
+
+  it('treats an inactive account during session restore as signed out', async () => {
+    fetchMock.mockReset().mockResolvedValue({
+      status: 403,
+      statusText: 'Forbidden',
+      ok: false,
+      text: async () => JSON.stringify({ message: 'This account is inactive.' }),
+    })
+
+    const client = new LaravelApiClient('http://127.0.0.1:8000')
+    const authListener = vi.fn()
+    client.auth.onAuthStateChange(authListener)
+
+    await expect(client.auth.getSession()).resolves.toEqual({
+      data: { session: null },
+      error: null,
+    })
+    expect(authListener).toHaveBeenCalledWith('SIGNED_OUT', null)
+  })
+
+  it('signs out an inactive account discovered during a workspace request', async () => {
+    fetchMock.mockReset().mockResolvedValue({
+      status: 403,
+      statusText: 'Forbidden',
+      ok: false,
+      text: async () => JSON.stringify({ message: 'This account is inactive.' }),
+    })
+
+    const client = new LaravelApiClient('http://127.0.0.1:8000')
+    const authListener = vi.fn()
+    client.auth.onAuthStateChange(authListener)
+
+    await expect(client.get('/api/workspace')).rejects.toThrow('This account is inactive.')
+    expect(authListener).toHaveBeenCalledWith('SIGNED_OUT', null)
+  })
+
+  it('does not sign out for an ordinary permission-denied response', async () => {
+    fetchMock.mockReset().mockResolvedValue({
+      status: 403,
+      statusText: 'Forbidden',
+      ok: false,
+      text: async () => JSON.stringify({ message: 'This action is unauthorized.' }),
+    })
+
+    const client = new LaravelApiClient('http://127.0.0.1:8000')
+    const authListener = vi.fn()
+    client.auth.onAuthStateChange(authListener)
+
+    await expect(client.get('/api/admin/users')).rejects.toThrow('This action is unauthorized.')
+    expect(authListener).not.toHaveBeenCalled()
+  })
 })

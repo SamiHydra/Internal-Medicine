@@ -16,16 +16,29 @@ export type RosterAssignment = {
   endsOn: string
   source: string
   note: string | null
+  isRotationOverride: boolean
+}
+
+export type RosterRotationBlock = {
+  id: string
+  calendarId: string
+  academicYearLabel: string | null
+  blockIndex: number
+  startsOn: string
+  endsOn: string
 }
 
 export type RosterPerson = {
   id: string
   fullName: string
   role: 'resident' | 'consultant'
+  title: string | null
   sectionId: string | null
   sectionName: string | null
   trainingYear: number | null
   rotationGroup: string | null
+  rotationManaged: boolean
+  rotationBlocks: RosterRotationBlock[]
   monthly: RosterAssignment[]
   daily: RosterAssignment[]
 }
@@ -51,7 +64,11 @@ export async function saveRosterMonth(
   client: LaravelApiClient,
   year: number,
   month: number,
-  assignments: Array<{ userId: string; dutyTypeId: string | null }>,
+  assignments: Array<{
+    userId: string
+    dutyTypeId: string | null
+    overrideReason?: string
+  }>,
 ): Promise<RosterMonth> {
   return client.put<RosterMonth>(`/api/admin/roster/${year}/${month}`, { assignments })
 }
@@ -69,7 +86,23 @@ export type RotationPlan = {
   calendar: RotationCalendarSummary
   residents: Array<{ id: string; fullName: string; rotationGroup: string | null }>
   dutyTypes: Array<{ id: string; name: string; category: string }>
-  assignments: Array<{ userId: string; blockId: string; dutyTypeId: string }>
+  assignments: Array<{
+    userId: string
+    blockId: string
+    dutyTypeId: string | null
+    status: 'consistent' | 'mixed'
+    fullyCovered: boolean
+    requiresOverwriteConfirmation: boolean
+    segments: Array<{
+      id: string
+      dutyTypeId: string
+      dutyTypeName: string | null
+      startsOn: string
+      endsOn: string
+      source: string
+      note: string | null
+    }>
+  }>
 }
 
 export async function fetchRotationPlan(
@@ -85,6 +118,7 @@ export async function saveRotationPlan(
   payload: {
     assignments?: Array<{ userId: string; blockId: string; dutyTypeId: string | null }>
     groupPlan?: Array<{ rotationGroup: string; blockId: string; dutyTypeId: string }>
+    confirmOverwrite?: boolean
   },
 ): Promise<RotationPlan> {
   return client.post<RotationPlan>(`/api/admin/rotations/${calendarId}/plan`, payload)

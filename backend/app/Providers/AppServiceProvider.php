@@ -15,11 +15,11 @@ use App\Models\Notification;
 use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportFieldDefinition;
-use App\Models\ResidentEvaluation;
 use App\Models\ReportFieldValue;
 use App\Models\ReportingPeriod;
 use App\Models\ReportStatusHistory;
 use App\Models\ReportTemplate;
+use App\Models\ResidentEvaluation;
 use App\Models\Role;
 use App\Models\User;
 use App\Policies\AccessRequestItemPolicy;
@@ -68,7 +68,7 @@ class AppServiceProvider extends ServiceProvider
         // Baseline password policy applied wherever a password is set (register,
         // reset, change, admin create/reset). min(8)+mixedCase+numbers rejects the
         // weak/known passwords plain min:8 allowed. Production can additionally
-        // enable ->uncompromised() (HIBP breach check) — left off here so the test
+        // enable ->uncompromised() (HIBP breach check) - left off here so the test
         // suite stays offline-deterministic.
         Password::defaults(fn () => $this->app->isProduction()
             ? Password::min(12)->mixedCase()->numbers()->uncompromised()

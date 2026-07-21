@@ -105,7 +105,7 @@ type PresentationRule = ChangeWatchRule
 /** Small uppercase caption that sits above a single control. */
 function Caption({ children }: { children: ReactNode }) {
   return (
-    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9aa7b8]">
+    <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#526171]">
       {children}
     </span>
   )
@@ -132,7 +132,7 @@ function FieldGroup({
         <h3 className="flex items-center gap-2 text-sm font-bold text-[#000a1e]">
           {title}
           {count != null ? (
-            <span className="text-[13px] font-semibold text-[#9aa7b8]">{count}</span>
+            <span className="text-sm font-semibold text-[#657180]">{count}</span>
           ) : null}
         </h3>
       </div>
@@ -321,13 +321,9 @@ export function TemplateManagementPage() {
           eyebrow="Report templates"
           title="Shape what staff fill in"
           actions={
-            <TabsList className="h-auto flex-wrap gap-2 rounded-[0.35rem] bg-[#f4f7fb] p-1.5 outline outline-1 outline-[#e3e9f1]">
+            <TabsList>
               {serviceLineOptions.map((option) => (
-                <TabsTrigger
-                  key={option.value}
-                  value={option.value}
-                  className="rounded-[0.25rem] px-4 py-2 text-sm font-semibold text-[#44474e] data-[state=active]:bg-[#000a1e] data-[state=active]:text-white data-[state=active]:shadow-none"
-                >
+                <TabsTrigger key={option.value} value={option.value}>
                   {option.label}
                 </TabsTrigger>
               ))}
@@ -390,7 +386,7 @@ export function TemplateManagementPage() {
                     isOpen ? 'outline-[#bcd0ea]' : 'outline-[#d4dde8]',
                   )}
                 >
-                  {/* Collapsed/expanded header — the whole bar toggles the editor open. */}
+                  {/* Collapsed/expanded header - the whole bar toggles the editor open. */}
                   <button
                     type="button"
                     onClick={() => toggleOpen(template.slug)}
@@ -415,7 +411,7 @@ export function TemplateManagementPage() {
                           <Badge variant="warning">Unsaved</Badge>
                         ) : null}
                       </div>
-                      <p className="mt-0.5 hidden truncate text-[13px] text-[#74777f] sm:block">
+                      <p className="mt-0.5 hidden truncate text-sm leading-5 text-[#5f6670] sm:block">
                         {template.description}
                       </p>
                     </div>
@@ -588,7 +584,7 @@ export function TemplateManagementPage() {
                                       className="h-9 min-w-0 flex-1 border-transparent bg-transparent px-2 text-sm font-medium hover:border-[#d4dde8] hover:bg-white focus:border-[#bcd0ea] focus:bg-white"
                                     />
 
-                                    <span className="hidden shrink-0 rounded-full border border-[#e3e9f1] bg-[#f4f7fb] px-2.5 py-0.5 text-[11px] font-semibold text-[#5b6169] sm:inline">
+                                    <span className="hidden shrink-0 rounded-full border border-[#d4dde8] bg-[#f4f7fb] px-2.5 py-0.5 text-xs font-semibold text-[#526171] sm:inline">
                                       {prettyFieldType(field.fieldKind)}
                                     </span>
 
@@ -800,7 +796,7 @@ export function TemplateManagementPage() {
                                         {ruleName}
                                       </span>
                                       <div className="flex items-center gap-2">
-                                        <span className="text-xs font-medium text-[#74777f]">
+                                        <span className="text-[13px] font-medium text-[#5f6670]">
                                           Flag a change over
                                         </span>
                                         <div className="relative">

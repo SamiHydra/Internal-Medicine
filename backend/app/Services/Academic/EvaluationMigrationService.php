@@ -85,7 +85,7 @@ final class EvaluationMigrationService
      *
      * @return array{passed: bool, details: list<string>}
      */
-    public function verify(int $sample = 50): array
+    public function verify(int $sample = 50, bool $allowEmptyLegacy = false): array
     {
         $details = [];
         $passed = true;
@@ -97,7 +97,14 @@ final class EvaluationMigrationService
             $legacyCount = (clone $query)->count();
             $unifiedCount = Evaluation::query()->where('form_key', $formKey)->count();
 
-            if ($unifiedCount < $legacyCount) {
+            if ($legacyCount === 0 && $unifiedCount > 0 && ! $allowEmptyLegacy) {
+                $passed = false;
+                $details[] = sprintf(
+                    '%s: NO LEGACY COMPARISON SET, unified=%d. Restore the legacy rows or rerun with --allow-empty-legacy after recording an approved exception.',
+                    $formKey,
+                    $unifiedCount,
+                );
+            } elseif ($unifiedCount < $legacyCount) {
                 $passed = false;
                 $details[] = sprintf('%s: COUNT MISMATCH legacy=%d unified=%d', $formKey, $legacyCount, $unifiedCount);
             } else {

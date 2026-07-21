@@ -10,7 +10,7 @@ use Illuminate\Support\Carbon;
 
 /**
  * Flags clinically critical values (deaths, HAIs, pressure ulcers, ...) the moment
- * a report is submitted or edited, and pushes a notification to admin-like users —
+ * a report is submitted or edited, and pushes a notification to admin-like users -
  * something a passive spreadsheet can never do.
  *
  * The set of "critical" fields is configurable via app settings

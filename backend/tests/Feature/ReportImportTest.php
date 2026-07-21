@@ -11,6 +11,7 @@ use App\Models\ReportTemplate;
 use App\Models\User;
 use App\Services\Reports\ReportImportService;
 use App\Services\Reports\ReportImportTemplateService;
+use App\Support\Export\XlsxWriter;
 use Database\Seeders\AppSettingSeeder;
 use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportFieldDefinitionSeeder;
@@ -138,7 +139,7 @@ class ReportImportTest extends TestCase
 
     public function test_import_rejects_rows_that_violate_quality_rules(): void
     {
-        // hai subtype (2) exceeds total_hai (1) — a blocking cross-field rule.
+        // hai subtype (2) exceeds total_hai (1), a blocking cross-field rule.
         $file = $this->csvFile([
             ['2026-05-25', 'GI/Neurology', $this->departmentSlug, 'quality_safety', 'total_hai', 'total_hai', '1', '', '', '', '', '', ''],
             ['2026-05-25', 'GI/Neurology', $this->departmentSlug, 'quality_safety', 'hai_clabsi', 'hai_clabsi', '2', '', '', '', '', '', ''],
@@ -150,7 +151,7 @@ class ReportImportTest extends TestCase
             ->assertJsonPath('imported', 0)
             ->assertJsonPath('skipped', 1);
 
-        // The whole group rolled back — nothing persisted.
+        // The whole group rolled back, so nothing persisted.
         $this->assertSame(0, Report::query()->count());
     }
 
@@ -188,7 +189,7 @@ class ReportImportTest extends TestCase
 
     public function test_admin_can_import_an_xlsx_file(): void
     {
-        $path = (new \App\Support\Export\XlsxWriter())->toTempFile(
+        $path = (new XlsxWriter)->toTempFile(
             ReportImportTemplateService::HEADER,
             [$this->row('total_admitted_patients', 8)],
         );
@@ -210,7 +211,7 @@ class ReportImportTest extends TestCase
         $response->assertOk();
         $response->assertHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 
-        $zip = new \ZipArchive();
+        $zip = new \ZipArchive;
         $zip->open($response->baseResponse->getFile()->getPathname());
         $sheet = (string) $zip->getFromName('xl/worksheets/sheet1.xml');
         $zip->close();
@@ -242,7 +243,7 @@ class ReportImportTest extends TestCase
             ->assertStatus(422)
             ->assertJsonPath('imported', 0);
 
-        $this->assertSame(0, \App\Models\ReportFieldValue::query()->count());
+        $this->assertSame(0, ReportFieldValue::query()->count());
     }
 
     public function test_import_handles_a_utf8_bom_csv(): void

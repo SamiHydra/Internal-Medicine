@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Services\Academic\TransferService;
+use App\Support\HospitalClock;
 use Illuminate\Console\Command;
 
 class ApplySectionTransfers extends Command
@@ -13,7 +14,7 @@ class ApplySectionTransfers extends Command
 
     public function handle(TransferService $transferService): int
     {
-        $applied = $transferService->applyDue();
+        $applied = $transferService->applyDue(HospitalClock::today());
 
         $this->info(sprintf('Section transfers applied: %d.', $applied));
 

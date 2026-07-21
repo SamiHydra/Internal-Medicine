@@ -13,6 +13,7 @@ use Illuminate\Support\Collection;
 class ReportReminderService
 {
     private const LIVE_REPORTING_START = '2026-03-02';
+
     private const OVERDUE_LOOKBACK_DAYS = 7;
 
     public function __construct(

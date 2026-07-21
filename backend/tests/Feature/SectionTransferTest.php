@@ -7,9 +7,14 @@ use App\Models\DutyType;
 use App\Models\Section;
 use App\Models\TransferRequest;
 use App\Models\User;
+use App\Services\Academic\TransferService;
+use App\Services\Admin\AdminAuditService;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Mockery\MockInterface;
 use Tests\TestCase;
 
 class SectionTransferTest extends TestCase
@@ -255,6 +260,103 @@ class SectionTransferTest extends TestCase
 
         // Idempotent: a second run finds nothing.
         $this->artisan('academic:apply-section-transfers')->expectsOutputToContain('applied: 0');
+    }
+
+    public function test_retried_transfer_transitions_do_not_duplicate_audits_or_notifications(): void
+    {
+        $request = $this->fileRequest();
+        $service = app(TransferService::class);
+
+        $service->approve($request, $this->destinationHead, Carbon::parse('2026-07-20'));
+        $service->approve($request, $this->destinationHead, Carbon::parse('2026-07-20'));
+
+        $this->assertSame(1, DB::table('admin_audit_logs')
+            ->where('entity_type', 'transfer_request')
+            ->where('entity_id', $request->id)
+            ->where('action', 'approve')
+            ->count());
+        $this->assertSame(1, DB::table('notifications')
+            ->where('related_id', $request->id)
+            ->where('type', 'transfer_decided')
+            ->count());
+
+        $this->travelTo(Carbon::parse('2026-07-20 00:30:00'));
+
+        // The original date is now in the past, but this is a retry of an
+        // already-committed decision, not a new invalid approval.
+        $service->approve($request, $this->destinationHead, Carbon::parse('2026-07-20'));
+        $this->assertTrue($service->apply($request));
+        $this->assertFalse($service->apply($request));
+        $this->assertSame(1, DB::table('admin_audit_logs')
+            ->where('entity_type', 'transfer_request')
+            ->where('entity_id', $request->id)
+            ->where('action', 'apply')
+            ->count());
+
+        foreach (DB::table('notifications')->where('related_id', $request->id)->where('type', 'transfer_applied')->pluck('recipient_id')->countBy() as $count) {
+            $this->assertSame(1, $count);
+        }
+    }
+
+    public function test_reject_and_cancel_retries_are_idempotent_and_conflicting_decisions_fail(): void
+    {
+        $service = app(TransferService::class);
+        $rejected = $this->fileRequest();
+
+        $service->reject($rejected, $this->destinationHead);
+        $service->reject($rejected, $this->destinationHead);
+
+        $this->assertSame(1, DB::table('admin_audit_logs')
+            ->where('entity_id', $rejected->id)
+            ->where('action', 'reject')
+            ->count());
+        $this->assertSame(1, DB::table('notifications')
+            ->where('related_id', $rejected->id)
+            ->where('type', 'transfer_decided')
+            ->count());
+
+        try {
+            $service->approve($rejected, $this->destinationHead, Carbon::parse('2026-07-20'));
+            $this->fail('A rejected request was approved by a stale caller.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('request', $exception->errors());
+        }
+
+        $cancelled = $service->request($this->consultant->refresh(), $this->cardiology->refresh(), null);
+        $service->cancel($cancelled, $this->consultant);
+        $service->cancel($cancelled, $this->consultant);
+
+        $this->assertSame('cancelled', $cancelled->refresh()->status);
+
+        // The retry must not double-write, same as reject above.
+        $this->assertSame(1, DB::table('admin_audit_logs')
+            ->where('entity_id', $cancelled->id)
+            ->where('action', 'cancel')
+            ->count());
+    }
+
+    public function test_transfer_state_and_side_effects_roll_back_together(): void
+    {
+        $request = $this->fileRequest();
+
+        $this->mock(AdminAuditService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('record')->once()->andThrow(new \RuntimeException('Simulated audit failure.'));
+        });
+
+        try {
+            app(TransferService::class)->approve($request, $this->destinationHead, Carbon::parse('2026-07-20'));
+            $this->fail('The simulated audit failure should abort the transfer transaction.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Simulated audit failure.', $exception->getMessage());
+        }
+
+        $request->refresh();
+        $this->assertSame('pending', $request->status);
+        $this->assertNull($request->decided_at);
+        $this->assertSame(0, DB::table('notifications')
+            ->where('related_id', $request->id)
+            ->where('type', 'transfer_decided')
+            ->count());
     }
 
     public function test_head_review_queue_is_scoped_and_workspace_carries_the_pending_count(): void

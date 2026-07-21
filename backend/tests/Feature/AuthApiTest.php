@@ -161,7 +161,7 @@ class AuthApiTest extends TestCase
             ],
         ])->assertCreated();
 
-        // The applicant account exists but is inactive — it cannot authenticate yet.
+        // The applicant account exists but is inactive, so it cannot authenticate yet.
         $this->assertDatabaseHas('users', ['email' => 'pending@example.test', 'active' => false]);
         $this->postJson('/api/auth/login', [
             'identifier' => 'pending@example.test',

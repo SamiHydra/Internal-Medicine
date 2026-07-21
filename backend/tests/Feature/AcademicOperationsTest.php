@@ -2,11 +2,11 @@
 
 namespace Tests\Feature;
 
-use App\Models\DutyAssignment;
-use App\Models\DutyType;
 use App\Models\MorningAttendance;
 use App\Models\MorningSession;
+use App\Models\Notification;
 use App\Models\RepAssignment;
+use App\Models\ReportingPeriod;
 use App\Models\Student;
 use App\Models\StudentAttendance;
 use App\Models\StudentBatch;
@@ -14,11 +14,13 @@ use App\Models\SubgroupPlacement;
 use App\Models\TeachingSession;
 use App\Models\User;
 use App\Models\Ward;
+use App\Services\Academic\AcademicOperationsAnalyticsService;
 use App\Services\Academic\EvaluationFormService;
 use App\Services\Reports\LeadershipDigestService;
 use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Cache\CacheManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Tests\TestCase;
@@ -52,6 +54,36 @@ class AcademicOperationsTest extends TestCase
         $this->travelBack();
 
         parent::tearDown();
+    }
+
+    public function test_operations_analytics_database_cache_hits_contain_only_plain_data(): void
+    {
+        /** @var CacheManager $cache */
+        $cache = app('cache');
+        $originalDriver = $cache->getDefaultDriver();
+        $cache->setDefaultDriver('database');
+        $cache->forgetDriver('database');
+
+        try {
+            $calls = [
+                'morning' => fn (): array => app(AcademicOperationsAnalyticsService::class)->morning(),
+                'teaching' => fn (): array => app(AcademicOperationsAnalyticsService::class)->teaching(),
+                'students' => fn (): array => app(AcademicOperationsAnalyticsService::class)->students(),
+            ];
+
+            foreach ($calls as $operation => $call) {
+                $first = $call();
+                $second = $call();
+
+                $this->assertSame($first, $second, "{$operation} changed on its cache hit.");
+                $this->assertPlainCachePayload($second, $operation);
+                $this->assertStringNotContainsString('__PHP_Incomplete_Class', serialize($second));
+            }
+        } finally {
+            $cache->store('database')->flush();
+            $cache->setDefaultDriver($originalDriver);
+            $cache->forgetDriver('database');
+        }
     }
 
     public function test_morning_analytics_report_punctuality_and_attendance_rates(): void
@@ -99,10 +131,86 @@ class AcademicOperationsTest extends TestCase
 
         // The per-person history for the detail page.
         $this->assertCount(2, $response['history']);
+        $this->assertSame([
+            'type' => 'latest_sessions',
+            'limit' => 60,
+            'sessionCount' => 3,
+            'fromDate' => '2026-09-07',
+            'toDate' => '2026-09-11',
+        ], $response['window']);
 
         // Non-admins cannot read the operations analytics.
         $resident = User::factory()->role('resident', 'Resident')->create();
         $this->actingAs($resident)->getJson('/api/academic/analytics/morning')->assertForbidden();
+    }
+
+    public function test_morning_analytics_uses_the_same_latest_session_window_for_every_section(): void
+    {
+        $person = User::factory()->role('resident', 'Resident')->create();
+
+        $outside = MorningSession::query()->create([
+            'session_date' => '2025-01-01',
+            'scheduled_start_at' => '08:00',
+            'status' => 'recorded',
+            'started_on_time' => true,
+            'recorded_at' => now(),
+        ]);
+        MorningAttendance::query()->create([
+            'morning_session_id' => $outside->id,
+            'user_id' => $person->id,
+            'present' => true,
+        ]);
+
+        foreach (range(1, 60) as $day) {
+            $session = MorningSession::query()->create([
+                'session_date' => Carbon::parse('2026-01-01')->addDays($day)->toDateString(),
+                'scheduled_start_at' => '08:00',
+                'status' => 'recorded',
+                'started_on_time' => false,
+                'actual_start_at' => '08:10',
+                'recorded_at' => now(),
+            ]);
+            MorningAttendance::query()->create([
+                'morning_session_id' => $session->id,
+                'user_id' => $person->id,
+                'present' => false,
+            ]);
+        }
+
+        $response = $this->actingAs($this->admin)
+            ->getJson('/api/academic/analytics/morning?userId='.$person->id)
+            ->assertOk()
+            ->json();
+
+        $this->assertSame(60, $response['window']['sessionCount']);
+        $this->assertSame(60, $response['recordedCount']);
+        $this->assertCount(60, $response['trend']);
+        $this->assertCount(60, $response['history']);
+
+        $personRow = collect($response['people'])->firstWhere('userId', $person->id);
+        $this->assertSame(60, $personRow['expectedCount']);
+        $this->assertSame(0, $personRow['presentCount']);
+        $this->assertEquals(0, $personRow['attendanceRate']);
+        $this->assertNotContains('2025-01-01', array_column($response['history'], 'date'));
+    }
+
+    private function assertPlainCachePayload(mixed $value, string $path): void
+    {
+        $this->assertNotInstanceOf(\__PHP_Incomplete_Class::class, $value, "Incomplete cache object at {$path}.");
+
+        if (is_array($value)) {
+            foreach ($value as $key => $item) {
+                $this->assertPlainCachePayload($item, $path.'.'.$key);
+            }
+
+            return;
+        }
+
+        $this->assertTrue(is_scalar($value) || $value === null, sprintf(
+            'Cache value at %s must be plain; %s found.',
+            $path,
+            get_debug_type($value),
+        ));
     }
 
     public function test_teaching_analytics_report_held_rates_reasons_and_backlog(): void
@@ -130,6 +238,20 @@ class AcademicOperationsTest extends TestCase
         $make('bedside', '2026-09-11', 'pending');
         $make('seminar', '2026-09-09', 'cancelled', 'Exam week');
 
+        $secondBlock = StudentBatch::query()->create([
+            'cohort' => 'C2',
+            'label' => 'C2 2026-B',
+            'starts_on' => '2026-09-01',
+            'ends_on' => '2026-12-06',
+        ]);
+        TeachingSession::query()->create([
+            'batch_id' => $secondBlock->id,
+            'activity_type' => 'seminar',
+            'scheduled_date' => '2026-09-10',
+            'status' => 'not_held',
+            'reason' => 'Room unavailable',
+        ]);
+
         $response = $this->actingAs($this->admin)
             ->getJson('/api/academic/analytics/teaching')
             ->assertOk()
@@ -146,6 +268,17 @@ class AcademicOperationsTest extends TestCase
 
         $batchRow = collect($response['byBatch'])->firstWhere('batchLabel', 'C1 2026-A');
         $this->assertSame(2, $batchRow['held']);
+        $this->assertSame($batch->id, $batchRow['batchId']);
+
+        $c1Block = collect($response['blocks'])->firstWhere('batchId', $batch->id);
+        $this->assertCount(2, $c1Block['missedSessions']);
+        $this->assertSame('C1 2026-A', $c1Block['missedSessions'][0]['batchLabel']);
+        $this->assertSame(1, $c1Block['pendingBacklog']);
+
+        $c2Block = collect($response['blocks'])->firstWhere('batchId', $secondBlock->id);
+        $this->assertSame(1, $c2Block['notHeld']);
+        $this->assertSame('Room unavailable', $c2Block['missedSessions'][0]['reason']);
+        $this->assertSame('C2 2026-B', $response['missedSessions'][0]['batchLabel']);
     }
 
     public function test_student_analytics_roll_up_attendance_and_evaluation_trajectories(): void
@@ -221,7 +354,7 @@ class AcademicOperationsTest extends TestCase
     {
         // The digest reads the most recent reporting period; the seeded test
         // DB has none, so create one covering this week.
-        \App\Models\ReportingPeriod::query()->create([
+        ReportingPeriod::query()->create([
             'week_start' => '2026-09-14',
             'week_end' => '2026-09-20',
             'deadline_at' => '2026-09-21 10:00:00',
@@ -332,7 +465,7 @@ class AcademicOperationsTest extends TestCase
             'type' => 'placement_gap',
         ]);
 
-        $notification = \App\Models\Notification::query()->where('type', 'placement_gap')->firstOrFail();
+        $notification = Notification::query()->where('type', 'placement_gap')->firstOrFail();
         $this->assertStringContainsString('subgroup B', $notification->message);
         $this->assertStringNotContainsString('subgroup A', $notification->message);
     }

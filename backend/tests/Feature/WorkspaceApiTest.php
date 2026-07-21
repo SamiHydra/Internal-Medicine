@@ -113,6 +113,52 @@ class WorkspaceApiTest extends TestCase
             ->assertJsonCount(1, 'state.auditLogs');
     }
 
+    public function test_workspace_exposes_the_role_registry_with_its_workspace_split(): void
+    {
+        $roles = $this->actingAs($this->admin)
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->assertJsonCount(6, 'state.roles')
+            // Ordered by label so the SPA can render the registry as it arrives.
+            ->assertJsonPath('state.roles.0.key', 'admin')
+            ->assertJsonPath('state.roles.0.label', 'Admin')
+            ->json('state.roles');
+
+        $this->assertEquals([
+            'superadmin' => 'both',
+            'admin' => 'both',
+            'nurse' => 'clinical',
+            'resident' => 'academic',
+            'consultant' => 'academic',
+            'student_rep' => 'academic',
+        ], collect($roles)->pluck('workspace', 'key')->all());
+
+        $this->actingAs($this->nurse)
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->assertJsonCount(6, 'state.roles');
+    }
+
+    public function test_workspace_profiles_stay_workspace_agnostic_for_admins(): void
+    {
+        $resident = User::factory()->role('resident', 'Resident')->create(['full_name' => 'Rita Resident']);
+        $consultant = User::factory()->role('consultant', 'Consultant')->create(['full_name' => 'Carl Consultant']);
+        $studentRep = User::factory()->role('student_rep', 'Student representative')->create(['full_name' => 'Sara Rep']);
+
+        // The profile directory is the app-wide identity map: the academic pages
+        // resolve display names by id from it, so it must never be split by
+        // workspace even though the admin roster is.
+        $profileIds = $this->actingAs($this->admin)
+            ->getJson('/api/workspace?includeProfiles=1')
+            ->assertOk()
+            ->json('state.profiles.*.id');
+
+        $this->assertEqualsCanonicalizing(
+            [$this->admin->id, $this->nurse->id, $this->otherNurse->id, $resident->id, $consultant->id, $studentRep->id],
+            $profileIds,
+        );
+    }
+
     public function test_public_access_request_creates_applicant_and_notifies_admins(): void
     {
         $this->postJson('/api/access-requests', [

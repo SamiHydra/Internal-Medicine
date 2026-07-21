@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowRight, ChevronDown, History, Search, ShieldCheck } from 'lucide-react'
 
+import { AcademicAuditTrail } from '@/components/admin/academic-audit-trail'
 import { Badge } from '@/components/ui/badge'
-import { ListSkeleton, TableSkeleton } from '@/components/layout/loading-skeletons'
+import { ListSkeleton } from '@/components/layout/loading-skeletons'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -16,10 +17,9 @@ import { departments, templateMap } from '@/config/templates'
 import { useAppData } from '@/context/app-data-context'
 import { useWorkspace } from '@/context/workspace-context'
 import { fetchAdminAuditTrail } from '@/lib/api/admin'
-import { fetchAcademicAuditTrail } from '@/lib/api/academic'
 import { getApiBrowserClient } from '@/lib/api/client'
 import { apiEnvSetupHint } from '@/lib/api/env'
-import type { AcademicAuditEntry, AdminAuditEntry } from '@/lib/api/types'
+import type { AdminAuditEntry } from '@/lib/api/types'
 import { formatTimestamp } from '@/lib/dates'
 import { cn, formatCompactNumber } from '@/lib/utils'
 
@@ -36,7 +36,7 @@ const countChipClass =
 
 function formatAuditValue(value: string | number | null) {
   if (value === null || value === undefined || value === '') {
-    return '—'
+    return '-'
   }
 
   return String(value)
@@ -44,7 +44,7 @@ function formatAuditValue(value: string | number | null) {
 
 function formatAuditDetailValue(value: unknown): string {
   if (value === null || value === undefined || value === '') {
-    return '—'
+    return '-'
   }
 
   if (typeof value === 'object') {
@@ -63,67 +63,12 @@ function SectionEyebrow({ label }: { label: string }) {
   )
 }
 
-function AcademicDirectionBadge({ direction }: { direction: AcademicAuditEntry['direction'] }) {
-  return (
-    <Badge variant={direction === 'resident' ? 'info' : 'success'}>
-      {direction === 'resident' ? 'Resident eval' : 'Consultant eval'}
-    </Badge>
-  )
-}
-
 /**
- * Academic workspace audit: a chronological "who evaluated whom" feed. Evaluations
- * are immutable, so this is a submission trail (no field diffs like the clinical log).
+ * Academic workspace audit. The section chrome lives here; the trail itself is
+ * AcademicAuditTrail, which reads the real workspace-scoped audit log rather
+ * than the evaluations table this section used to be limited to.
  */
 function AcademicAuditStream() {
-  const client = getApiBrowserClient()
-  const [entries, setEntries] = useState<AcademicAuditEntry[]>([])
-  const [isLoading, setIsLoading] = useState(Boolean(client))
-  const [error, setError] = useState<string | null>(
-    client ? null : `The Laravel API is not configured. ${apiEnvSetupHint}`,
-  )
-  const [search, setSearch] = useState('')
-
-  useEffect(() => {
-    if (!client) {
-      return
-    }
-
-    let active = true
-    fetchAcademicAuditTrail(client)
-      .then((response) => {
-        if (active) {
-          setEntries(response.data)
-          setError(null)
-        }
-      })
-      .catch((cause) => {
-        if (active) {
-          setError(
-            cause instanceof Error ? cause.message : 'Failed to load the academic audit trail.',
-          )
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setIsLoading(false)
-        }
-      })
-
-    return () => {
-      active = false
-    }
-  }, [client])
-
-  const query = search.trim().toLowerCase()
-  const filtered = query
-    ? entries.filter((entry) =>
-        [entry.authorName, entry.subjectName, entry.wardName].some((value) =>
-          String(value ?? '').toLowerCase().includes(query),
-        ),
-      )
-    : entries
-
   return (
     <motion.section
       initial={{ opacity: 0, y: 10 }}
@@ -132,91 +77,18 @@ function AcademicAuditStream() {
       className={sectionClass}
     >
       <div className="space-y-5">
-        <div className="flex flex-col gap-4 border-b border-[#eef2f6] pb-5 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <SectionEyebrow label="Audit stream" />
-            <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
-              Evaluation activity
-            </h2>
-            <p className="mt-1 text-sm text-[#74777f]">Who evaluated whom, newest first.</p>
-          </div>
-          <span className={cn(countChipClass, 'whitespace-nowrap')}>
-            <History className="h-3.5 w-3.5 text-[#005db6]" />
-            {formatCompactNumber(filtered.length)} filed
-          </span>
+        <div className="border-b border-[#eef2f6] pb-5">
+          <SectionEyebrow label="Audit stream" />
+          <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
+            Academic activity
+          </h2>
+          <p className="mt-1 text-sm text-[#74777f]">
+            Every recorded academic action - evaluations, morning sessions, teaching,
+            roster, students and structure - newest first.
+          </p>
         </div>
 
-        <div className="relative w-full sm:w-72">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9aa7b8]" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search evaluator, subject, or ward"
-            className="h-10 pl-9 text-sm"
-          />
-        </div>
-
-        {error ? (
-          <div className="rounded-[0.4rem] border border-dashed border-[#f1d1d1] bg-[#fff6f6] px-6 py-10 text-center text-sm text-[#9d2a2a]">
-            {error}
-          </div>
-        ) : isLoading ? (
-          <TableSkeleton rows={7} columns={4} />
-        ) : filtered.length ? (
-          <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
-            <div className="hidden items-center gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f] lg:flex">
-              <span className="min-w-0 flex-[2_1_0%]">Evaluator → Subject</span>
-              <span className="min-w-[8rem] flex-1">Ward · Date</span>
-              <span className="w-16 shrink-0 text-right">Score</span>
-              <span className="min-w-[9rem] flex-1 text-right">Filed</span>
-            </div>
-
-            {filtered.map((entry) => (
-              <div
-                key={`${entry.direction}-${entry.id}`}
-                className="flex items-center gap-3 border-b border-[#eef2f6] px-4 py-2.5 last:border-b-0"
-              >
-                <span className="flex min-w-0 flex-[2_1_0%] flex-col items-start gap-1.5">
-                  <span className="flex w-full items-center gap-2 text-sm">
-                    <span className="truncate font-semibold text-[#000a1e]">
-                      {entry.authorName ?? 'Unknown'}
-                    </span>
-                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-[#9aa7b8]" />
-                    <span className="truncate text-[#1d3047]">{entry.subjectName ?? 'Unknown'}</span>
-                  </span>
-                  <AcademicDirectionBadge direction={entry.direction} />
-                </span>
-                <span className="hidden min-w-[8rem] flex-1 text-xs text-[#74777f] lg:block">
-                  {entry.wardName ?? '—'}
-                  <span className="mt-0.5 block text-[11px]">
-                    {entry.evaluationDate ? formatTimestamp(entry.evaluationDate) : '—'}
-                  </span>
-                </span>
-                <span className="hidden w-16 shrink-0 text-right text-xs lg:block">
-                  {entry.overallRating != null ? (
-                    <span className="font-semibold text-[#000a1e]">{entry.overallRating}/5</span>
-                  ) : (
-                    <span className="text-[#74777f]">
-                      {entry.indicatorsMet}/{entry.indicatorsTotal}
-                    </span>
-                  )}
-                </span>
-                <span className="hidden min-w-[9rem] flex-1 text-right text-[11px] text-[#74777f] lg:block">
-                  {entry.createdAt ? formatTimestamp(entry.createdAt) : '—'}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-6 text-center">
-            <span className="flex h-11 w-11 items-center justify-center rounded-[0.4rem] bg-[#edf4fb] text-[#005db6]">
-              <History className="h-5 w-5" />
-            </span>
-            <p className="text-sm leading-6 text-[#5b6169]">
-              {search ? 'No evaluations match the search.' : 'No evaluations have been filed yet.'}
-            </p>
-          </div>
-        )}
+        <AcademicAuditTrail />
       </div>
     </motion.section>
   )
@@ -319,7 +191,7 @@ function AdminActionsStream() {
               Account &amp; access actions
             </h2>
             <p className="mt-1 text-sm text-[#74777f]">
-              Approvals, role and assignment changes — shown in both workspaces.
+              Approvals, role and assignment changes - shown in both workspaces.
             </p>
           </div>
           {!error && !isLoading ? (
@@ -387,10 +259,10 @@ function AdminActionsStream() {
                       <span className="block truncate text-sm font-semibold capitalize text-[#000a1e]">
                         {entry.entityType.replace(/_/g, ' ')}
                       </span>
-                      <span className="block truncate text-xs text-[#74777f]">{entry.userName ?? 'System'}</span>
+                      <span className="block truncate text-[13px] leading-5 text-[#5f6670]">{entry.userName ?? 'System'}</span>
                     </span>
-                    <span className="shrink-0 text-[11px] text-[#74777f]">
-                      {entry.createdAt ? formatTimestamp(entry.createdAt) : '—'}
+                    <span className="shrink-0 text-xs text-[#657180]">
+                      {entry.createdAt ? formatTimestamp(entry.createdAt) : '-'}
                     </span>
                   </div>
 
@@ -398,7 +270,7 @@ function AdminActionsStream() {
                     <div className="space-y-3 border-t border-[#eef2f6] bg-[#f7f9fc] px-4 py-3.5">
                       {changedKeys.length ? (
                         <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3] bg-white">
-                          <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-[#eef2f6] bg-[#f7f9fc] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f]">
+                          <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-[#eef2f6] bg-[#f7f9fc] px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#526171]">
                             <span>Field</span>
                             <span>Before</span>
                             <span>After</span>
@@ -421,11 +293,11 @@ function AdminActionsStream() {
                           ))}
                         </div>
                       ) : (
-                        <p className="text-xs text-[#74777f]">
+                        <p className="text-[13px] leading-5 text-[#5f6670]">
                           No field-level changes were recorded for this action.
                         </p>
                       )}
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-[#74777f]">
+                      <div className="flex flex-wrap items-center gap-2 text-[13px] leading-5 text-[#5f6670]">
                         <span>By {entry.userName ?? 'System'}</span>
                         {entry.entityId ? (
                           <>
@@ -597,7 +469,7 @@ export function AuditLogPage() {
 
           {entries.length ? (
             <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
-              <div className="hidden items-center gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f] lg:flex">
+              <div className="hidden items-center gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.12em] text-[#526171] lg:flex">
                 <span className="w-4 shrink-0" />
                 <span className="min-w-0 flex-1">Field</span>
                 <span className="min-w-0 flex-1">Change</span>
@@ -637,7 +509,7 @@ export function AuditLogPage() {
                         <span className="block truncate text-sm font-semibold text-[#000a1e]">
                           {entry.fieldLabel}
                         </span>
-                        <span className="block truncate text-xs text-[#74777f]">
+                        <span className="block truncate text-[13px] leading-5 text-[#5f6670]">
                           {department?.name ?? entry.departmentId} · {templateName}
                         </span>
                       </span>
@@ -654,7 +526,7 @@ export function AuditLogPage() {
                         <span className="block truncate text-xs font-medium text-[#1d3047]">
                           {entry.changedByName}
                         </span>
-                        <span className="block text-[11px] text-[#74777f]">
+                        <span className="block text-xs text-[#657180]">
                           {formatTimestamp(entry.changedAt)}
                         </span>
                       </span>
@@ -664,7 +536,7 @@ export function AuditLogPage() {
                       <div className="space-y-3 border-t border-[#eef2f6] bg-[#f7f9fc] px-4 py-3.5">
                         <div className="grid gap-3 sm:grid-cols-2">
                           <div className="rounded-[0.4rem] border border-[#e6ecf3] bg-white p-3.5">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#526171]">
                               Before
                             </p>
                             <p className="mt-1.5 break-words text-sm font-medium leading-6 text-[#44474e]">
@@ -683,7 +555,7 @@ export function AuditLogPage() {
                             </p>
                           </div>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-[#74777f]">
+                        <div className="flex flex-wrap items-center gap-2 text-[13px] leading-5 text-[#5f6670]">
                           {department ? (
                             <Badge variant="info">{serviceLineLabels[department.family]}</Badge>
                           ) : null}
@@ -727,7 +599,10 @@ export function AuditLogPage() {
       </motion.section>
       )}
 
-      <AdminActionsStream />
+      {/* Clinical only: in the academic workspace the trail above already
+          covers these rows (academic + the system-wide ones), so rendering
+          both would list every account change twice. */}
+      {workspace === 'academic' ? null : <AdminActionsStream />}
     </div>
   )
 }

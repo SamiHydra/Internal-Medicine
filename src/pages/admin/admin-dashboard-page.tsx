@@ -1886,7 +1886,7 @@ export function AdminDashboardPage() {
             <div className="rounded-[0.35rem] bg-[#f8fafc] p-4 outline outline-1 outline-[#d9e0e7]/75">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                 <div
-                  className="flex w-full rounded-[0.25rem] bg-[#edf1f5] p-1 outline outline-1 outline-[#d4dde8]/75 sm:inline-flex sm:w-auto"
+                  className="flex w-full gap-1.5 rounded-[0.35rem] bg-white p-1.5 outline outline-1 outline-[#d4dde8] sm:inline-flex sm:w-auto"
                   role="group"
                   aria-label="Trend grouping"
                 >
@@ -1912,10 +1912,10 @@ export function AdminDashboardPage() {
                         }
                       }}
                       className={cn(
-                        'h-9 flex-1 rounded-[0.2rem] px-4 text-sm font-semibold transition-colors sm:min-w-[96px] sm:flex-none',
+                        'h-9 flex-1 rounded-[0.25rem] px-4 text-sm font-semibold transition-colors sm:min-w-[96px] sm:flex-none',
                         trendScale === option.value
-                          ? 'bg-[#000a1e] text-white'
-                          : 'text-[#44474e] hover:bg-white hover:text-[#000a1e]',
+                          ? 'bg-[#04162f] text-white'
+                          : 'text-[#44474e] hover:bg-[#eef2f6]',
                       )}
                     >
                       {option.label}

@@ -58,7 +58,7 @@ function scoreBand(value: number): { pct: number; hex: string; text: string; wor
   return { pct, hex: '#fb7185', text: 'text-rose-300', word: 'Needs work' }
 }
 
-const eyebrowClass = 'text-[10px] font-bold uppercase tracking-[0.2em] text-amber-300/90'
+const eyebrowClass = 'text-xs font-bold uppercase tracking-[0.16em] text-amber-300/90'
 
 function Section({
   label,
@@ -74,7 +74,7 @@ function Section({
       <div className="flex items-center justify-between gap-3">
         <p className={eyebrowClass}>{label}</p>
         {meta ? (
-          <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/40">
+          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-white/55">
             {meta}
           </span>
         ) : null}
@@ -118,7 +118,7 @@ function ChipList({ labels, empty }: { labels: string[]; empty: string }) {
       {labels.map((label) => (
         <span
           key={label}
-          className="rounded-md bg-white/10 px-2.5 py-1 text-xs font-medium text-white/90"
+          className="rounded-md bg-white/10 px-2.5 py-1 text-[13px] font-medium text-white/90"
         >
           {label}
         </span>
@@ -174,7 +174,7 @@ function ScoreHeader({ value, label }: { value: number; label: string }) {
     <div className="mt-5">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">{label}</p>
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-white/55">{label}</p>
           <p className="mt-1.5 font-display text-[2.4rem] font-bold leading-none text-white">
             {band.pct}
             <span className="ml-0.5 text-xl font-semibold text-white/45">%</span>
@@ -273,7 +273,7 @@ function ResidentDetail({ record }: { record: ResidentEvaluationRecord }) {
         <div className="space-y-5">
           {RESIDENT_COMPETENCIES.map((competency) => (
             <div key={competency.group} className="space-y-2.5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/40">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-white/55">
                 {competency.group}
               </p>
               {competency.items.map((item) => (

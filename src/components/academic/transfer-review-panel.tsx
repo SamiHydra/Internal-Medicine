@@ -104,7 +104,7 @@ export function TransferReviewPanel({ allowImmediate = false }: { allowImmediate
                 aria-label="Apply approvals immediately"
                 onCheckedChange={setImmediate}
               />
-              <span className="text-xs font-medium text-[#44474e]">Apply immediately</span>
+              <span className="text-[13px] font-medium text-[#44474e]">Apply immediately</span>
             </div>
           ) : undefined
         }
@@ -133,7 +133,7 @@ export function TransferReviewPanel({ allowImmediate = false }: { allowImmediate
                     · {request.fromSectionName ?? '-'} → {request.toSectionName ?? '-'}
                   </span>
                 </p>
-                <p className="mt-0.5 text-xs text-[#74777f]">
+                <p className="mt-0.5 text-[13px] text-[#74777f]">
                   Requested {dateLabel(request.requestedAt) ?? '-'}
                   {request.reason ? ` · "${request.reason}"` : ''}
                 </p>

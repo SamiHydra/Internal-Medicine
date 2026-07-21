@@ -26,7 +26,7 @@ function getMessage(error: unknown, fallback: string) {
 
 function toDateLabel(value: string | null) {
   if (!value) {
-    return '—'
+    return '-'
   }
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString()
@@ -57,7 +57,7 @@ function RecentSubmissions({ submissions }: { submissions: AcademicMySubmissions
                 {record.subjectName ?? 'Unknown'}
               </p>
               <p className="text-xs text-[#74777f]">
-                {toDateLabel(record.evaluationDate)} · {record.wardName ?? '—'}
+                {toDateLabel(record.evaluationDate)} · {record.wardName ?? '-'}
               </p>
             </div>
             <span className="rounded-[0.25rem] bg-[#edf4fb] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-[#005db6]">

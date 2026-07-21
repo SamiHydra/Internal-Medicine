@@ -5,6 +5,8 @@ import type {
   ActionItemStatus,
   AdminAccessRequest,
   AdminAuditEntry,
+  AdminAuditQuery,
+  AdminAuditResponse,
   ApiReferenceState,
   ApiTemplateConfig,
   CreateAdminAccountPayload,
@@ -147,7 +149,7 @@ export async function importReports(
     return await client.post<ReportImportResult>('/api/admin/reports/import', form)
   } catch (error) {
     // A "total failure" import (e.g. every row rejected) comes back as a 422 whose
-    // body is still the {imported, skipped, reports, errors[]} result envelope —
+    // body is still the {imported, skipped, reports, errors[]} result envelope -
     // surface that as a result so per-row errors render. A *validation* 422 (bad
     // file type, missing file) carries Laravel's {message, errors:{field:[...]}}
     // shape instead (no numeric `imported`, `errors` is an object): that must
@@ -174,6 +176,31 @@ export async function fetchAdminAuditTrail(client: LaravelApiClient): Promise<Ad
   const response = await client.get<{ data: AdminAuditEntry[] }>('/api/admin/admin-audit-logs')
 
   return response.data
+}
+
+/**
+ * The workspace-scoped action trail, with the filter vocabulary the server
+ * derives from its audit registry. Scoping happens server-side so the client
+ * never has to know which entity types belong to which workspace.
+ */
+export async function fetchWorkspaceAuditTrail(
+  client: LaravelApiClient,
+  query: AdminAuditQuery = {},
+): Promise<AdminAuditResponse> {
+  const params: Record<string, string> = {}
+
+  if (query.workspace) params.workspace = query.workspace
+  if (query.entityType) params.entity_type = query.entityType
+  if (query.userId) params.user_id = query.userId
+  if (query.action) params.action = query.action
+  if (query.search) params.search = query.search
+  if (query.dateFrom) params.date_from = query.dateFrom
+  if (query.dateTo) params.date_to = query.dateTo
+  if (query.limit) params.limit = String(query.limit)
+
+  return client.get<AdminAuditResponse>('/api/admin/admin-audit-logs', {
+    query: params,
+  })
 }
 
 /** Full template definitions (incl. inactive fields + presentation metadata) for the editor. */

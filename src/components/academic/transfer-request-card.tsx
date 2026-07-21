@@ -154,7 +154,7 @@ export function TransferRequestCard() {
             Request transfer
           </Button>
           {hasPending ? (
-            <p className="w-full text-xs text-[#74777f]">
+            <p className="w-full text-[13px] text-[#74777f]">
               You already have a pending request. Cancel it below to file a new one.
             </p>
           ) : null}
@@ -174,7 +174,7 @@ export function TransferRequestCard() {
                   <p className="truncate text-sm font-medium text-[#000a1e]">
                     {request.fromSectionName ?? '-'} → {request.toSectionName ?? '-'}
                   </p>
-                  <p className="text-xs text-[#74777f]">
+                  <p className="text-[13px] text-[#74777f]">
                     {request.status === 'approved' && request.effectiveOn
                       ? `Effective ${request.effectiveOn}`
                       : (request.reason ?? '')}

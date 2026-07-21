@@ -62,6 +62,12 @@ jobs:
       - name: Install backend dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
 
+      - name: Audit backend dependencies
+        run: composer audit --no-interaction
+
+      - name: Check backend formatting
+        run: vendor/bin/pint --test
+
       - name: Test backend with SQLite
         run: php artisan test
 
@@ -112,3 +118,54 @@ jobs:
 
       - name: Test backend with MariaDB
         run: vendor/bin/phpunit --configuration phpunit.mariadb.xml
+
+  deployment-scripts:
+    name: Deployment shell scripts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install --yes shellcheck
+
+      - name: Check shell syntax
+        run: bash -n deploy/*.sh
+
+      - name: Lint deployment scripts
+        run: shellcheck deploy/*.sh
+
+  e2e:
+    name: Isolated Playwright gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: dom, fileinfo, mbstring, pdo_sqlite
+          coverage: none
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run isolated browser suite
+        run: npm run test:e2e

@@ -1,5 +1,5 @@
 import { Bell, GraduationCap, LogOut, PanelLeftClose, PanelLeftOpen, Stethoscope } from 'lucide-react'
-import { useEffect, useState, type PropsWithChildren } from 'react'
+import { Fragment, useEffect, useState, type PropsWithChildren } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
@@ -79,8 +79,13 @@ function SidebarNav({ onNavigate, collapsed = false }: { onNavigate?: () => void
         const Icon = item.icon
 
         return (
-          <NavLink
-            key={item.href}
+          <Fragment key={item.href}>
+            {item.sectionLabel && !collapsed ? (
+              <p className="px-4 pb-1 pt-4 text-[10px] font-bold uppercase tracking-[0.18em] text-[#647a95]">
+                {item.sectionLabel}
+              </p>
+            ) : null}
+            <NavLink
             to={item.href}
             end={item.end}
             onClick={onNavigate}
@@ -96,23 +101,24 @@ function SidebarNav({ onNavigate, collapsed = false }: { onNavigate?: () => void
                   : 'text-[#92a3ba] hover:border-[#294567] hover:bg-white/[0.03] hover:text-white',
               )
             }
-          >
-            {({ isActive }) => (
-              <span className={cn('flex items-center', collapsed ? '' : 'gap-3.5')}>
-                <Icon
-                  className={cn(
-                    'h-5 w-5 shrink-0 transition-colors duration-200',
-                    isActive ? 'text-[#f0b429]' : 'text-[#92a3ba] group-hover:text-white',
+            >
+              {({ isActive }) => (
+                <span className={cn('flex items-center', collapsed ? '' : 'gap-3.5')}>
+                  <Icon
+                    className={cn(
+                      'h-5 w-5 shrink-0 transition-colors duration-200',
+                      isActive ? 'text-[#f0b429]' : 'text-[#92a3ba] group-hover:text-white',
+                    )}
+                  />
+                  {!collapsed && (
+                    <span className={cn(isActive ? 'text-white' : 'text-[#92a3ba] group-hover:text-white')}>
+                      {item.label}
+                    </span>
                   )}
-                />
-                {!collapsed && (
-                  <span className={cn(isActive ? 'text-white' : 'text-[#92a3ba] group-hover:text-white')}>
-                    {item.label}
-                  </span>
-                )}
-              </span>
-            )}
-          </NavLink>
+                </span>
+              )}
+            </NavLink>
+          </Fragment>
         )
       })}
     </nav>

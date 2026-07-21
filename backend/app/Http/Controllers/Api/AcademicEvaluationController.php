@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\Concerns\SerializesAdminResources;
 use App\Http\Controllers\Controller;
 use App\Models\ConsultantEvaluation;
 use App\Models\Evaluation;
+use App\Models\EvaluationForm;
 use App\Models\ResidentEvaluation;
 use App\Models\Student;
 use App\Models\SubgroupPlacement;
@@ -15,6 +16,8 @@ use App\Services\Academic\AcademicAnalyticsFilters;
 use App\Services\Academic\AcademicAnalyticsService;
 use App\Services\Academic\EvaluationFormService;
 use App\Services\Academic\RosterService;
+use App\Services\Admin\AdminAuditService;
+use App\Support\HospitalClock;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -38,19 +41,50 @@ class AcademicEvaluationController extends Controller
         private readonly AcademicAnalyticsService $analytics,
         private readonly RosterService $roster,
         private readonly EvaluationFormService $forms,
+        private readonly AdminAuditService $auditService,
     ) {}
+
+    /**
+     * Record that an evaluation was submitted - who, about whom, which form,
+     * for which date. Deliberately NOT the answers: the trail exists to prove
+     * a submission happened and to catch a mis-addressed one, and anyone
+     * holding audit.view should not thereby read peer feedback content. The
+     * answers stay in the evaluations tables behind the academic policies.
+     */
+    private function auditEvaluationSubmission(
+        Request $request,
+        string $entityType,
+        Evaluation $evaluation,
+        string $formKey,
+        string $subjectName,
+    ): void {
+        $this->auditService->record(
+            $request->user(),
+            'submit',
+            $entityType,
+            $evaluation->id,
+            null,
+            [
+                'formKey' => $formKey,
+                'subjectName' => $subjectName,
+                'evaluationDate' => $evaluation->evaluation_date?->toDateString(),
+            ],
+            $request,
+        );
+    }
 
     public function formOptions(Request $request): JsonResponse
     {
         // Second authz layer (the route also enforces permission:academic.submit).
         Gate::authorize('create', ConsultantEvaluation::class);
 
+        $today = HospitalClock::today()->toDateString();
         $validated = $request->validate([
-            'date' => ['sometimes', 'date', 'before_or_equal:today'],
+            'date' => ['sometimes', 'date', "before_or_equal:{$today}"],
         ]);
 
         $user = $request->user();
-        $date = isset($validated['date']) ? Carbon::parse($validated['date']) : now();
+        $date = isset($validated['date']) ? Carbon::parse($validated['date']) : HospitalClock::today();
         $oppositeRole = $this->oppositeRole($user->role_key);
 
         // Only the people the author actually overlaps with in a ward or
@@ -95,7 +129,7 @@ class AcademicEvaluationController extends Controller
 
         // All four forms: consultants render the student forms on the
         // teaching page through this same endpoint.
-        if (! in_array($key, \App\Models\EvaluationForm::KEYS, true)) {
+        if (! in_array($key, EvaluationForm::KEYS, true)) {
             throw ValidationException::withMessages([
                 'key' => ['Unknown evaluation form.'],
             ]);
@@ -165,7 +199,7 @@ class AcademicEvaluationController extends Controller
 
     /**
      * The authenticated resident/consultant's OWN received-evaluation summary.
-     * Aggregates only (average score, indicator compliance, rating) — never the
+     * Aggregates only (average score, indicator compliance, rating) - never the
      * identity of individual evaluators. subject_id is taken from the session, so
      * a user can only ever see their own performance.
      */
@@ -210,7 +244,7 @@ class AcademicEvaluationController extends Controller
             return response()->json(['data' => []]);
         }
 
-        $today = now()->toDateString();
+        $today = HospitalClock::today()->toDateString();
 
         $students = Student::query()
             ->with('batch')
@@ -272,9 +306,10 @@ class AcademicEvaluationController extends Controller
 
         // Form rules spread FIRST so the header rules always win: a form
         // field sharing a header key must not weaken its validation.
+        $today = HospitalClock::today()->toDateString();
         $validated = Validator::make($this->normalize($request), [
             ...$this->forms->validationRulesFor($form),
-            'evaluation_date' => ['required', 'date', 'before_or_equal:today'],
+            'evaluation_date' => ['required', 'date', "before_or_equal:{$today}"],
             'student_id' => ['required', 'uuid', 'exists:students,id'],
         ])->validate();
 
@@ -301,6 +336,14 @@ class AcademicEvaluationController extends Controller
                 : null,
         ]);
 
+        $this->auditEvaluationSubmission(
+            $request,
+            'student_evaluation',
+            $evaluation,
+            $formKey,
+            $student->full_name,
+        );
+
         return response()->json($this->serializeStudentEvaluation($evaluation), 201);
     }
 
@@ -310,9 +353,10 @@ class AcademicEvaluationController extends Controller
 
         // Form rules spread FIRST so the header rules always win: a form
         // field sharing a header key must not weaken its validation.
+        $today = HospitalClock::today()->toDateString();
         $validated = Validator::make($this->normalize($request), [
             ...$this->forms->validationRulesFor($form),
-            'evaluation_date' => ['required', 'date', 'before_or_equal:today'],
+            'evaluation_date' => ['required', 'date', "before_or_equal:{$today}"],
             // Accepted for backwards compatibility but IGNORED: the ward is
             // snapshotted server-side from the shared duty placement.
             'ward_id' => ['sometimes', 'nullable', 'uuid'],
@@ -340,6 +384,14 @@ class AcademicEvaluationController extends Controller
             'ward_id' => $placement['ward_ref_id'],
             'placement_type' => $placement['placement_type'],
         ]);
+
+        $this->auditEvaluationSubmission(
+            $request,
+            $direction === 'consultant' ? 'consultant_evaluation' : 'resident_evaluation',
+            $evaluation,
+            $formKey,
+            $subject->full_name,
+        );
 
         return response()->json(
             $direction === 'consultant'

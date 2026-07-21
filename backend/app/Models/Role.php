@@ -13,7 +13,7 @@ class Role extends Model
 
     protected $keyType = 'string';
 
-    protected $fillable = ['role_key', 'label', 'description'];
+    protected $fillable = ['role_key', 'label', 'workspace', 'description'];
 
     public function users(): HasMany
     {

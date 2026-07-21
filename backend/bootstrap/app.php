@@ -24,8 +24,14 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         // Behind a TLS-terminating proxy (typical on shared hosting), trust the
         // forwarded headers so $request->isSecure(), secure cookies and HSTS work.
-        // Set TRUSTED_PROXIES="*" (or a comma-separated list) in the environment.
-        $trustedProxies = env('TRUSTED_PROXIES');
+        // This callback runs before Laravel's config service is bound. When
+        // config is cached, Dotenv is intentionally skipped, so read the one
+        // required bootstrap value from the generated cache array. Without a
+        // cache, normal local boot can still use the environment helper.
+        $cachedConfigPath = __DIR__.'/cache/config.php';
+        $trustedProxies = is_file($cachedConfigPath)
+            ? ((require $cachedConfigPath)['operations']['trusted_proxies'] ?? null)
+            : env('TRUSTED_PROXIES');
         if (! empty($trustedProxies)) {
             $middleware->trustProxies(
                 at: $trustedProxies === '*' ? '*' : array_map('trim', explode(',', $trustedProxies)),

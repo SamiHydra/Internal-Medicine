@@ -128,6 +128,9 @@ export type AcademicWorkspaceState = {
     calendarsMissing: boolean
     consultantsWithoutSection: number
     peopleWithoutAssignment: number
+    mixedRotationCells: number
+    rotationCellsNeedingReview: number
+    activeRotationOverrides: number
   } | null
 }
 
@@ -194,7 +197,7 @@ export type NotificationRestorePayload = {
 }
 
 // ---------------------------------------------------------------------------
-// Academic module — camelCase shapes mirroring the Laravel serializer exactly.
+// Academic module - camelCase shapes mirroring the Laravel serializer exactly.
 // ---------------------------------------------------------------------------
 
 export type AcademicDirection = 'consultant' | 'resident'
@@ -423,18 +426,49 @@ export type AcademicAuditResponse = {
   data: AcademicAuditEntry[]
 }
 
+export type AuditWorkspace = 'clinical' | 'academic' | 'system'
+
 export type AdminAuditEntry = {
   id: string
   userId: string | null
   userName: string | null
   action: string
+  /** Server-rendered from the audit registry - never humanized client-side. */
+  actionLabel: string
   entityType: string
+  entityLabel: string
+  workspace: AuditWorkspace
   entityId: string | null
   oldValues: Record<string, unknown> | null
   newValues: Record<string, unknown> | null
   ipAddress: string | null
   userAgent: string | null
   createdAt: string | null
+}
+
+export type AdminAuditEntityOption = {
+  value: string
+  label: string
+  workspace: AuditWorkspace
+}
+
+export type AdminAuditResponse = {
+  data: AdminAuditEntry[]
+  meta: {
+    entityTypes: AdminAuditEntityOption[]
+    actors: Array<{ id: string; name: string }>
+  }
+}
+
+export type AdminAuditQuery = {
+  workspace?: 'clinical' | 'academic'
+  entityType?: string
+  userId?: string
+  action?: string
+  search?: string
+  dateFrom?: string
+  dateTo?: string
+  limit?: number
 }
 
 export type ActionItemStatus = 'open' | 'in_progress' | 'resolved'
@@ -483,8 +517,8 @@ export type SubmitAcademicRegistrationPayload = {
 }
 
 export type AcademicRegistrationResult = {
-  signedIn: boolean
-  role: AcademicRole
+  status: 'pending'
+  message: string
 }
 
 export type AcademicAnalyticsQuery = {

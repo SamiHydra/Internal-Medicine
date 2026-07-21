@@ -3,6 +3,7 @@
 namespace App\Support\Academic;
 
 use App\Models\Evaluation;
+use App\Models\EvaluationForm;
 
 /**
  * The yes/no indicator sets whose true-percentage forms each direction's
@@ -46,10 +47,24 @@ final class EvaluationScoring
         return $direction === 'resident' ? 'resident_acgme' : 'consultant_mdt';
     }
 
+    /** @return list<string> */
+    public static function activeItems(EvaluationForm $form, string $direction): array
+    {
+        $configured = $form->fields
+            ->where('active', true)
+            ->pluck('key')
+            ->all();
+
+        return array_values(array_intersect(self::itemsForDirection($direction), $configured));
+    }
+
     /** The % of the direction's yes/no items answered true. */
     public static function score(Evaluation $evaluation, string $direction): float
     {
-        $items = self::itemsForDirection($direction);
+        $evaluation->loadMissing('form.fields');
+        $items = $evaluation->form !== null
+            ? self::activeItems($evaluation->form, $direction)
+            : self::itemsForDirection($direction);
         $total = count($items);
 
         if ($total === 0) {

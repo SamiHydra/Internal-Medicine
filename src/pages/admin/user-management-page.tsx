@@ -23,6 +23,7 @@ import {
 import { departments, templateMap } from '@/config/templates'
 import { useAppData } from '@/context/app-data-context'
 import { useWorkspace } from '@/context/workspace-context'
+import { visibleRoleKeysForWorkspace } from '@/lib/role-registry'
 import { cn } from '@/lib/utils'
 import type { UserRole } from '@/types/domain'
 
@@ -54,7 +55,7 @@ function initialsFor(fullName: string) {
       .filter(Boolean)
       .join('')
       .slice(0, 2)
-      .toUpperCase() || '—'
+      .toUpperCase() || '-'
   )
 }
 
@@ -106,7 +107,7 @@ export function UserManagementPage() {
   const toggleExpandedUser = toggleFromSet(setExpandedUsers)
   const toggleExpandedRequest = toggleFromSet(setExpandedRequests)
 
-  // Only the maintenance owner and admins approve other admins.
+  // Only the maintenance owner and admins review the self-service account queue.
   const canApproveAdmins = currentUser?.role === 'superadmin' || currentUser?.role === 'admin'
 
   useEffect(() => {
@@ -130,22 +131,22 @@ export function UserManagementPage() {
     return null
   }
 
-  const pendingAdminRequests = adminAccessRequests.filter((request) => request.status === 'pending')
-
   const nurses = state.profiles
     .filter((profile) => profile.role === 'nurse')
     .sort((left, right) => left.fullName.localeCompare(right.fullName))
   const pendingRequests = state.accessRequests.filter((request) => request.status === 'pending')
   const selectedDepartment = departments.find((department) => department.id === selectedDepartmentId)
-  // Users & Access scopes to the active workspace: management roles always, plus
-  // the workspace's domain role (clinical → nurse, academic → resident/consultant).
-  const visibleRoles = new Set<UserRole>(
-    workspace === 'clinical'
-      ? ['admin', 'superadmin', 'nurse']
-      : ['admin', 'superadmin', 'resident', 'consultant'],
+  const rolesByKey = new Map(state.roles.map((role) => [role.key, role]))
+  const visibleRoles = visibleRoleKeysForWorkspace(state.roles, workspace)
+  // The self-service queue carries admin and academic signups alike and is NOT
+  // scoped to the active workspace: the approver notification points at the
+  // shared /admin/users path, so a scoped queue would silently strand academic
+  // enrollments on the clinical page. The per-row role badge carries the split.
+  const pendingAccountRequests = adminAccessRequests.filter(
+    (request) => request.status === 'pending',
   )
   const orderedProfiles = state.profiles
-    .filter((profile) => visibleRoles.has(profile.role))
+    .filter((profile) => !visibleRoles.size || visibleRoles.has(profile.role))
     .sort((left, right) => {
       if (left.role !== right.role) {
         if (left.role === 'nurse') {
@@ -310,19 +311,20 @@ export function UserManagementPage() {
                 <div>
                   <SectionEyebrow label="Pending" />
                   <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
-                    Admin access requests
+                    Account requests
                   </h2>
                   <p className="mt-1 text-sm text-[#74777f]">
-                    Approve to create the admin account, or reject.
+                    Approve to create the account, or reject.
                   </p>
                 </div>
-                <span className={countChipClass}>{pendingAdminRequests.length} in queue</span>
+                <span className={countChipClass}>{pendingAccountRequests.length} in queue</span>
               </div>
 
-              {pendingAdminRequests.length ? (
+              {pendingAccountRequests.length ? (
                 <div className="overflow-hidden rounded-[0.4rem] border border-[#cfe0f4]">
-                  {pendingAdminRequests.map((request) => {
+                  {pendingAccountRequests.map((request) => {
                     const expanded = expandedRequests.has(request.id)
+                    const requestedRole = request.requestedRole as UserRole
 
                     return (
                       <div key={request.id} className="border-b border-[#dbe8f6] bg-[#f6fbff] last:border-b-0">
@@ -356,8 +358,12 @@ export function UserManagementPage() {
                             </span>
                             <span className="block truncate text-xs text-[#74777f]">{request.email}</span>
                           </span>
-                          <span className="hidden shrink-0 rounded-full border border-[#cfe0f4] bg-white px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#005db6] sm:block">
-                            Admin
+                          {/* Always visible: approving grants the badged role, so it
+                              must be readable before Approve is reachable. */}
+                          <span className="shrink-0 rounded-full border border-[#cfe0f4] bg-white px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#005db6]">
+                            {rolesByKey.get(requestedRole)?.label ??
+                              roleLabels[requestedRole] ??
+                              request.requestedRole}
                           </span>
                           <div className="flex w-full shrink-0 items-center gap-2 [&>button]:flex-1 sm:w-auto sm:[&>button]:flex-none">
                             <Button
@@ -400,7 +406,7 @@ export function UserManagementPage() {
                   <span className="flex h-11 w-11 items-center justify-center rounded-[0.4rem] bg-[#edf4fb] text-[#005db6]">
                     <ShieldCheck className="h-5 w-5" />
                   </span>
-                  <p className="text-sm leading-6 text-[#5b6169]">No admin requests awaiting approval.</p>
+                  <p className="text-sm leading-6 text-[#5b6169]">No account requests awaiting approval.</p>
                 </div>
               )}
             </div>
@@ -521,7 +527,7 @@ export function UserManagementPage() {
               <p className="mt-1 text-sm text-[#74777f]">
                 {workspace === 'clinical'
                   ? 'Users and their department assignments.'
-                  : 'Residents, consultants, and administrators.'}
+                  : 'Residents, consultants, student reps, and administrators.'}
               </p>
             </div>
             <div className="flex w-full items-center gap-3 sm:w-auto">
@@ -557,7 +563,10 @@ export function UserManagementPage() {
                 const assignments = state.assignments.filter(
                   (assignment) => assignment.nurseId === profile.id,
                 )
-                const isProtectedAdmin = profile.role !== 'nurse' && currentUser.role !== 'superadmin'
+                // Mirrors UserPolicy::setActive: maintenance is never togglable, and
+                // only maintenance may suspend another admin. Every other role is fair
+                // game for an admin, so academic profiles must not render as locked.
+                const isProtectedAdmin = profile.role === 'admin' && currentUser.role !== 'superadmin'
                 const isSuperadminProfile = profile.role === 'superadmin'
                 const canToggleProfileState = !isProtectedAdmin && !isSuperadminProfile
                 const expanded = expandedUsers.has(profile.id)
@@ -600,7 +609,7 @@ export function UserManagementPage() {
                       </span>
                       <span className="hidden min-w-[7rem] flex-1 lg:block">
                         <Badge variant={profile.role === 'nurse' ? 'info' : 'success'}>
-                          {roleLabels[profile.role]}
+                          {rolesByKey.get(profile.role)?.label ?? roleLabels[profile.role]}
                         </Badge>
                       </span>
                       <span className="hidden min-w-[5rem] flex-1 lg:block">
@@ -641,7 +650,7 @@ export function UserManagementPage() {
                       <div className="border-t border-[#eef2f6] bg-[#f7f9fc] px-4 py-3.5">
                         <div className="mb-3 flex flex-wrap items-center gap-2 lg:hidden">
                           <Badge variant={profile.role === 'nurse' ? 'info' : 'success'}>
-                            {roleLabels[profile.role]}
+                            {rolesByKey.get(profile.role)?.label ?? roleLabels[profile.role]}
                           </Badge>
                           <span
                             className={cn(

@@ -7,20 +7,25 @@ use App\Http\Controllers\Controller;
 use App\Models\AccessRequest;
 use App\Models\AuditLog;
 use App\Models\Department;
+use App\Models\DutyAssignment;
+use App\Models\RepAssignment;
 use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportingPeriod;
 use App\Models\ReportStatusHistory;
-use App\Models\RepAssignment;
 use App\Models\ReportTemplate;
+use App\Models\Role;
+use App\Models\RotationBlock;
 use App\Models\RotationCalendar;
 use App\Models\Section;
 use App\Models\TransferRequest;
 use App\Models\User;
 use App\Services\Academic\MorningSessionService;
 use App\Services\Academic\RosterService;
+use App\Services\Academic\RotationPlanStateService;
 use App\Services\Admin\AppSettingsService;
 use App\Support\Authorization\Permissions;
+use App\Support\HospitalClock;
 use App\Support\Reports\ReportPeriodWindow;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -126,6 +131,13 @@ class WorkspaceController extends Controller
 
         $state = [
             'currentUserId' => $user->id,
+            // The role registry drives which accounts each workspace shows, so the
+            // SPA no longer keeps its own copy of the clinical/academic split.
+            'roles' => Role::query()->orderBy('label')->get()->map(fn (Role $role) => [
+                'key' => $role->role_key,
+                'label' => $role->label,
+                'workspace' => $role->workspace,
+            ])->values(),
             // Hydrated template definitions (incl. metadata.presentation + per-field
             // metadata/active) so the SPA can render and edit from the DB. The static
             // config remains the runtime floor; this overlays edits on top.
@@ -285,7 +297,8 @@ class WorkspaceController extends Controller
         $academicSetup = null;
 
         if ($isAdmin) {
-            $today = now()->toDateString();
+            $today = HospitalClock::today()->toDateString();
+            $todayDate = HospitalClock::today();
 
             $coveredYears = RotationCalendar::query()
                 ->where('active', true)
@@ -294,6 +307,37 @@ class WorkspaceController extends Controller
                     ->whereDate('ends_on', '>=', $today))
                 ->distinct()
                 ->pluck('training_year');
+
+            $currentBlocks = RotationBlock::query()
+                ->with('calendar')
+                ->whereHas('calendar', fn ($query) => $query->where('active', true))
+                ->whereDate('starts_on', '<=', $today)
+                ->whereDate('ends_on', '>=', $today)
+                ->get();
+            $currentResidents = User::query()
+                ->where('role_key', 'resident')
+                ->where('active', true)
+                ->whereIn('training_year', $currentBlocks->pluck('calendar.training_year')->filter()->unique())
+                ->get();
+            $currentAssignments = DutyAssignment::query()
+                ->with('dutyType')
+                ->whereIn('user_id', $currentResidents->pluck('id'))
+                ->whereDate('starts_on', '<=', $currentBlocks->max('ends_on') ?? $today)
+                ->whereDate('ends_on', '>=', $currentBlocks->min('starts_on') ?? $today)
+                ->whereHas('dutyType', fn ($query) => $query->where('granularity', 'monthly'))
+                ->get();
+            $planStateService = app(RotationPlanStateService::class);
+            $mixedRotationCells = 0;
+            $rotationCellsNeedingReview = 0;
+
+            foreach ($currentBlocks as $block) {
+                foreach ($currentResidents->where('training_year', $block->calendar?->training_year) as $resident) {
+                    $state = $planStateService->cell($currentAssignments, $block, $resident->id);
+                    $mixedRotationCells += $state['status'] === 'mixed' ? 1 : 0;
+                    $rotationCellsNeedingReview += $state['status'] !== 'empty'
+                        && $state['requiresOverwriteConfirmation'] ? 1 : 0;
+                }
+            }
 
             $academicSetup = [
                 'calendarsMissing' => $coveredYears->count() < 3,
@@ -307,7 +351,15 @@ class WorkspaceController extends Controller
                     ->where('active', true)
                     ->whereDoesntHave('dutyAssignments', fn ($query) => $query
                         ->whereDate('starts_on', '<=', $today)
-                        ->whereDate('ends_on', '>=', $today))
+                        ->whereDate('ends_on', '>=', $today)
+                        ->whereHas('dutyType', fn ($typeQuery) => $typeQuery->where('granularity', 'monthly')))
+                    ->count(),
+                'mixedRotationCells' => $mixedRotationCells,
+                'rotationCellsNeedingReview' => $rotationCellsNeedingReview,
+                'activeRotationOverrides' => DutyAssignment::query()
+                    ->covering($todayDate)
+                    ->where('source', 'admin')
+                    ->where('note', 'like', RosterService::ROTATION_OVERRIDE_NOTE_PREFIX.'%')
                     ->count(),
             ];
         }
@@ -319,6 +371,7 @@ class WorkspaceController extends Controller
                 ->with('batch')
                 ->where('user_id', $user->id)
                 ->where('active', true)
+                ->whereHas('batch', fn ($query) => $query->where('active', true))
                 ->first();
 
             if ($assignment !== null) {

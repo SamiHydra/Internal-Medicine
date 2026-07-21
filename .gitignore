@@ -52,4 +52,11 @@ artifacts/walkthrough/
 artifacts/pre-deployment-qa/_raw/
 artifacts/pre-deployment-qa/evidence/
 artifacts/pre-deployment-qa/PLAYWRIGHT_TESTS/.auth/
+tests/e2e/.auth/
+test-results/
+playwright-report/
 dist-*/
+
+# Docker production-parity stack: .env.docker holds only local throwaway
+# placeholders and is a deliverable, so it is exempt from the .env.* rule above.
+!.env.docker

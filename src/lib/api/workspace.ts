@@ -44,5 +44,9 @@ export async function fetchLiveAppState(
   // load (bootstrap, refresh, ensure*). Safe no-op when the backend omits them.
   hydrateTemplatesFromApi(payload.state.templates)
 
+  // Every workspace load funnels through here, so this is the one place that has
+  // to absorb a server old enough to omit the role registry.
+  payload.state.roles = Array.isArray(payload.state.roles) ? payload.state.roles : []
+
   return payload
 }

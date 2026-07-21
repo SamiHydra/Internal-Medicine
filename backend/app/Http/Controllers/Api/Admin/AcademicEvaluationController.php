@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\Academic\EvaluationFormService;
 use App\Services\Admin\AdminAuditService;
 use App\Support\Academic\EvaluationScoring;
+use App\Support\HospitalClock;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -101,11 +102,12 @@ class AcademicEvaluationController extends Controller
     {
         Gate::authorize('createExternal', ResidentEvaluation::class);
 
+        $today = HospitalClock::today()->toDateString();
         $validated = $request->validate([
             'authorId' => ['prohibited'],
             'author_id' => ['prohibited'],
             'subjectId' => ['required', 'uuid', Rule::exists('users', 'id')],
-            'evaluationDate' => ['required', 'date', 'before_or_equal:today'],
+            'evaluationDate' => ['required', 'date', "before_or_equal:{$today}"],
             'placement' => ['required', 'string', Rule::in(self::EXTERNAL_PLACEMENTS)],
             'evaluatorName' => ['required', 'string', 'max:255'],
             'evaluatorDepartment' => ['sometimes', 'nullable', 'string', 'max:255'],
@@ -167,7 +169,7 @@ class AcademicEvaluationController extends Controller
     /**
      * Chronological "who evaluated whom" feed across both evaluation directions.
      * Evaluations are immutable, so this is a submission trail (no field diffs).
-     * Admins see the evaluator identity — the anonymity rule only covers the
+     * Admins see the evaluator identity - the anonymity rule only covers the
      * resident/consultant self-view.
      */
     public function audit(Request $request): JsonResponse

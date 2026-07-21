@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\DutyAssignment;
 use App\Models\DutyType;
+use App\Models\RotationBlock;
 use App\Models\Section;
 use App\Models\User;
 use App\Services\Academic\RosterService;
@@ -51,6 +52,16 @@ class DutyRosterController extends Controller
             ->groupBy('user_id');
 
         $sections = Section::query()->orderBy('name')->get();
+        $rotationBlocks = RotationBlock::query()
+            ->with('calendar')
+            ->whereHas('calendar', fn ($query) => $query
+                ->where('active', true)
+                ->whereIn('training_year', $people->pluck('training_year')->filter()->unique()))
+            ->whereDate('starts_on', '<=', $monthEnd->toDateString())
+            ->whereDate('ends_on', '>=', $monthStart->toDateString())
+            ->orderBy('starts_on')
+            ->get()
+            ->groupBy(fn (RotationBlock $block) => $block->calendar?->training_year);
 
         return response()->json([
             'year' => $year,
@@ -61,17 +72,30 @@ class DutyRosterController extends Controller
                 'id' => $section->id,
                 'name' => $section->name,
             ])->values(),
-            'people' => $people->map(function (User $person) use ($assignments) {
+            'people' => $people->map(function (User $person) use ($assignments, $rotationBlocks) {
                 $personAssignments = $assignments->get($person->id, collect());
+                $personRotationBlocks = $person->role_key === 'resident' && $person->training_year !== null
+                    ? $rotationBlocks->get($person->training_year, collect())
+                    : collect();
 
                 return [
                     'id' => $person->id,
                     'fullName' => $person->full_name,
                     'role' => $person->role_key,
+                    'title' => $person->title,
                     'sectionId' => $person->section_id,
                     'sectionName' => $person->section?->name,
                     'trainingYear' => $person->training_year,
                     'rotationGroup' => $person->rotation_group,
+                    'rotationManaged' => $personRotationBlocks->isNotEmpty(),
+                    'rotationBlocks' => $personRotationBlocks->map(fn (RotationBlock $block) => [
+                        'id' => $block->id,
+                        'calendarId' => $block->calendar_id,
+                        'academicYearLabel' => $block->calendar?->academic_year_label,
+                        'blockIndex' => $block->block_index,
+                        'startsOn' => $block->starts_on?->toDateString(),
+                        'endsOn' => $block->ends_on?->toDateString(),
+                    ])->values(),
                     'monthly' => $personAssignments
                         ->filter(fn (DutyAssignment $assignment) => $assignment->dutyType?->granularity === 'monthly')
                         ->map(fn (DutyAssignment $assignment) => $this->serializeAssignment($assignment))
@@ -93,16 +117,59 @@ class DutyRosterController extends Controller
             'assignments' => ['required', 'array', 'max:500'],
             'assignments.*.userId' => ['required', 'string', Rule::exists('users', 'id')],
             'assignments.*.dutyTypeId' => ['present', 'nullable', 'string', Rule::exists('duty_types', 'id')],
+            'assignments.*.overrideReason' => ['sometimes', 'nullable', 'string', 'min:10', 'max:500'],
         ]);
 
         [$monthStart, $monthEnd] = $this->monthBounds($year, $month);
 
         $rows = [];
         $cleared = [];
+        $overrideDetails = [];
 
-        foreach ($validated['assignments'] as $entry) {
+        $users = User::query()
+            ->whereIn('id', collect($validated['assignments'])->pluck('userId')->unique())
+            ->get()
+            ->keyBy('id');
+
+        $rotationYears = $users
+            ->filter(fn (User $user) => $user->role_key === 'resident' && $user->training_year !== null)
+            ->pluck('training_year')
+            ->unique();
+        $rotationManagedYears = RotationBlock::query()
+            ->whereHas('calendar', fn ($query) => $query
+                ->where('active', true)
+                ->whereIn('training_year', $rotationYears))
+            ->whereDate('starts_on', '<=', $monthEnd->toDateString())
+            ->whereDate('ends_on', '>=', $monthStart->toDateString())
+            ->with('calendar:id,training_year')
+            ->get()
+            ->pluck('calendar.training_year')
+            ->filter()
+            ->unique();
+
+        foreach ($validated['assignments'] as $index => $entry) {
+            $person = $users[$entry['userId']];
+            $rotationManaged = $person->role_key === 'resident'
+                && $person->training_year !== null
+                && $rotationManagedYears->contains($person->training_year);
+            $overrideReason = trim((string) ($entry['overrideReason'] ?? ''));
+
+            if ($rotationManaged && $overrideReason === '') {
+                throw ValidationException::withMessages([
+                    "assignments.{$index}.overrideReason" => ['Explain why this calendar-month override is necessary. The resident is managed by an active rotation block.'],
+                ]);
+            }
+
+            if ($rotationManaged) {
+                $overrideDetails[] = [
+                    'userId' => $person->id,
+                    'reason' => $overrideReason,
+                    'dutyTypeId' => $entry['dutyTypeId'],
+                ];
+            }
+
             if ($entry['dutyTypeId'] === null) {
-                $cleared[] = $entry['userId'];
+                $cleared[] = $entry;
 
                 continue;
             }
@@ -112,6 +179,9 @@ class DutyRosterController extends Controller
                 'duty_type_id' => $entry['dutyTypeId'],
                 'starts_on' => $monthStart->toDateString(),
                 'ends_on' => $monthEnd->toDateString(),
+                'note' => $rotationManaged
+                    ? RosterService::ROTATION_OVERRIDE_NOTE_PREFIX.$overrideReason
+                    : null,
             ];
         }
 
@@ -119,8 +189,8 @@ class DutyRosterController extends Controller
 
         // Clearing a cell frees the user's month; a cross-month block is
         // trimmed or split, never deleted outside this month.
-        foreach ($cleared as $userId) {
-            $this->rosterService->carveMonthlyWindow($userId, $monthStart->toDateString(), $monthEnd->toDateString());
+        foreach ($cleared as $entry) {
+            $this->rosterService->carveMonthlyWindow($entry['userId'], $monthStart->toDateString(), $monthEnd->toDateString());
         }
 
         $this->rosterService->bulkAssign($rows, 'admin', $request->user());
@@ -131,7 +201,11 @@ class DutyRosterController extends Controller
             'duty_roster',
             sprintf('%04d-%02d', $year, $month),
             null,
-            ['assigned' => count($rows), 'cleared' => count($cleared)],
+            [
+                'assigned' => count($rows),
+                'cleared' => count($cleared),
+                'rotationOverrides' => $overrideDetails,
+            ],
             $request,
         );
 
@@ -231,6 +305,8 @@ class DutyRosterController extends Controller
             'endsOn' => $assignment->ends_on?->toDateString(),
             'source' => $assignment->source,
             'note' => $assignment->note,
+            'isRotationOverride' => $assignment->source === 'admin'
+                && str_starts_with((string) $assignment->note, RosterService::ROTATION_OVERRIDE_NOTE_PREFIX),
         ];
     }
 }
