@@ -92,7 +92,13 @@ lane is broken, which is why this was never caught).
 | **Verification** | **Independently verified by the auditor** - and found to be broader than first reported |
 | **Fix status** | **FIXED - NOT YET VERIFIED IN CI** 2026-07-21 |
 
-**FIX** `.github/workflows/ci.yml` lines 51, 105 and 156: `php-version: '8.3'` -> `'8.4'` in all three jobs.
+**FIX ATTEMPT 1 - REVERTED. The auditor got this wrong and is recording the error rather than hiding it.**
+The first fix raised CI from 8.3 to 8.4 so it would match `composer.lock`. That was the wrong direction.
+Subsequent investigation (below) established that **PHP 8.3 is correct and the lock file is the outlier**.
+Raising CI to 8.4 would have made CI pass while the department server still could not install - a false
+green, which is exactly the class of failure this audit exists to catch. CI has been reverted to 8.3.
+
+**THE ACTUAL DEFECT - see AUD-DEPLOY-007 below. This finding is superseded by it.**
 
 **Honest verification limit:** GitHub Actions cannot be executed from this machine, so the fix is verified
 only in its premise - that the pinned version now satisfies the 17 packages requiring `php >=8.4.1` - and
@@ -112,6 +118,76 @@ lock file was updated**. This is the root cause of why AUD-DB-001 reached this b
 evidence of a healthy pipeline.
 
 **Recommended fix** Raise all three jobs to PHP 8.4 to match `composer.lock` and the documented runtime.
+
+---
+
+### AUD-DEPLOY-007 - `composer.lock` requires PHP 8.4; the production server runs 8.3
+
+| Field | Value |
+|---|---|
+| **Severity** | **CRITICAL - second deployment blocker** |
+| **Category** | Release engineering / dependency management |
+| **Environment** | Department server (Ubuntu LTS, PHP-FPM 8.3) and all CI jobs |
+| **Verification** | **Independently verified by the auditor** |
+| **Fix status** | **FIXED - VERIFIED** 2026-07-21 (Option A, chosen by the operator) |
+
+**FIX APPLIED**
+1. `backend/composer.json` `config.platform.php = "8.3.0"` - so the lock can never again resolve against a
+   PHP newer than the server. This is the root-cause fix; the version bump alone would not have prevented
+   recurrence.
+2. `php composer.phar update` re-resolved the lock: **31 downgrades**, Symfony 8.1.x -> 7.4.x across the board.
+3. `.github/workflows/ci.yml` reverted to `php-version: '8.3'` in all three jobs, matching production.
+4. **`docker/Dockerfile` and `compose.yaml` moved from PHP 8.4 to 8.3.** The parity lane had been running a
+   different runtime than production, which also closes triage finding H3. A parity lane on the wrong
+   runtime is not a parity lane.
+
+**VERIFICATION - empirical, on a genuine 8.3 runtime**
+| Check | Result |
+|---|---|
+| `docker compose build` on the 8.3 image | **exit 0** |
+| `composer install --no-dev --optimize-autoloader` inside it (the exact `deploy.sh:149` command) | **91 installs, 0 updates, 0 removals**, optimized autoload generated |
+| `docker compose up -d --wait` | **exit 0**, all services healthy |
+| `php -v` in the app container | **PHP 8.3.32** - confirmed, not assumed |
+
+The operation that failed on the department server now demonstrably succeeds on the same PHP version the
+server runs.
+
+**Auditor error recorded:** the first attempt at this fix raised CI to 8.4 to match the lock. That was
+backwards and would have produced a green CI against a server that still could not install. Retained in
+AUD-INFRA-003 above rather than deleted.
+
+**Evidence**
+| Source | States |
+|---|---|
+| `backend/composer.json:9` | `"php": "^8.3"` - the declared platform |
+| `backend/composer.json` `config.platform` | **NONE** - so the lock resolved against whatever PHP the dev machine had (8.4) |
+| `backend/composer.lock` | **17 packages require `php >=8.4.1`** (`symfony/console`, `symfony/clock`, `symfony/error-handler`, `dragonmantank/cron-expression`, +13) |
+| `deploy/README.md:31,36,96` | "Install ... **PHP-FPM 8.3**", sudo scoped to `reload php8.3-fpm` |
+| `deploy/deploy.sh:121,126,184` | `systemctl reload php8.3-fpm` |
+| `docs/OPERATIONS.md:43` | `systemctl restart php8.3-fpm` |
+| `deploy/deploy.sh:149` | `composer install --no-dev --optimize-autoloader --no-interaction` - **run ON the server** |
+
+**Impact** `composer install` cannot succeed on a PHP 8.3 host. `deploy.sh` runs it during every deployment,
+so **the department server cannot be deployed to** - independently of the (now fixed) migration blocker
+`AUD-DB-001`. It is also why no CI job could install dependencies.
+
+**Root cause** The lock file drifted ahead of the declared platform because `config.platform` was never
+pinned. Every `composer update` on a dev machine running 8.4 silently resolves dependencies the target
+cannot install. Structurally identical to `AUD-DB-001`: the environment that runs the code is stricter
+than the environment it was authored on.
+
+**Two valid remediations - this is an operator decision, not a technical toss-up**
+
+*Option A (recommended): keep the server on 8.3, fix the drift.* Set `config.platform.php` in
+`composer.json` and re-resolve the lock so it installs on 8.3. Matches the declared `^8.3` and every
+deploy document. Prevents recurrence permanently. No server downtime.
+
+*Option B: upgrade the server to PHP 8.4.* Then `composer.json` must move to `^8.4` and
+`deploy/README.md`, `deploy/deploy.sh` and `docs/OPERATIONS.md` all need updating. Requires a maintenance
+window on a hospital LAN server.
+
+**CI must match whichever is chosen.** CI has been reverted to 8.3 pending the decision, because a CI
+lane that does not match production is worse than no CI lane.
 
 ---
 

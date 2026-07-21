@@ -22,7 +22,7 @@ x-php-image: &php-image
     dockerfile: docker/Dockerfile
     target: app
     args:
-      PHP_VERSION: "8.4"
+      PHP_VERSION: "8.3"
       VITE_API_BASE_URL: "https://localhost:8443"
   image: imreport-parity/app:local
   env_file:
@@ -179,7 +179,7 @@ services:
       dockerfile: docker/Dockerfile
       target: test
       args:
-        PHP_VERSION: "8.4"
+        PHP_VERSION: "8.3"
     image: imreport-parity/test:local
     depends_on:
       testdb:

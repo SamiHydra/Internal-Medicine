@@ -19,7 +19,9 @@
 # backend/composer.lock pins symfony/console v8.1.1 (and 17 other symfony
 # components) whose "require.php" is ">=8.4.1", so `composer install` from that
 # lock file is IMPOSSIBLE on PHP 8.3. See docker/README.md.
-ARG PHP_VERSION=8.4
+# Must match the department server, which runs PHP-FPM 8.3 (deploy/README.md:31).
+# A parity lane on a different runtime than production is not a parity lane.
+ARG PHP_VERSION=8.3
 ARG NODE_VERSION=22
 ARG NGINX_VERSION=1.27
 
