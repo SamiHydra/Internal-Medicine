@@ -93,7 +93,10 @@ return new class extends Migration
             $table->timestamp('recorded_at')->nullable();
             $table->timestamps();
 
-            $table->unique(['batch_id', 'subgroup', 'activity_type', 'scheduled_date']);
+            // Named explicitly: the auto-generated name would be 71 characters,
+            // over MySQL/MariaDB's 64-char identifier limit, so migrating onto
+            // the production engine fails outright.
+            $table->unique(['batch_id', 'subgroup', 'activity_type', 'scheduled_date'], 'teaching_sessions_slot_unique');
             $table->index(['scheduled_date', 'status']);
         });
 

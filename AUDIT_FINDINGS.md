@@ -40,9 +40,26 @@ permissive where MariaDB is strict.
 | **Affected module** | Undergraduate / teaching sessions |
 | **Environment** | MariaDB 11.4 (production engine). Invisible on SQLite. |
 | **Verification** | **Independently verified by the auditor**, not agent-reported |
-| **Fix status** | Open |
+| **Fix status** | **FIXED - VERIFIED** 2026-07-21 |
 
-**Reproduction**
+**FIX AND VERIFICATION**
+Named the index explicitly at `2026_08_12_000010_create_undergraduate_tables.php:96`:
+`$table->unique([...], 'teaching_sessions_slot_unique')` - 29 chars instead of the generated 71.
+
+Verified by *reproducing the deployment*, not by inspection:
+1. `docker compose down -v` - destroyed the container database entirely.
+2. `docker compose build && docker compose up -d --wait` - **exit 0**, all services healthy from an
+   empty DB. 72 migration/seeder steps completed. This is the same `migrate --force` path `deploy.sh` runs.
+3. Independent corroboration: the container-only patch that previously made the stack bootable now reports
+   `PATCH 1 skipped: migration already carries an explicit index name (defect fixed upstream)` -
+   **0 applied, 1 skipped**.
+4. Confirmed in MariaDB's own catalogue that the index exists as `teaching_sessions_slot_unique`.
+5. SQLite suite re-run: 281 tests, 280 passed, 1 skipped - unchanged, no regression.
+
+The container patch script was intentionally LEFT in place. It self-skips, and it now acts as a tripwire:
+if the migration ever regresses, the build says so out loud.
+
+**Reproduction (original defect)**
 1. Point the app at MariaDB and run `php artisan migrate --force` (exactly what `deploy/deploy.sh` runs).
 2. Migration `2026_08_12_000010_create_undergraduate_tables.php:96` executes
    `$table->unique(['batch_id', 'subgroup', 'activity_type', 'scheduled_date'])` on `teaching_sessions`.
@@ -73,7 +90,14 @@ lane is broken, which is why this was never caught).
 | **Category** | Release engineering |
 | **Environment** | GitHub Actions |
 | **Verification** | **Independently verified by the auditor** - and found to be broader than first reported |
-| **Fix status** | Open |
+| **Fix status** | **FIXED - NOT YET VERIFIED IN CI** 2026-07-21 |
+
+**FIX** `.github/workflows/ci.yml` lines 51, 105 and 156: `php-version: '8.3'` -> `'8.4'` in all three jobs.
+
+**Honest verification limit:** GitHub Actions cannot be executed from this machine, so the fix is verified
+only in its premise - that the pinned version now satisfies the 17 packages requiring `php >=8.4.1` - and
+by the prod-parity stack running the suite successfully on PHP 8.4. **Whether CI actually goes green must
+be confirmed on the next push.** Until then this is `FIXED - UNVERIFIED` and must not be reported as closed.
 
 **Reproduction** `composer install` on any CI job.
 
