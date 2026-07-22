@@ -1,0 +1,632 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\DutyAssignment;
+use App\Models\DutyType;
+use App\Models\Section;
+use App\Models\User;
+use App\Models\Ward;
+use App\Services\Academic\RosterService;
+use App\Services\Academic\RotationCalendarService;
+use App\Services\Admin\AdminAuditService;
+use Database\Seeders\RoleSeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Tests\TestCase;
+
+class RosterTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private RosterService $roster;
+
+    private RotationCalendarService $calendars;
+
+    private User $admin;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->seed(RoleSeeder::class);
+
+        $this->roster = app(RosterService::class);
+        $this->calendars = app(RotationCalendarService::class);
+        $this->admin = User::factory()->role('admin', 'Administrator')->create();
+    }
+
+    private function dutyType(string $slug): DutyType
+    {
+        // The duty-type catalog is created by the seed_academic_structure data
+        // migration, so it exists in every freshly migrated test database.
+        return DutyType::query()->where('slug', $slug)->firstOrFail();
+    }
+
+    private function assign(User $user, string $dutyTypeSlug, string $from, string $to): DutyAssignment
+    {
+        return $this->roster->createAssignment(
+            $user,
+            $this->dutyType($dutyTypeSlug),
+            Carbon::parse($from),
+            Carbon::parse($to),
+            'admin',
+            $this->admin,
+        );
+    }
+
+    // ---- Pairing keys ----
+
+    public function test_pairing_keys_for_ward_service_opd_dialysis_and_leave(): void
+    {
+        $resident = User::factory()->role('resident', 'Resident')->create();
+        $date = Carbon::parse('2026-07-10');
+
+        $this->assign($resident, 'nephrology_ward_service', '2026-07-01', '2026-07-31');
+        $wardId = $this->dutyType('nephrology_ward_service')->ward_id;
+        $this->assertSame(['ward:'.$wardId], $this->roster->pairingKeysFor($resident, $date));
+
+        $opdResident = User::factory()->role('resident', 'Resident')->create();
+        $this->assign($opdResident, 'opd', '2026-07-01', '2026-07-31');
+        $this->assertSame(['group:opd'], $this->roster->pairingKeysFor($opdResident, $date));
+
+        $dialysisConsultant = User::factory()->role('consultant', 'Consultant')->create();
+        $this->assign($dialysisConsultant, 'dialysis', '2026-07-01', '2026-07-31');
+        $this->assertSame([], $this->roster->pairingKeysFor($dialysisConsultant, $date));
+
+        $onLeave = User::factory()->role('resident', 'Resident')->create();
+        $this->assign($onLeave, 'annual_leave', '2026-07-01', '2026-07-31');
+        $this->assertSame([], $this->roster->pairingKeysFor($onLeave, $date));
+    }
+
+    public function test_transition_duty_pairs_only_on_shared_days(): void
+    {
+        $first = User::factory()->role('consultant', 'Consultant')->create();
+        $second = User::factory()->role('consultant', 'Consultant')->create();
+
+        $this->assign($first, 'transition_ward_duty', '2026-07-10', '2026-07-10');
+        $this->assign($second, 'transition_ward_duty', '2026-07-10', '2026-07-10');
+        $this->assertTrue($this->roster->canPair($first, $second, Carbon::parse('2026-07-10')));
+
+        $third = User::factory()->role('consultant', 'Consultant')->create();
+        $this->assign($third, 'transition_ward_duty', '2026-07-11', '2026-07-11');
+        $this->assertFalse($this->roster->canPair($first, $third, Carbon::parse('2026-07-10')));
+        $this->assertFalse($this->roster->canPair($first, $third, Carbon::parse('2026-07-11')));
+    }
+
+    public function test_can_pair_is_false_when_dates_do_not_overlap_despite_matching_ward(): void
+    {
+        $resident = User::factory()->role('resident', 'Resident')->create();
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+
+        $this->assign($resident, 'pulmonology_ward_service', '2026-07-01', '2026-07-31');
+        $this->assign($consultant, 'pulmonology_ward_service', '2026-08-01', '2026-08-31');
+
+        $this->assertFalse($this->roster->canPair($resident, $consultant, Carbon::parse('2026-07-15')));
+        $this->assertFalse($this->roster->canPair($resident, $consultant, Carbon::parse('2026-08-15')));
+    }
+
+    public function test_shared_ward_across_two_sections_pairs_their_people(): void
+    {
+        // Cardiology and Endocrinology ward services point at the same
+        // physical ward, so their holders pair with each other.
+        $resident = User::factory()->role('resident', 'Resident')->create();
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+
+        $this->assign($resident, 'cardiology_ward_service', '2026-07-01', '2026-07-31');
+        $this->assign($consultant, 'endocrinology_ward_service', '2026-07-01', '2026-07-31');
+
+        $this->assertTrue($this->roster->canPair($resident, $consultant, Carbon::parse('2026-07-15')));
+    }
+
+    public function test_peers_for_returns_only_same_pairing_key_users_of_the_requested_role(): void
+    {
+        $resident = User::factory()->role('resident', 'Resident')->create();
+        $sameWard = User::factory()->role('consultant', 'Consultant')->create();
+        $otherWard = User::factory()->role('consultant', 'Consultant')->create();
+        $sameWardResident = User::factory()->role('resident', 'Resident')->create();
+
+        $this->assign($resident, 'nephrology_ward_service', '2026-07-01', '2026-07-31');
+        $this->assign($sameWard, 'nephrology_ward_service', '2026-07-01', '2026-07-31');
+        $this->assign($otherWard, 'pulmonology_ward_service', '2026-07-01', '2026-07-31');
+        $this->assign($sameWardResident, 'nephrology_ward_service', '2026-07-01', '2026-07-31');
+
+        $peers = $this->roster->peersFor($resident, Carbon::parse('2026-07-15'), 'consultant');
+
+        $this->assertSame([$sameWard->id], $peers->pluck('id')->all());
+    }
+
+    public function test_morning_roster_includes_non_pairing_duties_and_excludes_leave_and_external(): void
+    {
+        $onDialysis = User::factory()->role('consultant', 'Consultant')->create();
+        $onLeave = User::factory()->role('consultant', 'Consultant')->create();
+        $external = User::factory()->role('resident', 'Resident')->create();
+        $onWard = User::factory()->role('resident', 'Resident')->create();
+        $unassigned = User::factory()->role('resident', 'Resident')->create();
+
+        $this->assign($onDialysis, 'dialysis', '2026-07-01', '2026-07-31');
+        $this->assign($onLeave, 'annual_leave', '2026-07-01', '2026-07-31');
+        $this->assign($external, 'icu', '2026-07-01', '2026-07-31');
+        $this->assign($onWard, 'oncology_ward_service', '2026-07-01', '2026-07-31');
+
+        $roster = $this->roster->morningRosterOn(Carbon::parse('2026-07-10'))->pluck('id');
+
+        $this->assertTrue($roster->contains($onDialysis->id));
+        $this->assertTrue($roster->contains($onWard->id));
+        $this->assertFalse($roster->contains($onLeave->id));
+        $this->assertFalse($roster->contains($external->id));
+        $this->assertFalse($roster->contains($unassigned->id));
+    }
+
+    // ---- Overlap guard ----
+
+    public function test_overlap_guard_rejects_second_monthly_assignment_but_accepts_stacked_daily(): void
+    {
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+
+        $this->assign($consultant, 'nephrology_ward_service', '2026-07-01', '2026-07-31');
+
+        try {
+            $this->assign($consultant, 'dialysis', '2026-07-15', '2026-08-14');
+            $this->fail('Expected the monthly overlap guard to reject the second assignment.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('startsOn', $exception->errors());
+        }
+
+        // A day-level duty stacks legitimately on top of the service month.
+        $daily = $this->assign($consultant, 'transition_ward_duty', '2026-07-15', '2026-07-15');
+        $this->assertDatabaseHas('duty_assignments', ['id' => $daily->id]);
+    }
+
+    // ---- Rotation calendars ----
+
+    public function test_fixed_weeks_calendar_generates_contiguous_blocks(): void
+    {
+        $calendar = $this->calendars->createCalendar(3, '2026/27', Carbon::parse('2026-09-14'), 'fixed_weeks', 8, 6);
+
+        $blocks = $calendar->blocks;
+        $this->assertCount(6, $blocks);
+
+        foreach ($blocks as $index => $block) {
+            $this->assertSame(56, (int) Carbon::parse($block->starts_on)->diffInDays(Carbon::parse($block->ends_on)) + 1);
+
+            if ($index > 0) {
+                $previous = $blocks[$index - 1];
+                $this->assertSame(
+                    Carbon::parse($previous->ends_on)->addDay()->toDateString(),
+                    Carbon::parse($block->starts_on)->toDateString(),
+                    'Year 3 blocks must be back-to-back with no gap.',
+                );
+            }
+        }
+    }
+
+    public function test_calendar_month_blocks_align_to_month_boundaries(): void
+    {
+        $calendar = $this->calendars->createCalendar(1, '2026/27', Carbon::parse('2026-09-01'), 'calendar_month', null, 4);
+
+        $blocks = $calendar->blocks;
+        $this->assertCount(4, $blocks);
+        $this->assertSame('2026-09-01', $blocks[0]->starts_on->toDateString());
+        $this->assertSame('2026-09-30', $blocks[0]->ends_on->toDateString());
+        $this->assertSame('2026-10-01', $blocks[1]->starts_on->toDateString());
+        $this->assertSame('2026-12-31', $blocks[3]->ends_on->toDateString());
+    }
+
+    public function test_current_block_and_next_boundary(): void
+    {
+        $this->calendars->createCalendar(2, '2026/27', Carbon::parse('2026-09-01'), 'calendar_month', null, 12);
+
+        $block = $this->calendars->currentBlockFor(2, Carbon::parse('2026-11-15'));
+        $this->assertNotNull($block);
+        $this->assertSame('2026-11-01', $block->starts_on->toDateString());
+
+        $this->assertSame(
+            '2026-12-01',
+            $this->calendars->nextBoundaryAfter(Carbon::parse('2026-11-15'))->toDateString(),
+        );
+    }
+
+    // ---- Admin API + authorization ----
+
+    public function test_admin_can_manage_structure_through_the_api_and_audit_rows_are_written(): void
+    {
+        $ward = $this->actingAs($this->admin)
+            ->postJson('/api/admin/academic/wards', ['name' => 'New Teaching Ward'])
+            ->assertCreated()
+            ->json();
+
+        $section = $this->actingAs($this->admin)
+            ->postJson('/api/admin/academic/sections', ['name' => 'Rheumatology'])
+            ->assertCreated()
+            ->json();
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/academic/duty-types', [
+                'name' => 'Rheumatology Ward Service',
+                'sectionId' => $section['id'],
+                'wardId' => $ward['id'],
+                'category' => 'ward_service',
+                'granularity' => 'monthly',
+                'pairsForEvaluation' => true,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('wardName', 'New Teaching Ward');
+
+        $calendar = $this->actingAs($this->admin)
+            ->postJson('/api/admin/rotations/calendars', [
+                'trainingYear' => 3,
+                'academicYearLabel' => '2026/27',
+                'startsOn' => '2026-09-14',
+                'blockKind' => 'fixed_weeks',
+                'blockLengthWeeks' => 8,
+                'blocksCount' => 6,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->assertCount(6, $calendar['blocks']);
+
+        foreach (['ward', 'section', 'duty_type', 'rotation_calendar'] as $entityType) {
+            $this->assertDatabaseHas('admin_audit_logs', [
+                'entity_type' => $entityType,
+                'action' => 'create',
+                'user_id' => $this->admin->id,
+            ]);
+        }
+    }
+
+    public function test_non_admin_roles_are_denied_on_structure_roster_and_rotation_endpoints(): void
+    {
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+        $nurse = User::factory()->role('nurse', 'Nurse')->create();
+
+        foreach ([$consultant, $nurse] as $user) {
+            $this->actingAs($user)->getJson('/api/admin/academic/wards')->assertForbidden();
+            $this->actingAs($user)->postJson('/api/admin/academic/wards', ['name' => 'X'])->assertForbidden();
+            $this->actingAs($user)->getJson('/api/admin/rotations/calendars')->assertForbidden();
+            $this->actingAs($user)->getJson('/api/admin/roster/2026/7')->assertForbidden();
+        }
+    }
+
+    public function test_duty_roster_month_read_and_writes(): void
+    {
+        $consultant = User::factory()->role('consultant', 'Consultant')->create(['full_name' => 'Dr. Roster Target']);
+        $intern = User::factory()->role('resident', 'Resident')->create(['title' => 'Intern']);
+        $internist = User::factory()->role('consultant', 'Consultant')->create(['title' => 'Internist']);
+        $firstYearFellow = User::factory()->role('resident', 'Resident')->create(['title' => 'F1']);
+        $secondYearFellow = User::factory()->role('resident', 'Resident')->create(['title' => 'Fellow 2']);
+
+        $nephrologyService = $this->dutyType('nephrology_ward_service');
+
+        $this->actingAs($this->admin)
+            ->putJson('/api/admin/roster/2026/7', [
+                'assignments' => [
+                    ['userId' => $consultant->id, 'dutyTypeId' => $nephrologyService->id],
+                ],
+            ])
+            ->assertOk();
+
+        $this->assertTrue(
+            DutyAssignment::query()
+                ->where('user_id', $consultant->id)
+                ->where('duty_type_id', $nephrologyService->id)
+                ->whereDate('starts_on', '2026-07-01')
+                ->whereDate('ends_on', '2026-07-31')
+                ->exists(),
+        );
+
+        // Re-planning the same month replaces rather than rejects.
+        $dialysis = $this->dutyType('dialysis');
+        $this->actingAs($this->admin)
+            ->putJson('/api/admin/roster/2026/7', [
+                'assignments' => [
+                    ['userId' => $consultant->id, 'dutyTypeId' => $dialysis->id],
+                ],
+            ])
+            ->assertOk();
+
+        $this->assertSame(1, DutyAssignment::query()->where('user_id', $consultant->id)->count());
+        $this->assertDatabaseHas('duty_assignments', [
+            'user_id' => $consultant->id,
+            'duty_type_id' => $dialysis->id,
+        ]);
+
+        // Daily strip write + month read surface both granularities.
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/roster/daily', [
+                'userId' => $consultant->id,
+                'dutyTypeId' => $this->dutyType('transition_ward_duty')->id,
+                'date' => '2026-07-20',
+            ])
+            ->assertCreated();
+
+        $month = $this->actingAs($this->admin)->getJson('/api/admin/roster/2026/7')->assertOk()->json();
+        $person = collect($month['people'])->firstWhere('id', $consultant->id);
+
+        $this->assertCount(1, $person['monthly']);
+        $this->assertCount(1, $person['daily']);
+        $this->assertSame('Consultant', $person['title']);
+        $this->assertSame('Intern', collect($month['people'])->firstWhere('id', $intern->id)['title']);
+        $this->assertSame('Internist', collect($month['people'])->firstWhere('id', $internist->id)['title']);
+        $this->assertSame('F1', collect($month['people'])->firstWhere('id', $firstYearFellow->id)['title']);
+        $this->assertSame('Fellow 2', collect($month['people'])->firstWhere('id', $secondYearFellow->id)['title']);
+
+        // A month cell rejects a daily-granularity duty type.
+        $this->actingAs($this->admin)
+            ->putJson('/api/admin/roster/2026/7', [
+                'assignments' => [
+                    ['userId' => $consultant->id, 'dutyTypeId' => $this->dutyType('transition_ward_duty')->id],
+                ],
+            ])
+            ->assertStatus(422);
+    }
+
+    public function test_rotation_managed_resident_requires_a_reasoned_roster_override(): void
+    {
+        $calendar = $this->calendars->createCalendar(
+            3,
+            '2026/27',
+            Carbon::parse('2026-07-01'),
+            'fixed_weeks',
+            8,
+            1,
+        );
+        $resident = User::factory()->role('resident', 'Resident')->create([
+            'training_year' => 3,
+            'rotation_group' => 'A',
+        ]);
+        $block = $calendar->blocks[0];
+
+        $this->roster->createAssignment(
+            $resident,
+            $this->dutyType('cardiology_ward_service'),
+            $block->starts_on,
+            $block->ends_on,
+            'rotation_planner',
+            $this->admin,
+        );
+
+        $person = collect($this->actingAs($this->admin)
+            ->getJson('/api/admin/roster/2026/7')
+            ->assertOk()
+            ->json('people'))
+            ->firstWhere('id', $resident->id);
+
+        $this->assertTrue($person['rotationManaged']);
+        $this->assertCount(1, $person['rotationBlocks']);
+        $this->assertSame('rotation_planner', $person['monthly'][0]['source']);
+
+        $this->actingAs($this->admin)
+            ->putJson('/api/admin/roster/2026/7', [
+                'assignments' => [
+                    ['userId' => $resident->id, 'dutyTypeId' => $this->dutyType('opd')->id],
+                ],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['assignments.0.overrideReason']);
+
+        $reason = 'Temporary service coverage required for the July staffing gap.';
+        $response = $this->actingAs($this->admin)
+            ->putJson('/api/admin/roster/2026/7', [
+                'assignments' => [
+                    [
+                        'userId' => $resident->id,
+                        'dutyTypeId' => $this->dutyType('opd')->id,
+                        'overrideReason' => $reason,
+                    ],
+                ],
+            ])
+            ->assertOk();
+
+        $saved = DutyAssignment::query()
+            ->where('user_id', $resident->id)
+            ->whereDate('starts_on', '2026-07-01')
+            ->whereDate('ends_on', '2026-07-31')
+            ->firstOrFail();
+        $this->assertSame('admin', $saved->source);
+        $this->assertSame(RosterService::ROTATION_OVERRIDE_NOTE_PREFIX.$reason, $saved->note);
+
+        $responsePerson = collect($response->json('people'))->firstWhere('id', $resident->id);
+        $this->assertTrue($responsePerson['monthly'][0]['isRotationOverride']);
+        $this->assertDatabaseHas('admin_audit_logs', [
+            'entity_type' => 'duty_roster',
+            'action' => 'save_roster_month',
+        ]);
+    }
+
+    public function test_workspace_bootstrap_carries_placement_and_setup_signals(): void
+    {
+        $resident = User::factory()->role('resident', 'Resident')->create();
+        $this->assign($resident, 'oncology_ward_service', now()->startOfMonth()->toDateString(), now()->endOfMonth()->toDateString());
+
+        $academic = $this->actingAs($resident)->getJson('/api/workspace')->assertOk()->json('academic');
+        $this->assertSame('Oncology Ward Service', $academic['currentPlacement']['dutyTypeName']);
+        $this->assertNotNull($academic['currentPlacement']['wardId']);
+        $this->assertNull($academic['academicSetup']);
+
+        $unassigned = User::factory()->role('consultant', 'Consultant')->create();
+        $adminAcademic = $this->actingAs($this->admin)->getJson('/api/workspace')->assertOk()->json('academic');
+
+        $this->assertTrue($adminAcademic['academicSetup']['calendarsMissing']);
+        // The unassigned consultant (no section, no duty) is counted in both signals.
+        $this->assertGreaterThanOrEqual(1, $adminAcademic['academicSetup']['consultantsWithoutSection']);
+        $this->assertGreaterThanOrEqual(1, $adminAcademic['academicSetup']['peopleWithoutAssignment']);
+        $this->assertArrayHasKey('mixedRotationCells', $adminAcademic['academicSetup']);
+        $this->assertArrayHasKey('rotationCellsNeedingReview', $adminAcademic['academicSetup']);
+        $this->assertArrayHasKey('activeRotationOverrides', $adminAcademic['academicSetup']);
+
+        $head = User::factory()->role('consultant', 'Consultant')->create();
+        Section::query()->where('slug', 'nephrology')->update(['head_user_id' => $head->id]);
+        $headAcademic = $this->actingAs($head)->getJson('/api/workspace')->assertOk()->json('academic');
+        $this->assertCount(1, $headAcademic['headsSections']);
+    }
+
+    public function test_seeded_structure_exists_after_migrations(): void
+    {
+        $this->assertSame(6, Ward::query()->count());
+        $this->assertSame(8, Section::query()->count());
+        $this->assertTrue(DutyType::query()->where('slug', 'opd')->where('pairing_group', 'opd')->exists());
+        $this->assertTrue(DutyType::query()->where('slug', 'transition_ward_duty')->where('granularity', 'daily')->exists());
+        $this->assertSame(
+            DutyType::query()->where('slug', 'cardiology_ward_service')->value('ward_id'),
+            DutyType::query()->where('slug', 'endocrinology_ward_service')->value('ward_id'),
+        );
+    }
+
+    // ---- Audit-column regression: the period handle must survive the write ----
+
+    public function test_a_roster_month_save_stores_the_period_as_its_audit_entity_id(): void
+    {
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+
+        $this->actingAs($this->admin)
+            ->putJson('/api/admin/roster/2026/7', [
+                'assignments' => [
+                    ['userId' => $consultant->id, 'dutyTypeId' => $this->dutyType('nephrology_ward_service')->id],
+                ],
+            ])
+            ->assertOk();
+
+        // entity_id is an opaque handle, not a uuid. MariaDB's native uuid
+        // type rejected the period outright, so the whole save 500'd there.
+        $this->assertDatabaseHas('admin_audit_logs', [
+            'entity_type' => 'duty_roster',
+            'action' => 'save_roster_month',
+            'entity_id' => '2026-07',
+        ]);
+
+        // The admin trail still finds it again by that same raw handle, which
+        // is the only history admins have on a roster month.
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/admin-audit-logs?entity_type=duty_roster&entity_id=2026-07')
+            ->assertOk()
+            ->assertJsonPath('data.0.action', 'save_roster_month');
+    }
+
+    public function test_a_failing_audit_write_rolls_back_the_whole_roster_month(): void
+    {
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+        $keep = $this->assign($consultant, 'nephrology_ward_service', '2026-07-01', '2026-07-31');
+
+        $this->app->instance(AdminAuditService::class, new class extends AdminAuditService
+        {
+            public function record(
+                User $actor,
+                string $action,
+                string $entityType,
+                ?string $entityId = null,
+                ?array $oldValues = null,
+                ?array $newValues = null,
+                ?Request $request = null,
+            ): never {
+                throw new \RuntimeException('Simulated audit write failure.');
+            }
+        });
+
+        $this->actingAs($this->admin)
+            ->putJson('/api/admin/roster/2026/7', [
+                'assignments' => [
+                    ['userId' => $consultant->id, 'dutyTypeId' => $this->dutyType('dialysis')->id],
+                ],
+            ])
+            ->assertStatus(500);
+
+        // carveMonthlyWindow and bulkAssign each open their own transaction,
+        // so without an outer one the replacement would already be committed
+        // by the time the audit row failed.
+        $rows = DutyAssignment::query()->where('user_id', $consultant->id)->get();
+        $this->assertCount(1, $rows);
+        $this->assertSame($keep->id, $rows[0]->id);
+        $this->assertSame(0, DB::table('admin_audit_logs')->where('entity_type', 'duty_roster')->count());
+    }
+
+    // ---- Date-window regression: a typo is not a plan ----
+
+    public function test_the_daily_strip_rejects_a_date_outside_the_planning_window(): void
+    {
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+        $transition = $this->dutyType('transition_ward_duty');
+
+        foreach (['2320-02-12', '1900-01-01'] as $date) {
+            $this->actingAs($this->admin)
+                ->postJson('/api/admin/roster/daily', [
+                    'userId' => $consultant->id,
+                    'dutyTypeId' => $transition->id,
+                    'date' => $date,
+                ])
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors(['date']);
+        }
+
+        $this->assertSame(0, DutyAssignment::query()->where('user_id', $consultant->id)->count());
+
+        // A date inside the window still writes.
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/roster/daily', [
+                'userId' => $consultant->id,
+                'dutyTypeId' => $transition->id,
+                'date' => now()->addMonth()->toDateString(),
+            ])
+            ->assertCreated();
+    }
+
+    public function test_a_rotation_calendar_cannot_start_outside_the_planning_window(): void
+    {
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/rotations/calendars', [
+                'trainingYear' => 3,
+                'academicYearLabel' => '2320/21',
+                'startsOn' => '2320-02-12',
+                'blockKind' => 'fixed_weeks',
+                'blockLengthWeeks' => 8,
+                'blocksCount' => 6,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['startsOn']);
+
+        $this->assertDatabaseCount('rotation_calendars', 0);
+    }
+
+    // ---- Review-pass regression: carving, not wholesale replacement ----
+
+    public function test_replanning_one_month_carves_a_cross_month_block_instead_of_deleting_it(): void
+    {
+        $resident = User::factory()->role('resident', 'Resident')->create();
+
+        // A two-month block: July + August.
+        $this->assign($resident, 'nephrology_ward_service', '2026-07-01', '2026-08-31');
+
+        // Re-planning AUGUST must not erase the July half of the block.
+        $this->roster->bulkAssign([[
+            'user_id' => $resident->id,
+            'duty_type_id' => $this->dutyType('opd')->id,
+            'starts_on' => '2026-08-01',
+            'ends_on' => '2026-08-31',
+        ]], 'admin', $this->admin);
+
+        $rows = DutyAssignment::query()->where('user_id', $resident->id)->orderBy('starts_on')->get();
+        $this->assertCount(2, $rows);
+        $this->assertSame('2026-07-01', $rows[0]->starts_on->toDateString());
+        $this->assertSame('2026-07-31', $rows[0]->ends_on->toDateString());
+        $this->assertSame($this->dutyType('opd')->id, $rows[1]->duty_type_id);
+
+        // Carving a window out of the middle splits the block in two.
+        $resident2 = User::factory()->role('resident', 'Resident')->create();
+        $this->assign($resident2, 'nephrology_ward_service', '2026-07-01', '2026-09-30');
+        $this->roster->carveMonthlyWindow($resident2->id, '2026-08-01', '2026-08-31');
+
+        $pieces = DutyAssignment::query()->where('user_id', $resident2->id)->orderBy('starts_on')->get();
+        $this->assertCount(2, $pieces);
+        $this->assertSame(['2026-07-01', '2026-07-31'], [$pieces[0]->starts_on->toDateString(), $pieces[0]->ends_on->toDateString()]);
+        $this->assertSame(['2026-09-01', '2026-09-30'], [$pieces[1]->starts_on->toDateString(), $pieces[1]->ends_on->toDateString()]);
+        $this->assertSame($pieces[0]->duty_type_id, $pieces[1]->duty_type_id);
+
+        // A fully-covered assignment is still simply removed.
+        $this->roster->carveMonthlyWindow($resident2->id, '2026-06-01', '2026-10-31');
+        $this->assertSame(0, DutyAssignment::query()->where('user_id', $resident2->id)->count());
+    }
+}

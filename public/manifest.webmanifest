@@ -1,0 +1,19 @@
+{
+  "name": "St Paul Hospital Internal Medicine",
+  "short_name": "St Paul",
+  "description": "Secure weekly operational reporting for St Paul Hospital Internal Medicine.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#002147",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}

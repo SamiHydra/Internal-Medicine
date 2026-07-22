@@ -3,8 +3,9 @@ import { useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
-import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { isSupabaseConfigured, supabaseEnvSetupHint } from '@/lib/supabase/env'
+import { getApiBrowserClient, isApiConfigured } from '@/lib/api/client'
+import { apiEnvSetupHint } from '@/lib/api/env'
+import { requestPasswordReset } from '@/lib/api/passwords'
 
 export function ForgotPasswordPage() {
   const [searchParams] = useSearchParams()
@@ -24,28 +25,23 @@ export function ForgotPasswordPage() {
       return
     }
 
-    const client = getSupabaseBrowserClient()
-    if (!client || !isSupabaseConfigured) {
-      setError(`Supabase is not configured. ${supabaseEnvSetupHint}`)
+    const client = getApiBrowserClient()
+    if (!client || !isApiConfigured) {
+      setError(`Laravel API is not configured. ${apiEnvSetupHint}`)
       return
     }
 
     setIsSubmitting(true)
 
     try {
-      const { error: resetError } = await client.auth.resetPasswordForEmail(
-        normalizedEmail,
-        {
-          redirectTo: `${window.location.origin}/reset-password`,
-        },
-      )
-
-      if (resetError) {
-        setError(resetError.message)
-        return
-      }
-
+      await requestPasswordReset(client, normalizedEmail)
       setSuccess(`Password reset instructions were sent to ${normalizedEmail}.`)
+    } catch (resetError) {
+      setError(
+        resetError instanceof Error
+          ? resetError.message
+          : 'Unable to send password reset instructions.',
+      )
     } finally {
       setIsSubmitting(false)
     }
@@ -62,14 +58,14 @@ export function ForgotPasswordPage() {
               <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[6px] bg-white ring-1 ring-[#d7dbe0]">
                 <img
                   src={stPaulosLogo}
-                  alt="St Paulos logo"
+                  alt="St Paul logo"
                   className="h-full w-full object-cover"
                 />
               </div>
 
               <div>
                 <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
-                  St Paulos Hospital
+                  St Paul Hospital
                 </p>
                 <p className="font-display text-[1.1rem] text-[#000a1e]">
                   Internal Medicine
@@ -102,7 +98,7 @@ export function ForgotPasswordPage() {
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
-                  placeholder="resident.id@stpaulos.edu"
+                  placeholder="resident.id@stpaul.edu"
                   className="h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 text-[0.95rem] font-medium text-[#191c1d] outline-none transition placeholder:text-[#8c929b] focus:border-[#005db6] focus:bg-[#fbfdff]"
                   disabled={isSubmitting}
                 />

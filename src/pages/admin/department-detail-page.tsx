@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
-import { useParams } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
+import { Link, useParams } from 'react-router-dom'
 import {
   CartesianGrid,
   Line,
@@ -26,6 +27,7 @@ import { useAppData } from '@/context/app-data-context'
 import {
   getCurrentPeriod,
   getDepartmentDetail,
+  getReportingPeriodsForRange,
   getVisibleReportingPeriods,
   type ReportingTimeRange,
 } from '@/data/selectors'
@@ -34,34 +36,95 @@ import { formatTimestamp } from '@/lib/dates'
 
 export function DepartmentDetailPage() {
   const { departmentId = '' } = useParams()
-  const { state, ensureHistoryData, ensureReportDetails } = useAppData()
+  const {
+    state,
+    ensureHistoryData,
+    ensureReportDetails,
+    reportPeriodWindow,
+    refreshData,
+    resolveDepartmentSlug,
+  } = useAppData()
+  const resolvedDepartmentId = resolveDepartmentSlug(departmentId) ?? departmentId
   const [timeRange, setTimeRange] = useState<ReportingTimeRange>('last8')
   const [selectedPeriodId, setSelectedPeriodId] = useState('')
+  const requestedReportWindowRef = useRef<'default' | 'all' | null>(null)
   const currentPeriod = getCurrentPeriod(state)
   const availablePeriods = [...getVisibleReportingPeriods(state)].reverse()
   const fallbackPeriodId = currentPeriod?.id ?? availablePeriods[0]?.id ?? ''
   const effectivePeriodId = availablePeriods.some((period) => period.id === selectedPeriodId)
     ? selectedPeriodId
     : fallbackPeriodId
-  const departmentReportIds = state.reports
-    .filter((report) => report.departmentId === departmentId)
+  const reportingPeriodIds = new Set(
+    getReportingPeriodsForRange(state, timeRange, effectivePeriodId).map(
+      (period) => period.id,
+    ),
+  )
+  const departmentReportIdsKey = state.reports
+    .filter(
+      (report) =>
+        report.departmentId === resolvedDepartmentId &&
+        reportingPeriodIds.has(report.reportingPeriodId),
+    )
     .map((report) => report.id)
+    .join('|')
 
   useEffect(() => {
     void ensureHistoryData()
   }, [ensureHistoryData])
 
   useEffect(() => {
-    void ensureReportDetails(departmentReportIds)
-  }, [departmentId, departmentReportIds, ensureReportDetails])
+    const nextReportWindow = timeRange === 'all' ? 'all' : 'default'
 
-  const detail = getDepartmentDetail(state, departmentId, {
+    if (reportPeriodWindow === nextReportWindow) {
+      requestedReportWindowRef.current = null
+      return
+    }
+
+    if (requestedReportWindowRef.current === nextReportWindow) {
+      return
+    }
+
+    requestedReportWindowRef.current = nextReportWindow
+    void refreshData({ reportPeriodWindow: nextReportWindow })
+  }, [refreshData, reportPeriodWindow, timeRange])
+
+  useEffect(() => {
+    const departmentReportIds = departmentReportIdsKey
+      ? departmentReportIdsKey.split('|')
+      : []
+
+    void ensureReportDetails(departmentReportIds)
+  }, [departmentReportIdsKey, ensureReportDetails])
+
+  const detail = getDepartmentDetail(state, resolvedDepartmentId, {
     anchorPeriodId: effectivePeriodId,
     range: timeRange,
   })
 
   if (!detail) {
-    return null
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          eyebrow="Department"
+          title="Department not found"
+          description="We couldn't find reporting data for this department."
+        />
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-[#5b6169]">
+            <p>
+              This department may not exist yet, or it has no reports in the selected period.
+            </p>
+            <Link
+              to="/admin"
+              className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-[#005db6] hover:text-[#00468c]"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to the dashboard
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   const timeRangeOptions = [
@@ -188,7 +251,7 @@ export function DepartmentDetailPage() {
           </CardHeader>
           <CardContent>
             <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                 <LineChart data={detail.trends.activity}>
                   <CartesianGrid strokeDasharray="3 8" stroke="#d4dde8" vertical={false} />
                   <XAxis dataKey="shortLabel" />

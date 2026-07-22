@@ -1,5 +1,5 @@
 {
-  "name": "mesay",
+  "name": "st-paul",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -11,8 +11,9 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:e2e": "node scripts/run-e2e.mjs",
     "verify": "npm run lint && npm run test:run && npm run build",
-    "supabase:demo-users": "node scripts/create-demo-users.mjs"
+    "load:test": "node scripts/load-test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -31,24 +32,27 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
-    "@supabase/supabase-js": "^2.100.1",
-    "@tanstack/react-query": "^5.95.2",
+    "@tanstack/react-query": "^5.101.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "framer-motion": "^12.38.0",
+    "laravel-echo": "^2.3.4",
     "lucide-react": "^1.7.0",
+    "pusher-js": "^8.5.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-hook-form": "^7.72.0",
-    "react-router-dom": "^7.13.2",
+    "react-router-dom": "^7.18.1",
     "recharts": "^3.8.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/vite": "^4.2.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

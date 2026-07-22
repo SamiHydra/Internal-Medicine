@@ -1,4 +1,19 @@
-export type UserRole = 'superadmin' | 'admin' | 'doctor_admin' | 'nurse'
+export type UserRole =
+  | 'superadmin'
+  | 'admin'
+  | 'nurse'
+  | 'resident'
+  | 'consultant'
+  | 'student_rep'
+
+export type RoleWorkspace = 'clinical' | 'academic' | 'both'
+
+// Server-owned role registry, so adding a role never means editing a frontend list.
+export interface RoleDefinition {
+  key: UserRole
+  label: string
+  workspace: RoleWorkspace
+}
 
 export type ReportFamily = 'inpatient' | 'outpatient' | 'procedure'
 
@@ -25,7 +40,10 @@ export type NotificationType =
   | 'report_unlocked'
   | 'overdue_report'
   | 'nurse_access_request'
+  | 'admin_access_request'
   | 'access_request_reviewed'
+  | 'critical_value_alert'
+  | 'trend_alert'
 
 export type Weekday =
   | 'monday'
@@ -52,6 +70,7 @@ export interface UserProfile {
   active: boolean
   phone?: string
   avatar?: string
+  passwordChangeRequired?: boolean
 }
 
 export interface Department {
@@ -170,6 +189,25 @@ export interface CalculatedMetricSet {
   alos: number | null
 }
 
+export type ReportQualityIssue = {
+  key: string
+  severity: 'error' | 'warning'
+  message: string
+  leftValue?: number
+  rightValue?: number
+}
+
+export interface ReportQuality {
+  completeness: {
+    expectedCells: number
+    filledCells: number
+    missingCells: number
+    percent: number
+  }
+  errors: ReportQualityIssue[]
+  warnings: ReportQualityIssue[]
+}
+
 export interface ReportRecord {
   id: string
   assignmentId: string
@@ -185,6 +223,7 @@ export interface ReportRecord {
   status: StoredReportStatus
   values: Record<string, ReportFieldValue>
   calculatedMetrics: Partial<CalculatedMetricSet>
+  quality?: ReportQuality
 }
 
 export interface ReportStatusHistoryEntry {
@@ -231,6 +270,28 @@ export interface AppSettings {
   notableRiseThresholdPercent: number
   notableDropThresholdPercent: number
   criticalNonZeroFields: string[]
+  metricTargets: Record<PerformanceTargetKey, PerformanceTarget>
+  reportReminderThresholds: {
+    inAppHoursBeforeDeadline: number
+    emailHoursBeforeDeadline: number
+    smsHoursBeforeDeadline: number
+    overdueHoursAfterDeadline: number
+  }
+}
+
+export type PerformanceTargetKey =
+  | 'deliveryRate'
+  | 'inpatientSafetyEvents'
+  | 'outpatientSameDayRate'
+  | 'procedureThroughput'
+
+export type PerformanceTargetDirection = 'atLeast' | 'atMost'
+
+export interface PerformanceTarget {
+  enabled: boolean
+  direction: PerformanceTargetDirection
+  amber: number
+  green: number
 }
 
 export interface PendingDraftState {
@@ -243,6 +304,7 @@ export interface PendingDraftState {
 export interface AppState {
   currentUserId: string | null
   profiles: UserProfile[]
+  roles: RoleDefinition[]
   assignments: ReportAssignment[]
   accessRequests: AccessRequest[]
   reportingPeriods: ReportingPeriod[]

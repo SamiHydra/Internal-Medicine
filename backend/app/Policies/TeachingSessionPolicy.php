@@ -1,0 +1,92 @@
+<?php
+
+namespace App\Policies;
+
+use App\Models\RepAssignment;
+use App\Models\TeachingSession;
+use App\Models\User;
+use App\Policies\Concerns\HandlesDomainAuthorization;
+use App\Services\Academic\TeachingService;
+
+class TeachingSessionPolicy
+{
+    use HandlesDomainAuthorization;
+
+    public function __construct(
+        private readonly TeachingService $teachingService,
+    ) {}
+
+    public function viewAny(User $user): bool
+    {
+        return $this->isAdminLike($user);
+    }
+
+    /**
+     * Admin writes across the undergraduate module (batches, rosters,
+     * placements, schedules, rep designations, session oversight). Same
+     * population as viewAny today, but a separate ability so widening one
+     * never silently widens the other.
+     */
+    public function manage(User $user): bool
+    {
+        return $this->isAdminLike($user);
+    }
+
+    /** A representative may read only the session collection for an active assignment. */
+    public function viewMine(User $user): bool
+    {
+        return $user->active && ($this->isAdminLike($user) || RepAssignment::query()
+            ->where('user_id', $user->id)
+            ->where('active', true)
+            ->whereHas('batch', fn ($query) => $query->where('active', true))
+            ->exists());
+    }
+
+    /** Today's attendance roster is visible only to active consultants or admins. */
+    public function viewToday(User $user): bool
+    {
+        return $user->active && ($this->isAdminLike($user) || $user->role_key === 'consultant');
+    }
+
+    /**
+     * The data-driven rep rule (V2 guide 8.1): an admin may record anything;
+     * a rep needs an ACTIVE assignment for the session's batch whose scope
+     * covers the activity: `group` records lectures and seminars for the
+     * whole cohort; `subgroup_a`/`subgroup_b` record bedside and teaching
+     * rounds ONLY for their own subgroup.
+     */
+    public function record(User $user, TeachingSession $session): bool
+    {
+        if (! $user->active) {
+            return false;
+        }
+
+        if ($this->isAdminLike($user)) {
+            return true;
+        }
+
+        if (! $this->teachingService->isBackedByActiveSchedule($session)) {
+            return false;
+        }
+
+        return RepAssignment::query()
+            ->where('user_id', $user->id)
+            ->where('batch_id', $session->batch_id)
+            ->where('active', true)
+            ->whereHas('batch', fn ($query) => $query->where('active', true))
+            ->get()
+            ->contains(function (RepAssignment $assignment) use ($session) {
+                if (! in_array($session->activity_type, $assignment->recordableActivities(), true)) {
+                    return false;
+                }
+
+                return $assignment->scope === 'group' || $assignment->subgroup() === $session->subgroup;
+            });
+    }
+
+    /** Attendance is recorded by the consultant who taught, or an admin. */
+    public function recordAttendance(User $user, TeachingSession $session): bool
+    {
+        return $user->active && ($this->isAdminLike($user) || $user->role_key === 'consultant');
+    }
+}

@@ -1,10 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 :root {
   color: #091223;
-  background: #e7f0fb;
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  background: #f8f9fa;
+  font-family: 'Segoe UI Variable', 'Segoe UI', Arial, sans-serif;
   --brand-primary: #005db6;
   --brand-primary-strong: #00468c;
   --brand-accent: #f0b429;
@@ -31,8 +30,8 @@
 }
 
 @theme {
-  --font-sans: 'Plus Jakarta Sans', sans-serif;
-  --font-display: 'Manrope', sans-serif;
+  --font-sans: 'Segoe UI Variable', 'Segoe UI', Arial, sans-serif;
+  --font-display: 'Aptos Display', 'Segoe UI Variable Display', 'Segoe UI', Arial, sans-serif;
 }
 
 * {
@@ -51,39 +50,7 @@ body {
   min-height: 100vh;
   font-family: var(--font-sans);
   color: #091223;
-  background:
-    radial-gradient(circle at 12% 12%, rgba(56, 189, 248, 0.22), transparent 28%),
-    radial-gradient(circle at 88% 14%, rgba(45, 212, 191, 0.18), transparent 26%),
-    radial-gradient(circle at 72% 74%, rgba(59, 130, 246, 0.14), transparent 30%),
-    linear-gradient(180deg, #eff7ff 0%, #f7fbff 38%, #eaf4ff 100%);
-}
-
-body::before,
-body::after {
-  content: '';
-  pointer-events: none;
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-}
-
-body::before {
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.36) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.36) 1px, transparent 1px);
-  background-size: 72px 72px;
-  mask-image: radial-gradient(circle at center, black 30%, transparent 82%);
-  opacity: 0.22;
-}
-
-body::after {
-  inset: -12%;
-  background:
-    radial-gradient(circle at 18% 26%, rgba(34, 211, 238, 0.18), transparent 24%),
-    radial-gradient(circle at 82% 22%, rgba(59, 130, 246, 0.15), transparent 22%),
-    radial-gradient(circle at 54% 86%, rgba(16, 185, 129, 0.14), transparent 24%);
-  filter: blur(40px);
-  animation: aurora-drift 18s ease-in-out infinite alternate;
+  background: #f8f9fa;
 }
 
 button,
@@ -182,6 +149,37 @@ a {
 
 ::-webkit-scrollbar-corner {
   background: #edf1f5;
+}
+
+.sidebar-scrollbar {
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+}
+
+.sidebar-scrollbar:hover {
+  scrollbar-color: rgba(146, 163, 186, 0.52) transparent;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-thumb {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.sidebar-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: rgba(146, 163, 186, 0.52);
+}
+
+.sidebar-scrollbar:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(240, 180, 41, 0.72);
 }
 
 @keyframes aurora-drift {
@@ -344,6 +342,31 @@ a {
   }
 }
 
+@keyframes skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.74),
+    transparent
+  );
+  animation: skeleton-shimmer 1.35s ease-in-out infinite;
+}
+
 .float-slow {
   animation: float-slow 9s ease-in-out infinite;
 }
@@ -411,6 +434,65 @@ a {
   will-change: transform, opacity;
 }
 
+/* Slide-over sheets (Radix Dialog): fade the scrim, slide the panel from its
+   edge. Enter is slightly slower with the iOS drawer curve; exit is snappier
+   (slow where the user decides, fast where the system responds). */
+@keyframes sheet-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sheet-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes sheet-slide-in-right {
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes sheet-slide-out-right {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(100%); }
+}
+
+@keyframes sheet-slide-in-left {
+  from { opacity: 0; transform: translateX(-100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes sheet-slide-out-left {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(-100%); }
+}
+
+.sheet-overlay[data-state='open'] {
+  animation: sheet-overlay-in 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.sheet-overlay[data-state='closed'] {
+  animation: sheet-overlay-out 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.sheet-content[data-state='open'] {
+  animation: sheet-slide-in-right 380ms cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform;
+}
+
+.sheet-content[data-state='closed'] {
+  animation: sheet-slide-out-right 250ms cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform;
+}
+
+.sheet-content[data-side='left'][data-state='open'] {
+  animation-name: sheet-slide-in-left;
+}
+
+.sheet-content[data-side='left'][data-state='closed'] {
+  animation-name: sheet-slide-out-left;
+}
+
 @media (prefers-reduced-motion: reduce) {
   body::after,
   .float-slow,
@@ -424,12 +506,63 @@ a {
   .login-reveal,
   .login-chip-float,
   .login-bar-breathe,
-  .login-dot-blink {
+  .login-dot-blink,
+  .skeleton-shimmer::after {
     animation: none !important;
   }
 
   .login-reveal {
     opacity: 1 !important;
     transform: none !important;
+  }
+
+  /* Keep a gentle fade for sheets, drop the slide (no position motion). */
+  .sheet-content[data-state='open'] {
+    animation: sheet-overlay-in 200ms ease-out !important;
+  }
+
+  .sheet-content[data-state='closed'] {
+    animation: sheet-overlay-out 160ms ease-out !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Rating meter (student progress)
+
+   Five steps are always present: the unfilled ones are the reference that
+   makes a filled count read as a value. Steps grow from the baseline on mount,
+   staggered left to right, so the eye reads the scale in the direction it
+   fills. Predetermined entry, so keyframes (off the main thread) rather than
+   a JS-driven transition.
+--------------------------------------------------------------------------- */
+@keyframes rating-step-grow {
+  from {
+    opacity: 0;
+    transform: scaleY(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+.rating-step {
+  transform-origin: bottom;
+  animation: rating-step-grow 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@keyframes rating-step-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Reduced motion keeps the fade (it aids comprehension) and drops the growth. */
+@media (prefers-reduced-motion: reduce) {
+  .rating-step {
+    animation: rating-step-fade 180ms ease both;
   }
 }

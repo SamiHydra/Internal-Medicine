@@ -2,9 +2,13 @@ import { Suspense, lazy, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import { AppStateScreen } from '@/components/layout/app-state-screen'
+import { FullPageSkeleton, PageSkeleton } from '@/components/layout/loading-skeletons'
+import { ScrollToTop } from '@/components/layout/scroll-to-top'
 import { useAppData } from '@/context/app-data-context'
-import { supabaseEnvSetupHint } from '@/lib/supabase/env'
+import { WorkspaceProvider } from '@/context/workspace-context'
+import { apiEnvSetupHint } from '@/lib/api/env'
 import { LoginPage } from '@/pages/auth/login-page'
+import { landingPathForRole } from '@/routes/landing'
 import { ProtectedRoute, ProtectedShell } from '@/routes/route-guards'
 
 const DepartmentDetailPage = lazy(() =>
@@ -17,9 +21,74 @@ const AdminDashboardPage = lazy(() =>
     default: module.AdminDashboardPage,
   })),
 )
+const AcademicDashboardPage = lazy(() =>
+  import('@/pages/admin/academic-dashboard-page').then((module) => ({
+    default: module.AcademicDashboardPage,
+  })),
+)
+const AcademicPersonDetailPage = lazy(() =>
+  import('@/pages/admin/academic-person-detail-page').then((module) => ({
+    default: module.AcademicPersonDetailPage,
+  })),
+)
+const AcademicSubmissionsPage = lazy(() =>
+  import('@/pages/admin/academic-submissions-page').then((module) => ({
+    default: module.AcademicSubmissionsPage,
+  })),
+)
+const AcademicStructurePage = lazy(() =>
+  import('@/pages/admin/academic-structure-page').then((module) => ({
+    default: module.AcademicStructurePage,
+  })),
+)
+const DutyRosterPage = lazy(() =>
+  import('@/pages/admin/duty-roster-page').then((module) => ({
+    default: module.DutyRosterPage,
+  })),
+)
+const RotationPlannerPage = lazy(() =>
+  import('@/pages/admin/rotation-planner-page').then((module) => ({
+    default: module.RotationPlannerPage,
+  })),
+)
+const EvaluationFormsPage = lazy(() =>
+  import('@/pages/admin/evaluation-forms-page').then((module) => ({
+    default: module.EvaluationFormsPage,
+  })),
+)
+const StudentsPage = lazy(() =>
+  import('@/pages/admin/students-page').then((module) => ({
+    default: module.StudentsPage,
+  })),
+)
+const RepLogPage = lazy(() =>
+  import('@/pages/teaching/rep-log-page').then((module) => ({
+    default: module.RepLogPage,
+  })),
+)
+const TeachingAttendancePage = lazy(() =>
+  import('@/pages/academic/teaching-attendance-page').then((module) => ({
+    default: module.TeachingAttendancePage,
+  })),
+)
+const MorningAttendancePage = lazy(() =>
+  import('@/pages/academic/morning-attendance-page').then((module) => ({
+    default: module.MorningAttendancePage,
+  })),
+)
 const AuditLogPage = lazy(() =>
   import('@/pages/admin/audit-log-page').then((module) => ({
     default: module.AuditLogPage,
+  })),
+)
+const ActionItemsPage = lazy(() =>
+  import('@/pages/admin/action-items-page').then((module) => ({
+    default: module.ActionItemsPage,
+  })),
+)
+const DataImportPage = lazy(() =>
+  import('@/pages/admin/data-import-page').then((module) => ({
+    default: module.DataImportPage,
   })),
 )
 const SettingsPage = lazy(() =>
@@ -62,6 +131,11 @@ const ResetPasswordPage = lazy(() =>
     default: module.ResetPasswordPage,
   })),
 )
+const ForcePasswordChangePage = lazy(() =>
+  import('@/pages/auth/force-password-change-page').then((module) => ({
+    default: module.ForcePasswordChangePage,
+  })),
+)
 const NotFoundPage = lazy(() =>
   import('@/pages/not-found-page').then((module) => ({
     default: module.NotFoundPage,
@@ -92,23 +166,24 @@ const ReportFormPage = lazy(() =>
     default: module.ReportFormPage,
   })),
 )
+const AcademicEvaluationFormPage = lazy(() =>
+  import('@/pages/academic/evaluation-form-page').then((module) => ({
+    default: module.AcademicEvaluationFormPage,
+  })),
+)
+const AcademicHomePage = lazy(() =>
+  import('@/pages/academic/academic-home-page').then((module) => ({
+    default: module.AcademicHomePage,
+  })),
+)
+const AcademicHistoryPage = lazy(() =>
+  import('@/pages/academic/academic-history-page').then((module) => ({
+    default: module.AcademicHistoryPage,
+  })),
+)
 
 function InlineRouteFallback() {
-  return (
-    <section className="rounded-[0.35rem] border border-[#d9e0e7] bg-[linear-gradient(180deg,#ffffff_0%,#f1f5fa_100%)] px-5 py-10 shadow-[0_18px_36px_rgba(0,33,71,0.06)]">
-      <div className="space-y-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
-          Loading view
-        </p>
-        <h1 className="font-display text-[2rem] leading-[0.98] tracking-[-0.04em] text-[#000a1e]">
-          Opening page
-        </h1>
-        <p className="text-sm leading-7 text-[#5b6169]">
-          Preparing the selected dashboard screen.
-        </p>
-      </div>
-    </section>
-  )
+  return <PageSkeleton />
 }
 
 function renderLazyRoute(node: ReactNode, fallback: 'page' | 'inline' = 'page') {
@@ -116,10 +191,7 @@ function renderLazyRoute(node: ReactNode, fallback: 'page' | 'inline' = 'page') 
     <Suspense
       fallback={
         fallback === 'page' ? (
-          <AppStateScreen
-            title="Loading Page"
-            description="Preparing the selected workspace view."
-          />
+          <FullPageSkeleton label="Loading page" />
         ) : (
           <InlineRouteFallback />
         )
@@ -142,9 +214,9 @@ function HomeRedirect() {
   if (!isConfigured) {
     return (
       <AppStateScreen
-        title="Supabase Configuration Required"
-        description="The live product needs its Supabase project values before it can start."
-        detail={`Missing ${missingEnvVars.join(', ')}. ${supabaseEnvSetupHint}`}
+        title="Laravel API Configuration Required"
+        description="The live product needs its Laravel API URL before it can start."
+        detail={`Missing ${missingEnvVars.join(', ')}. ${apiEnvSetupHint}`}
       />
     )
   }
@@ -172,13 +244,19 @@ function HomeRedirect() {
     return <Navigate to="/login" replace />
   }
 
-  return <Navigate to={currentUser.role === 'nurse' ? '/nurse' : '/admin'} replace />
+  if (currentUser.passwordChangeRequired) {
+    return <Navigate to="/change-password" replace />
+  }
+
+  return <Navigate to={landingPathForRole(currentUser.role)} replace />
 }
 
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
+      <WorkspaceProvider>
+        <ScrollToTop />
+        <Routes>
         <Route path="/" element={<HomeRedirect />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={renderLazyRoute(<ForgotPasswordPage />)} />
@@ -186,6 +264,10 @@ function App() {
         <Route path="/register" element={renderLazyRoute(<AccessRequestPage />)} />
 
         <Route element={<ProtectedRoute />}>
+          <Route
+            path="/change-password"
+            element={renderLazyRoute(<ForcePasswordChangePage />)}
+          />
           <Route element={<ProtectedShell />}>
             <Route
               path="/notifications"
@@ -200,6 +282,33 @@ function App() {
               element={renderLazyRoute(<ReportFormPage />, 'inline')}
             />
 
+            <Route element={<ProtectedRoute roles={['resident', 'consultant']} />}>
+              <Route path="/academic" element={renderLazyRoute(<AcademicHomePage />, 'inline')} />
+              <Route
+                path="/academic/submit"
+                element={renderLazyRoute(<AcademicEvaluationFormPage />, 'inline')}
+              />
+              <Route
+                path="/academic/history"
+                element={renderLazyRoute(<AcademicHistoryPage />, 'inline')}
+              />
+              <Route
+                path="/academic/morning"
+                element={renderLazyRoute(<MorningAttendancePage />, 'inline')}
+              />
+            </Route>
+
+            <Route element={<ProtectedRoute roles={['consultant']} />}>
+              <Route
+                path="/academic/teaching"
+                element={renderLazyRoute(<TeachingAttendancePage />, 'inline')}
+              />
+            </Route>
+
+            <Route element={<ProtectedRoute roles={['student_rep']} />}>
+              <Route path="/teaching" element={renderLazyRoute(<RepLogPage />, 'inline')} />
+            </Route>
+
             <Route element={<ProtectedRoute roles={['nurse']} />}>
               <Route path="/nurse" element={renderLazyRoute(<NurseDashboardPage />, 'inline')} />
               <Route
@@ -212,8 +321,40 @@ function App() {
               />
             </Route>
 
-            <Route element={<ProtectedRoute roles={['superadmin', 'admin', 'doctor_admin']} />}>
+            <Route element={<ProtectedRoute roles={['superadmin', 'admin']} />}>
               <Route path="/admin" element={renderLazyRoute(<AdminDashboardPage />, 'inline')} />
+              <Route
+                path="/admin/academic"
+                element={renderLazyRoute(<AcademicDashboardPage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/submissions"
+                element={renderLazyRoute(<AcademicSubmissionsPage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/structure"
+                element={renderLazyRoute(<AcademicStructurePage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/roster"
+                element={renderLazyRoute(<DutyRosterPage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/rotations"
+                element={renderLazyRoute(<RotationPlannerPage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/evaluation-forms"
+                element={renderLazyRoute(<EvaluationFormsPage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/students"
+                element={renderLazyRoute(<StudentsPage />, 'inline')}
+              />
+              <Route
+                path="/admin/academic/people/:userId"
+                element={renderLazyRoute(<AcademicPersonDetailPage />, 'inline')}
+              />
               <Route
                 path="/admin/departments/:departmentId"
                 element={renderLazyRoute(<DepartmentDetailPage />, 'inline')}
@@ -235,6 +376,14 @@ function App() {
                 element={renderLazyRoute(<TemplateManagementPage />, 'inline')}
               />
               <Route
+                path="/admin/action-items"
+                element={renderLazyRoute(<ActionItemsPage />, 'inline')}
+              />
+              <Route
+                path="/admin/import"
+                element={renderLazyRoute(<DataImportPage />, 'inline')}
+              />
+              <Route
                 path="/admin/audit"
                 element={renderLazyRoute(<AuditLogPage />, 'inline')}
               />
@@ -246,8 +395,9 @@ function App() {
           </Route>
         </Route>
 
-        <Route path="*" element={renderLazyRoute(<NotFoundPage />)} />
-      </Routes>
+          <Route path="*" element={renderLazyRoute(<NotFoundPage />)} />
+        </Routes>
+      </WorkspaceProvider>
     </BrowserRouter>
   )
 }

@@ -1,4 +1,5 @@
 import type { AppSettings, AppState } from '@/types/domain'
+import { defaultMetricTargets } from '@/lib/performance-targets'
 
 export const defaultAppSettings: AppSettings = {
   deadlineEnforced: true,
@@ -15,12 +16,20 @@ export const defaultAppSettings: AppSettings = {
     'hai_cauti',
     'hai_vap',
   ],
+  metricTargets: defaultMetricTargets,
+  reportReminderThresholds: {
+    inAppHoursBeforeDeadline: 24,
+    emailHoursBeforeDeadline: 4,
+    smsHoursBeforeDeadline: 1,
+    overdueHoursAfterDeadline: 0,
+  },
 }
 
 export function createEmptyAppState(): AppState {
   return {
     currentUserId: null,
     profiles: [],
+    roles: [],
     assignments: [],
     accessRequests: [],
     reportingPeriods: [],

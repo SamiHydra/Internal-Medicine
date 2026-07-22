@@ -1,12 +1,11 @@
-import { useEffect, useState } from 'react'
-import { format } from 'date-fns'
-import { AlertTriangle, CalendarDays, CheckCircle2, Lock, Rows3 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { motion } from 'framer-motion'
 
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { SubmissionBoardGrid } from '@/components/dashboard/submission-board-grid'
 import {
   getCurrentPeriod,
-  getLockDeadlineNote,
   getReportingRangeSummary,
   getVisibleReportingPeriods,
   getSubmissionBoard,
@@ -36,70 +35,136 @@ const statusOptions = [
   { value: 'overdue' as const, label: 'Overdue' },
 ] as const
 
+const timeRangeValues: ReportingTimeRange[] = ['current', 'last4', 'last8', 'all']
+
 export function SubmissionBoardPage() {
-  const { state, ensureProfileDirectoryData } = useAppData()
+  const { state, ensureProfileDirectoryData, reportPeriodWindow, refreshData } = useAppData()
   const currentPeriod = getCurrentPeriod(state)
   const currentPeriodId = currentPeriod?.id ?? ''
+  // Honor deep-links from the dashboard (e.g. the Outstanding-reports card) so the
+  // board opens pre-filtered to the same service line / status / window. Unknown or
+  // missing params fall back to the defaults. Read once for initial state only.
+  const [searchParams] = useSearchParams()
+  const serviceParam = searchParams.get('service')
+  const statusParam = searchParams.get('status')
+  const rangeParam = searchParams.get('range')
+  const initialServiceLine: ServiceLineFilter = serviceLineOptions.some(
+    (option) => option.value === serviceParam,
+  )
+    ? (serviceParam as ServiceLineFilter)
+    : 'all'
+  const initialStatus: StatusFilter = statusOptions.some(
+    (option) => option.value === statusParam,
+  )
+    ? (statusParam as StatusFilter)
+    : 'all'
+  const initialTimeRange: ReportingTimeRange = timeRangeValues.includes(
+    rangeParam as ReportingTimeRange,
+  )
+    ? (rangeParam as ReportingTimeRange)
+    : 'current'
   const [periodId, setPeriodId] = useState(currentPeriodId)
-  const [timeRange, setTimeRange] = useState<ReportingTimeRange>('current')
+  const [timeRange, setTimeRange] = useState<ReportingTimeRange>(initialTimeRange)
   const [serviceLineFilter, setServiceLineFilter] =
-    useState<ServiceLineFilter>('all')
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+    useState<ServiceLineFilter>(initialServiceLine)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialStatus)
+  const requestedReportWindowRef = useRef<'default' | 'all' | null>(null)
 
   useEffect(() => {
     void ensureProfileDirectoryData()
   }, [ensureProfileDirectoryData])
 
-  const visibleReportingPeriods = [...getVisibleReportingPeriods(state)].reverse()
-  const reportingPeriodOptions = visibleReportingPeriods.map((period) => ({
-    label: period.label,
-    value: period.id,
-  }))
+  useEffect(() => {
+    const nextReportWindow = timeRange === 'all' ? 'all' : 'default'
+
+    if (reportPeriodWindow === nextReportWindow) {
+      requestedReportWindowRef.current = null
+      return
+    }
+
+    if (requestedReportWindowRef.current === nextReportWindow) {
+      return
+    }
+
+    requestedReportWindowRef.current = nextReportWindow
+    void refreshData({ reportPeriodWindow: nextReportWindow })
+  }, [refreshData, reportPeriodWindow, timeRange])
+
+  // All board derivations are memoized on their real inputs so a poll-driven
+  // re-render (or an unrelated state change) does not rebuild the grid; only a
+  // change to the data or the active filters recomputes. Every useMemo is
+  // declared before the `if (!rangeSummary)` early return to satisfy the Rules
+  // of Hooks (hook count must be stable across renders).
+  const visibleReportingPeriods = useMemo(
+    () => [...getVisibleReportingPeriods(state)].reverse(),
+    [state],
+  )
+  const reportingPeriodOptions = useMemo(
+    () =>
+      visibleReportingPeriods.map((period) => ({
+        label: period.label,
+        value: period.id,
+      })),
+    [visibleReportingPeriods],
+  )
   const effectivePeriodId = visibleReportingPeriods.some((period) => period.id === periodId)
     ? periodId
     : currentPeriodId
-  const rangeSummary = getReportingRangeSummary(
-    state,
-    timeRange,
-    effectivePeriodId,
-    serviceLineFilter === 'all' ? undefined : serviceLineFilter,
+  const rangeSummary = useMemo(
+    () =>
+      getReportingRangeSummary(
+        state,
+        timeRange,
+        effectivePeriodId,
+        serviceLineFilter === 'all' ? undefined : serviceLineFilter,
+      ),
+    [state, timeRange, effectivePeriodId, serviceLineFilter],
   )
-  const deadlineNote = getLockDeadlineNote(state, effectivePeriodId)
+
+  // Index nurse names once instead of a state.profiles.find() per board row.
+  const profileNameById = useMemo(() => {
+    const names = new Map<string, string>()
+    state.profiles.forEach((profile) => names.set(profile.id, profile.fullName))
+    return names
+  }, [state.profiles])
+
+  const rows = useMemo(() => {
+    if (!rangeSummary) {
+      return []
+    }
+
+    return getSubmissionBoard(state, rangeSummary.periods.length, effectivePeriodId)
+      .filter((row) =>
+        serviceLineFilter === 'all' ? true : row.department.family === serviceLineFilter,
+      )
+      .filter((row) =>
+        statusFilter === 'all'
+          ? true
+          : row.statuses.some((status) => status.status === statusFilter),
+      )
+      .map((row) => ({
+        id: row.assignment.id,
+        departmentName: row.department.name,
+        templateName: row.template.name,
+        assigneeName: profileNameById.get(row.assignment.nurseId) ?? 'Assigned nurse',
+        statuses: row.statuses.map((status) => ({
+          label: status.period.label.split(' - ')[0],
+          status: status.status,
+          href: `/reports/${row.assignment.id}/${status.period.id}`,
+        })),
+      }))
+  }, [
+    rangeSummary,
+    state,
+    effectivePeriodId,
+    serviceLineFilter,
+    statusFilter,
+    profileNameById,
+  ])
 
   if (!rangeSummary) {
     return null
   }
-
-  const scopedBoardRows = getSubmissionBoard(
-    state,
-    rangeSummary.periods.length,
-    effectivePeriodId,
-  ).filter(
-    (row) =>
-      serviceLineFilter === 'all'
-        ? true
-        : row.department.family === serviceLineFilter,
-  )
-
-  const filteredBoardRows = scopedBoardRows.filter((row) =>
-    statusFilter === 'all'
-      ? true
-      : row.statuses.some((status) => status.status === statusFilter),
-  )
-
-  const rows = filteredBoardRows.map((row) => ({
-    id: row.assignment.id,
-    departmentName: row.department.name,
-    templateName: row.template.name,
-    assigneeName:
-      state.profiles.find((profile) => profile.id === row.assignment.nurseId)?.fullName ??
-      'Assigned nurse',
-    statuses: row.statuses.map((status) => ({
-      label: status.period.label.split(' - ')[0],
-      status: status.status,
-      href: `/reports/${row.assignment.id}/${status.period.id}`,
-    })),
-  }))
 
   const scopeLabel =
     serviceLineOptions.find((option) => option.value === serviceLineFilter)?.label ??
@@ -116,133 +181,73 @@ export function SubmissionBoardPage() {
   const timeRangeLabel =
     timeRangeOptions.find((option) => option.value === timeRange)?.label ??
     'Current week'
-  const rangeStart = rangeSummary.periods[0]
-  const rangeEnd = rangeSummary.periods.at(-1)
-  const rangeNote =
-    timeRange === 'current'
-      ? rangeEnd?.label ?? 'Selected week'
-      : rangeStart && rangeEnd
-        ? `${format(new Date(rangeStart.weekStart), 'MMM d')} - ${format(
-            new Date(rangeEnd.weekEnd),
-            'MMM d, yyyy',
-          )}`
-        : 'No reporting periods'
-  const deliveredCount =
-    rangeSummary.metrics.submitted +
-    rangeSummary.metrics.locked +
-    rangeSummary.metrics.editedAfterSubmission
-  const overdueCount = rangeSummary.metrics.overdue
-  const summaryItems = [
-    {
-      label: 'Rows in view',
-      value: formatCompactNumber(filteredBoardRows.length),
-      note: `${scopeLabel} / ${statusLabel}`,
-      icon: Rows3,
-      tone: 'text-[#005db6] bg-[#edf4fb] outline-[#cfe0f4]/75',
-    },
-    {
-      label: 'Delivered',
-      value: formatCompactNumber(deliveredCount),
-      note: `${rangeSummary.metrics.totalExpected ? Math.round((deliveredCount / rangeSummary.metrics.totalExpected) * 100) : 0}% of expected`,
-      icon: CheckCircle2,
-      tone: 'text-[#00468c] bg-[#edf4fb] outline-[#cfe0f4]/75',
-    },
-    {
-      label: 'Overdue',
-      value: formatCompactNumber(overdueCount),
-      note: overdueCount ? 'Needs follow-up' : 'No late submissions',
-      icon: AlertTriangle,
-      tone: 'text-[#8a5a00] bg-[#fcf5e8] outline-[#edd9b0]/75',
-    },
-    timeRange === 'current'
-      ? {
-          label: 'Lock deadline',
-          value: deadlineNote ? format(deadlineNote, 'EEE, MMM d') : 'Not set',
-          note: deadlineNote ? format(deadlineNote, 'HH:mm') : 'No lock scheduled',
-          icon: Lock,
-          tone: 'text-[#1d3047] bg-[#edf1f5] outline-[#d4dde8]/75',
-        }
-      : {
-          label: 'Range',
-          value: `${formatCompactNumber(rangeSummary.periods.length)} ${
-            rangeSummary.periods.length === 1 ? 'week' : 'weeks'
-          }`,
-          note: rangeNote,
-          icon: CalendarDays,
-          tone: 'text-[#1d3047] bg-[#edf1f5] outline-[#d4dde8]/75',
-        },
-  ] as const
+
+  const sectionClass =
+    'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
 
   return (
-    <div className="space-y-8">
-      <section className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-5">
-        <ReportingScopePanel
-          className="w-full max-w-[760px]"
-          fields={[
-            {
-              label: 'Time range',
-              options: timeRangeOptions,
-              placeholder: 'Time range',
-              value: timeRange,
-              onValueChange: (value) => setTimeRange(value as ReportingTimeRange),
-              triggerClassName: 'text-[0.95rem]',
-            },
-            {
-              label: 'Ending period',
-              options: reportingPeriodOptions,
-              placeholder: 'Ending period',
-              value: effectivePeriodId,
-              onValueChange: setPeriodId,
-              triggerClassName: 'text-[0.95rem]',
-            },
-            {
-              label: 'Service line',
-              options: serviceLineOptions,
-              placeholder: 'Service line',
-              value: serviceLineFilter,
-              onValueChange: (value) => setServiceLineFilter(value as ServiceLineFilter),
-              triggerClassName: 'text-[0.95rem]',
-            },
-            {
-              label: 'Status',
-              options: statusOptions,
-              placeholder: 'Status',
-              value: statusFilter,
-              onValueChange: (value) => setStatusFilter(value as StatusFilter),
-              triggerClassName: 'text-[0.95rem]',
-            },
-          ]}
-        />
-        <div className="mt-4 grid gap-3 border-t border-[#d9e0e7] pt-4 sm:grid-cols-2 xl:grid-cols-4">
-          {summaryItems.map((item) => {
-            const Icon = item.icon
-
-            return (
-              <div
-                key={item.label}
-                className={`rounded-[0.35rem] px-3.5 py-3 outline outline-1 ${item.tone}`}
-              >
-                <div className="flex items-center gap-2">
-                  <Icon className="h-3.5 w-3.5" />
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">
-                    {item.label}
-                  </p>
-                </div>
-                <p className="mt-3 font-display text-[1.35rem] leading-none tracking-[-0.03em]">
-                  {item.value}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-current/75">{item.note}</p>
-              </div>
-            )
-          })}
+    <div className="space-y-6 px-4 py-5 md:px-6 md:py-8">
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, ease: 'easeOut' }}
+        className={sectionClass}
+      >
+        <div>
+          <ReportingScopePanel
+            className="w-full"
+            collapsibleLabel="Filters"
+            summary={`${timeRangeLabel} · ${scopeLabel} · ${statusLabel}`}
+            fields={[
+              {
+                label: 'Time range',
+                options: timeRangeOptions,
+                placeholder: 'Time range',
+                value: timeRange,
+                onValueChange: (value) => setTimeRange(value as ReportingTimeRange),
+                triggerClassName: 'text-[0.95rem]',
+              },
+              {
+                label: 'Ending period',
+                options: reportingPeriodOptions,
+                placeholder: 'Ending period',
+                value: effectivePeriodId,
+                onValueChange: setPeriodId,
+                triggerClassName: 'text-[0.95rem]',
+              },
+              {
+                label: 'Service line',
+                options: serviceLineOptions,
+                placeholder: 'Service line',
+                value: serviceLineFilter,
+                onValueChange: (value) => setServiceLineFilter(value as ServiceLineFilter),
+                triggerClassName: 'text-[0.95rem]',
+              },
+              {
+                label: 'Status',
+                options: statusOptions,
+                placeholder: 'Status',
+                value: statusFilter,
+                onValueChange: (value) => setStatusFilter(value as StatusFilter),
+                triggerClassName: 'text-[0.95rem]',
+              },
+            ]}
+          />
         </div>
-      </section>
+      </motion.section>
 
-      <SubmissionBoardGrid
-        title={timeRange === 'current' ? 'Current reporting board' : 'Reporting board'}
-        description={`${scopeLabel} / ${statusLabel} / ${timeRangeLabel} / ${formatCompactNumber(rangeSummary.metrics.totalExpected)} expected`}
-        rows={rows}
-      />
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, ease: 'easeOut', delay: 0.04 }}
+      >
+        <SubmissionBoardGrid
+          eyebrow="Reporting status"
+          title={timeRange === 'current' ? 'Current reporting board' : 'Reporting board'}
+          description={`${scopeLabel} / ${statusLabel} / ${timeRangeLabel} / ${formatCompactNumber(rangeSummary.metrics.totalExpected)} expected`}
+          rows={rows}
+        />
+      </motion.div>
     </div>
   )
 }

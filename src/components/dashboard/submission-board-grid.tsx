@@ -10,14 +10,16 @@ const statusTone: Record<ReportStatus, string> = {
   submitted: 'bg-[#edf7f0] text-[#1f6b3b]',
   edited_after_submission: 'bg-[#fbf4e6] text-[#8a5a00]',
   locked: 'bg-[#e7edf6] text-[#244261]',
-  overdue: 'bg-[#fff1f1] text-[#9d2a2a]',
+  overdue: 'bg-[#fceeee] text-[#ba1a1a]',
 }
 
 export function SubmissionBoardGrid({
+  eyebrow = 'Reporting board',
   title,
   description,
   rows,
 }: {
+  eyebrow?: string
   title: string
   description: string
   rows: Array<{
@@ -32,52 +34,58 @@ export function SubmissionBoardGrid({
     }>
   }>
 }) {
-  const columnHeaders = rows[0]?.statuses.map((status) => status.label) ?? []
-
   return (
-    <section className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-6 md:px-7">
+    <section className="rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7">
       <div className="space-y-5">
-        <div className="space-y-2">
-          <h2 className="font-display text-[1.9rem] text-[#000a1e]">{title}</h2>
-          <p className="max-w-2xl text-sm leading-7 text-[#44474e] md:text-base">{description}</p>
+        <div className="border-b border-[#eef2f6] pb-5">
+          <div className="flex items-center gap-2">
+            <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+              {eyebrow}
+            </p>
+          </div>
+          <h2 className="mt-2 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
+            {title}
+          </h2>
+          <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[#74777f]">{description}</p>
         </div>
 
-        <div className="hidden gap-3 bg-[#ffffff] px-4 py-3 text-[11px] font-bold uppercase tracking-[0.18em] text-[#000a1e] md:grid md:grid-cols-[minmax(180px,1.2fr)_minmax(160px,1fr)_repeat(4,minmax(120px,1fr))]">
+        {/* Each row is an info column + a self-labeled grid of weekly status cards.
+            Cards carry their own week label, so no global week-column header is needed. */}
+        <div className="hidden gap-5 px-1 text-xs font-bold uppercase tracking-[0.12em] text-[#526171] md:grid md:grid-cols-[minmax(190px,250px)_1fr]">
           <span>Department</span>
-          <span>Template</span>
-          {columnHeaders.map((header) => (
-            <span key={header}>{header}</span>
-          ))}
+          <span>Reporting weeks · newest first</span>
         </div>
         <div className="space-y-0">
           {rows.map((row) => (
             <div
               key={row.id ?? `${row.departmentName}-${row.templateName}-${row.statuses[0]?.href ?? 'row'}`}
-              className="grid gap-3 border-t border-[#d4dde8] py-5 transition-all first:border-t-0 md:grid-cols-[minmax(180px,1.2fr)_minmax(160px,1fr)_repeat(4,minmax(120px,1fr))]"
+              className="grid gap-4 border-t border-[#eef2f6] py-5 first:border-t-0 md:grid-cols-[minmax(190px,250px)_1fr] md:gap-5"
             >
-              <div>
+              <div className="min-w-0">
                 <p className="font-semibold text-[#000a1e]">{row.departmentName}</p>
                 {row.assigneeName ? (
                   <p className="text-sm text-[#74777f]">{row.assigneeName}</p>
                 ) : null}
-                <p className="text-sm text-[#44474e] md:hidden">{row.templateName}</p>
+                <p className="mt-1 text-sm text-[#44474e]">{row.templateName}</p>
               </div>
-              <p className="hidden text-sm text-[#44474e] md:block">{row.templateName}</p>
-              {row.statuses.map((status) => (
-                <Link
-                  key={`${row.departmentName}-${status.label}`}
-                  to={status.href}
-                  className={cn(
-                    'rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] px-3 py-3 text-sm font-medium transition-colors hover:bg-[#f6f8fa]',
-                    statusTone[status.status],
-                  )}
-                >
-                  <p className="mb-2 text-[11px] uppercase tracking-[0.18em]">
-                    {status.label}
-                  </p>
-                  <StatusBadge status={status.status} />
-                </Link>
-              ))}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+                {row.statuses.map((status) => (
+                  <Link
+                    key={`${row.departmentName}-${status.label}`}
+                    to={status.href}
+                    className={cn(
+                      'rounded-[0.4rem] border border-[#e6ecf3] px-3 py-3 text-sm font-medium transition-[transform,border-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#bcd0ea] motion-safe:active:scale-[0.98]',
+                      statusTone[status.status],
+                    )}
+                  >
+                    <p className="mb-2 text-[11px] uppercase tracking-[0.18em] opacity-80">
+                      {status.label}
+                    </p>
+                    <StatusBadge status={status.status} />
+                  </Link>
+                ))}
+              </div>
             </div>
           ))}
         </div>

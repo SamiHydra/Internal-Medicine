@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Environment files — never commit real values; commit only *.example templates.
+.env
+.env.*
+!.env*.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -23,3 +28,35 @@ dist-ssr
 *.sln
 *.sw?
 .codex-temp/
+
+# Third-party design reference (not part of the build)
+design-reference/
+
+# Binary brief archive + generated screenshots (not source)
+files.zip
+PROJECT_CONTEXT_BRIEF.md
+tools/shots/
+
+# Local Playwright dashboard screenshots (dev verification only)
+artifacts/dashboard-shots/
+
+# Local agent/browser automation state
+.claude/
+.playwright-cli/
+
+# Generated QA/audit evidence and ad-hoc build copies
+artifacts/audit-*/
+artifacts/e2e/
+artifacts/load-tests/*.json
+artifacts/walkthrough/
+artifacts/pre-deployment-qa/_raw/
+artifacts/pre-deployment-qa/evidence/
+artifacts/pre-deployment-qa/PLAYWRIGHT_TESTS/.auth/
+tests/e2e/.auth/
+test-results/
+playwright-report/
+dist-*/
+
+# Docker production-parity stack: .env.docker holds only local throwaway
+# placeholders and is a deliverable, so it is exempt from the .env.* rule above.
+!.env.docker

@@ -6,7 +6,7 @@ export function ReportFormPage() {
   const { assignmentId = '', periodId = '' } = useParams()
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 px-4 py-6 md:px-6 md:py-8">
       <ReportForm assignmentId={assignmentId} periodId={periodId} />
     </div>
   )

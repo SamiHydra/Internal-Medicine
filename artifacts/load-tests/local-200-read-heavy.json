@@ -1,0 +1,206 @@
+{
+  "startedAt": "2026-06-03T06:48:54.900Z",
+  "finishedAt": "2026-06-03T06:50:03.460Z",
+  "baseUrl": "http://127.0.0.1:8000",
+  "users": 200,
+  "durationSeconds": 60,
+  "rampSeconds": 20,
+  "sessionCount": 3,
+  "totalRequests": 7570,
+  "totalFailures": 7502,
+  "errorRate": 0.991,
+  "rps": 126.17,
+  "endpoints": {
+    "csrf": {
+      "count": 3,
+      "ok": 3,
+      "failed": 0,
+      "errorRate": 0,
+      "bytes": 0,
+      "rps": 0.05,
+      "p50Ms": 284.1,
+      "p95Ms": 319.4,
+      "p99Ms": 319.4,
+      "maxMs": 319.4,
+      "statuses": {
+        "204": 3
+      }
+    },
+    "login": {
+      "count": 3,
+      "ok": 3,
+      "failed": 0,
+      "errorRate": 0,
+      "bytes": 5765,
+      "rps": 0.05,
+      "p50Ms": 768.4,
+      "p95Ms": 822.1,
+      "p99Ms": 822.1,
+      "maxMs": 822.1,
+      "statuses": {
+        "200": 3
+      }
+    },
+    "workspace-prime": {
+      "count": 3,
+      "ok": 3,
+      "failed": 0,
+      "errorRate": 0,
+      "bytes": 286893,
+      "rps": 0.05,
+      "p50Ms": 417.6,
+      "p95Ms": 446.1,
+      "p99Ms": 446.1,
+      "maxMs": 446.1,
+      "statuses": {
+        "200": 3
+      }
+    },
+    "workspace": {
+      "count": 4537,
+      "ok": 37,
+      "failed": 4500,
+      "errorRate": 0.9918,
+      "bytes": 3528919,
+      "rps": 75.62,
+      "p50Ms": 0.8,
+      "p95Ms": 2.7,
+      "p99Ms": 15001.5,
+      "maxMs": 15004.4,
+      "statuses": {
+        "0": 4500,
+        "200": 37
+      }
+    },
+    "report-details": {
+      "count": 1654,
+      "ok": 10,
+      "failed": 1644,
+      "errorRate": 0.994,
+      "bytes": 543753,
+      "rps": 27.57,
+      "p50Ms": 0.8,
+      "p95Ms": 3.8,
+      "p99Ms": 15001.5,
+      "maxMs": 15003.1,
+      "statuses": {
+        "0": 1644,
+        "200": 10
+      }
+    },
+    "auth-me": {
+      "count": 595,
+      "ok": 5,
+      "failed": 590,
+      "errorRate": 0.9916,
+      "bytes": 10640,
+      "rps": 9.92,
+      "p50Ms": 0.8,
+      "p95Ms": 2177.4,
+      "p99Ms": 15002,
+      "maxMs": 15002.9,
+      "statuses": {
+        "0": 590,
+        "200": 5
+      }
+    },
+    "notifications": {
+      "count": 775,
+      "ok": 7,
+      "failed": 768,
+      "errorRate": 0.991,
+      "bytes": 14553,
+      "rps": 12.92,
+      "p50Ms": 0.8,
+      "p95Ms": 2,
+      "p99Ms": 15001.2,
+      "maxMs": 15003.4,
+      "statuses": {
+        "0": 768,
+        "200": 7
+      }
+    }
+  },
+  "failures": [
+    {
+      "endpoint": "workspace",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "auth-me",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "report-details",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "report-details",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "report-details",
+      "message": "fetch failed"
+    },
+    {
+      "endpoint": "report-details",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "fetch failed"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "fetch failed"
+    },
+    {
+      "endpoint": "report-details",
+      "message": "fetch failed"
+    },
+    {
+      "endpoint": "workspace",
+      "message": "This operation was aborted"
+    },
+    {
+      "endpoint": "report-details",
+      "message": "fetch failed"
+    }
+  ]
+}

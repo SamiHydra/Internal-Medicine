@@ -1,9 +1,14 @@
 import {
   addDays,
   addWeeks,
+  differenceInDays,
+  differenceInHours,
+  differenceInMinutes,
   endOfWeek,
   format,
   isAfter,
+  isThisYear,
+  isYesterday,
   parseISO,
   set,
   startOfWeek,
@@ -81,6 +86,63 @@ export function formatTimestamp(dateString: string | null | undefined) {
   }
 
   return format(parseISO(dateString), 'MMM d, yyyy HH:mm')
+}
+
+/**
+ * A short, scannable timestamp for activity feeds: recent entries read as an
+ * age ("12m ago"), older ones collapse to a date. Pair it with the absolute
+ * timestamp in a `title` so precision is never actually lost.
+ */
+export function formatRelativeTimestamp(dateString: string | null | undefined) {
+  if (!dateString) {
+    return '-'
+  }
+
+  const date = parseISO(dateString)
+  const now = new Date()
+  const minutes = differenceInMinutes(now, date)
+
+  // Future timestamps (clock skew, or a data oddity) fall through to a date
+  // rather than rendering a negative age.
+  if (minutes >= 0) {
+    if (minutes < 1) return 'Just now'
+    if (minutes < 60) return `${minutes}m ago`
+
+    const hours = differenceInHours(now, date)
+    if (hours < 24) return `${hours}h ago`
+    if (isYesterday(date)) return 'Yesterday'
+
+    const days = differenceInDays(now, date)
+    if (days < 7) return `${days}d ago`
+  }
+
+  return isThisYear(date) ? format(date, 'MMM d') : format(date, 'MMM d, yyyy')
+}
+
+/**
+ * Render a value that came out of an audit payload. ISO dates arrive as raw
+ * strings ("2320-02-12"), which read as machine output in a list a human is
+ * scanning.
+ */
+export function formatAuditFieldValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '-'
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+
+  if (typeof value === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return format(parseISO(value), 'MMM d, yyyy')
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}T/.test(value)) {
+      return format(parseISO(value), 'MMM d, yyyy HH:mm')
+    }
+
+    return value
+  }
+
+  if (typeof value === 'object') return JSON.stringify(value)
+
+  return String(value)
 }
 
 export function formatPeriodShortRange(period: ReportingPeriod) {

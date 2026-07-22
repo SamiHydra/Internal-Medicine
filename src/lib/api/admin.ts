@@ -1,0 +1,306 @@
+import { ApiError, type LaravelApiClient } from '@/lib/api/client'
+import { resolveAssignmentReference } from '@/lib/api/helpers'
+import type {
+  ActionItem,
+  ActionItemStatus,
+  AdminAccessRequest,
+  AdminAuditEntry,
+  AdminAuditQuery,
+  AdminAuditResponse,
+  ApiReferenceState,
+  ApiTemplateConfig,
+  CreateAdminAccountPayload,
+  DepartmentReferencePayload,
+  SubmitAdminAccessRequestPayload,
+} from '@/lib/api/types'
+import type { Department, ReportTemplateConfig } from '@/types/domain'
+
+function fieldMetadata(field: ReportTemplateConfig['fields'][number]) {
+  return {
+    ...(field.options?.length ? { options: field.options } : {}),
+    ...(field.unit ? { unit: field.unit } : {}),
+  }
+}
+
+export async function createAdminAccount(
+  client: LaravelApiClient,
+  payload: CreateAdminAccountPayload,
+) {
+  await client.post('/api/admin/users', {
+    fullName: payload.fullName,
+    username: payload.username,
+    email: payload.email,
+    password: payload.password,
+    role: payload.role,
+    title: payload.title,
+    passwordChangeRequired: true,
+  })
+}
+
+export async function updateUserActiveState(
+  client: LaravelApiClient,
+  userId: string,
+  active: boolean,
+) {
+  await client.patch(`/api/admin/users/${userId}/active`, { active })
+}
+
+export async function updateAssignmentActiveState(
+  client: LaravelApiClient,
+  assignmentId: string,
+  active: boolean,
+) {
+  await client.patch(`/api/admin/assignments/${assignmentId}`, { active })
+}
+
+export async function reviewAccessRequest(
+  client: LaravelApiClient,
+  requestId: string,
+  decision: 'approved' | 'rejected',
+) {
+  await client.post(`/api/admin/access-requests/${requestId}/${decision === 'approved' ? 'approve' : 'reject'}`)
+}
+
+/** Public self-signup for an admin account. Creates a pending request only. */
+export async function submitAdminAccessRequest(
+  client: LaravelApiClient,
+  payload: SubmitAdminAccessRequestPayload,
+) {
+  // The reply is non-committal by design and its copy is the only thing that
+  // tells an applicant who already has an account to sign in instead, so it has
+  // to reach the page rather than being discarded here.
+  return client.post<{ status: 'pending'; message?: string }>('/api/admin-access-requests', {
+    fullName: payload.fullName,
+    email: payload.email,
+    password: payload.password,
+    notes: payload.notes,
+  })
+}
+
+export async function fetchAdminAccessRequests(
+  client: LaravelApiClient,
+  status?: AdminAccessRequest['status'],
+): Promise<AdminAccessRequest[]> {
+  const query = status ? `?status=${status}` : ''
+  const response = await client.get<{ data: AdminAccessRequest[] }>(`/api/admin/admin-access-requests${query}`)
+
+  return response.data
+}
+
+export async function reviewAdminAccessRequest(
+  client: LaravelApiClient,
+  requestId: string,
+  decision: 'approved' | 'rejected',
+  profile?: { trainingYear: number; rotationGroup?: string | null },
+) {
+  await client.post(
+    `/api/admin/admin-access-requests/${requestId}/${decision === 'approved' ? 'approve' : 'reject'}`,
+    decision === 'approved' ? profile : undefined,
+  )
+}
+
+/** Follow-up action items (auto-opened by critical alerts, or created manually). */
+export async function fetchActionItems(
+  client: LaravelApiClient,
+  status: ActionItemStatus | 'all' = 'open',
+): Promise<{ items: ActionItem[]; openCount: number }> {
+  const response = await client.get<{ data: ActionItem[]; meta: { openCount?: number } }>(
+    `/api/admin/action-items?status=${status}`,
+  )
+
+  return { items: response.data, openCount: response.meta?.openCount ?? 0 }
+}
+
+export async function updateActionItem(
+  client: LaravelApiClient,
+  id: string,
+  payload: Partial<{
+    status: ActionItemStatus
+    resolution_note: string
+    assigned_to: string | null
+    severity: 'low' | 'medium' | 'high'
+  }>,
+): Promise<ActionItem> {
+  return client.patch<ActionItem>(`/api/admin/action-items/${id}`, payload)
+}
+
+export async function createActionItem(
+  client: LaravelApiClient,
+  payload: { title: string; description?: string; severity?: 'low' | 'medium' | 'high' },
+): Promise<ActionItem> {
+  return client.post<ActionItem>('/api/admin/action-items', payload)
+}
+
+export type ReportImportResult = {
+  imported: number
+  skipped: number
+  reports: number
+  errors: string[]
+}
+
+/**
+ * Upload a filled import template (CSV or .xlsx). A "total failure" comes back as
+ * a 422 whose body is still the result; surface it as a result, not a throw, so
+ * the UI can show per-row errors. Real failures (403/500/network) still throw.
+ */
+export async function importReports(
+  client: LaravelApiClient,
+  file: File,
+  submit: boolean,
+): Promise<ReportImportResult> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('submit', submit ? '1' : '0')
+
+  try {
+    return await client.post<ReportImportResult>('/api/admin/reports/import', form)
+  } catch (error) {
+    // A "total failure" import (e.g. every row rejected) comes back as a 422 whose
+    // body is still the {imported, skipped, reports, errors[]} result envelope -
+    // surface that as a result so per-row errors render. A *validation* 422 (bad
+    // file type, missing file) carries Laravel's {message, errors:{field:[...]}}
+    // shape instead (no numeric `imported`, `errors` is an object): that must
+    // re-throw so the page shows the real error message, not a false "imported"
+    // summary alongside "No reports were imported".
+    if (
+      error instanceof ApiError &&
+      error.details &&
+      typeof error.details === 'object' &&
+      'imported' in error.details &&
+      typeof (error.details as { imported: unknown }).imported === 'number' &&
+      'errors' in error.details &&
+      Array.isArray((error.details as { errors: unknown }).errors)
+    ) {
+      return error.details as ReportImportResult
+    }
+
+    throw error
+  }
+}
+
+/** Cross-cutting account & access actions (approvals, role/assignment changes) for the Audit Log. */
+export async function fetchAdminAuditTrail(client: LaravelApiClient): Promise<AdminAuditEntry[]> {
+  const response = await client.get<{ data: AdminAuditEntry[] }>('/api/admin/admin-audit-logs')
+
+  return response.data
+}
+
+/**
+ * The workspace-scoped action trail, with the filter vocabulary the server
+ * derives from its audit registry. Scoping happens server-side so the client
+ * never has to know which entity types belong to which workspace.
+ */
+export async function fetchWorkspaceAuditTrail(
+  client: LaravelApiClient,
+  query: AdminAuditQuery = {},
+): Promise<AdminAuditResponse> {
+  const params: Record<string, string> = {}
+
+  if (query.workspace) params.workspace = query.workspace
+  if (query.entityType) params.entity_type = query.entityType
+  if (query.userId) params.user_id = query.userId
+  if (query.action) params.action = query.action
+  if (query.search) params.search = query.search
+  if (query.dateFrom) params.date_from = query.dateFrom
+  if (query.dateTo) params.date_to = query.dateTo
+  if (query.limit) params.limit = String(query.limit)
+
+  return client.get<AdminAuditResponse>('/api/admin/admin-audit-logs', {
+    query: params,
+  })
+}
+
+/** Full template definitions (incl. inactive fields + presentation metadata) for the editor. */
+export async function fetchAdminTemplates(
+  client: LaravelApiClient,
+): Promise<ApiTemplateConfig[]> {
+  const response = await client.get<{ data: ApiTemplateConfig[] }>('/api/admin/templates')
+
+  return response.data
+}
+
+export async function updateTemplateContent(
+  client: LaravelApiClient,
+  slug: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  await client.patch(`/api/admin/templates/${slug}`, payload)
+}
+
+export async function setTemplateFieldActive(
+  client: LaravelApiClient,
+  slug: string,
+  fieldKey: string,
+  active: boolean,
+): Promise<void> {
+  await client.patch(`/api/admin/templates/${slug}/fields/${fieldKey}/active`, { active })
+}
+
+export async function ensureDepartmentReferenceData(
+  client: LaravelApiClient,
+  department: Department,
+  template: ReportTemplateConfig,
+): Promise<{ departmentId: string; templateId: string }> {
+  const templateRow = await client.post<{ id: string }>('/api/admin/templates', {
+    slug: template.id,
+    family: template.family,
+    name: template.name,
+    description: template.description,
+    activeDays: template.activeDays,
+    metadata: { ui_family: template.family },
+    fields: template.fields.map((field, index) => ({
+      sectionKey: field.sectionId,
+      fieldKey: field.id,
+      label: field.label,
+      fieldKind: field.kind,
+      aggregateType: field.aggregate,
+      displayOrder: (index + 1) * 10,
+      metadata: fieldMetadata(field),
+    })),
+  })
+  const departmentRow = await client.post<{ id: string }>('/api/admin/departments', {
+    slug: department.id,
+    family: department.family,
+    templateId: template.id,
+    name: department.name,
+    description: department.description,
+    accentColor: department.accent,
+    bedCount: department.bedCount ?? null,
+    active: true,
+  })
+
+  return {
+    departmentId: departmentRow.id,
+    templateId: templateRow.id,
+  }
+}
+
+export async function assignUserToDepartment(
+  client: LaravelApiClient,
+  references: ApiReferenceState,
+  userId: string,
+  departmentSlug: string,
+  templateSlug: string,
+  approverId?: string,
+) {
+  void approverId
+
+  const resolvedReference = resolveAssignmentReference(
+    references,
+    departmentSlug,
+    templateSlug,
+  )
+
+  if (!resolvedReference) {
+    throw new Error('The selected department or template is not available in the API.')
+  }
+
+  await client.post('/api/admin/assignments', {
+    nurseId: userId,
+    departmentId: resolvedReference.departmentId,
+    templateId: resolvedReference.templateId,
+    active: true,
+  })
+}
+
+export type { DepartmentReferencePayload }
