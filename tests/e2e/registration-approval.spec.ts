@@ -1,7 +1,14 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { anonContext, apiContextFromState, apiLoginRaw, ajaxHeaders, xsrfToken } from './helpers/api'
+import { anonContext, apiContextFromState, apiLoginRaw, ajaxHeaders, xsrfToken, flushRateLimits } from './helpers/api'
 import { authFile } from './helpers/auth'
 import { DEV_PASSWORD, QA_MARKER } from './helpers/accounts'
+
+// Each self-registration flow signs up and logs in against the shared per-IP
+// throttle bucket; reset it before every test so accumulated count from earlier
+// tests (or the setup logins) does not 429 a legitimate registration or login.
+test.beforeEach(async () => {
+  await flushRateLimits()
+})
 
 /**
  * Gap A.2 / risk-area #2 — the in-flux registration + approval subsystem has zero
@@ -193,6 +200,10 @@ test.describe('Academic self-signup and approval', () => {
     // Pick the Resident role card (scoped so "Consultant / Evaluate residents." does
     // not also match).
     await page.getByRole('button').filter({ has: page.getByText('Resident', { exact: true }) }).click()
+
+    // Residents must declare a training year (a required field on the academic
+    // enrollment form); pick one so client validation lets the submit through.
+    await page.getByRole('radio', { name: 'Year 2' }).click()
 
     await page.getByRole('button', { name: /request academic account/i }).first().click()
     await expect(page.getByText(/awaiting approval/i).first()).toBeVisible({ timeout: 20_000 })
