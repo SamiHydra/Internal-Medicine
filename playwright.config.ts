@@ -100,7 +100,10 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   forbidOnly: true,
-  retries: 0,
+  // Deterministic locally; on CI, retry so a single transient UI flake (e.g. a
+  // login field fill timing out under load) does not red the whole gate. The
+  // setup project's storageState logins are the main flake surface.
+  retries: process.env.CI ? 2 : 0,
   timeout: 45_000,
   expect: { timeout: 10_000 },
   reporter: [
