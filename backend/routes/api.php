@@ -65,6 +65,19 @@ Route::post('/access-requests', [AccessRequestSubmissionController::class, 'stor
 Route::post('/academic-access-requests', [AcademicRegistrationController::class, 'store'])->middleware('throttle:10,1');
 Route::post('/admin-access-requests', [AdminRegistrationController::class, 'store'])->middleware('throttle:10,1');
 
+// Test-only: clears the rate-limiter store so the e2e suite can reset the
+// shared per-IP throttle bucket between specs (Laravel keys the default limiter
+// on domain+IP, not path, so all the public auth/registration endpoints share
+// one bucket and a spec's own request volume would otherwise 429). Registered
+// only in local - it does not exist under APP_ENV=production or testing.
+if (app()->environment('local')) {
+    Route::post('/testing/flush-rate-limits', function () {
+        cache()->flush();
+
+        return response()->noContent();
+    });
+}
+
 // A generous per-user ceiling (300/min) - far above any legitimate session
 // (the admin dashboard's burst + 20s poll is a fraction of this) - so a single
 // compromised or runaway client cannot hammer the read/analytics endpoints.

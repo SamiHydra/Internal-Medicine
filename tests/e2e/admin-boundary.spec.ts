@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { apiContextFromState, apiLoginRaw, ajaxHeaders, xsrfToken } from './helpers/api'
+import { apiContextFromState, apiLoginRaw, ajaxHeaders, xsrfToken, flushRateLimits } from './helpers/api'
 import { DEV_PASSWORD, QA_MARKER } from './helpers/accounts'
 
 /**
@@ -85,6 +85,9 @@ test.describe('True admin vs superadmin boundary', () => {
     superadmin = await apiContextFromState('superadmin')
     await ensureAdmin(superadmin, ADMIN_A)
     adminBId = await ensureAdmin(superadmin, ADMIN_B)
+    // Clear the shared per-IP login bucket the setup project's 8 role logins
+    // have already drawn down, so the fresh admin login below is not a 429.
+    await flushRateLimits()
     // Proves the created admin can authenticate IMMEDIATELY (no force-password
     // flow); apiLoginRaw throws if the login is rejected.
     admin = await apiLoginRaw(ADMIN_A.email, DEV_PASSWORD)

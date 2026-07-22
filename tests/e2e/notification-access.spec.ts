@@ -152,7 +152,9 @@ test.describe('Regression C-AUTHZ-001: the notification surface is reachable in 
     await expect(page.getByRole('heading', { name: 'Recent activity' })).toBeVisible()
 
     // The notification the system addressed to this resident renders for them.
-    await expect(page.getByText(title)).toBeVisible()
+    // The title also appears inside the message paragraph, so scope to the first
+    // match rather than tripping strict mode on two elements.
+    await expect(page.getByText(title).first()).toBeVisible()
 
     // No permission wall and no crash on the notification surface for this role.
     const forbidden = diagnostics.apiResponses.filter(

@@ -1,6 +1,6 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
 
-import { apiContextFromState, anonContext, ajaxHeaders, xsrfToken } from './helpers/api'
+import { apiContextFromState, anonContext, ajaxHeaders, xsrfToken, flushRateLimits } from './helpers/api'
 import { ACCOUNTS, DEV_PASSWORD, QA_MARKER } from './helpers/accounts'
 
 /**
@@ -94,6 +94,9 @@ function academicPayload(email: string): Record<string, unknown> {
     email,
     password: DEV_PASSWORD,
     role: 'resident',
+    // Residents must carry a training year (required_if:role,resident); without
+    // it the payload 422s on validation before the email-state branch under test.
+    trainingYear: 2,
     notes: QA_MARKER,
   }
 }
@@ -119,6 +122,13 @@ const endpoints = [
 ] as const
 
 test.describe('Regression C-SEC-004: registration endpoints do not disclose account existence', () => {
+  // Each test makes several POSTs to the shared per-IP registration bucket; reset
+  // it first so a test starts with a clean allowance rather than inheriting the
+  // accumulated count from the prior endpoint's probes.
+  test.beforeEach(async () => {
+    await flushRateLimits()
+  })
+
   for (const endpoint of endpoints) {
     test(`${endpoint.label} answers identically for existing / pending / unknown emails`, async () => {
       // Emails are namespaced per endpoint: the academic + admin endpoints share

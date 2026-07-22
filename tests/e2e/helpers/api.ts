@@ -69,3 +69,22 @@ export async function anonContext(): Promise<APIRequestContext> {
   await ctx.get('/sanctum/csrf-cookie', { headers: ajaxHeaders() })
   return ctx
 }
+
+/**
+ * Reset the shared per-IP rate-limit bucket via the local-only testing route, so
+ * a spec's own request volume does not trip the public auth/registration
+ * throttles (Laravel keys the default limiter on domain+IP, not path, so those
+ * endpoints share one bucket across the whole serial run). Self-contained and
+ * best-effort: a non-local backend simply 404s and the call is a no-op.
+ */
+export async function flushRateLimits(): Promise<void> {
+  const ctx = await anonContext()
+  try {
+    const token = await xsrfToken(ctx)
+    await ctx.post('/api/testing/flush-rate-limits', { headers: ajaxHeaders(token) })
+  } catch {
+    // Best-effort: never fail a test because the reset route was unavailable.
+  } finally {
+    await ctx.dispose()
+  }
+}

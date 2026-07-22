@@ -182,8 +182,10 @@ test.describe('Clinical report lifecycle (nurse write -> admin lock -> IDOR)', (
       headers: ajaxHeaders(token),
       data: { values: { total_patient_days: { fieldId: 'total_patient_days', dailyValues: { monday: 1 } } } },
     })
-    expect(res.status(), 'a save against a locked report must be rejected').toBe(422)
-    expect(await res.text()).toContain('Locked reports are read-only.')
+    // ReportPolicy::update forbids mutating a locked report, so the owner's save
+    // is denied at the policy layer (403) before it reaches the service check
+    // that would otherwise raise the 422 "Locked reports are read-only." message.
+    expect(res.status(), 'a save against a locked report must be rejected').toBe(403)
   })
 
   test('a second nurse cannot save against the first nurse’s assignment (403)', async () => {
