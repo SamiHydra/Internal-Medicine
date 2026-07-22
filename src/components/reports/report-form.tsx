@@ -1460,6 +1460,32 @@ export function ReportForm({
   const isRouteDataLoading =
     appData.isBootstrapping || isDataRefreshing || isSyncing
 
+  // AUD-UI-020: the default period window only loads recent reports, but every
+  // period is listed, so opening a period OUTSIDE that window finds no report
+  // and would render an editable "Not started" blank even when a locked report
+  // exists for it. Pull the full window once before trusting the empty result,
+  // so a real locked/submitted report loads and renders read-only. The common
+  // in-window case resolves a report immediately and never triggers this.
+  const resolvedReport = getReportForAssignmentPeriod(appData.state, assignmentId, periodId)
+  const needsFullReportWindow =
+    Boolean(assignmentId) &&
+    Boolean(periodId) &&
+    !resolvedReport &&
+    appData.reportPeriodWindow !== 'all'
+  const requestedFullWindowRef = useRef(false)
+
+  useEffect(() => {
+    // Reset the one-shot guard if the route points at a different report.
+    requestedFullWindowRef.current = false
+  }, [assignmentId, periodId])
+
+  useEffect(() => {
+    if (needsFullReportWindow && !isRouteDataLoading && !requestedFullWindowRef.current) {
+      requestedFullWindowRef.current = true
+      void appData.refreshData({ reportPeriodWindow: 'all' })
+    }
+  }, [needsFullReportWindow, isRouteDataLoading, appData])
+
   if (!assignmentId || !periodId) {
     return (
       <ReportStatePanel
@@ -1524,6 +1550,17 @@ export function ReportForm({
             ? 'The report may belong to another nurse or an assignment that is no longer active.'
             : 'The assignment or reporting period may have been removed, or the link may be stale.'
         }
+      />
+    )
+  }
+
+  // Hold the editable form back until the full window has loaded, so an
+  // out-of-window locked report is never briefly presented as a blank draft.
+  if (needsFullReportWindow) {
+    return (
+      <ReportStatePanel
+        title="Loading report"
+        description="Fetching the full reporting history to confirm this report's status."
       />
     )
   }
