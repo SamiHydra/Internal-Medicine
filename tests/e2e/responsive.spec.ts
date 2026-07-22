@@ -205,10 +205,12 @@ test.describe('Responsive shell - workspace switcher on touch (admin @ phone)', 
     // Selecting Academic navigates to the academic dashboard (and closes the sheet).
     await expect(page).toHaveURL(/\/admin\/academic/)
     await awaitShell(page)
-    const afterWorkspace = await page.evaluate(() =>
-      window.localStorage.getItem('stpaul:workspace'),
-    )
-    expect(afterWorkspace).toBe('academic')
+    // The 'stpaul:workspace' mirror is written by a React passive effect
+    // (workspace-context.tsx), which can lag the navigation/URL flip by a tick.
+    // Poll the storage read so it is deterministic rather than a one-shot race.
+    await expect
+      .poll(() => page.evaluate(() => window.localStorage.getItem('stpaul:workspace')))
+      .toBe('academic')
 
     // Persists across a full reload: reopen the sheet, Academic is still pressed.
     await page.reload()

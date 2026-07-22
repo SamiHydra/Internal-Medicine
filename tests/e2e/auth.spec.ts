@@ -19,12 +19,14 @@ test.describe('Authentication', () => {
     await page.locator('#identifier').fill(ACCOUNTS.superadmin.identifier)
     await page.locator('#password').fill('wrong-password-123')
     await page.getByRole('button', { name: /sign in to reporting portal/i }).click()
-    // The inline form error appears and we are not navigated into the app.
+    // The PERSISTENT inline form error appears and we are not navigated into the
+    // app. (The raw Laravel "These credentials do not match our records." string
+    // surfaces only in an auto-dismissing ~4s Sonner toast, which races the poll
+    // on slower engines; the non-enumeration guarantee is asserted at the API
+    // layer, not on transient toast text.)
     await expect(
       page.getByText('Check your email and password and try again.'),
     ).toBeVisible({ timeout: 15_000 })
-    // The backend returns the generic Laravel auth message (no user enumeration).
-    await expect(page.getByText('These credentials do not match our records.')).toBeVisible()
     await expect(page).toHaveURL(/\/login/)
   })
 

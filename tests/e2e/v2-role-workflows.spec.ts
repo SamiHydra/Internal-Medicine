@@ -13,13 +13,29 @@ test.describe('Morning recorder policy', () => {
     await context.close()
   })
 
-  test('non-designated resident is denied by the API', async () => {
+  test('non-designated resident gets a safe read-only state from the API', async () => {
     const api = await apiContextFromState('non_recorder')
-    expect((await api.get('/api/academic/morning-sessions/today', { headers: ajaxHeaders() })).status()).toBe(403)
+    // A resident/consultant who is NOT the designated recorder is not denied:
+    // MorningSessionPolicy::viewToday returns a safe 200 with canRecord:false and
+    // the expected-person roster omitted, without lazy-opening a session. The 403
+    // boundary belongs to nurse/student_rep (they lack morningAttendance.record).
+    // Pinned by V2ReadAuthorizationTest + ROLE_PERMISSION_MATRIX.md:278.
+    const res = await api.get('/api/academic/morning-sessions/today', { headers: ajaxHeaders() })
+    expect(res.status()).toBe(200)
+    const body = await res.json()
+    expect(body.canRecord).toBe(false)
+    expect(body.session?.people).toBeUndefined()
     await api.dispose()
   })
 
-  test('designated recorder cancels a pending session with an audited reason', async ({ browser }) => {
+  test('designated recorder cancels a pending session with an audited reason', async ({ browser, browserName }) => {
+    // Destructive and non-idempotent: this permanently cancels the singleton
+    // "today" morning session, and the domain has no un-cancel path (a cancelled
+    // session can never return to pending). The spec is in CROSS_BROWSER_UI and
+    // replays against one seed-once DB, so a second engine finds the session
+    // already cancelled (the cancel form correctly hidden) and fails. Pin the
+    // mutation to the CI project so it stays deterministic across engines.
+    test.skip(browserName !== 'chromium', 'Mutates the shared seed-once DB; runs once on the CI (chromium) project.')
     const context = await browser.newContext({ storageState: authFile('resident') })
     const page = await context.newPage()
     const reason = 'E2E recorder cancellation verification'
@@ -66,11 +82,11 @@ test.describe('Admin academic runtime behavior', () => {
 
     await page.goto('/admin/academic', { waitUntil: 'domcontentloaded' })
     await page.getByRole('button', { name: 'Morning sessions' }).click()
-    await expect(page.getByText('Morning punctuality')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Punctuality and attendance' })).toBeVisible()
     await page.getByRole('button', { name: 'Teaching activities' }).click()
     await expect(page.getByText('Teaching activities').last()).toBeVisible()
     await page.getByRole('button', { name: 'Morning sessions' }).click()
-    await expect(page.getByText('Morning punctuality')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Punctuality and attendance' })).toBeVisible()
 
     expect(morningRequests).toBe(1)
   })

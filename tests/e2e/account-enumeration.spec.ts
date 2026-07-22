@@ -49,12 +49,16 @@ test.beforeAll(async () => {
   expect(deptRes.status(), 'need departments to build a valid clinical payload').toBe(200)
   expect(tplRes.status(), 'need templates to build a valid clinical payload').toBe(200)
 
-  const departments = ((await deptRes.json()).data ?? []) as Array<{ id: string; template_id: string | null }>
+  // The admin serializer emits camelCase `templateId` (SerializesAdminResources
+  // ::serializeDepartment), NOT `template_id`; reading the snake_case key left the
+  // department lookup permanently undefined and aborted the whole describe in
+  // beforeAll, so no enumeration probe was ever sent.
+  const departments = ((await deptRes.json()).data ?? []) as Array<{ id: string; templateId: string | null }>
   const templates = ((await tplRes.json()).data ?? []) as Array<{ id: string; active?: boolean }>
   const activeTemplateIds = new Set(templates.filter((t) => t.active !== false).map((t) => t.id))
-  const department = departments.find((d) => d.template_id && activeTemplateIds.has(d.template_id))
+  const department = departments.find((d) => d.templateId && activeTemplateIds.has(d.templateId))
   expect(department, 'expected an active department linked to an active template').toBeTruthy()
-  assignment = { departmentId: department!.id, templateId: department!.template_id! }
+  assignment = { departmentId: department!.id, templateId: department!.templateId! }
 
   await admin.dispose()
 })

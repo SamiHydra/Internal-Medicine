@@ -172,11 +172,13 @@ test.describe('Section transfers: consultant object-level isolation', () => {
     expect(mine.status()).toBe(200)
     expect(((await mine.json()).data ?? []).map((t: TransferRow) => t.id)).not.toContain(transferId)
 
-    // mesfin holds transfers.review, so the queue answers 200 - but he heads no
-    // section, so a request touching neither of his sections must not appear.
+    // mesfin passes the coarse transfers.review middleware, but he heads no
+    // section, so TransferRequestPolicy::viewAny (isAdminLike OR headsAnySection)
+    // denies him the queue entirely - a 403, which is the STRONGER non-disclosure
+    // than a filtered 200. Documented at ROLE_PERMISSION_MATRIX.md:283; the
+    // filtered-200 branch is the section-head path, exercised elsewhere.
     const review = await other.get('/api/admin/transfer-requests', { headers: ajaxHeaders() })
-    expect(review.status()).toBe(200)
-    expect(((await review.json()).data ?? []).map((t: TransferRow) => t.id)).not.toContain(transferId)
+    expect(review.status()).toBe(403)
   })
 
   test('the owner CAN still cancel it (the foreign 403 was authorization, not a dead route)', async () => {
