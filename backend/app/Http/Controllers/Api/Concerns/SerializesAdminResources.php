@@ -158,6 +158,8 @@ trait SerializesAdminResources
             'fullName' => $adminRequest->full_name,
             'email' => $adminRequest->email,
             'requestedRole' => $adminRequest->requested_role,
+            'trainingYear' => $adminRequest->training_year,
+            'rotationGroup' => $adminRequest->rotation_group,
             'status' => $adminRequest->status,
             'notes' => $adminRequest->notes,
             'requestedAt' => $adminRequest->requested_at?->toJSON(),

@@ -25,6 +25,8 @@ class AdminAccessRequest extends Model
         'status',
         'notes',
         'home_ward_id',
+        'training_year',
+        'rotation_group',
         'requested_at',
         'reviewed_at',
         'reviewed_by',
@@ -41,6 +43,7 @@ class AdminAccessRequest extends Model
             'password' => 'hashed',
             'requested_at' => 'datetime',
             'reviewed_at' => 'datetime',
+            'training_year' => 'integer',
         ];
     }
 

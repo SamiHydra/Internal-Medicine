@@ -43,6 +43,8 @@ class DevAcademicDataSeeder extends Seeder
 {
     private const DEV_PASSWORD = 'StPaul2026!';
 
+    private const RANDOM_SEED = 20260722;
+
     private const CONSULTANTS_PER_SECTION = 2;
 
     private const RESIDENTS_PER_SECTION = 3;
@@ -72,6 +74,8 @@ class DevAcademicDataSeeder extends Seeder
         if (app()->environment('production', 'testing')) {
             return;
         }
+
+        mt_srand(self::RANDOM_SEED);
 
         $admin = User::query()->where('email', 'admin@stpaulos.local')->first();
 
@@ -110,32 +114,50 @@ class DevAcademicDataSeeder extends Seeder
     }
 
     /**
-     * Keep the documented browser-test resident and consultant on the same
-     * current ward service so the evaluation journey is always executable.
+     * Keep every documented browser-test academic identity inside the same
+     * coherent section roster as the generated staff. This prevents orphaned
+     * walkthrough accounts from creating false setup-health warnings.
      *
      * @param  array<string, array{consultants: list<User>, residents: list<User>}>  $staff
      */
     private function includeWalkthroughAcademicUsers($sections, array &$staff): void
     {
-        $section = $sections->first();
-        if ($section === null) {
+        $firstSection = $sections->first();
+        $secondSection = $sections->skip(1)->first() ?? $firstSection;
+        if ($firstSection === null || $secondSection === null) {
             return;
         }
 
-        $consultant = User::query()->where('email', 'chaltu.tesfaye@stpaulhospital.demo')->first();
-        $resident = User::query()->where('email', 'rediet.bekele@stpaulhospital.demo')->first();
+        foreach ([
+            ['email' => 'chaltu.tesfaye@stpaulhospital.demo', 'section' => $firstSection],
+            ['email' => 'mesfin.girma@stpaulhospital.demo', 'section' => $secondSection],
+        ] as $entry) {
+            $consultant = User::query()->where('email', $entry['email'])->first();
+            $section = $entry['section'];
 
-        if ($consultant !== null) {
-            $consultant->forceFill(['section_id' => $section->id])->save();
-            if (! collect($staff[$section->slug]['consultants'])->contains('id', $consultant->id)) {
-                $staff[$section->slug]['consultants'][] = $consultant;
+            if ($consultant !== null) {
+                $consultant->forceFill(['section_id' => $section->id])->save();
+                if (! collect($staff[$section->slug]['consultants'])->contains('id', $consultant->id)) {
+                    $staff[$section->slug]['consultants'][] = $consultant;
+                }
             }
         }
 
-        if ($resident !== null) {
-            $resident->forceFill(['training_year' => 1, 'rotation_group' => 'A'])->save();
-            if (! collect($staff[$section->slug]['residents'])->contains('id', $resident->id)) {
-                $staff[$section->slug]['residents'][] = $resident;
+        foreach ([
+            ['email' => 'rediet.bekele@stpaulhospital.demo', 'section' => $firstSection, 'year' => 1, 'group' => 'A'],
+            ['email' => 'samuel.alemu@stpaulhospital.demo', 'section' => $secondSection, 'year' => 2, 'group' => 'B'],
+        ] as $entry) {
+            $resident = User::query()->where('email', $entry['email'])->first();
+            $section = $entry['section'];
+
+            if ($resident !== null) {
+                $resident->forceFill([
+                    'training_year' => $entry['year'],
+                    'rotation_group' => $entry['group'],
+                ])->save();
+                if (! collect($staff[$section->slug]['residents'])->contains('id', $resident->id)) {
+                    $staff[$section->slug]['residents'][] = $resident;
+                }
             }
         }
     }
@@ -195,6 +217,7 @@ class DevAcademicDataSeeder extends Seeder
                 'password' => Hash::make(self::DEV_PASSWORD),
                 'active' => true,
                 'password_change_required' => false,
+                'email_verified_at' => now(),
             ], $extra),
         );
     }
@@ -263,10 +286,13 @@ class DevAcademicDataSeeder extends Seeder
         $mdtForm = $forms->published('consultant_mdt');
         $acgmeForm = $forms->published('resident_acgme');
 
-        for ($m = 0; $m <= 12; $m++) {
+        // Seed the trailing year plus enough future coverage to fully span any
+        // active eight-week Year 3 block. Evaluations remain historical only.
+        $coverageEnd = $today->copy()->addMonths(2)->endOfMonth();
+        for ($m = 0; $m <= 14; $m++) {
             $monthStart = $yearStart->copy()->addMonths($m)->startOfMonth();
 
-            if ($monthStart->greaterThan($today)) {
+            if ($monthStart->greaterThan($coverageEnd)) {
                 break;
             }
 
@@ -285,7 +311,19 @@ class DevAcademicDataSeeder extends Seeder
                 $group = $staff[$section->slug];
 
                 foreach (array_merge($group['consultants'], $group['residents']) as $person) {
-                    $roster->createAssignment($person, $wardType, $monthStart, $monthEnd, 'admin', $admin, 'Demo roster');
+                    $roster->createAssignment(
+                        $person,
+                        $wardType,
+                        $monthStart,
+                        $monthEnd,
+                        'rotation_planner',
+                        $admin,
+                        'Quality demo rotation plan',
+                    );
+                }
+
+                if ($monthStart->greaterThan($today)) {
+                    continue;
                 }
 
                 $leadConsultant = $group['consultants'][0];
@@ -414,7 +452,9 @@ class DevAcademicDataSeeder extends Seeder
         $wardB = $wards->firstWhere('slug', 'nephrology_ward');
 
         $blocks = [
-            ['cohort' => 'C2', 'label' => 'C2 Block 1', 'start' => $today->copy()->subWeeks(20), 'weeks' => 9, 'final' => true],
+            ['cohort' => 'C2', 'label' => 'C2 Block 1', 'start' => $today->copy()->subWeeks(36), 'weeks' => 9, 'final' => true],
+            ['cohort' => 'C1', 'label' => 'C1 Block 1', 'start' => $today->copy()->subWeeks(26), 'weeks' => 9, 'final' => true],
+            ['cohort' => 'C2', 'label' => 'C2 Block 2', 'start' => $today->copy()->subWeeks(16), 'weeks' => 9, 'final' => true],
             ['cohort' => 'C1', 'label' => 'C1 Block 2', 'start' => $today->copy()->subWeeks(4), 'weeks' => 12, 'final' => false],
         ];
 
@@ -504,13 +544,16 @@ class DevAcademicDataSeeder extends Seeder
 
         $start = $block['start']->copy()->startOfWeek();
         $end = $start->copy()->addWeeks($block['weeks'])->endOfWeek();
+        $shouldRemainActive = $today->between($start, $end);
 
         $batch = StudentBatch::query()->create([
             'cohort' => $block['cohort'],
             'label' => $block['label'],
             'starts_on' => $start->toDateString(),
             'ends_on' => $end->toDateString(),
-            'active' => $today->between($start, $end),
+            // Keep completed fixtures active while their historical teaching
+            // sessions are generated; retire them after all history is built.
+            'active' => true,
         ]);
 
         $students = [];
@@ -568,11 +611,19 @@ class DevAcademicDataSeeder extends Seeder
             $recorder = $session->subgroup === 'A'
                 ? $reps['subgroup_a']
                 : ($session->subgroup === 'B' ? $reps['subgroup_b'] : $reps['group']);
+            $outcome = $this->teachingOutcome($batch, $session);
             $session->forceFill([
-                'status' => 'held',
+                'status' => $outcome['status'],
+                'reason' => $outcome['reason'],
                 'recorded_by' => $recorder->id,
                 'recorded_at' => $session->scheduled_date,
             ])->save();
+
+            // Not-held and cancelled sessions are intentional anomalies. They
+            // carry a reason but must never fabricate student attendance.
+            if ($outcome['status'] !== 'held') {
+                continue;
+            }
 
             $cohortStudents = $session->subgroup === null
                 ? $students
@@ -600,8 +651,9 @@ class DevAcademicDataSeeder extends Seeder
             DB::table('student_attendance')->insert($attendanceRows);
         }
 
-        // A weekly student evaluation for each student, and a final one for a
-        // finished block.
+        // A genuine weekly evaluation series for every student, plus a final
+        // evaluation for completed blocks. This gives undergraduate analytics
+        // more than six months of trend depth instead of one point per batch.
         $weeklyForm = $forms->published('student_weekly');
         $finalForm = $forms->published('student_final');
         $evalDate = ($end->lessThan($today) ? $end : $today)->copy();
@@ -609,14 +661,19 @@ class DevAcademicDataSeeder extends Seeder
 
         if ($consultant !== null) {
             foreach ($students as $student) {
-                $forms->store($weeklyForm, $this->studentWeeklyPayload(), [
-                    'author_id' => $consultant->id,
-                    'subject_student_id' => $student->id,
-                    'evaluation_date' => $evalDate->toDateString(),
-                    'ward_id' => $wardA?->id,
-                    'placement_type' => 'ward',
-                    'week_starts_on' => $evalDate->copy()->startOfWeek()->toDateString(),
-                ]);
+                $evaluationWeek = $start->copy();
+                while ($evaluationWeek->lessThanOrEqualTo($evalDate)) {
+                    $weeklyDate = $evaluationWeek->copy()->endOfWeek()->min($evalDate);
+                    $forms->store($weeklyForm, $this->studentWeeklyPayload(), [
+                        'author_id' => $consultant->id,
+                        'subject_student_id' => $student->id,
+                        'evaluation_date' => $weeklyDate->toDateString(),
+                        'ward_id' => $student->subgroup === 'B' ? $wardB?->id : $wardA?->id,
+                        'placement_type' => 'ward',
+                        'week_starts_on' => $evaluationWeek->toDateString(),
+                    ]);
+                    $evaluationWeek->addWeek();
+                }
 
                 if ($block['final']) {
                     $forms->store($finalForm, $this->studentFinalPayload(), [
@@ -628,6 +685,10 @@ class DevAcademicDataSeeder extends Seeder
                     ]);
                 }
             }
+        }
+
+        if (! $shouldRemainActive) {
+            $batch->forceFill(['active' => false])->save();
         }
     }
 
@@ -829,5 +890,44 @@ class DevAcademicDataSeeder extends Seeder
             'strengths' => 'Consistent, engaged, and reliable on the ward.',
             'areas_to_improve' => 'Broaden differential reasoning under time pressure.',
         ];
+    }
+
+    /**
+     * Stable operational variation: most teaching happens, while a meaningful
+     * minority is not held or cancelled so exception dashboards are useful.
+     *
+     * @return array{status: 'held'|'not_held'|'cancelled', reason: string|null}
+     */
+    private function teachingOutcome(StudentBatch $batch, TeachingSession $session): array
+    {
+        $signature = implode('|', [
+            $batch->label,
+            $session->scheduled_date->toDateString(),
+            $session->activity_type,
+            $session->subgroup ?? 'cohort',
+        ]);
+        $roll = crc32($signature) % 100;
+
+        if ($roll < 78) {
+            return ['status' => 'held', 'reason' => null];
+        }
+
+        if ($roll < 92) {
+            $reasons = [
+                'Consultant diverted to emergency clinical coverage',
+                'Competing ward round exceeded the scheduled session time',
+                'Students were attending a scheduled assessment',
+            ];
+
+            return ['status' => 'not_held', 'reason' => $reasons[$roll % count($reasons)]];
+        }
+
+        $reasons = [
+            'Hospital-wide clinical meeting',
+            'Public holiday teaching schedule',
+            'Teaching ward temporarily unavailable',
+        ];
+
+        return ['status' => 'cancelled', 'reason' => $reasons[$roll % count($reasons)]];
     }
 }

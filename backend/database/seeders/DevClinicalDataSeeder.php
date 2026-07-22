@@ -31,7 +31,10 @@ use Illuminate\Support\Str;
  */
 class DevClinicalDataSeeder extends Seeder
 {
-    private const HISTORY_PERIOD_COUNT = 26;
+    /** Thirty weeks keeps every trend comfortably beyond six calendar months. */
+    private const HISTORY_PERIOD_COUNT = 30;
+
+    private const RANDOM_SEED = 20260722;
 
     private const INSERT_BATCH_SIZE = 1000;
 
@@ -76,6 +79,8 @@ class DevClinicalDataSeeder extends Seeder
             return;
         }
 
+        mt_srand(self::RANDOM_SEED);
+
         $nurses = User::query()->where('role_key', 'nurse')->where('active', true)->get()->values();
         if ($nurses->isEmpty()) {
             $this->command?->warn('No active nurses found; run DevUserSeeder first.');
@@ -108,7 +113,7 @@ class DevClinicalDataSeeder extends Seeder
             ->get()
             ->groupBy('template_id');
 
-        // Six months gives weekly, monthly and quarterly charts realistic depth
+        // More than six months gives weekly, monthly and quarterly charts realistic depth
         // while remaining safe under the 128 MB PHP limit used in local dev.
         $periods = ReportingPeriod::query()
             ->whereDate('week_start', '<=', now())
@@ -155,6 +160,9 @@ class DevClinicalDataSeeder extends Seeder
 
                 $status = self::STATUS_CYCLE[($deptIndex + $periodIndex) % count(self::STATUS_CYCLE)];
                 $filed = in_array($status, ['submitted', 'locked', 'edited_after_submission'], true);
+                $filedAt = $filed
+                    ? Carbon::parse($period->week_end)->endOfDay()->min($now)
+                    : null;
 
                 $report = Report::query()->updateOrCreate(
                     ['assignment_id' => $assignment->id, 'reporting_period_id' => $period->id],
@@ -162,8 +170,8 @@ class DevClinicalDataSeeder extends Seeder
                         'department_id' => $department->id,
                         'template_id' => $department->template_id,
                         'status' => $status,
-                        'submitted_at' => $filed ? $period->week_end : null,
-                        'locked_at' => $status === 'locked' ? $period->week_end : null,
+                        'submitted_at' => $filedAt,
+                        'locked_at' => $status === 'locked' ? $filedAt : null,
                         'created_by' => $nurse->id,
                         'updated_by' => $nurse->id,
                     ],

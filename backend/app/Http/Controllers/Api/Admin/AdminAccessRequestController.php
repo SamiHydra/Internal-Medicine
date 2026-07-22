@@ -44,7 +44,17 @@ class AdminAccessRequestController extends Controller
     {
         Gate::authorize('review', $adminAccessRequest);
 
-        $reviewed = $this->reviewService->review($request->user(), $adminAccessRequest, 'approved');
+        $profile = $request->validate([
+            'trainingYear' => ['sometimes', 'nullable', 'integer', 'between:1,3'],
+            'rotationGroup' => ['sometimes', 'nullable', 'string', 'max:8', 'regex:/^[A-Za-z0-9-]+$/'],
+        ]);
+
+        $reviewed = $this->reviewService->review(
+            $request->user(),
+            $adminAccessRequest,
+            'approved',
+            $profile,
+        );
 
         return response()->json($this->serializeAdminAccessRequest($reviewed));
     }

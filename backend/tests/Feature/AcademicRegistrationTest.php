@@ -38,6 +38,7 @@ class AcademicRegistrationTest extends TestCase
             'email' => 'Rediet.Bekele@example.test',
             'password' => 'StPaul2026!',
             'role' => 'resident',
+            'trainingYear' => 2,
             'homeWardId' => $this->ward->slug,
             'notes' => 'Rotating through GI/Neuro.',
         ], $overrides))->assertCreated()->assertJsonPath('status', 'pending');
@@ -51,6 +52,7 @@ class AcademicRegistrationTest extends TestCase
             'email' => 'rediet.bekele@example.test',
             'status' => 'pending',
             'requested_role' => 'resident',
+            'training_year' => 2,
             'home_ward_id' => $this->ward->id,
         ]);
 
@@ -96,6 +98,8 @@ class AcademicRegistrationTest extends TestCase
         $this->assertSame('resident', $created->role_key);
         $this->assertSame('Resident', $created->title);
         $this->assertSame($this->ward->id, $created->home_ward_id);
+        $this->assertSame(2, $created->training_year);
+        $this->assertNull($created->rotation_group);
         $this->assertTrue((bool) $created->active);
         $this->assertSame($enrollmentRequest->refresh()->created_user_id, $created->id);
 
@@ -144,6 +148,78 @@ class AcademicRegistrationTest extends TestCase
         $this->assertDatabaseMissing('users', ['email' => 'rediet.bekele@example.test']);
     }
 
+    public function test_a_resident_must_submit_a_training_year(): void
+    {
+        $this->postJson('/api/academic-access-requests', [
+            'fullName' => 'Dr. Missing Year',
+            'email' => 'missing.year@example.test',
+            'password' => 'StPaul2026!',
+            'role' => 'resident',
+        ])->assertUnprocessable()->assertJsonValidationErrors('training_year');
+
+        $this->assertDatabaseMissing('admin_access_requests', [
+            'email' => 'missing.year@example.test',
+        ]);
+    }
+
+    public function test_an_approver_can_correct_the_year_and_assign_a_year_three_group(): void
+    {
+        $this->submitEnrollment(['trainingYear' => 1]);
+        $enrollmentRequest = AdminAccessRequest::query()->firstOrFail();
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/admin/admin-access-requests/{$enrollmentRequest->id}/approve", [
+                'trainingYear' => 3,
+                'rotationGroup' => 'b',
+            ])
+            ->assertOk()
+            ->assertJsonPath('trainingYear', 3)
+            ->assertJsonPath('rotationGroup', 'B');
+
+        $created = User::query()->where('email', 'rediet.bekele@example.test')->firstOrFail();
+        $this->assertSame(3, $created->training_year);
+        $this->assertSame('B', $created->rotation_group);
+    }
+
+    public function test_an_approver_can_complete_a_legacy_resident_request_with_no_submitted_year(): void
+    {
+        $legacyRequest = AdminAccessRequest::query()->create([
+            'full_name' => 'Dr. Legacy Resident',
+            'email' => 'legacy.resident@example.test',
+            'password' => 'StPaul2026!',
+            'requested_role' => 'resident',
+            'status' => 'pending',
+            'training_year' => null,
+            'requested_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/admin/admin-access-requests/{$legacyRequest->id}/approve", [
+                'trainingYear' => 1,
+            ])
+            ->assertOk()
+            ->assertJsonPath('trainingYear', 1);
+
+        $created = User::query()->where('email', 'legacy.resident@example.test')->firstOrFail();
+        $this->assertSame(1, $created->training_year);
+    }
+
+    public function test_year_three_cannot_be_approved_without_a_rotation_group(): void
+    {
+        $this->submitEnrollment(['trainingYear' => 3]);
+        $enrollmentRequest = AdminAccessRequest::query()->firstOrFail();
+
+        $this->actingAs($this->admin)
+            ->postJson("/api/admin/admin-access-requests/{$enrollmentRequest->id}/approve", [
+                'trainingYear' => 3,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('rotationGroup');
+
+        $this->assertSame('pending', $enrollmentRequest->refresh()->status);
+        $this->assertDatabaseMissing('users', ['email' => 'rediet.bekele@example.test']);
+    }
+
     public function test_a_superadmin_request_can_never_be_approved_into_an_account(): void
     {
         // No public endpoint can produce this row; it can only arrive by tampering.
@@ -174,6 +250,7 @@ class AcademicRegistrationTest extends TestCase
             'email' => 'taken@example.test',
             'password' => 'StPaul2026!',
             'role' => 'resident',
+            'trainingYear' => 2,
         ])->assertCreated();
 
         $this->assertDatabaseMissing('admin_access_requests', ['email' => 'taken@example.test']);
@@ -208,6 +285,7 @@ class AcademicRegistrationTest extends TestCase
             'email' => $email,
             'password' => 'StPaul2026!',
             'role' => 'resident',
+            'trainingYear' => 2,
         ]);
 
         $free = $probe('nobody@example.test');
@@ -232,6 +310,7 @@ class AcademicRegistrationTest extends TestCase
             'email' => 'taken@example.test',
             'password' => 'StPaul2026!',
             'role' => 'resident',
+            'trainingYear' => 2,
             'homeWardId' => 'no_such_ward',
         ])->assertStatus(422);
     }
@@ -256,6 +335,7 @@ class AcademicRegistrationTest extends TestCase
             'email' => 'ward@example.test',
             'password' => 'StPaul2026!',
             'role' => 'resident',
+            'trainingYear' => 2,
             'homeWardId' => 'no_such_ward',
         ])->assertStatus(422);
 

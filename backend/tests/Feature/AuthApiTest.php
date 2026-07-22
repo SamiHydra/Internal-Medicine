@@ -258,6 +258,7 @@ class AuthApiTest extends TestCase
                 'email' => $email,
                 'password' => 'AttackerChosen!2026',
                 'role' => 'resident',
+                'trainingYear' => 2,
             ])->assertCreated();
         }
 
@@ -315,6 +316,7 @@ class AuthApiTest extends TestCase
             'email' => 'rediet.bekele@example.test',
             'password' => 'StPaul2026!',
             'role' => 'resident',
+            'trainingYear' => 2,
         ])->assertCreated();
 
         $wrongPassword = $this->postJson('/api/auth/login', [

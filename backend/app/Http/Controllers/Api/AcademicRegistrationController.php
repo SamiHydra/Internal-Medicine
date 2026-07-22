@@ -35,6 +35,7 @@ class AcademicRegistrationController extends Controller
             'password' => ['required', 'string', Password::defaults()],
             'role' => ['required', Rule::in(['resident', 'consultant'])],
             'home_ward_id' => ['nullable', 'string', 'max:80'],
+            'training_year' => ['required_if:role,resident', 'nullable', 'integer', 'between:1,3'],
             'notes' => ['nullable', 'string', 'max:1000'],
         ])->validate();
 
@@ -78,6 +79,8 @@ class AcademicRegistrationController extends Controller
             'requested_role' => $validated['role'],
             'status' => 'pending',
             'home_ward_id' => $homeWard?->id,
+            'training_year' => $validated['role'] === 'resident' ? $validated['training_year'] : null,
+            'rotation_group' => null,
             'notes' => $validated['notes'] ?? null,
             'requested_at' => now(),
         ]);

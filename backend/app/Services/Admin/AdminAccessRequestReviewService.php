@@ -31,7 +31,12 @@ class AdminAccessRequestReviewService
         private readonly AdminAuditService $auditService,
     ) {}
 
-    public function review(User $actor, AdminAccessRequest $adminRequest, string $decision): AdminAccessRequest
+    public function review(
+        User $actor,
+        AdminAccessRequest $adminRequest,
+        string $decision,
+        array $profile = [],
+    ): AdminAccessRequest
     {
         $decision = strtolower(trim($decision));
 
@@ -41,7 +46,7 @@ class AdminAccessRequestReviewService
             ]);
         }
 
-        return DB::transaction(function () use ($actor, $adminRequest, $decision): AdminAccessRequest {
+        return DB::transaction(function () use ($actor, $adminRequest, $decision, $profile): AdminAccessRequest {
             $locked = AdminAccessRequest::query()->lockForUpdate()->findOrFail($adminRequest->id);
 
             if ($locked->status !== 'pending') {
@@ -53,6 +58,7 @@ class AdminAccessRequestReviewService
             $oldValues = $locked->only(['status', 'reviewed_at', 'reviewed_by', 'created_user_id']);
 
             if ($decision === 'approved') {
+                $this->confirmAcademicProfile($locked, $profile);
                 $createdUser = $this->createRequestedUser($locked);
                 $locked->forceFill([
                     'status' => 'approved',
@@ -82,6 +88,47 @@ class AdminAccessRequestReviewService
 
             return $locked->refresh()->load(['reviewer', 'createdUser']);
         });
+    }
+
+    /**
+     * The approver owns the final scheduling classification. New requests carry
+     * a proposed year, while older pending rows may need it entered from scratch.
+     * Year 3 is planned by group, so it cannot be approved without one.
+     *
+     * @param  array<string, mixed>  $profile
+     */
+    private function confirmAcademicProfile(AdminAccessRequest $adminRequest, array $profile): void
+    {
+        if ($adminRequest->requested_role !== 'resident') {
+            return;
+        }
+
+        $trainingYear = array_key_exists('trainingYear', $profile)
+            ? $profile['trainingYear']
+            : $adminRequest->training_year;
+        $rotationGroup = array_key_exists('rotationGroup', $profile)
+            ? $profile['rotationGroup']
+            : $adminRequest->rotation_group;
+        $rotationGroup = is_string($rotationGroup) ? strtoupper(trim($rotationGroup)) : null;
+
+        if (! in_array($trainingYear, [1, 2, 3], true)) {
+            throw ValidationException::withMessages([
+                'trainingYear' => 'Confirm the resident training year before approval.',
+            ]);
+        }
+
+        if ($trainingYear === 3 && ! $rotationGroup) {
+            throw ValidationException::withMessages([
+                'rotationGroup' => 'A rotation group is required for a Year 3 resident.',
+            ]);
+        }
+
+        $adminRequest->forceFill([
+            'training_year' => $trainingYear,
+            // Earlier years are planned individually; discard a stale group if
+            // an approver changes a pending resident away from Year 3.
+            'rotation_group' => $trainingYear === 3 ? $rotationGroup : null,
+        ])->save();
     }
 
     private function createRequestedUser(AdminAccessRequest $adminRequest): User
@@ -115,6 +162,8 @@ class AdminAccessRequestReviewService
             'role_key' => $roleKey,
             'title' => self::CREATABLE_ROLE_TITLES[$roleKey],
             'home_ward_id' => $adminRequest->home_ward_id,
+            'training_year' => $roleKey === 'resident' ? $adminRequest->training_year : null,
+            'rotation_group' => $roleKey === 'resident' ? $adminRequest->rotation_group : null,
             'active' => true,
             // The applicant chose this password at signup, so do not force a change.
             'password_change_required' => false,
