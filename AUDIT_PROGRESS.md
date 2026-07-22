@@ -399,6 +399,41 @@ verification, not the role-based audit.
 
 **Last verified checkpoint:** CHECKPOINT 7
 
+---
+
+## CHECKPOINT 8 - 2026-07-21 ~08:20, paused for sleep mid Playwright run
+
+**State saved before the operator sleeps the machine.**
+
+Remediation fully committed and verified earlier this session:
+- `43bbccc` - 16 audit findings fixed, both lanes green (SQLite 313 pass, MariaDB 314 pass, 0 failures).
+  Roster-500 proven fixed end to end through nginx on the MariaDB stack (PUT -> 200, audit row 5->6).
+- Two deployment blockers closed and verified (AUD-DB-001 index name, AUD-DEPLOY-007 composer/PHP 8.3).
+
+Playwright role audit (this checkpoint):
+- `af15ac0` - **8 new e2e specs authored and committed** (cross-role authz, IDOR/object ownership,
+  account enumeration, notification access, registration+approval, clinical report lifecycle, academic
+  evaluation submit, responsive) plus firefox/webkit/mobile/tablet projects in playwright.config.ts.
+  All typecheck clean. **NOT YET EXECUTED.**
+- The three-browser Execute run was IN PROGRESS when paused; no results.json was written, so that run is
+  lost and must be re-done. The workflow was stopped cleanly (TaskStop) so nothing is half-written.
+
+**On wake - exact resume steps**
+1. Re-run the interrupted phases. Either resume the workflow from cache
+   (`Workflow({scriptPath: ".../playwright-role-audit-wf_59d26afe-552.js", resumeFromRunId: "wf_59d26afe-552"})`
+   - scout + authors replay from cache, only Execute+Triage+Report re-run), OR simply run the suite directly:
+   `npx playwright test` (it self-manages its servers), then triage failures.
+2. The specs are already committed, so even if the workflow cache is gone, no authoring is lost.
+3. Triage failures into product-defect vs test-bug vs flake; write PLAYWRIGHT_TEST_REPORT.md; fold genuine
+   defects into AUDIT_FINDINGS.md.
+
+**Still open after the Playwright run**
+- CI green confirmation (needs an operator push; cannot run GitHub Actions locally).
+- Lower-severity hardening findings (login timing side-channel, X-Forwarded-For throttle bypass).
+- The remaining audit deliverable documents (FULL_SYSTEM_AUDIT.md, SECURITY_AUDIT.md, etc.).
+
+**Last verified checkpoint:** CHECKPOINT 8
+
 ## MASTER CHECKLIST
 
 ### 1. System discovery
