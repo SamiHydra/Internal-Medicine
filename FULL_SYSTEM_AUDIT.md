@@ -1,2047 +1,372 @@
-# Complete Functional, Playwright, Security, Performance, and Scalability Audit
+# FULL SYSTEM AUDIT
 
-You are a senior software quality engineer, application security engineer, Laravel architect, React architect, database performance engineer, and DevOps reviewer.
+**System:** St Paul's Hospital Millennium Medical College, Department of Internal Medicine Reporting and
+Academic Accountability Platform (Laravel + Sanctum backend, React SPA).
+**Audit window:** 2026-07-21 (audit and remediation) / 2026-07-22 (reporting).
+**Reporting environment:** local dev (Vite + Laravel + SQLite) plus a purpose-built Docker
+production-parity lane (MariaDB 11.4 + nginx + PHP-FPM 8.3 + queue + scheduler).
 
-Audit the current St. Paul’s Hospital Millennium Medical College Department of Internal Medicine Reporting and Academic Accountability Platform.
+This is the top-level executive report. It summarises the audit and points to the specialist deliverables.
+The source of truth for individual issues is `AUDIT_FINDINGS.md`; the reconciled master index is
+`ISSUE_REGISTER.md`; the full narrative is `AUDIT_PROGRESS.md` (checkpoints 0 to 8); the command record is
+`AUDIT_COMMAND_LOG.md`. Every claim below cites one of those or a named evidence artifact under
+`artifacts/audit-2026-07-21/`.
 
-The system contains an existing production clinical reporting pillar and newly added academic V2 functionality. Your responsibility is to inspect, test, verify, stress, and analyze the current implementation. Find functional defects, authorization failures, security weaknesses, performance bottlenecks, data-integrity risks, concurrency problems, scalability limitations, migration defects, deployment risks, and maintainability problems.
+---
 
-Do not perform a superficial review. Verify behavior through executable tests, direct code inspection, database inspection, browser testing, and API testing.
+## 1. Readiness verdict
 
-## 1. Primary objectives
+**Before this audit the application was NOT deployable to the department server.** Two independent,
+confirmed blockers each stopped `deploy/deploy.sh` cold on the production stack, and a third critical defect
+broke a core admin workflow at runtime on the production database engine. None of the three was observable on
+the developer's machine, because the dev machine (SQLite + PHP 8.4) is more permissive than the production
+target (MariaDB 11.4 + PHP 8.3). All three are now **fixed and verified on the production engine.**
 
-Complete all of the following:
+**Current state: deployable and verified on the production-parity stack, with residual work that is
+lower-risk but real and must not be skipped.**
 
-1. Verify every existing clinical function still works.
-2. Verify every implemented V2 academic function against the specification.
-3. Build or expand Playwright end-to-end coverage.
-4. Test all backend API routes directly.
-5. Test permissions, policies, role isolation, and object-level authorization.
-6. Check data integrity, historical snapshot behavior, transactions, indexes, and database constraints.
-7. Test concurrency and race conditions.
-8. Perform a full security review aligned with OWASP guidance.
-9. Measure frontend, API, database, queue, scheduler, and analytics performance.
-10. Analyze scalability using current and projected data volumes.
-11. Inspect production deployment configuration and operational readiness.
-12. Produce a complete, evidence-based defect report.
-13. Add regression tests for every confirmed defect.
-14. Fix verified critical and high-severity defects unless doing so risks changing locked business behavior.
-15. Do not hide or silently ignore failures.
+| Dimension | Verdict | Basis |
+|---|---|---|
+| Can the server be deployed to? | **Yes, now** (was No) | Both blockers verified by rebuild-from-empty and a real PHP 8.3.32 `composer install`. `AUDIT_FINDINGS.md:44-57,144-153` |
+| Core admin workflow (duty roster save) | **Works on MariaDB** (was 500) | Reproduced through nginx: `PUT /api/admin/roster/2028/3` returned HTTP 200, audit row written. `AUDIT_FINDINGS.md:210-213` |
+| Backend regression suite, both DB lanes | **Green** | SQLite 313 passed / 1 skipped; MariaDB 314 passed / 0 failures. `mariadb-suite-postfix.txt:23`; `ISSUE_REGISTER.md:412-413` |
+| Critical security release blockers | **None open** | All confirmed criticals are FIXED-VERIFIED; no open Critical or High remains except deferred retention (Medium). `ISSUE_REGISTER.md:89-96` |
+| CI pipeline green | **Not confirmed** | Fix applied but GitHub Actions cannot be run from this machine; needs a push. `AUDIT_FINDINGS.md:102-106` |
+| Browser role sweep (every page x every viewport) | **Partial / pending** | 8 e2e specs authored and committed (`af15ac0`); execution reported separately in `PLAYWRIGHT_TEST_REPORT.md`. `AUDIT_PROGRESS.md:413-419` |
+| Empirical load testing (1k/10k/100k) | **Not performed** | Scalability figures are PREDICTED from schema and query analysis only. `ISSUE_REGISTER.md:420-422` |
 
-## 2. Mandatory safety rules
+**Plain-language bottom line for a decision-maker.** The application moved from a state where it could not be
+installed on the hospital server to a state where installation, boot, and the previously-broken core
+workflow are all demonstrated on the same database engine and PHP version production runs. That is the
+headline and it is genuine. What remains before this is a clean go-live is operational, not architectural:
+confirm CI goes green on a push, complete the lower-severity hardening items, run the empirical load test
+the brief asked for, and finish the full every-page every-viewport browser sweep. This document states those
+boundaries plainly because the system is destined for a hospital LAN, where a report that implies more
+completeness than it has would be actively harmful.
 
-Before running tests:
+---
 
-1. Confirm whether the environment is local, test, staging, or production.
-2. Never run destructive tests against production.
-3. Never run `migrate:fresh`, database truncation, mass deletion, stress testing, vulnerability exploitation, or synthetic account creation against production.
-4. Use an isolated test database for automated backend tests.
-5. Use staging or local infrastructure for Playwright and performance tests.
-6. Do not display, copy, log, or commit real patient information, passwords, tokens, session cookies, API keys, database credentials, private certificates, or personal records.
-7. Redact sensitive values in screenshots, traces, logs, reports, and test artifacts.
-8. Do not weaken authentication, authorization, CSRF protection, validation, TLS, or audit logging to make tests pass.
-9. Do not disable existing tests.
-10. Do not rewrite assertions merely to accommodate defective behavior.
-11. Preserve the clinical reporting pillar.
-12. Preserve historical snapshot behavior.
-13. Do not introduce Redis or another state-management library.
-14. Do not introduce unnecessary architecture changes.
-15. Do not use em dashes in user-facing strings, comments, reports, or documentation.
+## 2. Counts
 
-## 3. Required initial repository inspection
+Reconciled from `ISSUE_REGISTER.md:85-97` (which itself reconciles `AUDIT_FINDINGS.md` against the
+remediation commit `43bbccc` and the blocker commits `540c067`, `6bb360f`). Note the source caveat below the
+tables.
 
-Before modifying anything, inspect the repository and document:
+### 2.1 By fix status
 
-- Current branch and commit.
-- Working tree status.
-- Backend and frontend directory structure.
-- Laravel version.
-- PHP version.
-- Composer dependency versions.
-- React, TypeScript, Vite, React Router, TanStack Query, React Hook Form, Zod, Tailwind, Vitest, and Playwright versions.
-- Database engine and version.
-- Current environment configuration, excluding secrets.
-- Authentication configuration.
-- Session, cache, and queue drivers.
-- Scheduler registration.
-- Existing test counts.
-- Existing Playwright setup, if present.
-- Existing CI workflow.
-- Existing linting, formatting, static-analysis, and security tools.
-- All registered API routes.
-- All frontend routes.
-- Permission constants and role mappings.
-- Policies and their registered model relationships.
-- Database migration status.
-- Database indexes and foreign keys.
-- Scheduled commands and queue jobs.
-- Service worker and PWA configuration.
-- Deployment scripts and systemd definitions.
+| Fix status | Count | Items |
+|---|---|---|
+| FIXED-VERIFIED | 20 | Both blockers, roster-500 (+transaction), the two SPA header fixes, the test-teardown FK, nine code/schema candidates, one new finding, and four carried-over concerns |
+| FIXED-UNVERIFIED | 1 | `AUD-INFRA-003` CI (root cause closed; green needs a push) |
+| OPEN (deferred) | 1 | `C-DB-013` retention (real; the core of the scalability section) |
+| REFUTED (checked and cleared, not defects) | 8 | 7 candidates + `PRE-5` (intentional design) |
 
-Read representative existing files before adding new patterns:
+**Findings fixed total: 16** (4 confirmed + 9 candidates + 1 new + 2 carried-over), matching commit
+`43bbccc` and the blocker commits. **32 regression tests added**, each verified to fail before its fix
+(`ISSUE_REGISTER.md:96-97`). The count of 20 FIXED-VERIFIED rows above is larger than 16 because it counts
+`AUD-API-002b`, the two SPA header fixes, and the test-teardown fix as separate rows.
 
-- One migration.
-- One model.
-- One policy.
-- One API controller.
-- One service.
-- One admin controller.
-- One feature test.
-- One React page.
-- One React form.
-- One TanStack Query implementation.
-- One Vitest test.
-- Existing clinical analytics caching code.
-- Existing template content and structure editing code.
-- Existing audit-log implementation.
+### 2.2 By severity (tracked findings and fixed candidates)
 
-Follow the existing project conventions.
+| Severity | Count | Examples |
+|---|---|---|
+| Critical | 4 | `AUD-DB-001`, `AUD-DEPLOY-007`, `AUD-INFRA-003`, `AUD-API-002` |
+| High | 5 | `AUD-API-002b`, `C-AUTHZ-001`, `C-SEC-002`, `C-SEC-003`, `C-DB-012`, `PRE-1` (`C-SEC-009` is Low-now/High-on-prem) |
+| Medium | 8 | `AUD-SEC-004`, `C-SEC-004`, `C-SEC-005`, `C-DB-015`, `AUD-DB-018`, `PRE-3`, `PRE-2`, `C-DB-013` (open) |
+| Low | 5 | `AUD-SEC-005`, `AUD-DB-006`, `C-SEC-009`, `C-DB-016`, `PRE-4` |
 
-## 4. Establish the baseline
+Every Critical and every High is FIXED-VERIFIED except `AUD-INFRA-003` (FIXED-UNVERIFIED, awaiting a CI
+push). The only unfixed item at any severity is `C-DB-013` (Medium, retention), deferred as an operational
+task. Source: `ISSUE_REGISTER.md:108-131`.
 
-Run the existing checks before making changes.
+### 2.3 By category (frontend / backend / db / security / perf)
 
-### Backend
+| Category | Count | Notes |
+|---|---|---|
+| Release engineering / deployment | 3 | `AUD-DB-001`, `AUD-DEPLOY-007`, `AUD-INFRA-003` - all three blocker-class |
+| Database / data integrity / migration | 6 | `AUD-DB-001`, `C-DB-012`, `C-DB-015`, `C-DB-016`, `AUD-DB-018`, `C-DB-013` (open) |
+| Backend / data integrity | 2 | `AUD-API-002`, `AUD-API-002b` (duty roster) |
+| Security | 8 | `AUD-SEC-004`, `AUD-SEC-005`, `C-SEC-002/003/004/005/009`, `PRE-3` |
+| Authorization | 3 | `C-AUTHZ-001`, `PRE-1`, `PRE-2` |
+| Frontend / UI | 1 | `PRE-4` (title fallback) |
+| Test hygiene | 1 | `AUD-DB-006` |
 
-```bash
+**The frontend count is deliberately low and must be read as a coverage gap, not a clean bill of health.**
+The audit's high-value findings came from the production-parity lane and code inspection; the
+every-page-every-viewport browser sweep that would surface UI-layer defects is reported separately and is
+partial (Section 8). Do not infer that the SPA is defect-free from the single frontend row here.
+
+**Source caveat on all counts.** `AUDIT_FINDINGS.md` was not fully refreshed after remediation: three fixed
+items still read "Open" in that file and nine fixed candidates still sit under its "PENDING" heading. The
+authoritative record for those is the committed code, migrations, and tests in `43bbccc`. This discrepancy
+is documented at length in `ISSUE_REGISTER.md:47-102,382-406`. The single corrective action is to refresh
+`AUDIT_FINDINGS.md`; until then the register defers to the commit and cites the artifact per row.
+
+---
+
+## 3. The single most important theme: systematic dev-vs-prod divergence
+
+This is the structural lesson of the audit, not merely a list of bugs. **The environment that runs the code
+in production is stricter than the environment it was authored on, and that gap produced three separate
+deployment-class defects that all passed local testing.**
+
+| Blocker | Dev machine (permissive) | Production target (strict) | Consequence |
+|---|---|---|---|
+| `AUD-DB-001` | SQLite ignores identifier length | MariaDB rejects index names over 64 chars (a 71-char name) | `migrate --force` aborts; server cannot boot. `AUDIT_FINDINGS.md:33-81` |
+| `AUD-DEPLOY-007` | dev machine ran PHP 8.4, so `composer.lock` resolved against 8.4 | server runs PHP 8.3; 17 locked packages require `php >=8.4.1` | `composer install` cannot resolve; server cannot install. `AUDIT_FINDINGS.md:124-190` |
+| `AUD-API-002` | SQLite accepts a string in a `uuid` column | MariaDB rejects `'2026-07'` in `admin_audit_logs.entity_id` (native uuid) | roster save 500s on the production engine. `AUDIT_FINDINGS.md:194-219` |
+
+A fourth, narrower instance of the same class was found while verifying a candidate: two SQLite CHECK
+constraints were silently lost to table rebuilds, so a bad-value regression would pass the SQLite suite and
+fail only in production (`AUD-DB-018`, `ISSUE_REGISTER.md:297-305`). And the schema carries 29 `enum()`
+columns that are unvalidated `varchar` on SQLite but value-rejecting on MariaDB (`C-DB-011`); the broad
+claim that this was a live defect did not hold, but it is the same divergence surface (`AUDIT_FINDINGS.md:301`).
+
+**Why this matters more than any single fix.** The reason all three blockers reached the deployment branch
+undetected is a fourth divergence in the pipeline itself: CI pinned PHP 8.3 while the lock required 8.4, so
+**no CI job could install dependencies and CI has not been green since the lock file drifted**
+(`AUD-INFRA-003`, `AUDIT_FINDINGS.md:110-118`). A green local SQLite suite was never evidence of a healthy
+pipeline. The remediation addressed the root cause rather than the symptom: `config.platform.php` is now
+pinned in `composer.json` so the lock can never again resolve ahead of the server's PHP, and the parity lane
+itself was moved from PHP 8.4 to 8.3 so it actually mirrors production (`AUDIT_FINDINGS.md:134-143`).
+
+The durable recommendation carried by this theme: **run the production database engine and the production
+PHP version in CI.** The entire class of blocker above is invisible to any lane that does not.
+
+---
+
+## 4. Highest-risk workflows
+
+Ranked in the discovery baseline by (likelihood broken) x (blast radius); full list at
+`artifacts/audit-2026-07-21/discovery/00-DISCOVERY-BASELINE.md:563-597`. The status column records where each
+stands after remediation.
+
+| Workflow | Risk | Status after remediation |
+|---|---|---|
+| Registration / approval subsystem (highest-privilege path, unauthenticated write endpoints) | Was rewritten mid-audit; four unauthenticated write endpoints; enumeration oracle | Hardened: duplicate guard added, session-cookie bypass closed, enumeration aligned to non-revealing responses, academic signup now enters the approval queue (`C-SEC-002/003/004`, `PRE-1`; `ISSUE_REGISTER.md:119-121,130`). Browser coverage still reported separately |
+| Duty roster save (admin, superadmin) | 100% failure on the production engine | Fixed and verified end to end through nginx; wrapped in a transaction so an audit failure cannot leave partial roster state (`AUD-API-002/002b`) |
+| Academic evaluation submission | No uniqueness key; 4 duplicate groups already in the DB, each counting into published averages | Fixed: uniqueness constraint added, designed to survive the existing duplicates (`C-DB-012`) |
+| Notifications for resident / consultant | The system addresses notifications to roles that could not read them (guaranteed functional break) | Fixed: `notifications.view` granted to those roles, caller pinned to own recipient id (`C-AUTHZ-001`) |
+| Excel/CSV import + export (active branch headline feature) | No client size/MIME check; a swallowed 422 could turn validation failures into silent "imported 0" | Not addressed by remediation; browser coverage reported separately. Treat as an open verification item |
+| Unbounded log tables at scale (`audit_logs`, `notifications`, `admin_audit_logs`, `report_status_history`) | No retention; some read paths pull the whole table into the browser; 11 admin lists unpaginated | Open (`C-DB-013`). These tables are empty in the seeded DB, so behaviour at volume is UNTESTED |
+| Analytics endpoints and export | 12 routes with zero in-action authorization and no per-department scoping visible in the controller | REFUTED as a defect (permission middleware is the intended sole control; no cross-department leak demonstrated) but service-level scoping remains UNVERIFIED by any discovery pass (`ISSUE_REGISTER.md:341`; baseline item 13) |
+
+---
+
+## 5. Security release blockers
+
+**There are no open Critical or High security release blockers.** Every confirmed critical and high-severity
+security or authorization defect is FIXED-VERIFIED:
+
+- Unauthenticated write amplification and the missing duplicate guard on `POST /api/access-requests`
+  (`C-SEC-002`, High) - fixed.
+- The session-cookie auth-gate bypass on that same public endpoint (`C-SEC-003`, High) - fixed.
+- Residents and consultants unable to read their own notifications (`C-AUTHZ-001`, High) - fixed.
+- Public academic signup creating a live account with no approval (`PRE-1`, High) - fixed.
+- Account-enumeration oracle across the three registration endpoints and the login path
+  (`C-SEC-004`, `PRE-3`, Medium) - fixed.
+- Unthrottled `change-password` as a bcrypt CPU-exhaustion primitive (`C-SEC-005`, Medium) - fixed with a
+  named limiter.
+- CSP/HSTS absent from the SPA document nginx serves (`AUD-SEC-004`, Medium) - fixed at the nginx layer.
+
+The full defensive review is in `SECURITY_AUDIT.md` (OWASP-structured, 13 categories). Two boundary items
+remain and are documented, not hidden:
+1. The broadcast-channel authorization fix (`C-SEC-009`) is verified in code and unit test, but the live
+   exploit path is PREDICTED for on-prem because dev runs `BROADCAST_CONNECTION=log`. Low now, High once a
+   real broadcast driver is live (`ISSUE_REGISTER.md:271-277`).
+2. Lower-severity hardening the audit named but did not close: the login timing side-channel and the
+   `X-Forwarded-For` / `TRUSTED_PROXIES` throttle-bypass question if the deployed value is `'*'`
+   (`AUDIT_PROGRESS.md:432`; baseline item 11, open question 6).
+
+---
+
+## 6. Scalability posture (PREDICTED)
+
+**Every scalability figure in this audit is PREDICTED from schema and query analysis. None was measured at
+1k, 10k, or 100k users, and no high-concurrency load test was run.** This is stated per the brief's own
+requirement and repeated wherever a figure appears. Full detail in `PERFORMANCE_SCALABILITY_AUDIT.md`.
+
+What is MEASURED (not predicted):
+- Seeded volume on the parity stack: 50 users, 695 reports, 61,001 `report_field_values`, 758 evaluations,
+  61 migrations, 10 seeders (`AUDIT_COMMAND_LOG.md:107`).
+- Backend parity suite timing: 314 tests on the production engine, 0 failures (`mariadb-suite-postfix.txt:23`).
+- MariaDB write-concurrency: `MariaDbConcurrencyRegressionTest` now executes (it had never run anywhere) and
+  all three concurrency scenarios pass, 14 assertions (`AUDIT_PROGRESS.md:259-261`).
+
+The dominant predicted risk is unmanaged retention (`C-DB-013`): 13 unbounded tables, the only prune job
+touches read notifications only, `sanctum:prune-expired` is not scheduled, and `audit_logs` is described by
+its own migration as "the fastest-growing audit table" (`AUDIT_FINDINGS.md:303`). This is OPEN.
+
+**Hard limit on every performance claim: 20 of 53 tables are empty in the seeded DB**, including
+`audit_logs`, `notifications`, `access_requests`, `report_status_history`, `report_comments`, and
+`calculated_metrics`. No performance or scalability claim may be made about those paths from this dataset;
+real volume exists in only four tables. This caveat applies to the parity lane too, which used the same
+seeders (`AUDIT_FINDINGS.md:309-317`; `ISSUE_REGISTER.md:39-43`).
+
+---
+
+## 7. Verified vs predicted: the boundary this audit draws
+
+The entire point of this audit was to separate what was executed and reproduced from what was reasoned about.
+
+**VERIFIED by execution:**
+- Both deployment blockers, by destroying and rebuilding the container DB from empty (72 migration/seeder
+  steps, exit 0) and by a real `composer install --no-dev --optimize-autoloader` on PHP 8.3.32 (91 installs)
+  (`AUDIT_FINDINGS.md:49-57,144-153`).
+- The duty-roster 500 fix, end to end through nginx (`PUT` returned 200, audit row 5 to 6)
+  (`AUDIT_FINDINGS.md:210-213`).
+- Both DB lanes green (SQLite 313 passed / 1 skipped; MariaDB 314 passed / 0 failures), where MariaDB was
+  7 failures / 3 errors before remediation (`mariadb-suite-postfix.txt:23`; `AUDIT_FINDINGS.md:22-30`).
+- 32 regression tests, each confirmed to fail before its fix.
+
+**NOT executed from this machine:**
+- CI green (`AUD-INFRA-003`): GitHub Actions cannot be run locally; needs a push.
+- The live broadcast-driver exploit path (`C-SEC-009`): dev uses `BROADCAST_CONNECTION=log`.
+
+**PREDICTED, never measured:** all 1k/10k/100k and high-concurrency figures, and the growth behind
+`C-DB-013`.
+
+**Checked and CLEARED (report as non-defects, not as risks):** 7 candidates were refuted as intentional
+design or false premises, including the two named in the evidence - "44 unindexed foreign keys"
+(`C-PERF-014`) and "29 unvalidated enum columns" (`C-DB-011`) - neither of which held on MariaDB. Five
+further refutations are inferred from the remediation leaving them untouched and are flagged as inferred, not
+recorded fact (`ISSUE_REGISTER.md:328-352`). `PRE-5` (`student_rep` cannot self-register) is confirmed
+intentional.
+
+---
+
+## 8. Remaining untested areas (candid)
+
+This section states plainly what the brief asked for that was not completed. It is deliberately explicit
+because the system targets a hospital LAN.
+
+1. **Empirical load testing at 1k / 10k / 100k users and under high concurrency was NOT performed.** All
+   scalability numbers are PREDICTED. A `scripts/load-test.mjs` harness exists but was not run at scale
+   against a seeded target (baseline honourable mentions; `PERFORMANCE_SCALABILITY_AUDIT.md`).
+2. **The full every-page, every-viewport browser sweep is partial.** 8 e2e specs (cross-role authz, IDOR,
+   enumeration, notification access, registration+approval, clinical report lifecycle, academic evaluation
+   submit, responsive) were authored and committed (`af15ac0`) with firefox/webkit/mobile/tablet projects,
+   but the three-browser execution run was interrupted and is being produced separately. Results live in
+   `PLAYWRIGHT_TEST_REPORT.md` (produced by the browser workflow), not here (`AUDIT_PROGRESS.md:413-419`).
+   Phases 2 to 8 of the audit plan (viewport sweeps, cross-role browser sweeps) are reported there.
+3. **CI green is not confirmed.** The PHP 8.3 pin is correct and the parity lane proves the suite passes on
+   8.3, but whether GitHub Actions actually goes green must be confirmed on the next push
+   (`AUDIT_FINDINGS.md:102-106`).
+4. **Performance of the empty paths is UNTESTED.** 20 of 53 tables are empty in the seeded DB, so the audit,
+   notification, access-request, and status-history read paths carry no measured behaviour at any volume
+   (`AUDIT_FINDINGS.md:309-317`).
+5. **Lower-severity hardening is not closed:** login timing side-channel; `X-Forwarded-For` /
+   `TRUSTED_PROXIES` throttle-bypass depending on the deployed value; `sanctum:prune-expired` scheduling;
+   retention for the 13 unbounded tables (`C-DB-013`) (`AUDIT_PROGRESS.md:430-432`).
+6. **Import/export pipeline verification** (client-side size/MIME check, the swallowed-422 discriminator in
+   `lib/api/admin.ts`) was flagged as high-risk but not exercised in a browser (baseline item 6).
+7. **Several discovery open questions remain unresolved** (analytics service-level scoping, whether the
+   on-prem deploy serves `public/_headers`, the deployed `TRUSTED_PROXIES` value): baseline Section 11.
+
+None of these blocks deployment. All should be scheduled before or immediately after go-live and tracked as
+open operational items.
+
+---
+
+## 9. Deliverable index
+
+| Document | Contents |
+|---|---|
+| `FULL_SYSTEM_AUDIT.md` (this file) | Executive report: readiness, counts, the dev-vs-prod theme, risks, boundaries, repro commands |
+| `SECURITY_AUDIT.md` | OWASP-structured defensive review across 13 categories, each finding cited to source |
+| `DATABASE_REVIEW.md` | 53-table schema; keys, FKs, ON DELETE behaviour, unique constraints, the dev-vs-prod divergence class |
+| `PERFORMANCE_SCALABILITY_AUDIT.md` | Strict MEASURED-vs-PREDICTED split; seeded volume, parity timing, concurrency; 1k/10k/100k projections |
+| `ISSUE_REGISTER.md` | Reconciled master index; one row per finding with severity, category, verification and fix status, evidence pointer |
+| `FIX_VERIFICATION_REPORT.md` | Per-finding fix records: what changed, how it was verified, on which lane |
+| `FUNCTIONAL_TEST_MATRIX.md` | Role x workflow coverage for all 12 major workflows across the 6 roles |
+| `ROLE_PERMISSION_MATRIX.md` | Roles, permission matrix, route x role access matrix, policy truth tables, escalation paths |
+| `PLAYWRIGHT_TEST_REPORT.md` | Browser-based e2e results (produced separately by the browser workflow) |
+| `AUDIT_FINDINGS.md` | Source of truth for individual findings (note: not refreshed after remediation; see `ISSUE_REGISTER.md:47-102`) |
+| `AUDIT_PROGRESS.md` | Full narrative, checkpoints 0 to 8, deferred items, master checklist |
+| `AUDIT_COMMAND_LOG.md` | Chronological command record with outcomes |
+| `artifacts/audit-2026-07-21/discovery/` | 6 inventories (schema, routes, roles, SPA surface, modules, tests) + baseline with the 15 risk areas |
+| `artifacts/audit-2026-07-21/evidence/` | MariaDB suite runs, `mariadb-failure-triage.md`, header captures, concurrency and CPU probes |
+
+---
+
+## 10. Reproduction commands for the whole audit
+
+All paths relative to the repo root unless noted. Reference set drawn from `AUDIT_COMMAND_LOG.md:14-29,97-116`.
+
+**Backend regression suite, SQLite lane (dev + CI default):**
+```
 cd backend
-php artisan about
-php artisan route:list
-php artisan migrate:status
-php artisan test
-php artisan test --filter=Academic
-composer audit
+php artisan test          # expect: 313 passed, 1 skipped, 0 failures
 ```
 
-Run any existing formatter, static analyzer, or architecture test already configured.
-
-Examples only, when installed:
-
-```bash
-./vendor/bin/pint --test
-./vendor/bin/phpstan analyse
-./vendor/bin/pest
+**Frontend gates:**
+```
+npx tsc -b --force        # typecheck (silent on success)
+npm run lint              # zero problems
+npm run test:run          # 15 files, 85 tests passed
 ```
 
-### Frontend
+**Production-parity lane (MariaDB 11.4 + nginx + PHP-FPM 8.3), from the docker kit:**
+```
+docker compose build                          # expect exit 0 on the PHP 8.3 image
+docker compose up -d --wait                   # expect exit 0, all 5 services healthy
+docker compose ps                             # db/app/web healthy, queue/scheduler up
+```
+Ports: 8080 (HTTP, 301 to HTTPS), 8443 (HTTPS), 33306 (MariaDB), all bound to 127.0.0.1. The dev servers on
+:5173 / :8000 and `backend/.env` are untouched. See `docker/README.md` for the 14 ways this lane still
+differs from real production.
 
-```bash
-npm ci
-npm run test
-npm run lint
-npm run build
-npm audit
+**Backend regression suite on the production engine (the lane that catches the divergence blockers):**
+```
+docker compose --profile test run --rm test   # expect: 314 tests, 0 failures, 0 errors
+docker compose --profile test run --rm test --filter MariaDbConcurrencyRegressionTest   # executes, no longer skips
 ```
 
-Record:
-
-- Total tests.
-- Passed tests.
-- Failed tests.
-- Skipped tests.
-- Flaky tests.
-- Test duration.
-- Build duration.
-- Warnings.
-- Dependency vulnerabilities.
-- Existing failures that were present before the audit.
-
-Do not claim a newly introduced regression when it existed in the baseline.
-
-## 5. Build a requirements-to-test traceability matrix
-
-Create:
-
-```text
-docs/TEST_COVERAGE_MATRIX.md
+**Verify the two deployment blockers are gone (rebuild from empty):**
+```
+docker compose down -v                        # destroy the container DB
+docker compose build && docker compose up -d --wait   # 72 migration/seeder steps, exit 0
+# inside the app container:
+composer install --no-dev --optimize-autoloader --no-interaction   # 91 installs on PHP 8.3.32 (the deploy.sh:149 command)
+php -v                                         # confirm PHP 8.3.32, not assumed
 ```
 
-For every function, include:
-
-| Requirement | Backend route or service | Frontend page | Existing test | New test | Result | Evidence | Defect ID |
-|---|---|---|---|---|---|---|---|
-
-Classify each item as:
-
-- Fully tested.
-- Partially tested.
-- Not tested.
-- Not implemented.
-- Implemented incorrectly.
-- Blocked by environment.
-- Not applicable.
-
-Do not mark a feature as passed based only on code inspection. A passed feature should have executable evidence whenever practical.
-
-## 6. Test account and fixture strategy
-
-Create controlled test fixtures for at least these roles:
-
-- Superadmin.
-- Admin.
-- Consultant.
-- Consultant who is a destination section head.
-- Consultant who is not a section head.
-- Resident Year 1.
-- Resident Year 2.
-- Resident Year 3.
-- Designated morning recorder.
-- Non-designated morning recorder.
-- Student representative with group scope.
-- Student representative with subgroup A scope.
-- Student representative with subgroup B scope.
-- Inactive user.
-- User without a section.
-- User without a duty assignment.
-- User on annual leave.
-- User on external rotation.
-- User on dialysis.
-- User on OPD.
-- User on Transition duty.
-- User with overlapping daily and monthly duties.
-
-Create test data covering:
-
-- All six wards.
-- All eight sections.
-- Paired ward mappings.
-- All duty categories.
-- Monthly assignments.
-- Daily assignments.
-- Rotation calendars.
-- Calendar-month blocks.
-- Eight-week blocks.
-- Transfer requests in every status.
-- Current and historical evaluations.
-- Multiple evaluation-form versions.
-- C1 and C2 student batches.
-- Two overlapping C1 batches.
-- Both student subgroups.
-- Teaching sessions in every status.
-- Morning sessions in every status.
-- Roster overrides.
-- Notifications.
-- Audit-log records.
-
-Use factories and seeders rather than fragile direct inserts where possible.
-
-## 7. Playwright architecture
-
-Use Playwright with TypeScript.
-
-Create or verify:
-
-```text
-playwright.config.ts
-tests/e2e/
-tests/e2e/fixtures/
-tests/e2e/pages/
-tests/e2e/helpers/
-test-results/
-playwright-report/
+**Reproduce the duty-roster fix through nginx (was 500, now 200):**
+```
+# csrf-cookie -> login -> PUT /api/admin/roster/2028/3 ; expect HTTP 200 and one new admin_audit_logs row
+# scripted in artifacts/audit-2026-07-21/evidence/ (login.sh, req.sh)
 ```
 
-Use:
-
-- Page-object classes for reusable workflows.
-- Authenticated storage state per role.
-- API-based test setup where appropriate.
-- Isolated test data.
-- Stable selectors using `data-testid`.
-- No arbitrary sleep statements.
-- Assertions based on visible behavior and API outcomes.
-- Automatic screenshots, traces, videos, console logs, and network logs on failure.
-- Desktop and mobile viewport coverage.
-- Chromium as mandatory.
-- Firefox and WebKit for critical workflows.
-- Parallel execution only after isolation is proven.
-- Serial execution for workflows that intentionally share state.
-
-Configure test retries only in CI. A test that passes only after retry must be reported as potentially flaky.
-
-Capture:
-
-- Browser console errors.
-- Failed network requests.
-- Unhandled promise rejections.
-- React warnings.
-- Hydration errors.
-- Accessibility-critical failures.
-- Unexpected redirects.
-- Requests returning 401, 403, 404, 419, 422, 429, or 500.
-
-## 8. Authentication and session testing
-
-Test:
-
-### Login
-
-- Correct credentials.
-- Incorrect password.
-- Unknown user.
-- Empty fields.
-- Invalid email format.
-- Inactive account.
-- Repeated failed login attempts.
-- Rate limiting.
-- Error-message information leakage.
-- Login redirect by role.
-- Return-to-original-page behavior.
-- Session regeneration after login.
-
-### Logout
-
-- Normal logout.
-- Logout from multiple tabs.
-- Back-button behavior after logout.
-- API access after logout.
-- Session-cookie invalidation.
-- Service-worker cache behavior after logout.
-
-### Sanctum and CSRF
-
-- SPA CSRF cookie acquisition.
-- Missing CSRF token.
-- Invalid CSRF token.
-- Expired session.
-- Requests without credentials.
-- Cross-origin requests.
-- Same-origin production behavior.
-- 419 recovery behavior.
-- Cookie attributes:
-  - Secure.
-  - HttpOnly.
-  - SameSite.
-  - Correct domain.
-  - Correct path.
-- Session fixation.
-- Session reuse after password or account-status changes, when applicable.
-
-### Route guards
-
-For every frontend route:
-
-- Anonymous access.
-- Correct role.
-- Incorrect role.
-- Direct URL entry.
-- Browser refresh.
-- Client-side navigation.
-- Prefetch behavior.
-- API denial even if the frontend guard is bypassed.
-
-A hidden navigation item is not an authorization control. Confirm the API returns 403.
-
-## 9. Clinical pillar regression testing
-
-The existing clinical pillar must remain operational.
-
-Test all implemented workflows for:
-
-- Weekly report templates.
-- Template publishing and versioning.
-- Report creation.
-- Draft saving.
-- Report submission.
-- Submission locking.
-- Reopening or correction behavior.
-- Approval or review workflows.
-- Analytics.
-- Excel import.
-- Excel export.
-- Reminders.
-- Action items.
-- Comments.
-- Audit logs.
-- Notification generation.
-- Permission restrictions.
-- Historical records.
-- Date filtering.
-- Pagination.
-- Search.
-- Empty states.
-- Validation errors.
-- Large Excel files.
-- Invalid Excel formats.
-- Formula injection risks in exported CSV or Excel content.
-- Duplicate import behavior.
-- Import transaction rollback.
-- Idempotency.
-- Failed queue jobs.
-- Concurrent edits.
-- Lock bypass attempts.
-
-Confirm that academic V2 database changes did not alter clinical behavior, reporting vocabulary, or existing department relationships.
-
-## 10. Academic structure administration
-
-Test ward, section, and duty-type management.
-
-### Wards
-
-- List.
-- Create.
-- Read.
-- Update.
-- Activate and deactivate.
-- Duplicate name.
-- Duplicate slug.
-- Missing fields.
-- Invalid slug.
-- Delete or deactivate a referenced ward.
-- Foreign-key behavior.
-- Audit logging.
-- Unauthorized access.
-- Non-admin API request.
-- Direct object access with another ID.
-
-### Sections
-
-- Create and update.
-- Assign section head.
-- Remove section head.
-- Assign inactive user as head.
-- Assign non-consultant as head.
-- Duplicate names and slugs.
-- Deactivate a section with consultants.
-- Delete behavior with referenced records.
-- Audit log.
-- Workspace `headsSections` accuracy.
-
-### Duty types
-
-Test all fields and combinations:
-
-- Section-specific duty.
-- Department-wide duty.
-- Ward service.
-- Clinical duty.
-- On-call.
-- External.
-- Leave.
-- Monthly granularity.
-- Daily granularity.
-- Pairing enabled.
-- Pairing disabled.
-- Ward pairing key.
-- Pairing-group key.
-- Morning-roster inclusion.
-- Morning-roster exclusion.
-- Active and inactive status.
-
-Reject invalid combinations, including:
-
-- Pairing enabled with neither ward nor pairing group.
-- Invalid category.
-- Invalid granularity.
-- Inactive referenced ward or section, when prohibited.
-- Duplicate slug.
-- Missing required fields.
-
-Confirm all mutations create audit records.
-
-## 11. Duty roster and assignment testing
-
-Test `RosterService` and every related endpoint.
-
-### Assignment lookup
-
-- Assignment beginning on the queried date.
-- Assignment ending on the queried date.
-- Date one day before.
-- Date one day after.
-- Monthly assignment.
-- Daily assignment.
-- Multiple daily assignments.
-- Monthly plus daily assignment.
-- Inactive duty type.
-- Inactive user.
-- Missing assignment.
-
-### Pairing keys
-
-Verify:
-
-- Ward service returns `ward:<uuid>`.
-- OPD returns `group:opd`.
-- Transplant returns the expected group key.
-- Dialysis returns no key.
-- On-call returns no key.
-- External rotation returns no key.
-- Annual leave returns no key.
-- Transition returns the ward key.
-- Duplicate keys are removed.
-- Monthly plus daily pairing returns both valid keys.
-
-### Pair eligibility
-
-Test:
-
-- Same ward and same date.
-- Same ward but non-overlapping dates.
-- Shared pairing group.
-- Different pairing group.
-- One user without an assignment.
-- One user on leave.
-- One user on an external rotation.
-- Two users on Transition duty on the same day.
-- Transition duty on different days.
-- OPD pairing.
-- Transplant pairing.
-- Consultant on dialysis.
-- Inactive user.
-- Invalid role direction.
-
-### Overlap protection
-
-Test:
-
-- Monthly assignment overlapping another monthly assignment.
-- Exact date-range duplicate.
-- Partial overlap at start.
-- Partial overlap at end.
-- Contained overlap.
-- Adjacent non-overlapping assignments.
-- Daily assignment stacked on monthly assignment.
-- Multiple daily assignments on one date.
-- Two concurrent requests attempting to create overlapping monthly assignments.
-
-The overlap check and insert must be protected by a transaction and appropriate locking. Attempt to reproduce a race condition using parallel requests.
-
-### Bulk assignment
-
-Test:
-
-- Entire valid batch succeeds.
-- One invalid row causes complete rollback.
-- Duplicate rows.
-- Missing user.
-- Missing duty type.
-- Invalid dates.
-- End before start.
-- Inactive user.
-- Inactive duty type.
-- Unauthorized operator.
-- Audit behavior.
-- Query count.
-- Large batch performance.
-
-## 12. Rotation calendar and planner testing
-
-Test:
-
-### Calendar creation
-
-- Year 1 calendar month.
-- Year 2 calendar month.
-- Year 3 fixed eight-week blocks.
-- Duplicate training year and academic-year label.
-- Invalid training year.
-- Missing block length for fixed weeks.
-- Block length provided for calendar month.
-- Zero blocks.
-- Excessive blocks.
-- Invalid start date.
-
-### Block generation
-
-Verify:
-
-- Calendar-month blocks align to calendar boundaries.
-- Eight-week blocks are exactly 56 days inclusive according to the system’s date convention.
-- No gaps.
-- No overlaps.
-- Correct block order.
-- Correct final date.
-- Leap-year handling.
-- Start date near month end.
-- Re-running generation is safe or explicitly rejected.
-- Existing assignments are not silently corrupted.
-
-### Planner
-
-- Load residents by training year.
-- Correct rotation groups.
-- Save individual plan.
-- Save Year 3 group plan.
-- Group expansion to every group member.
-- Empty group.
-- Resident changes group.
-- Partial plan.
-- Duplicate cell.
-- Invalid duty.
-- Assignment overlap.
-- Transaction rollback.
-- Historical plan preservation.
-- Query and payload size.
-
-## 13. Consultant transfer workflow
-
-Test:
-
-- Consultant submits request.
-- User without consultant eligibility submits request.
-- Same source and destination section.
-- Missing source section.
-- Missing destination section.
-- Duplicate pending request.
-- Cancel own pending request.
-- Cancel approved request.
-- Cancel another consultant’s request.
-- Destination head sees request.
-- Origin head permissions.
-- Unrelated head permissions.
-- Admin permissions.
-- Superadmin permissions.
-- Non-head consultant gets 403.
-- Destination head approves.
-- Destination head rejects.
-- Decision reason, when supported.
-- Default effective date.
-- Immediate admin override.
-- Scheduled future application.
-- Application exactly once.
-- Retry after partial failure.
-- Old section assignment closes correctly.
-- New section persists correctly.
-- Current and historical records remain accurate.
-- Notifications reach correct users.
-- Every decision writes an audit row.
-- Scheduler uses overlap protection.
-- Two actors deciding the same request concurrently.
-
-Confirm the system cannot approve an already rejected, cancelled, approved, or applied request.
-
-## 14. Rotation-aware evaluation testing
-
-Test both evaluation directions.
-
-### Form options
-
-- Default date is today.
-- Past valid date.
-- Future date rejected.
-- Date outside current assignment.
-- Same-pair peers only.
-- Correct opposite role.
-- No duplicate subjects.
-- Inactive subjects excluded.
-- User without assignment.
-- User on non-pairing duty.
-- Author current placement.
-- Ward list comes from `wards`.
-- No legacy `homeWardId` dependency.
-- Historical date returns historical peers, not current peers.
-
-### Submission
-
-- Resident evaluates consultant.
-- Consultant evaluates resident.
-- Wrong evaluation direction.
-- Subject is self.
-- Subject has wrong role.
-- Same ward.
-- Different ward.
-- Shared OPD group.
-- Shared Transition day.
-- Different Transition day.
-- Dialysis user.
-- Leave user.
-- External user.
-- Date boundary.
-- Duplicate evaluation, according to current uniqueness rules.
-- Client submits forged ward ID.
-- Client submits forged placement type.
-- Server snapshots the correct ward and placement.
-- Rotation changes after submission.
-- Historical evaluation still displays original ward and placement.
-- Policy and controller produce consistent denial.
-
-### External evaluation entry
-
-Test:
-
-- Admin enters a valid external evaluation.
-- Superadmin enters one.
-- Consultant attempts entry.
-- Resident attempts entry.
-- External evaluator name required.
-- External department required when specified by the form.
-- Author ID cannot also be set.
-- Entered-by user is stored.
-- Valid external duty slugs only.
-- Resident’s actual external assignment is checked when required.
-- Historical placement snapshot.
-- Audit logging.
-- Form validation.
-- Duplicate submission.
-
-## 15. Evaluation form engine testing
-
-Test every supported field type:
-
-- Boolean.
-- Rating.
-- Percent.
-- Integer.
-- Time.
-- Text.
-- Single select.
-- Multi-select.
-
-For each field type, test:
-
-- Valid input.
-- Missing required input.
-- Null optional input.
-- Wrong type.
-- Boundary values.
-- Malformed JSON.
-- Unknown option.
-- Duplicate multi-select options.
-- Unexpected additional field.
-- Inactive field.
-- Very long text.
-- HTML and script input.
-- Unicode and Amharic content.
-
-### Versioning
-
-Test:
-
-- Exactly one published version per key.
-- Draft creation from published version.
-- Content edit does not create a version.
-- Structural edit creates a draft or new version.
-- Publish archives previous published version.
-- Historical evaluation keeps original form ID.
-- Historical labels remain available.
-- Old evaluation renders after field removal from a later version.
-- Publishing two versions concurrently.
-- Failed publish transaction.
-- Version numbering race condition.
-
-### Core fields
-
-Confirm these cannot be removed or type-changed:
-
-- `senior_present`.
-- `senior_joined_at`.
-- `presence_minutes`.
-- `overall_rating`.
-
-Test:
-
-- Admin attempts core-field deletion.
-- Superadmin attempts core-field deletion.
-- Core field key change.
-- Core field type change.
-- Core field deactivation.
-- Core field label edit.
-- Non-core field deactivation.
-- Policy and service-level enforcement.
-
-### Unified evaluation invariants
-
-Verify:
-
-- Exactly one subject type is populated.
-- Exactly one evaluator source is populated.
-- User evaluation.
-- Student evaluation.
-- External evaluation.
-- Invalid combinations rejected at service level.
-- Invalid combinations rejected at database level where practical.
-- Header and answers save atomically.
-- Failed answer insert rolls back header.
-- Duplicate field answer rejected.
-- Form key matches form ID.
-- Unknown field key rejected.
-
-### Migration verification
-
-Run and inspect:
-
-```bash
-php artisan academic:verify-migration
+**End-to-end browser suite (self-manages its servers):**
+```
+npx playwright test       # results reported in PLAYWRIGHT_TEST_REPORT.md (produced separately)
 ```
 
-Verify:
+**CI (cannot be run locally):** push the branch; confirm all three jobs install dependencies and go green on
+PHP 8.3. This is the one verification `AUD-INFRA-003` still needs.
 
-- Source and destination row counts.
-- Random deep comparison.
-- Booleans.
-- Times.
-- Integers.
-- Percentages.
-- JSON values.
-- Null handling.
-- Ward references.
-- Placement types.
-- External evaluator fields.
-- No duplicate evaluation records.
-- No orphaned answers.
-- No legacy records silently skipped.
+**Liveness note:** there is no `/api/health` route. Probe `/sanctum/csrf-cookie` (expect 204) for liveness
+(`AUDIT_COMMAND_LOG.md:29`).
 
-Create an additional deterministic parity test, not only random verification.
+---
 
-## 16. Undergraduate module testing
+## 11. Coverage boundaries (do not overstate)
 
-### Student batches
+- **Verified means:** both DB lanes green by direct execution, targeted HTTP reproduction through nginx on
+  the parity stack, and rebuild-from-empty plus a real 8.3 `composer install`. It does **not** mean the full
+  browser role sweep, which is reported separately and is partial.
+- **The findings file is stale post-remediation.** Where `AUDIT_FINDINGS.md` and `ISSUE_REGISTER.md`
+  disagree on fix status, the committed code/migrations/tests in `43bbccc` are authoritative
+  (`ISSUE_REGISTER.md:47-102`).
+- **Scalability is predicted, not measured**, and 20 of 53 tables are empty in the dataset, so whole classes
+  of path carry no measured behaviour.
+- **Cross-browser claims are bounded:** Chromium and WebKit ran; Firefox was installed and proven to render
+  the app; the three-browser execution run itself is reported in `PLAYWRIGHT_TEST_REPORT.md`.
 
-Test:
+This report is intentionally honest about what it did not do. On a hospital LAN, a report that implies
+completeness it does not have is worse than one that states its limits.
 
-- C1 batch.
-- C2 batch.
-- Correct attachment length.
-- Overlapping C1 batches allowed.
-- Invalid dates.
-- End before start.
-- Duplicate label.
-- Activation and deactivation.
-- Batch with students.
-- Delete and foreign-key behavior.
-- Audit logging.
+---
 
-### Students
-
-Test:
-
-- Create.
-- Update.
-- Activate and deactivate.
-- Assign subgroup A.
-- Assign subgroup B.
-- No subgroup.
-- Duplicate external ID.
-- Unicode names.
-- CSV import.
-- CSV header validation.
-- Duplicate rows.
-- Partial invalid file.
-- Large file.
-- Formula injection.
-- Encoding problems.
-- Transaction rollback.
-- Re-import behavior.
-- Authorization.
-
-### Subgroup placements
-
-Test:
-
-- Manual weekly placement.
-- Subgroup A and B.
-- Two overlapping C1 batches.
-- Duplicate batch, subgroup, and week.
-- Missing ward.
-- Inactive ward.
-- Week boundary.
-- Historical placement remains unchanged.
-- Editing a placement does not rewrite historical session snapshots.
-- Audit logging.
-
-### Representative assignments
-
-Test:
-
-- Group representative.
-- Subgroup A representative.
-- Subgroup B representative.
-- One user assigned to multiple scopes.
-- Inactive assignment.
-- Wrong user role.
-- Representative for another batch.
-- Expired batch.
-- Duplicate assignment.
-- Audit log.
-
-### Teaching session generation
-
-Verify seeded schedules:
-
-C1:
-
-- Lecture Monday through Friday.
-- Teaching round Tuesday and Thursday.
-- Bedside Monday and Friday.
-- Seminar Wednesday.
-
-C2:
-
-- Lecture Friday.
-- Teaching round Tuesday and Thursday.
-- Bedside Monday and Wednesday.
-- Seminar Friday.
-
-Test:
-
-- Daily generation.
-- Correct cohort scope.
-- Correct subgroup scope.
-- Correct ward snapshot.
-- Missing placement produces flagged null ward.
-- Idempotent rerun.
-- Overlapping C1 batches.
-- Inactive batch.
-- Inactive schedule.
-- Weekends.
-- Holiday behavior where implemented.
-- Timezone and date boundary.
-
-### Rep activity recording
-
-Test:
-
-- Group rep records lecture.
-- Group rep records seminar.
-- Group rep cannot record bedside.
-- Group rep cannot record teaching round.
-- Subgroup A rep records subgroup A bedside.
-- Subgroup A rep cannot record subgroup B.
-- Subgroup B equivalent.
-- Held.
-- Not held with reason.
-- Not held without reason.
-- Cancelled with reason.
-- Cancelled without reason.
-- Already recorded session.
-- Editing after cutoff.
-- Wrong batch.
-- Inactive assignment.
-- Direct API bypass.
-- Audit logging where required.
-
-### Student attendance
-
-Test:
-
-- Consultant records attendance.
-- Admin records attendance.
-- Representative attempts attendance.
-- Correct cohort roster.
-- Correct subgroup roster.
-- Student from another batch injected into payload.
-- Duplicate student.
-- Missing student.
-- Partial presence list.
-- Session status changes to held.
-- Existing status behavior.
-- Attendance snapshot after student subgroup changes.
-- Atomic write.
-- Concurrent attendance saves.
-
-### Student evaluations
-
-Test:
-
-- Any consultant may evaluate any student.
-- Ward pairing is not required.
-- Student weekly form.
-- Student final form.
-- Weekly ward prefill.
-- Weekly start-date snapshot.
-- Student outside active attachment.
-- Final evaluation timing.
-- Duplicate weekly evaluation behavior.
-- Unauthorized representative.
-- Unauthorized student role, if students have accounts.
-- No route exists for students or representatives to evaluate consultants.
-
-### Mandatory representative isolation
-
-Build a route-level test that enumerates every academic evaluation route and verifies a `student_rep` receives 403.
-
-Do not test only one route.
-
-Also verify the workspace bootstrap and frontend contain no evaluation data, score data, assessment data, analytics data, or hidden prefetched evaluation response for representatives.
-
-## 17. Morning session testing
-
-Test:
-
-### Session generation
-
-- Monday.
-- Wednesday.
-- Friday.
-- Tuesday excluded.
-- Thursday excluded.
-- Saturday excluded.
-- Sunday excluded.
-- Configured session days changed.
-- Idempotent creation.
-- Scheduled time snapshot.
-- Setting changes after creation do not change historical sessions.
-- Scheduler overlap protection.
-
-### Roster
-
-Include:
-
-- Ward-service consultant.
-- Ward-service resident.
-- Consultant on dialysis.
-- Consultant on non-ward internal duty where `counts_for_morning_roster` is true.
-- Daily Transition assignment.
-- Monthly plus daily assignment without duplicate user.
-
-Exclude:
-
-- Annual leave.
-- External rotation.
-- Inactive user.
-- Duty type configured not to count.
-
-Test overrides:
-
-- Include user.
-- Exclude user.
-- Start date.
-- End date.
-- Open-ended override.
-- Conflicting include and exclude behavior.
-- Duplicate override.
-- Historical snapshot.
-
-### Recorder authorization
-
-- Designated recorder.
-- Multiple designated recorders.
-- Admin.
-- Superadmin.
-- Non-designated resident.
-- Non-designated consultant.
-- Representative.
-- Removed recorder.
-- Direct API bypass.
-
-### Recording
-
-- Started on time.
-- Started late with actual time.
-- Started late without actual time.
-- Client-forged delay.
-- Server computes delay.
-- Actual start before scheduled time.
-- Midnight or malformed time.
-- Full attendance roster.
-- Partial payload.
-- Unknown user.
-- Duplicate user.
-- User not expected on roster.
-- Concurrent record attempts.
-- Same-day correction.
-- Correction after same day.
-- Admin correction.
-- Historical attendance unaffected by later roster changes.
-
-### Cancellation
-
-- Reason required.
-- Recorder cancellation rules.
-- Admin cancellation.
-- Already recorded session.
-- Already cancelled session.
-- Audit logging.
-
-### Reminder
-
-- 08:15 pending session reminder.
-- Recorded session receives no reminder.
-- Cancelled session receives no reminder.
-- Multiple recorders.
-- Email failure.
-- In-app notification.
-- Job retries.
-- Duplicate-notification prevention.
-
-## 18. Academic analytics and cache testing
-
-Verify all implemented analytics:
-
-- Evaluation counts.
-- Per-person summaries.
-- Ward filters.
-- Date filters.
-- Form-key filters.
-- Morning punctuality.
-- Average delay.
-- Attendance rate.
-- Teaching held rate.
-- Reasons breakdown.
-- Pending backlog.
-- Student attendance.
-- Weekly evaluation trajectory.
-- Weekly versus final comparison.
-- Batch rollups.
-
-### Correctness
-
-- Empty dataset.
-- One record.
-- Multiple wards.
-- Multiple form versions.
-- Null answers.
-- Inactive fields.
-- Historical labels.
-- External evaluations.
-- Date boundaries.
-- Invalid filters.
-- Unauthorized person-level access.
-
-### Cache behavior
-
-Test:
-
-- First request is a cache miss.
-- Identical second request is a hit.
-- Different filters create different keys.
-- New evaluation changes the content stamp.
-- Updated evaluation changes the content stamp.
-- Deleted or archived evaluation behavior.
-- Cache TTL.
-- Concurrent cache fill.
-- Cache failure fallback.
-- Cache driver failure does not break correctness.
-- No cross-user authorization leakage.
-- No stale data after mutation.
-
-Measure cache hit and miss duration.
-
-Inspect whether the content-stamp query itself becomes a bottleneck at projected scale.
-
-## 19. Workspace bootstrap testing
-
-Verify every expected field:
-
-- `currentPlacement`.
-- `isMorningRecorder`.
-- `headsSections`.
-- `repScope`.
-- `pendingTransferCount`.
-- `academicSetup`.
-
-Test:
-
-- Each role.
-- User without placement.
-- Multiple assignments.
-- Daily plus monthly assignment.
-- Section head.
-- Admin.
-- Representative.
-- Missing calendars.
-- Consultants without section.
-- People without assignment.
-- Inactive records.
-- Window-bounded payload.
-- No per-row unbounded data growth.
-- No sensitive evaluation data for representatives.
-- Query count.
-- Payload size.
-- Response time.
-- Cache behavior, if applicable.
-
-Check for N+1 queries.
-
-## 20. Notifications, queue, and scheduler testing
-
-Inventory every scheduled command and queued job.
-
-Test:
-
-- Correct schedule.
-- Correct timezone.
-- `withoutOverlapping`.
-- Idempotency.
-- Retry behavior.
-- Maximum attempts.
-- Backoff.
-- Failure recording.
-- Failed-job handling.
-- Queue restart behavior.
-- Duplicate command invocation.
-- Database queue lock contention.
-- Long-running jobs.
-- Job payload size.
-- Serialized model changes.
-- Deleted model before job execution.
-- Email failure.
-- Notification duplication.
-- Notification authorization and recipient correctness.
-
-Run scheduler and worker tests in a controlled environment.
-
-Verify:
-
-- Section-transfer application.
-- Teaching-session generation.
-- Morning-session opening.
-- Morning reminder.
-- Representative reminder.
-- Missing-placement Friday alert.
-- Leadership digest.
-- Existing clinical reminders.
-
-## 21. API contract and validation testing
-
-For every API route:
-
-- Successful request.
-- Anonymous request.
-- Authenticated unauthorized request.
-- Object-level unauthorized request.
-- Missing body.
-- Malformed JSON.
-- Wrong content type.
-- Missing required field.
-- Unexpected field.
-- Wrong data type.
-- Invalid UUID.
-- Valid UUID for another tenant or user context, where applicable.
-- Nonexistent UUID.
-- Inactive referenced object.
-- Pagination boundaries.
-- Excessive page size.
-- Sorting input.
-- Filter input.
-- Search input.
-- Date input.
-- Unicode input.
-- Very long strings.
-- Duplicate submission.
-- Replay request.
-- Concurrent request.
-- Correct status code.
-- Stable camelCase response format.
-- No stack trace or SQL detail in error response.
-
-Check that each new route has:
-
-1. Permission middleware.
-2. Controller policy authorization.
-3. Happy-path test.
-4. Coarse permission-denial test.
-5. Policy-narrowing denial test.
-6. Audit test for administrative mutations.
-
-Produce an automated route audit where practical.
-
-## 22. Database integrity review
-
-Inspect migrations, schema, models, and service writes.
-
-Verify:
-
-- UUID primary keys.
-- Correct foreign-key actions.
-- Restrict deletes for referenced domain records.
-- Cascade deletes only for true child rows.
-- Nullable foreign keys use correct null behavior.
-- Composite indexes exist exactly where required.
-- Unique indexes exist.
-- Date-range queries use indexes.
-- Enum behavior is consistent across MySQL and MariaDB.
-- Fillable properties are complete and safe.
-- Casts are correct.
-- Relationships are typed and accurate.
-- No mass-assignment vulnerability.
-- No orphaned rows.
-- No duplicate answer rows.
-- No inconsistent form key and form ID.
-- No impossible evaluation subjects.
-- No impossible author combinations.
-- No duplicate morning attendance.
-- No duplicate student attendance.
-- No duplicate teaching sessions.
-- No duplicate rotation blocks.
-- No transfer request applied twice.
-
-Run integrity queries that report:
-
-- Orphaned foreign keys.
-- Duplicate logical keys.
-- Overlapping monthly assignments.
-- Rotation block gaps.
-- Rotation block overlaps.
-- Evaluations missing answers.
-- Answers referencing unknown form fields.
-- Historical evaluations missing form versions.
-- Student sessions missing a valid batch.
-- Attendance rows for students outside the session roster.
-- Morning attendance users outside the recorded roster.
-- Applied transfers without `applied_at`.
-- Published-form keys with zero or multiple published versions.
-
-Document every query and result.
-
-## 23. Transaction and concurrency testing
-
-Identify all write operations that require atomic behavior.
-
-At minimum:
-
-- Assignment overlap check and insert.
-- Bulk assignments.
-- Rotation planning.
-- Transfer approval.
-- Transfer application.
-- Form publishing.
-- Evaluation header and answers.
-- Teaching-session generation.
-- Teaching attendance.
-- Morning attendance.
-- Audit log plus administrative mutation.
-- Excel import.
-
-Use parallel requests or parallel test processes to test:
-
-- Double submission.
-- Lost updates.
-- Duplicate creation.
-- Overlap race.
-- Two section heads deciding one request.
-- Two admins publishing form versions.
-- Two recorders recording one morning session.
-- Two consultants saving attendance.
-- Scheduler and manual action running simultaneously.
-- Retry after transaction failure.
-
-Look for:
-
-- Missing row locks.
-- Incorrect isolation assumptions.
-- Deadlocks.
-- Non-idempotent retries.
-- Partial writes.
-- Audit record committed when mutation rolls back.
-- Mutation committed without audit record.
-
-## 24. Security audit
-
-Use OWASP Top 10 and relevant OWASP ASVS controls.
-
-### Access control
-
-Test:
-
-- Horizontal privilege escalation.
-- Vertical privilege escalation.
-- IDOR.
-- Forced browsing.
-- Parameter tampering.
-- Hidden frontend actions.
-- Direct API access.
-- UUID enumeration.
-- Admin-only mutations.
-- Section-head decisions.
-- Designated-recorder rules.
-- Representative scope rules.
-- Historical record access.
-- Analytics access.
-- Export access.
-
-### Injection
-
-Test safely in local or staging:
-
-- SQL injection.
-- Stored XSS.
-- Reflected XSS.
-- DOM XSS.
-- CSV or spreadsheet formula injection.
-- Log injection.
-- Header injection.
-- Email content injection.
-- Path traversal.
-- Command injection in deployment or backup scripts.
-- Template injection.
-- Malformed JSON.
-- Oversized input.
-
-Use harmless proof strings. Do not extract real data.
-
-### CSRF and browser security
-
-Verify:
-
-- State-changing routes require CSRF protection.
-- SameSite cookie configuration.
-- Secure cookie configuration.
-- CORS restrictions.
-- No wildcard credentialed CORS.
-- Clickjacking protection.
-- Content Security Policy.
-- X-Content-Type-Options.
-- Referrer Policy.
-- Permissions Policy.
-- HSTS on HTTPS.
-- MIME-type handling.
-- Mixed-content absence.
-- Cache-control on authenticated pages.
-- Sensitive API responses are not browser-cached improperly.
-
-### Authentication security
-
-Inspect:
-
-- Password hashing.
-- Password policy.
-- Login throttling.
-- Account enumeration.
-- Session expiration.
-- Remember-me behavior.
-- Password reset, when present.
-- Token revocation.
-- Inactive-user sessions.
-- Concurrent sessions.
-- MFA, when present.
-- Default credentials.
-- Seeded production credentials.
-
-### File and import security
-
-Inspect all upload or import paths:
-
-- MIME validation.
-- Extension validation.
-- File-size limits.
-- Filename sanitization.
-- Storage location.
-- Executable upload prevention.
-- Macro-enabled spreadsheet handling.
-- Zip bomb risk.
-- CSV formula injection.
-- Malformed workbook handling.
-- Temporary-file cleanup.
-
-### Sensitive data
-
-Check:
-
-- API responses.
-- Logs.
-- Exception pages.
-- Browser storage.
-- React state.
-- Query cache.
-- Service-worker caches.
-- Playwright artifacts.
-- Audit logs.
-- Notification content.
-- Email content.
-- Database backups.
-- `.env` exposure.
-- Source maps.
-- Public build files.
-- Git history.
-- Deployment scripts.
-
-### Dependency and configuration security
-
-Run:
-
-```bash
-composer audit
-npm audit
-```
-
-Also inspect:
-
-- Unsupported packages.
-- Known CVEs.
-- Debug mode.
-- APP_ENV.
-- APP_KEY.
-- Trusted proxies.
-- Host-header handling.
-- URL generation.
-- TLS verification.
-- Database account privileges.
-- File permissions.
-- Storage permissions.
-- Queue worker privileges.
-- Web-server user.
-- SSH configuration.
-- Firewall rules.
-- Unattended upgrades.
-- fail2ban.
-- Backup encryption and permissions.
-
-Do not automatically perform major dependency upgrades during the audit. Report compatibility and remediation risks first.
-
-## 25. PWA and frontend resilience testing
-
-Test:
-
-- Manifest validity.
-- Installability.
-- HTTPS requirement.
-- Service-worker registration.
-- Service-worker update behavior.
-- Old asset invalidation.
-- Offline shell behavior.
-- API request behavior offline.
-- Clear offline message.
-- Failed mutation while offline.
-- Duplicate mutation after reconnect.
-- Logout clears sensitive cached content.
-- User A logs out and User B logs in on the same device.
-- No User A data remains visible.
-- Stale frontend with newer backend API.
-- Backend validation errors.
-- Slow network.
-- Request timeout.
-- API 500.
-- API 419.
-- API 401.
-- API 403.
-- Queue-delayed state.
-- Browser refresh on nested routes.
-- Mobile viewport.
-- iOS Safari and WebKit behavior.
-- Android Chrome behavior.
-- Keyboard-only usage.
-- Screen-reader labels.
-- Focus management.
-- Modal focus traps.
-- Color contrast.
-- Zoom at 200 percent.
-- Long names and translated text.
-- Empty states.
-- Loading states.
-- Error states.
-
-Run Lighthouse or equivalent against a production build.
-
-Record:
-
-- Performance score.
-- Accessibility score.
-- Best-practices score.
-- PWA findings.
-- LCP.
-- CLS.
-- INP or available interaction metric.
-- JavaScript bundle size.
-- Largest chunks.
-- Unused JavaScript.
-- Render-blocking resources.
-
-## 26. Performance testing
-
-Use local or staging only.
-
-Prefer k6 for API load testing. Artillery is acceptable if already used.
-
-Create:
-
-```text
-tests/performance/
-tests/performance/k6/
-tests/performance/README.md
-```
-
-### Workload profiles
-
-Derive final concurrency from actual expected usage. At minimum test:
-
-1. Single-user baseline.
-2. Normal usage.
-3. Morning-session peak.
-4. Weekly clinical-report deadline.
-5. Academic evaluation burst.
-6. Analytics dashboard use.
-7. Stress test.
-8. Short soak test.
-9. Queue backlog recovery.
-
-Use provisional tiers when no SLO exists:
-
-- 1 virtual user.
-- 10 virtual users.
-- 25 virtual users.
-- 75 virtual users.
-- 150 virtual users.
-
-Do not run 75 or 150 virtual users against production.
-
-### Critical API scenarios
-
-Measure:
-
-- Login.
-- Workspace bootstrap.
-- Report-template loading.
-- Clinical report save.
-- Clinical report submit.
-- Roster month grid.
-- Rotation planner load.
-- Rotation planner save.
-- Form options.
-- Evaluation submission.
-- Published form loading.
-- Academic analytics.
-- Teaching sessions.
-- Student attendance save.
-- Morning roster.
-- Morning attendance save.
-- Admin dashboards.
-- Notifications list.
-
-Record:
-
-- Requests per second.
-- Median.
-- p90.
-- p95.
-- p99.
-- Error rate.
-- Timeout rate.
-- Database CPU.
-- Database connections.
-- PHP-FPM workers.
-- Memory.
-- Queue depth.
-- Slow queries.
-- Lock waits.
-- Deadlocks.
-- Response sizes.
-
-Unless the project already defines SLOs, use these provisional review thresholds:
-
-- Simple authenticated GET p95 below 500 ms.
-- Ordinary write p95 below 800 ms.
-- Complex analytics p95 below 1,500 ms on cache miss.
-- Cached analytics p95 below 500 ms.
-- Error rate below 1 percent under expected load.
-- No database deadlocks under expected load.
-- No unbounded memory growth during the soak test.
-- Workspace bootstrap response remains reasonably small and bounded.
-- No single ordinary page causes excessive duplicate requests.
-
-Do not report only averages.
-
-## 27. Database performance analysis
-
-Enable query logging or Laravel query listeners in test only.
-
-For critical routes, capture:
-
-- Query count.
-- Duplicate queries.
-- Slowest queries.
-- Total query duration.
-- N+1 patterns.
-- Missing eager loading.
-- Full table scans.
-- Temporary tables.
-- Filesort.
-- Index selection.
-- Returned row count.
-- Examined row count.
-
-Run `EXPLAIN` or `EXPLAIN ANALYZE` where supported for:
-
-- Assignment lookup.
-- Pairing peers.
-- Morning roster.
-- Evaluation filtering.
-- Evaluation-answer joins.
-- Analytics content stamp.
-- Student attendance.
-- Teaching-session oversight.
-- Transfer-request listing.
-- Rotation planner.
-- Admin roster month grid.
-
-Verify these indexes are present and used:
-
-- Duty assignments by user and date range.
-- Duty assignments by duty type and date range.
-- Evaluations by subject and date.
-- Evaluations by student and date.
-- Evaluations by ward and date.
-- Evaluations by form key and date.
-- Evaluation answers by evaluation and field key.
-- Students by batch and subgroup.
-- Teaching-session uniqueness and dates.
-- Morning-session date.
-- Attendance uniqueness.
-
-Check whether EAV analytics loads more answer rows into PHP than necessary. Recommend SQL aggregation, precomputed summaries, or future read models only when evidence shows the existing cache and query design are insufficient.
-
-## 28. Scalability analysis
-
-Use actual database measurements and the specified expected annual growth.
-
-Evaluate at least:
-
-- 1 year.
-- 3 years.
-- 5 years.
-- 10 years.
-
-Model:
-
-- Duty assignments.
-- Morning attendance.
-- Teaching sessions.
-- Student attendance.
-- Evaluations.
-- Evaluation answers.
-- Audit logs.
-- Notifications.
-- Queue jobs.
-- Failed jobs.
-- Session rows.
-- Cache rows.
-- Backups.
-
-Expected high-volume area:
-
-- Evaluation answers may grow by approximately 150,000 to 220,000 rows per year.
-
-Test or estimate:
-
-- Table size.
-- Index size.
-- Backup duration.
-- Restore duration.
-- Analytics query duration.
-- Migration duration.
-- Pagination performance.
-- Admin-history performance.
-- Cleanup requirements.
-- Database connection demand.
-- Disk growth.
-- Log growth.
-- Queue-table growth.
-- Session-table growth.
-- Cache-table growth.
-
-Check whether old database queue, session, cache, notification, and audit records have retention or cleanup strategies.
-
-Identify the point at which:
-
-- Analytics becomes too slow.
-- Backups exceed the operational window.
-- Restore time becomes unacceptable.
-- Database storage approaches disk limits.
-- Queue throughput becomes insufficient.
-- A persistent queue worker needs more processes.
-- Redis would become justified in the future.
-
-Do not recommend Redis merely because it is common. Base recommendations on measured evidence.
-
-## 29. Deployment and operational audit
-
-Inspect the intended on-premises topology.
-
-Verify:
-
-- Nginx serves the SPA.
-- `/api` is proxied correctly.
-- PHP-FPM configuration.
-- MariaDB configuration.
-- Same-origin Sanctum configuration.
-- CORS is not unnecessarily permissive.
-- HTTPS works on the LAN.
-- Certificate renewal works.
-- Service worker works with the certificate.
-- Queue worker systemd unit.
-- Automatic restart.
-- Correct working directory.
-- Correct user.
-- Correct environment.
-- `queue:restart` behavior.
-- Scheduler cron.
-- Scheduler heartbeat.
-- Log rotation.
-- File permissions.
-- Backup script.
-- Backup retention.
-- Off-box copy.
-- Backup integrity check.
-- Restore documentation.
-- Disk threshold check.
-- Certificate-expiry check.
-- Secure-cookie check.
-- APP_URL check.
-- Firewall.
-- Hospital subnet restrictions.
-- SSH restriction.
-- fail2ban.
-- Security updates.
-- UPS considerations.
-- Monitoring.
-- Health check.
-- Rollback process.
-
-Review scripts for:
-
-- `set -euo pipefail`.
-- Quoting.
-- Secret exposure.
-- Destructive commands.
-- Partial-deployment behavior.
-- Migration failure.
-- Build failure.
-- Health-check failure.
-- Rollback.
-- Concurrent deployment.
-- Backup before migration.
-- Queue restart.
-- File ownership.
-- Log output.
-
-Run shellcheck when available.
-
-Test `php artisan app:launch-readiness` and verify each check genuinely fails when its condition is broken.
-
-## 30. Code-quality and maintainability review
-
-Inspect for:
-
-- Fat controllers.
-- Business logic inside React components.
-- Duplicated authorization logic.
-- Policy and controller inconsistency.
-- Service classes with excessive responsibilities.
-- Unbounded queries.
-- Hidden coupling to `home_ward_id`.
-- Hard-coded wards, sections, duties, roles, or form fields.
-- Hard-coded analytics labels.
-- Inconsistent date handling.
-- Mutable historical data.
-- Missing transactions.
-- Missing audit logs.
-- Missing type declarations.
-- Incorrect model casts.
-- Loose TypeScript types.
-- `any` usage.
-- React effect misuse.
-- Unstable query keys.
-- Stale TanStack Query data.
-- Missing cache invalidation.
-- Duplicate requests.
-- Broken loading and error handling.
-- Runtime-built schemas that differ from backend validation.
-- Inconsistent naming between snake_case and camelCase.
-- Tests coupled to implementation details.
-- Flaky selectors.
-- Dead code.
-- Deprecated code.
-- Commented-out production code.
-- Debug statements.
-- Sensitive console logging.
-
-Report maintainability issues separately from confirmed functional defects.
-
-## 31. Required defect severity system
-
-Use:
-
-### Critical
-
-- Unauthorized access to confidential data.
-- Authentication bypass.
-- Privilege escalation.
-- Data corruption.
-- Permanent historical-record mutation.
-- Production-wide outage.
-- Backup or restore failure with no recovery.
-- Clinical pillar unusable.
-
-### High
-
-- Major workflow unusable.
-- Student representative accesses evaluations or scores.
-- Incorrect pairing permits or blocks evaluations.
-- Broken transaction causes partial writes.
-- Transfer applied incorrectly.
-- Form versioning corrupts historical rendering.
-- Serious stored XSS, SQL injection, CSRF, or IDOR.
-- Severe performance failure under expected load.
-
-### Medium
-
-- Important edge case fails.
-- Incorrect validation.
-- Missing audit row.
-- N+1 query with measurable impact.
-- Accessibility failure blocking some users.
-- Incorrect notification.
-- Recoverable stale cache.
-
-### Low
-
-- Minor UI issue.
-- Wording problem.
-- Non-blocking warning.
-- Small maintainability concern.
-- Cosmetic inconsistency.
-
-For each defect provide:
-
-- ID.
-- Title.
-- Severity.
-- Confidence.
-- Module.
-- Requirement.
-- Environment.
-- Preconditions.
-- Reproduction steps.
-- Expected result.
-- Actual result.
-- Screenshots or traces.
-- API request and redacted response.
-- Relevant logs.
-- Relevant code locations.
-- Root-cause analysis.
-- Data impact.
-- Security impact.
-- Performance impact.
-- Scalability impact.
-- Recommended fix.
-- Regression test required.
-- Fix status.
-- Verification status.
-
-## 32. Required output files
-
-Create:
-
-```text
-docs/QA_SECURITY_PERFORMANCE_AUDIT.md
-docs/TEST_COVERAGE_MATRIX.md
-docs/SECURITY_REVIEW.md
-docs/PERFORMANCE_AND_SCALABILITY_REPORT.md
-docs/DATABASE_INTEGRITY_REPORT.md
-docs/DEPLOYMENT_READINESS_REVIEW.md
-docs/KNOWN_RISKS.md
-tests/e2e/
-tests/performance/
-```
-
-Where practical, also create:
-
-```text
-artifacts/audit/
-artifacts/audit/screenshots/
-artifacts/audit/traces/
-artifacts/audit/api/
-artifacts/audit/performance/
-```
-
-Do not commit sensitive traces or credentials.
-
-## 33. Final report structure
-
-The main audit report must contain:
-
-1. Executive summary.
-2. Overall readiness rating.
-3. Baseline test results.
-4. Functional coverage summary.
-5. Clinical regression result.
-6. Academic V2 result.
-7. Playwright result.
-8. Authorization result.
-9. Security result.
-10. Data-integrity result.
-11. Performance result.
-12. Scalability result.
-13. Deployment result.
-14. Accessibility and UX result.
-15. Critical defects.
-16. High defects.
-17. Medium defects.
-18. Low defects.
-19. Untested or blocked areas.
-20. Recommended remediation order.
-21. Go-live recommendation.
-22. Exact commands used.
-23. Environment limitations.
-24. Evidence index.
-
-The go-live recommendation must be one of:
-
-- Ready.
-- Ready with documented low-risk exceptions.
-- Not ready until critical issues are fixed.
-- Not ready until critical and high issues are fixed.
-
-Do not mark the platform ready merely because the existing test suites pass.
-
-## 34. Fixing confirmed problems
-
-After the audit report has been produced:
-
-1. Fix critical issues first.
-2. Add a failing regression test before each fix whenever practical.
-3. Make the smallest safe correction.
-4. Do not change locked business rules.
-5. Do not weaken validation or authorization.
-6. Preserve API compatibility unless the existing API is insecure.
-7. Run focused tests after each fix.
-8. Run the complete backend and frontend suites after the fix set.
-9. Re-run affected Playwright tests.
-10. Re-run affected security tests.
-11. Re-run affected performance scenarios.
-12. Update the defect status and evidence.
-
-Do not mix unrelated refactoring into security or defect fixes.
-
-## 35. Mandatory final verification commands
-
-Run the project’s actual configured commands. At minimum:
-
-```bash
-cd backend
-php artisan migrate:fresh --seed
-php artisan test
-php artisan test --filter=Academic
-php artisan academic:verify-migration
-php artisan app:launch-readiness
-composer audit
-```
-
-Then:
-
-```bash
-npm ci
-npm run test
-npm run lint
-npm run build
-npx playwright test
-npm audit
-```
-
-Run performance commands documented in `tests/performance/README.md`.
-
-Record exact results, including failures.
-
-## 36. Completion rules
-
-The audit is not complete until:
-
-- Every route has been inventoried.
-- Every major workflow has a traceability entry.
-- Critical role boundaries have direct API tests.
-- Student representative isolation has a full route-list test.
-- Historical snapshot behavior has regression tests.
-- Concurrency-sensitive writes have been tested.
-- Database indexes have been inspected with query plans.
-- Analytics cache correctness has been tested.
-- Playwright covers all critical user journeys.
-- Security findings contain evidence.
-- Performance findings contain measured data.
-- Scalability findings include multi-year projections.
-- Deployment scripts and readiness checks have been reviewed.
-- All test commands and results are documented.
-- Remaining limitations are stated honestly.
-
-Begin by inspecting the repository and establishing the baseline. Do not begin broad refactoring before the baseline and test matrix are complete.
+*End of FULL_SYSTEM_AUDIT.md. Companion deliverables listed in Section 9. Source of truth for issues:
+`AUDIT_FINDINGS.md` (with the post-remediation caveat in `ISSUE_REGISTER.md`).*

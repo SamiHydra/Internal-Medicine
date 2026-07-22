@@ -265,6 +265,150 @@ executed - the error is teardown only. Worth noting: this is the first time this
 
 ---
 
+Surfaced 2026-07-22 by the extended Playwright E2E harness (REPORT phase). Full run write-up:
+`PLAYWRIGHT_TEST_REPORT.md`. Evidence root:
+`artifacts/audit-2026-07-21/evidence/playwright/`. These three are the only genuine product defects
+that survived per-failure triage; the other 31 failures were test-bugs, a flake, or environment
+artifacts (tabled in the report, deliberately **not** promoted here).
+
+### AUD-UI-008 - Locked / out-of-window reports render as an editable blank "Not started" form
+
+| Field | Value |
+|---|---|
+| **Severity** | Medium |
+| **Category** | UI / correctness (client-server data contract) |
+| **Affected role(s)** | nurse, admin, superadmin (any report viewer) |
+| **Affected module** | Clinical reports (report detail page) |
+| **Environment** | local dev (Vite :5173 / Laravel :8000 / SQLite); engine-independent (failed chromium + firefox + webkit) |
+| **Verification** | **reproduced by Playwright** - `artifacts/audit-2026-07-21/evidence/playwright/test-results/clinical-report-lifecycle--21b94-nly-and-a-nurse-save-is-422-chromium/` (`error-context.md`, `test-failed-1.png`, `trace.zip`); also `…-firefox/` and `…-webkit/` |
+| **Fix status** | Open |
+| **Regression test** | `tests/e2e/clinical-report-lifecycle.spec.ts` › "admin locks the report; the nurse sees read-only and a nurse save is 422" (currently red - keep, but pin an in-window period; see report §3) |
+
+**Reproduction steps**
+1. As admin, lock a report whose reporting period is **outside** the SPA's report window (any future
+   period, or a report older than the last ~9 periods).
+2. As the owning nurse, open `/reports/{assignmentId}/{periodId}` for that report (deep-link or
+   notification link).
+
+**Expected result** The report renders read-only: "This report is read only", disabled Save/Submit, and
+the previously saved/submitted values.
+
+**Actual result** A blank, **editable** form: Status "Not started", "Editing enabled while unlocked",
+enabled Save draft / Submit report. Prior values appear gone (looks like data loss).
+
+**Suspected root cause** `WorkspaceController::show` returns **all** reporting periods
+(`WorkspaceController.php:69`) but filters reports to `$visiblePeriodIds` (`:84-97`).
+`ReportPeriodWindow::ids` (`ReportPeriodWindow.php:50-58`) caps the visible slice at the current period -
+excluding every future period even for `window='all'`, and to the last `DEFAULT_PERIOD_COUNT=9` in
+`default` mode. The report form derives status solely from that windowed bootstrap
+(`src/components/reports/report-form.tsx:478-487`) and only calls `ensureReportDetails` when
+`report.id` already exists (`:546`), so an out-of-window report resolves to `null` ->
+`deriveReportStatus` = `not_started` (`src/data/selectors.ts:289-318`) -> `canEdit=true`.
+
+**Security / business impact** Correctness/UX only - **no integrity or authorization breach.**
+`ReportSubmissionService::save` (`backend/app/Services/Reports/ReportSubmissionService.php:51-61`)
+rejects every write to a locked report with 422 "Locked reports are read-only." and enforces `nurse_id`
+ownership (foreign save -> 403). The risk is a confusing affordance and apparent data loss on
+deep-linked aged-out / future reports.
+
+**Recommended fix** When `getReportForAssignmentPeriod(state, assignmentId, periodId)` is null (and route
+data has loaded), fetch `GET /api/reports?assignment_id={id}&reporting_period_id={id}`
+(`ReportWorkflowController::index:57-62` already skips windowing when both filters are present) and merge
+the result into state before deriving status/`canEdit`. Secondary: broaden `ReportPeriodWindow` so
+`window='all'` includes future periods.
+
+---
+
+### AUD-API-009 - `POST /api/notifications/restore` discards the client id; restore is non-idempotent and disarms its own IDOR guard
+
+| Field | Value |
+|---|---|
+| **Severity** | Medium |
+| **Category** | API / data integrity |
+| **Affected role(s)** | all notification recipients (verified for resident and consultant delivery) |
+| **Affected module** | Notifications ("Clear all" -> Undo/restore) |
+| **Environment** | local dev (Vite :5173 / Laravel :8000 / SQLite); backend-layer confirmed on sqlite :memory: |
+| **Verification** | **reproduced by Playwright** - `artifacts/audit-2026-07-21/evidence/playwright/test-results/notification-access-Regres-66f5f-clearable-by-that-recipient-chromium/trace.zip` (consultant) and `…-notification-access-Regres-4327e-clearable-by-that-recipient-chromium/trace.zip` (resident); corroborated by a throwaway RefreshDatabase feature test (fail->pass on the one-line fix) |
+| **Fix status** | Open |
+| **Regression test** | `tests/e2e/notification-access.spec.ts` › "a notification addressed to a {resident,consultant} is readable and clearable by that recipient" |
+
+**Reproduction steps**
+1. As an addressee, POST `/api/notifications/restore` with a notification carrying a client-generated
+   `id` (the SPA's "Undo clear" path does exactly this with the original id).
+2. GET `/api/notifications` as the recipient and look up the row by the id you sent.
+
+**Expected result** The restored row is persisted under the **caller-supplied id**; a repeat restore
+updates in place (idempotent).
+
+**Actual result** `restored:1`, `recipient_id` correct, but the row is stored under a **fresh
+server-generated UUIDv7** - never the client id. In the trace the request id
+`0c45c1e7-428a-48be-b9c6-0fa8197cc719` (v4) comes back as `019f8876-6f57-7115-848b-0cf8400c46a7` (v7).
+
+**Suspected root cause** `Notification` uses `HasUuids` (`backend/app/Models/Notification.php:11`) but
+omits `id` from `$fillable` (`:15-18`). `NotificationController::restore` writes
+`updateOrCreate(['id' => $notification['id']], [...])` (`NotificationController.php:133-145`); the guarded
+`id` is dropped by `fill()`, the new instance has an empty key, and the `HasUuids` `creating` hook mints
+a new UUID.
+
+**Security / business impact** No cross-user leak (recipient scoping is correct), hence Medium not High.
+But: (1) restore is **not idempotent** - `updateOrCreate` keyed on the original id never matches a
+re-keyed row, so a repeat undo / retry / double-submit inserts **duplicate** notifications and can inflate
+the unread bell count; (2) the endpoint's own IDOR/clobber guard (`find($id)` at `:128-131`) is **dead
+code** because rows never persist under the supplied id; (3) client and server ids diverge after restore.
+
+**Recommended fix** Add `'id'` to `Notification::$fillable` (`backend/app/Models/Notification.php:15-18`).
+`HasUuids::setUniqueIds()` only generates when the key is empty, so every other `Notification::create([...])`
+site (MorningSessionService, TransferService, ReportLockingService, ...) is unaffected; restore becomes
+idempotent and the IDOR guard goes live. Surgical alternative: set `$model->id` directly in `restore()`
+instead of relying on `updateOrCreate`.
+
+---
+
+### AUD-API-010 - `GET /api/notifications?unread=true` returns 422; the advertised boolean filter rejects the canonical `true`/`false` encoding
+
+| Field | Value |
+|---|---|
+| **Severity** | Low |
+| **Category** | API / input validation (over-restrictive) |
+| **Affected role(s)** | any caller of the notifications filter (no current SPA caller) |
+| **Affected module** | Notifications (`NotificationController::index`) |
+| **Environment** | local dev (Vite :5173 / Laravel :8000 / SQLite); engine-independent (chromium) |
+| **Verification** | **reproduced by Playwright** - `artifacts/audit-2026-07-21/evidence/playwright/test-results/notification-access-Regres-53496----200-with-a-readable-list-chromium/` and `…-notification-access-Regres-864e5----200-with-a-readable-list-chromium/` |
+| **Fix status** | Open |
+| **Regression test** | `tests/e2e/notification-access.spec.ts` › "{resident,consultant} GET /api/notifications -> 200 with a readable list" (the `?unread=true` sub-assertion) |
+
+**Reproduction steps**
+1. As any active recipient, `GET /api/notifications?unread=true`.
+
+**Expected result** 200 with the unread subset (the endpoint publicly advertises an `unread` boolean
+filter).
+
+**Actual result** **422.** `?unread=1` and `?unread=0` return 200; `?unread=true` and `?unread=false`
+are rejected.
+
+**Suspected root cause** `NotificationController::index` validates
+`'unread' => ['sometimes', 'boolean']` (`backend/app/Http/Controllers/Api/NotificationController.php:22`).
+Laravel's `boolean` rule uses strict `in_array($value, [true,false,0,1,'0','1'], true)`
+(`ValidatesAttributes.php:488-497`), so the query-string string `"true"` fails before the
+`whereNull('read_at')` filter is applied.
+
+**Security / business impact** Minimal today and Low severity: no `src/` code sends `?unread=` (the SPA
+computes the unread bell count client-side from the `/api/workspace` snapshot,
+`app-shell.tsx:239`), and `?unread=1` works as an escape hatch. It is a **latent contract bug** - a
+permitted, documented request is refused - that would bite any external API consumer using the filter the
+idiomatic way, or a future frontend that fetches the unread view server-side. *(Recorded as a Low product
+defect over the competing "app matches its declared Laravel contract" test-bug read, because the endpoint
+advertises a boolean filter that rejects the standard boolean literal - over-restrictive server-side
+validation.)*
+
+**Recommended fix** Normalize instead of relying on the strict rule: replace with
+`'unread' => ['sometimes', 'in:0,1,true,false,on,off']` and read via `$request->boolean('unread')`
+(filter_var-based, accepts `true`/`1`/`on`/`yes` and `false`/`0`/`off`/`no`). Keeps `?unread=1` working
+and adds `?unread=true`. Add a backend feature test pinning both encodings. No authorization boundary is
+touched (recipient pinning at `:26-28` is unchanged).
+
+---
+
 ## CODE-DERIVED CANDIDATES - PENDING EMPIRICAL VERIFICATION
 
 Produced by phase-1 discovery (read-only code inspection, 2026-07-21). Every entry cites file:line.
