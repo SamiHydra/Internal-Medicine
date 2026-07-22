@@ -397,7 +397,7 @@ export function AppShell({ children }: PropsWithChildren) {
 
                 <button
                   type="button"
-                  className="relative inline-flex h-10 w-10 items-center justify-center rounded-[0.4rem] border border-[#e1e6ec] bg-white text-[#44474e] transition-[transform,background-color,border-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#c8d5e6] hover:bg-[#f6f8fa] hover:text-[#000a1e] active:scale-[0.95]"
+                  className="relative inline-flex h-10 w-10 items-center justify-center rounded-[0.4rem] border border-[#e1e6ec] bg-white text-[#44474e] transition-[transform,background-color,border-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#c8d5e6] hover:bg-[#f6f8fa] hover:text-[#000a1e] active:scale-[0.95] pointer-coarse:h-11 pointer-coarse:w-11"
                   aria-label="Notifications"
                   onClick={() =>
                     navigate(
@@ -444,7 +444,7 @@ export function AppShell({ children }: PropsWithChildren) {
                   onClick={() => setMenuOpen(true)}
                   aria-label="Open account menu"
                   aria-haspopup="dialog"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-[0.4rem] border border-[#e1e6ec] bg-white transition-[transform,border-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#c8d5e6] active:scale-[0.95] sm:hidden"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-[0.4rem] border border-[#e1e6ec] bg-white transition-[transform,border-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#c8d5e6] active:scale-[0.95] sm:hidden pointer-coarse:h-11 pointer-coarse:w-11"
                 >
                   <Avatar className="h-8 w-8 rounded-[0.3rem] bg-[#04162f] shadow-none">
                     <AvatarFallback className="rounded-[0.3rem] bg-[#04162f] text-[0.7rem] font-bold text-[#f0b429]">

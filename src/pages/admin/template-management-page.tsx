@@ -554,7 +554,7 @@ export function TemplateManagementPage() {
                                         aria-label="Move question up"
                                         onClick={() => moveField(template, fieldIndex, -1)}
                                         disabled={fieldIndex === 0}
-                                        className="rounded-[0.25rem] p-0.5 text-[#9aa7b8] hover:text-[#005db6] disabled:opacity-30"
+                                        className="rounded-[0.25rem] p-0.5 text-[#9aa7b8] hover:text-[#005db6] disabled:opacity-30 pointer-coarse:p-2.5"
                                       >
                                         <ArrowUp className="h-3.5 w-3.5" />
                                       </button>
@@ -563,7 +563,7 @@ export function TemplateManagementPage() {
                                         aria-label="Move question down"
                                         onClick={() => moveField(template, fieldIndex, 1)}
                                         disabled={fieldIndex === template.fields.length - 1}
-                                        className="rounded-[0.25rem] p-0.5 text-[#9aa7b8] hover:text-[#005db6] disabled:opacity-30"
+                                        className="rounded-[0.25rem] p-0.5 text-[#9aa7b8] hover:text-[#005db6] disabled:opacity-30 pointer-coarse:p-2.5"
                                       >
                                         <ArrowDown className="h-3.5 w-3.5" />
                                       </button>

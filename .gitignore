@@ -60,3 +60,4 @@ dist-*/
 # Docker production-parity stack: .env.docker holds only local throwaway
 # placeholders and is a deliverable, so it is exempt from the .env.* rule above.
 !.env.docker
+artifacts/audit-2026-07-21/mobile/*.png

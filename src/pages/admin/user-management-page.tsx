@@ -243,7 +243,7 @@ export function UserManagementPage() {
                             event.stopPropagation()
                             toggleExpandedRequest(request.id)
                           }}
-                          className="shrink-0 rounded-[0.25rem] p-0.5 text-[#9aa7b8] outline-none transition-colors hover:text-[#005db6] focus-visible:text-[#005db6]"
+                          className="shrink-0 rounded-[0.25rem] p-0.5 text-[#9aa7b8] outline-none transition-colors hover:text-[#005db6] focus-visible:text-[#005db6] pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-center"
                         >
                           <ChevronDown
                             className={cn(
@@ -379,7 +379,7 @@ export function UserManagementPage() {
                               event.stopPropagation()
                               toggleExpandedRequest(request.id)
                             }}
-                            className="shrink-0 rounded-[0.25rem] p-0.5 text-[#9aa7b8] outline-none transition-colors hover:text-[#005db6] focus-visible:text-[#005db6]"
+                            className="shrink-0 rounded-[0.25rem] p-0.5 text-[#9aa7b8] outline-none transition-colors hover:text-[#005db6] focus-visible:text-[#005db6] pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-center"
                           >
                             <ChevronDown
                               className={cn(
