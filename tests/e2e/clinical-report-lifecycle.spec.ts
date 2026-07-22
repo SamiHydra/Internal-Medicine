@@ -67,8 +67,20 @@ test.describe('Clinical report lifecycle (nurse write -> admin lock -> IDOR)', (
 
     const assignment = assignments[0]
     const filled = new Set(reports.map((r) => `${r.assignmentId}|${r.reportingPeriodId}`))
+    // Stay inside the loaded reporting window: pick a free period no newer than
+    // the newest period that already has a report. A future / far-past period is
+    // outside the default window the report page loads, so its report never
+    // hydrates and the locked read-only surface cannot render (that out-of-window
+    // rendering gap is tracked separately as AUD-UI-020). Reported periods are
+    // in-window by construction, so a free period adjacent to them is too.
+    const reportedWeekStarts = periods
+      .filter((p) => reports.some((r) => r.reportingPeriodId === p.id))
+      .map((p) => String(p.weekStart))
+      .sort()
+    const newestReported = reportedWeekStarts[reportedWeekStarts.length - 1] ?? '9999-12-31'
     const freePeriods = periods
       .filter((p) => !filled.has(`${assignment.id}|${p.id}`))
+      .filter((p) => String(p.weekStart) <= newestReported)
       .sort((a, b) => String(b.weekStart).localeCompare(String(a.weekStart)))
 
     expect(freePeriods.length, 'need an un-reported period to create a clean draft').toBeGreaterThan(

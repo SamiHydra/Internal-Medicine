@@ -48,6 +48,50 @@ const RESPONSIVE_UI: RegExp[] = [
   /responsive\.spec\.ts/,
 ]
 
+/**
+ * The extra cross-browser and responsive projects only run when explicitly
+ * opted in (E2E_ALL_BROWSERS=1). run-e2e.mjs invokes `playwright test` with no
+ * --project filter, and CI installs the chromium binary only, so leaving these
+ * on by default would make CI's e2e job fail trying to launch Firefox/WebKit it
+ * never downloaded. Locally: `E2E_ALL_BROWSERS=1 npm run test:e2e`.
+ */
+const allBrowsers = process.env.E2E_ALL_BROWSERS === '1'
+
+const crossBrowserProjects = [
+  {
+    // Cross-engine confidence for critical UI workflows only (Gecko).
+    name: 'firefox',
+    use: { ...devices['Desktop Firefox'], viewport: { width: 1920, height: 1080 } },
+    dependencies: ['setup'],
+    testMatch: CROSS_BROWSER_UI,
+  },
+  {
+    // Cross-engine confidence for critical UI workflows only (Safari/WebKit).
+    name: 'webkit',
+    use: { ...devices['Desktop Safari'], viewport: { width: 1920, height: 1080 } },
+    dependencies: ['setup'],
+    testMatch: CROSS_BROWSER_UI,
+  },
+  {
+    // Mobile phone: real Pixel 5 profile (393x851, touch, mobile UA).
+    name: 'mobile-chrome',
+    use: { ...devices['Pixel 5'] },
+    dependencies: ['setup'],
+    testMatch: RESPONSIVE_UI,
+  },
+  {
+    // Tablet portrait (~820x1180) with touch, on the chromium engine.
+    name: 'tablet',
+    use: {
+      ...devices['Desktop Chrome'],
+      viewport: { width: 820, height: 1180 },
+      hasTouch: true,
+    },
+    dependencies: ['setup'],
+    testMatch: RESPONSIVE_UI,
+  },
+]
+
 export default defineConfig({
   testDir: './tests/e2e',
   outputDir: './test-results',
@@ -76,46 +120,16 @@ export default defineConfig({
     // Logs each role in once and saves a storageState file the other projects reuse.
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
     {
-      // The merge-gate baseline: runs the ENTIRE suite at desktop width. Left
-      // exactly as it was so CI (which runs chromium only) is unchanged.
+      // The merge-gate baseline: runs the ENTIRE suite at desktop width. This is
+      // the only project CI runs (it installs the chromium binary only).
       name: 'chromium',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1920, height: 1080 } },
       dependencies: ['setup'],
       // auth.setup runs in the 'setup' project; exclude it here.
       testIgnore: /auth\.setup\.ts/,
     },
-    {
-      // Cross-engine confidence for critical UI workflows only (Gecko).
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'], viewport: { width: 1920, height: 1080 } },
-      dependencies: ['setup'],
-      testMatch: CROSS_BROWSER_UI,
-    },
-    {
-      // Cross-engine confidence for critical UI workflows only (Safari/WebKit).
-      name: 'webkit',
-      use: { ...devices['Desktop Safari'], viewport: { width: 1920, height: 1080 } },
-      dependencies: ['setup'],
-      testMatch: CROSS_BROWSER_UI,
-    },
-    {
-      // Mobile phone: real Pixel 5 profile (393x851, touch, mobile UA).
-      name: 'mobile-chrome',
-      use: { ...devices['Pixel 5'] },
-      dependencies: ['setup'],
-      testMatch: RESPONSIVE_UI,
-    },
-    {
-      // Tablet portrait (~820x1180) with touch, on the chromium engine.
-      name: 'tablet',
-      use: {
-        ...devices['Desktop Chrome'],
-        viewport: { width: 820, height: 1180 },
-        hasTouch: true,
-      },
-      dependencies: ['setup'],
-      testMatch: RESPONSIVE_UI,
-    },
+    // Firefox/WebKit/mobile/tablet only when E2E_ALL_BROWSERS=1 (see note above).
+    ...(allBrowsers ? crossBrowserProjects : []),
   ],
   webServer: [
     {
