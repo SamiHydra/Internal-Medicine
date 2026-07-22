@@ -190,7 +190,7 @@ class V2OperationalConfigurationTest extends TestCase
             [],
             $tooLong,
             "These identifiers are longer than MariaDB's 64-character limit, so `php artisan migrate` "
-                ."cannot run against the deployment engine. Give the index an explicit short name as its "
+                .'cannot run against the deployment engine. Give the index an explicit short name as its '
                 ."second argument:\n  ".implode("\n  ", $tooLong),
         );
     }

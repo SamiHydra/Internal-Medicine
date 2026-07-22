@@ -436,7 +436,7 @@ class AcademicEvaluationController extends Controller
      * evaluations_author_subject_date_form_unique. Nothing maps that to a
      * response, so without this it surfaces as a 500.
      *
-     * @param  \Closure(): Evaluation  $submit
+     * @param  Closure(): Evaluation  $submit
      */
     private function submitGuardingUniqueness(Closure $submit): Evaluation
     {

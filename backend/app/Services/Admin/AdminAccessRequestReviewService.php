@@ -36,8 +36,7 @@ class AdminAccessRequestReviewService
         AdminAccessRequest $adminRequest,
         string $decision,
         array $profile = [],
-    ): AdminAccessRequest
-    {
+    ): AdminAccessRequest {
         $decision = strtolower(trim($decision));
 
         if (! in_array($decision, ['approved', 'rejected'], true)) {
