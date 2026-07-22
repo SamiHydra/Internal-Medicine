@@ -47,6 +47,11 @@ const sectionClass =
 const countChipClass =
   'inline-flex items-center gap-2 self-start rounded-full bg-[#f4f7fb] px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#44474e] outline outline-1 outline-[#e3e9f1]'
 
+type ResidentApprovalDraft = {
+  trainingYear: string
+  rotationGroup: string
+}
+
 function initialsFor(fullName: string) {
   return (
     fullName
@@ -90,6 +95,9 @@ export function UserManagementPage() {
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(() => new Set())
 
   const [expandedRequests, setExpandedRequests] = useState<Set<string>>(() => new Set())
+  const [residentApprovalDrafts, setResidentApprovalDrafts] = useState<
+    Record<string, ResidentApprovalDraft>
+  >({})
   const adminRequestsLoadedRef = useRef(false)
 
   const toggleFromSet =
@@ -106,6 +114,29 @@ export function UserManagementPage() {
 
   const toggleExpandedUser = toggleFromSet(setExpandedUsers)
   const toggleExpandedRequest = toggleFromSet(setExpandedRequests)
+
+  const residentDraftFor = (request: (typeof adminAccessRequests)[number]) =>
+    residentApprovalDrafts[request.id] ?? {
+      trainingYear: request.trainingYear ? String(request.trainingYear) : '',
+      rotationGroup: request.rotationGroup ?? '',
+    }
+
+  const updateResidentDraft = (
+    request: (typeof adminAccessRequests)[number],
+    updates: Partial<ResidentApprovalDraft>,
+  ) => {
+    setResidentApprovalDrafts((current) => {
+      const existing = current[request.id] ?? {
+        trainingYear: request.trainingYear ? String(request.trainingYear) : '',
+        rotationGroup: request.rotationGroup ?? '',
+      }
+
+      return {
+        ...current,
+        [request.id]: { ...existing, ...updates },
+      }
+    })
+  }
 
   // Only the maintenance owner and admins review the self-service account queue.
   const canApproveAdmins = currentUser?.role === 'superadmin' || currentUser?.role === 'admin'
@@ -325,6 +356,14 @@ export function UserManagementPage() {
                   {pendingAccountRequests.map((request) => {
                     const expanded = expandedRequests.has(request.id)
                     const requestedRole = request.requestedRole as UserRole
+                    const residentDraft = residentDraftFor(request)
+                    const residentYear = Number(residentDraft.trainingYear)
+                    const residentGroup = residentDraft.rotationGroup.trim().toUpperCase()
+                    const residentProfileComplete =
+                      requestedRole !== 'resident' ||
+                      (residentYear >= 1 &&
+                        residentYear <= 3 &&
+                        (residentYear !== 3 || Boolean(residentGroup)))
 
                     return (
                       <div key={request.id} className="border-b border-[#dbe8f6] bg-[#f6fbff] last:border-b-0">
@@ -365,13 +404,43 @@ export function UserManagementPage() {
                               roleLabels[requestedRole] ??
                               request.requestedRole}
                           </span>
+                          {requestedRole === 'resident' ? (
+                            <span
+                              className={cn(
+                                'shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]',
+                                residentProfileComplete
+                                  ? 'bg-[#edf7f0] text-[#1f6b3b]'
+                                  : 'bg-[#fff3d6] text-[#805600]',
+                              )}
+                            >
+                              {residentDraft.trainingYear
+                                ? `Year ${residentDraft.trainingYear}${residentYear === 3 && residentGroup ? ` · Group ${residentGroup}` : ''}`
+                                : 'Year required'}
+                            </span>
+                          ) : null}
                           <div className="flex w-full shrink-0 items-center gap-2 [&>button]:flex-1 sm:w-auto sm:[&>button]:flex-none">
                             <Button
                               variant="secondary"
                               size="sm"
+                              disabled={!residentProfileComplete}
+                              title={
+                                residentProfileComplete
+                                  ? 'Approve account request'
+                                  : residentYear === 3
+                                    ? 'Open the request and assign a Year 3 rotation group.'
+                                    : 'Open the request and confirm the resident training year.'
+                              }
                               onClick={(event) => {
                                 event.stopPropagation()
-                                void approveAdminAccessRequest(request.id)
+                                void approveAdminAccessRequest(
+                                  request.id,
+                                  requestedRole === 'resident'
+                                    ? {
+                                        trainingYear: residentYear,
+                                        rotationGroup: residentYear === 3 ? residentGroup : null,
+                                      }
+                                    : undefined,
+                                )
                               }}
                             >
                               <CheckCheck className="h-4 w-4" />
@@ -391,10 +460,69 @@ export function UserManagementPage() {
                         </div>
 
                         {expanded ? (
-                          <div className="border-t border-[#dbe8f6] px-4 py-3.5">
-                            <p className="text-sm leading-6 text-[#44474e]">
-                              {request.notes ? request.notes : 'No notes provided with this request.'}
-                            </p>
+                          <div className="space-y-4 border-t border-[#dbe8f6] px-4 py-4">
+                            {requestedRole === 'resident' ? (
+                              <div className="grid gap-4 border-l-[3px] border-[#f0b429] bg-white px-4 py-3.5 sm:grid-cols-2">
+                                <div className="space-y-1.5">
+                                  <label className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#000a1e]">
+                                    Confirm training year
+                                  </label>
+                                  <Select
+                                    value={residentDraft.trainingYear}
+                                    onValueChange={(value) =>
+                                      updateResidentDraft(request, {
+                                        trainingYear: value,
+                                        rotationGroup:
+                                          value === '3' ? residentDraft.rotationGroup : '',
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger className="h-10 bg-white">
+                                      <SelectValue placeholder="Select year" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="1">Year 1</SelectItem>
+                                      <SelectItem value="2">Year 2</SelectItem>
+                                      <SelectItem value="3">Year 3</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <p className="text-xs leading-5 text-[#74777f]">
+                                    Submitted value: {request.trainingYear ? `Year ${request.trainingYear}` : 'Not provided'}
+                                  </p>
+                                </div>
+                                <div className="space-y-1.5">
+                                  <label htmlFor={`rotation-group-${request.id}`} className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#000a1e]">
+                                    Rotation group {residentYear === 3 ? '(required)' : '(Year 3 only)'}
+                                  </label>
+                                  <Input
+                                    id={`rotation-group-${request.id}`}
+                                    value={residentDraft.rotationGroup}
+                                    disabled={residentYear !== 3}
+                                    maxLength={8}
+                                    placeholder={residentYear === 3 ? 'e.g. A' : 'Not required'}
+                                    className="h-10 bg-white uppercase"
+                                    onChange={(event) =>
+                                      updateResidentDraft(request, {
+                                        rotationGroup: event.target.value
+                                          .replace(/[^A-Za-z0-9-]/g, '')
+                                          .toUpperCase(),
+                                      })
+                                    }
+                                  />
+                                  <p className="text-xs leading-5 text-[#74777f]">
+                                    Year 3 rotations are planned by group.
+                                  </p>
+                                </div>
+                              </div>
+                            ) : null}
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
+                                Applicant note
+                              </p>
+                              <p className="mt-1 text-sm leading-6 text-[#44474e]">
+                                {request.notes ? request.notes : 'No notes provided with this request.'}
+                              </p>
+                            </div>
                           </div>
                         ) : null}
                       </div>

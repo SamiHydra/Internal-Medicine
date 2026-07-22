@@ -297,7 +297,7 @@ export function LoginPage() {
                 ) : null}
 
                 <button
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-[3px] bg-[#002147] px-4 text-[0.82rem] font-bold uppercase tracking-[0.16em] text-white shadow-[0_16px_32px_rgba(0,33,71,0.32)] transition-[background-color,transform] duration-150 ease-out hover:bg-[#06305f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#005db6] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-[#778197] disabled:shadow-none"
+                  className="flex h-12 w-full items-center justify-center gap-2 whitespace-nowrap rounded-[3px] bg-[#002147] px-4 text-[0.68rem] font-bold uppercase leading-none tracking-[0.08em] text-white shadow-[0_14px_28px_rgba(0,33,71,0.28)] transition-[background-color,transform] duration-150 ease-out hover:bg-[#06305f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#005db6] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-[#778197] disabled:shadow-none sm:text-[0.8rem] sm:tracking-[0.12em]"
                   type="submit"
                   disabled={!isConfigured || isBootstrapping || isSigningIn}
                   style={{ fontFamily: 'Manrope, sans-serif' }}

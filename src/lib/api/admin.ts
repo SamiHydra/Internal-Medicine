@@ -91,8 +91,12 @@ export async function reviewAdminAccessRequest(
   client: LaravelApiClient,
   requestId: string,
   decision: 'approved' | 'rejected',
+  profile?: { trainingYear: number; rotationGroup?: string | null },
 ) {
-  await client.post(`/api/admin/admin-access-requests/${requestId}/${decision === 'approved' ? 'approve' : 'reject'}`)
+  await client.post(
+    `/api/admin/admin-access-requests/${requestId}/${decision === 'approved' ? 'approve' : 'reject'}`,
+    decision === 'approved' ? profile : undefined,
+  )
 }
 
 /** Follow-up action items (auto-opened by critical alerts, or created manually). */

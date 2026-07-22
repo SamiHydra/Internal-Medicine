@@ -1,5 +1,5 @@
-import { Bell, GraduationCap, LogOut, PanelLeftClose, PanelLeftOpen, Stethoscope } from 'lucide-react'
-import { Fragment, useEffect, useState, type PropsWithChildren } from 'react'
+import { Bell, ChevronLeft, GraduationCap, LogOut, Stethoscope } from 'lucide-react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type PropsWithChildren } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
@@ -227,9 +227,39 @@ export function AppShell({ children }: PropsWithChildren) {
 
     return window.localStorage.getItem('stpaul:sidebar-collapsed') === '1'
   })
+  const mainContentRef = useRef<HTMLDivElement>(null)
+  const previousSidebarWidthRef = useRef(collapsed ? 84 : 292)
 
   useEffect(() => {
     window.localStorage.setItem('stpaul:sidebar-collapsed', collapsed ? '1' : '0')
+  }, [collapsed])
+
+  useLayoutEffect(() => {
+    const nextSidebarWidth = collapsed ? 84 : 292
+    const horizontalDelta = previousSidebarWidthRef.current - nextSidebarWidth
+    previousSidebarWidthRef.current = nextSidebarWidth
+
+    const mainContent = mainContentRef.current
+    if (
+      !mainContent ||
+      horizontalDelta === 0 ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      return
+    }
+
+    const animation = mainContent.animate(
+      [
+        { transform: `translate3d(${horizontalDelta}px, 0, 0)` },
+        { transform: 'translate3d(0, 0, 0)' },
+      ],
+      {
+        duration: 200,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      },
+    )
+
+    return () => animation.cancel()
   }, [collapsed])
 
   if (!currentUser) {
@@ -274,16 +304,22 @@ export function AppShell({ children }: PropsWithChildren) {
   return (
     <div className="min-h-screen bg-[#f8f9fa]">
       <aside
+        id="desktop-sidebar"
         className={cn(
-          'fixed inset-y-0 left-0 z-40 hidden border-r border-[#0c2747] bg-[#04162f] transition-[width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] sm:block',
+          'fixed inset-y-0 left-0 z-40 hidden border-r border-[#0c2747] bg-[#04162f] transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] sm:block',
           collapsed ? 'w-[84px]' : 'w-[292px]',
         )}
       >
-        <div className={cn('flex h-full flex-col py-8', collapsed ? 'px-3' : 'px-7')}>
+        <div
+          className={cn(
+            'flex h-full flex-col py-8 transition-[padding] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]',
+            collapsed ? 'px-3' : 'px-7',
+          )}
+        >
           <BrandLockup inverted collapsed={collapsed} />
           <Separator className="my-6 bg-white/10" />
           <WorkspaceSwitcher collapsed={collapsed} className="mb-5" />
-          <div className="flex-1 overflow-y-auto overflow-x-hidden pr-1">
+          <div className="sidebar-scrollbar flex-1 overflow-y-auto overflow-x-hidden pr-1">
             <SidebarNav collapsed={collapsed} />
           </div>
           {!collapsed && (
@@ -298,27 +334,36 @@ export function AppShell({ children }: PropsWithChildren) {
             </div>
           )}
         </div>
+        <button
+          type="button"
+          onClick={() => setCollapsed((value) => !value)}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-controls="desktop-sidebar"
+          aria-expanded={!collapsed}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className="group absolute -right-5 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-[#315476] bg-[#04162f] text-[#f0b429] shadow-[0_4px_14px_rgba(4,22,47,0.2)] transition-[transform,background-color,border-color,box-shadow] duration-150 ease-out hover:scale-105 hover:border-[#f0b429]/70 hover:bg-[#0a2342] hover:shadow-[0_5px_18px_rgba(4,22,47,0.26)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f0b429] focus-visible:ring-offset-2 active:scale-90 motion-reduce:transition-none"
+        >
+          <ChevronLeft
+            aria-hidden="true"
+            strokeWidth={2.5}
+            className={cn(
+              'h-[18px] w-[18px] transition-transform duration-[180ms] ease-out motion-reduce:transition-none',
+              collapsed ? 'rotate-180 group-hover:translate-x-0.5' : 'group-hover:-translate-x-0.5',
+            )}
+          />
+        </button>
       </aside>
 
       <div
         className={cn(
-          'min-h-screen transition-[padding] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]',
+          'min-h-screen',
           collapsed ? 'sm:pl-[84px]' : 'sm:pl-[292px]',
         )}
       >
-        <div className="flex min-h-screen min-w-0 flex-col">
+        <div ref={mainContentRef} className="flex min-h-screen min-w-0 flex-col will-change-transform">
           <header className="sticky top-0 z-30 border-b border-[#e7ecf1] bg-white">
             <div className="flex items-center justify-between gap-4 px-4 py-3 md:px-6 lg:px-8">
               <div className="flex min-w-0 items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setCollapsed((value) => !value)}
-                  aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                  className="hidden h-10 w-10 items-center justify-center rounded-[0.4rem] border border-[#e1e6ec] bg-white text-[#44474e] transition-[transform,background-color,border-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#c8d5e6] hover:bg-[#f6f8fa] hover:text-[#000a1e] active:scale-[0.95] sm:inline-flex"
-                >
-                  {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-                </button>
-
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="h-3.5 w-[3px] rounded-full bg-[#f0b429]" />

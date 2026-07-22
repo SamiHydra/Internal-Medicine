@@ -41,15 +41,26 @@ const requestSchema = z.object({
 
 type RequestValues = z.infer<typeof requestSchema>
 
-const academicSchema = z.object({
-  fullName: z.string().trim().min(3, 'Enter your full name.'),
-  email: z.string().trim().email('Enter a valid email address.'),
-  password: z.string().optional(),
-  confirmPassword: z.string().optional(),
-  role: z.string().min(1, 'Choose Resident or Consultant.'),
-  homeWard: z.string().optional(),
-  notes: z.string().max(240, 'Keep the note under 240 characters.').optional(),
-})
+const academicSchema = z
+  .object({
+    fullName: z.string().trim().min(3, 'Enter your full name.'),
+    email: z.string().trim().email('Enter a valid email address.'),
+    password: z.string().optional(),
+    confirmPassword: z.string().optional(),
+    role: z.string().min(1, 'Choose Resident or Consultant.'),
+    trainingYear: z.string().optional(),
+    homeWard: z.string().optional(),
+    notes: z.string().max(240, 'Keep the note under 240 characters.').optional(),
+  })
+  .superRefine((values, context) => {
+    if (values.role === 'resident' && !values.trainingYear) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['trainingYear'],
+        message: 'Select your current training year.',
+      })
+    }
+  })
 
 type AcademicValues = z.infer<typeof academicSchema>
 
@@ -59,6 +70,7 @@ const academicDefaults: AcademicValues = {
   password: '',
   confirmPassword: '',
   role: '',
+  trainingYear: '',
   homeWard: '',
   notes: '',
 }
@@ -350,6 +362,7 @@ export function AccessRequestPage() {
         email: values.email,
         password: values.password,
         role: values.role as 'resident' | 'consultant',
+        trainingYear: values.role === 'resident' ? Number(values.trainingYear) : null,
         homeWardId: values.homeWard ? values.homeWard : null,
         notes: values.notes ? values.notes : null,
       })
@@ -1101,6 +1114,62 @@ export function AccessRequestPage() {
                                   {academicForm.formState.errors.role.message}
                                 </p>
                               ) : null}
+
+                              <AnimatePresence initial={false}>
+                                {role === 'resident' ? (
+                                  <motion.div
+                                    initial={reduceMotion ? false : { opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: 'auto' }}
+                                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
+                                    className="overflow-hidden"
+                                  >
+                                    <div className="space-y-2 border-l-[3px] border-[#f0b429] bg-[#fffaf0] px-4 py-3.5">
+                                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                                        <label className={labelClass}>Current training year</label>
+                                        <span className="text-xs text-[#74777f]">
+                                          Required · confirmed by an administrator
+                                        </span>
+                                      </div>
+                                      <Controller
+                                        control={academicForm.control}
+                                        name="trainingYear"
+                                        render={({ field }) => (
+                                          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Current training year">
+                                            {[1, 2, 3].map((year) => {
+                                              const value = String(year)
+                                              const active = field.value === value
+
+                                              return (
+                                                <button
+                                                  key={year}
+                                                  type="button"
+                                                  role="radio"
+                                                  aria-checked={active}
+                                                  onClick={() => field.onChange(value)}
+                                                  className={cn(
+                                                    'h-11 rounded-[0.35rem] text-sm font-bold outline outline-1 transition-[background,color,outline-color,transform] duration-150 active:scale-[0.98]',
+                                                    active
+                                                      ? 'bg-[#002147] text-white outline-[#002147]'
+                                                      : 'bg-white text-[#44474e] outline-[#d4dde8] hover:outline-[#005db6]',
+                                                  )}
+                                                >
+                                                  Year {year}
+                                                </button>
+                                              )
+                                            })}
+                                          </div>
+                                        )}
+                                      />
+                                      {academicForm.formState.errors.trainingYear ? (
+                                        <p className="text-sm text-[#ba1a1a]">
+                                          {academicForm.formState.errors.trainingYear.message}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  </motion.div>
+                                ) : null}
+                              </AnimatePresence>
 
                               <div className="grid gap-5 md:grid-cols-2">
                                 <div className="space-y-2">

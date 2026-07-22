@@ -39,6 +39,8 @@ export type AdminAccessRequest = {
   fullName: string
   email: string
   requestedRole: string
+  trainingYear: number | null
+  rotationGroup: string | null
   status: 'pending' | 'approved' | 'rejected'
   notes: string | null
   requestedAt: string | null
@@ -512,6 +514,7 @@ export type SubmitAcademicRegistrationPayload = {
   email: string
   password: string
   role: AcademicRole
+  trainingYear?: number | null
   homeWardId?: string | null
   notes?: string | null
 }

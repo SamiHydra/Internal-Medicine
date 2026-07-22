@@ -114,7 +114,10 @@ type AppDataContextValue = {
   rejectAccessRequest: (requestId: string, reviewerId: string) => Promise<void>
   adminAccessRequests: AdminAccessRequest[]
   refreshAdminAccessRequests: () => Promise<void>
-  approveAdminAccessRequest: (requestId: string) => Promise<void>
+  approveAdminAccessRequest: (
+    requestId: string,
+    profile?: { trainingYear: number; rotationGroup?: string | null },
+  ) => Promise<void>
   rejectAdminAccessRequest: (requestId: string) => Promise<void>
   saveReport: (payload: SaveReportPayload) => Promise<SaveReportResult>
   queuedReportSaveCount: number
@@ -1697,13 +1700,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }, [client, currentUser])
 
   const approveAdminAccessRequest = useCallback(
-    async (requestId: string): Promise<void> => {
+    async (
+      requestId: string,
+      profile?: { trainingYear: number; rotationGroup?: string | null },
+    ): Promise<void> => {
       if (!client) {
         return
       }
 
       try {
-        await reviewAdminAccessRequestMutation(client, requestId, 'approved')
+        await reviewAdminAccessRequestMutation(client, requestId, 'approved', profile)
         await refreshAdminAccessRequests()
         await refreshDataWithOptions({ includeProfiles: profileDirectoryLoadedRef.current })
         toast.success('Account request approved.')

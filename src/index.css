@@ -151,6 +151,37 @@ a {
   background: #edf1f5;
 }
 
+.sidebar-scrollbar {
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+}
+
+.sidebar-scrollbar:hover {
+  scrollbar-color: rgba(146, 163, 186, 0.52) transparent;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-thumb {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.sidebar-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: rgba(146, 163, 186, 0.52);
+}
+
+.sidebar-scrollbar:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(240, 180, 41, 0.72);
+}
+
 @keyframes aurora-drift {
   0% {
     transform: translate3d(-1%, -1%, 0) scale(1);
