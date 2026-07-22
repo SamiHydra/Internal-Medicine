@@ -11,6 +11,43 @@ import { defineConfig, devices } from '@playwright/test'
  * it before serving. Existing servers are never reused, preventing the gate
  * from reading or mutating a developer database.
  */
+
+/**
+ * Specs worth re-running across Firefox and WebKit. These exercise real
+ * rendering/interaction where an engine difference could bite. Purely API-level
+ * or engine-specific specs (permissions, api, security-smoke, performance,
+ * accessibility, regression stability, zz-rate-limiting) stay chromium-only:
+ * they build their own APIRequestContexts from the shared .auth state or
+ * measure chromium-specific numbers, so triplicating them buys nothing.
+ * Referencing not-yet-authored spec files is harmless - the regex simply
+ * matches nothing until the file exists.
+ */
+const CROSS_BROWSER_UI: RegExp[] = [
+  /auth\.spec\.ts/,
+  /navigation\.spec\.ts/,
+  /dashboard\.spec\.ts/,
+  /workspace\.spec\.ts/,
+  /forms\.spec\.ts/,
+  /tables\.spec\.ts/,
+  /v2-role-workflows\.spec\.ts/,
+  /registration-approval\.spec\.ts/,
+  /clinical-report-lifecycle\.spec\.ts/,
+  /academic-evaluation-submit\.spec\.ts/,
+]
+
+/**
+ * Specs run at mobile (390x844) and tablet (820x1180) viewports to satisfy the
+ * "desktop AND mobile viewport coverage" requirement. Kept small: the shell,
+ * navigation, dashboards, the workspace switcher, and the dedicated responsive
+ * spec - the surfaces where layout actually reflows.
+ */
+const RESPONSIVE_UI: RegExp[] = [
+  /navigation\.spec\.ts/,
+  /dashboard\.spec\.ts/,
+  /workspace\.spec\.ts/,
+  /responsive\.spec\.ts/,
+]
+
 export default defineConfig({
   testDir: './tests/e2e',
   outputDir: './test-results',
@@ -39,11 +76,45 @@ export default defineConfig({
     // Logs each role in once and saves a storageState file the other projects reuse.
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
     {
+      // The merge-gate baseline: runs the ENTIRE suite at desktop width. Left
+      // exactly as it was so CI (which runs chromium only) is unchanged.
       name: 'chromium',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1920, height: 1080 } },
       dependencies: ['setup'],
       // auth.setup runs in the 'setup' project; exclude it here.
       testIgnore: /auth\.setup\.ts/,
+    },
+    {
+      // Cross-engine confidence for critical UI workflows only (Gecko).
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'], viewport: { width: 1920, height: 1080 } },
+      dependencies: ['setup'],
+      testMatch: CROSS_BROWSER_UI,
+    },
+    {
+      // Cross-engine confidence for critical UI workflows only (Safari/WebKit).
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'], viewport: { width: 1920, height: 1080 } },
+      dependencies: ['setup'],
+      testMatch: CROSS_BROWSER_UI,
+    },
+    {
+      // Mobile phone: real Pixel 5 profile (393x851, touch, mobile UA).
+      name: 'mobile-chrome',
+      use: { ...devices['Pixel 5'] },
+      dependencies: ['setup'],
+      testMatch: RESPONSIVE_UI,
+    },
+    {
+      // Tablet portrait (~820x1180) with touch, on the chromium engine.
+      name: 'tablet',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 820, height: 1180 },
+        hasTouch: true,
+      },
+      dependencies: ['setup'],
+      testMatch: RESPONSIVE_UI,
     },
   ],
   webServer: [
