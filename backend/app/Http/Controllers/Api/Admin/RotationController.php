@@ -26,6 +26,15 @@ use Illuminate\Validation\ValidationException;
  */
 class RotationController extends Controller
 {
+    /**
+     * Whole block ranges are generated forward from this date, so an
+     * unbounded start propagates a typo across every block it produces.
+     * Same window the duty roster's daily strip accepts.
+     */
+    private const EARLIEST_CALENDAR_DATE = '2020-01-01';
+
+    private const FORWARD_HORIZON_YEARS = 2;
+
     public function __construct(
         private readonly RotationCalendarService $calendarService,
         private readonly RosterService $rosterService,
@@ -53,7 +62,12 @@ class RotationController extends Controller
         $validated = $request->validate([
             'trainingYear' => ['required', 'integer', 'between:1,3'],
             'academicYearLabel' => ['required', 'string', 'max:32'],
-            'startsOn' => ['required', 'date'],
+            'startsOn' => [
+                'required',
+                'date',
+                'after_or_equal:'.self::EARLIEST_CALENDAR_DATE,
+                'before_or_equal:'.Carbon::now()->addYears(self::FORWARD_HORIZON_YEARS)->toDateString(),
+            ],
             'blockKind' => ['required', 'string', Rule::in(RotationCalendar::BLOCK_KINDS)],
             'blockLengthWeeks' => ['sometimes', 'nullable', 'integer', 'between:1,52'],
             'blocksCount' => ['required', 'integer', 'between:1,24'],

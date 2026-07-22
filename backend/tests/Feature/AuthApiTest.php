@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Models\AccessRequest;
+use App\Models\AdminAccessRequest;
 use App\Models\Department;
 use App\Models\ReportAssignment;
 use App\Models\ReportTemplate;
@@ -79,10 +81,13 @@ class AuthApiTest extends TestCase
 
     public function test_login_rejects_inactive_users(): void
     {
+        // last_login_at is what separates a deactivated member of staff (named
+        // outright) from a never-activated applicant row (silenced below).
         $user = User::factory()->inactive()->create([
             'email' => 'inactive@example.test',
             'username' => 'inactive.nurse',
             'password' => Hash::make('StPaul2026!'),
+            'last_login_at' => now()->subDay(),
         ]);
 
         $response = $this->postJson('/api/auth/login', [
@@ -152,7 +157,7 @@ class AuthApiTest extends TestCase
         $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
         $template = ReportTemplate::query()->whereKey($department->template_id)->firstOrFail();
 
-        $submission = $this->postJson('/api/access-requests', [
+        $this->postJson('/api/access-requests', [
             'fullName' => 'Pending Applicant',
             'email' => 'pending@example.test',
             'password' => 'StPaul2026!',
@@ -161,17 +166,23 @@ class AuthApiTest extends TestCase
             ],
         ])->assertCreated();
 
-        // The applicant account exists but is inactive, so it cannot authenticate yet.
+        // The anonymous branch answers non-committally (no serialized request),
+        // so the id comes from the row itself.
+        $submittedRequestId = AccessRequest::query()->firstOrFail()->id;
+
+        // The applicant account exists but is inactive, so it cannot authenticate
+        // yet - and login must not say so, or the anonymous caller who just chose
+        // that password learns the address was free (see the enumeration tests).
         $this->assertDatabaseHas('users', ['email' => 'pending@example.test', 'active' => false]);
         $this->postJson('/api/auth/login', [
             'identifier' => 'pending@example.test',
             'password' => 'StPaul2026!',
-        ])->assertForbidden()->assertJsonPath('message', 'This account is inactive.');
+        ])->assertStatus(422);
 
         // After an admin approves, the applicant is activated and can sign in.
         $admin = User::factory()->role('admin', 'Administrator')->create();
         $this->actingAs($admin)
-            ->postJson("/api/admin/access-requests/{$submission->json('data.id')}/approve")
+            ->postJson("/api/admin/access-requests/{$submittedRequestId}/approve")
             ->assertOk()
             ->assertJsonPath('status', 'approved');
 
@@ -228,5 +239,137 @@ class AuthApiTest extends TestCase
 
         $this->withHeader('Origin', 'http://localhost:5173')->getJson('/api/auth/me')->assertUnauthorized();
         $this->assertGuest();
+    }
+
+    /**
+     * The registration endpoints answer non-committally but still store the
+     * password the ANONYMOUS caller chose, so any reply that recognises that
+     * password hands the enumeration bit straight back: submit (address,
+     * password), then sign in with the same pair and read "free" off one status
+     * code and "taken" off the other. Login must answer identically either way.
+     */
+    public function test_submitting_a_request_then_signing_in_cannot_classify_an_address(): void
+    {
+        User::factory()->create(['email' => 'taken@example.test']);
+
+        foreach (['taken@example.test', 'free@example.test'] as $email) {
+            $this->postJson('/api/academic-access-requests', [
+                'fullName' => 'Dr. Rediet Bekele',
+                'email' => $email,
+                'password' => 'AttackerChosen!2026',
+                'role' => 'resident',
+            ])->assertCreated();
+        }
+
+        $taken = $this->postJson('/api/auth/login', [
+            'identifier' => 'taken@example.test',
+            'password' => 'AttackerChosen!2026',
+        ]);
+        $free = $this->postJson('/api/auth/login', [
+            'identifier' => 'free@example.test',
+            'password' => 'AttackerChosen!2026',
+        ]);
+
+        $taken->assertStatus(422);
+        $this->assertSame($taken->getStatusCode(), $free->getStatusCode());
+        $this->assertSame($taken->getContent(), $free->getContent());
+    }
+
+    /**
+     * The nurse track is the same probe against the one endpoint that really
+     * does create an inactive users row holding the caller-supplied password.
+     */
+    public function test_a_never_activated_applicant_account_is_indistinguishable_from_an_unknown_address(): void
+    {
+        $applicant = User::factory()->inactive()->create([
+            'email' => 'applicant@example.test',
+            'username' => null,
+            'title' => 'Applicant Nurse',
+            'password' => Hash::make('AttackerChosen!2026'),
+            'last_login_at' => null,
+        ]);
+
+        $applicantLogin = $this->postJson('/api/auth/login', [
+            'identifier' => $applicant->email,
+            'password' => 'AttackerChosen!2026',
+        ]);
+        $unknownAddress = $this->postJson('/api/auth/login', [
+            'identifier' => 'nobody.at.all@example.test',
+            'password' => 'AttackerChosen!2026',
+        ]);
+
+        $applicantLogin->assertStatus(422);
+        $this->assertSame($unknownAddress->getStatusCode(), $applicantLogin->getStatusCode());
+        $this->assertSame($unknownAddress->getContent(), $applicantLogin->getContent());
+        $this->assertGuest();
+    }
+
+    /**
+     * A pending applicant must be byte-identical to an address nobody has ever
+     * heard of, whatever password is typed.
+     */
+    public function test_a_wrong_password_never_reveals_a_pending_applicant(): void
+    {
+        $this->postJson('/api/academic-access-requests', [
+            'fullName' => 'Dr. Rediet Bekele',
+            'email' => 'rediet.bekele@example.test',
+            'password' => 'StPaul2026!',
+            'role' => 'resident',
+        ])->assertCreated();
+
+        $wrongPassword = $this->postJson('/api/auth/login', [
+            'identifier' => 'rediet.bekele@example.test',
+            'password' => 'TotallyWrong999!',
+        ]);
+        $unknownAddress = $this->postJson('/api/auth/login', [
+            'identifier' => 'nobody.at.all@example.test',
+            'password' => 'TotallyWrong999!',
+        ]);
+
+        $wrongPassword->assertStatus(422);
+        $this->assertSame($unknownAddress->getStatusCode(), $wrongPassword->getStatusCode());
+        $this->assertSame($unknownAddress->getContent(), $wrongPassword->getContent());
+
+        // A rejected request is not "pending", so it stays silent for the right
+        // password too.
+        AdminAccessRequest::query()->firstOrFail()->forceFill(['status' => 'rejected'])->save();
+
+        $rejected = $this->postJson('/api/auth/login', [
+            'identifier' => 'rediet.bekele@example.test',
+            'password' => 'StPaul2026!',
+        ]);
+        $this->assertSame($unknownAddress->getStatusCode(), $rejected->getStatusCode());
+        $this->assertSame($unknownAddress->getContent(), $rejected->getContent());
+    }
+
+    /**
+     * PRE-4: users.title is nullable and three private defaultTitle() copies
+     * disagreed, so a student rep with no title was rendered "Nurse" by both
+     * /api/auth/me and /api/workspace while the same payload reported roleLabel
+     * "Student representative".
+     */
+    public function test_a_null_title_falls_back_to_the_role_title_on_every_endpoint(): void
+    {
+        $expected = [
+            'student_rep' => 'Student representative',
+            'resident' => 'Resident',
+            'consultant' => 'Consultant',
+            'admin' => 'Administrator',
+            'superadmin' => 'Maintenance',
+            'nurse' => 'Nurse',
+        ];
+
+        foreach ($expected as $roleKey => $title) {
+            $user = User::factory()->role($roleKey)->create();
+            $this->assertNull($user->title);
+
+            $this->actingAs($user)->getJson('/api/auth/me')
+                ->assertOk()
+                ->assertJsonPath('user.title', $title);
+
+            $this->actingAs($user)->getJson('/api/workspace')
+                ->assertOk()
+                ->assertJsonPath('currentUser.title', $title);
+        }
     }
 }

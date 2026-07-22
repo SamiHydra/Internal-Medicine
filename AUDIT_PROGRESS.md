@@ -349,6 +349,56 @@ to the prod-parity lane too, which used the same seeders.
 
 **Last verified checkpoint:** CHECKPOINT 6
 
+---
+
+## CHECKPOINT 7 - 2026-07-21 ~15:00, both deployment blockers cleared; remediation run in flight
+
+**Scope decision recorded.** The operator authorised fixing everything found. The auditor chose the
+verify-then-fix path over both extremes: not a ship-only patch, and not the full seven-track browser sweep.
+Rationale: every high-value finding so far came from the production-parity lane and code inspection, not
+from Playwright. The remaining risk sits in the ~17 written-down candidates, not in untested viewports.
+Browser-based role testing (phases 2-8 of the plan) remains **NOT STARTED** and must be reported as such.
+
+**Both deployment blockers are now CLOSED and VERIFIED**
+| ID | Was | Now |
+|---|---|---|
+| `AUD-DB-001` | `migrate --force` failed on MariaDB (71-char index name) | Verified by destroying the container DB and rebuilding from empty: 72 migration/seeder steps, all services healthy |
+| `AUD-DEPLOY-007` | `composer install` failed on the server's PHP 8.3 (lock required 8.4) | Verified on a real 8.3.32 runtime: 91 installs, stack healthy. Root cause fixed by pinning `config.platform.php`, not just bumping a version |
+
+Commits: `6494dec` (checkpoint), `540c067` (migration + first CI attempt), `6bb360f` (composer platform).
+
+**Auditor error, recorded not hidden:** the first CI fix raised the pinned PHP to 8.4 to match the lock.
+That was backwards - it would have produced a green CI against a server that still could not install.
+Reverted. Retained in `AUD-INFRA-003` so the audit trail shows the correction.
+
+**Parity lane realigned:** it had been running PHP 8.4 while production runs 8.3, so it could not have
+caught `AUD-DEPLOY-007` itself. Now pinned to 8.3 in `docker/Dockerfile` and `compose.yaml`.
+
+**Remediation workflow in flight** (`fix-all-audit-findings`): verify -> 4 sequential fix lanes ->
+adversarial review with refuters -> full gate on BOTH lanes. Design notes:
+- Verify precedes fix, so only real defects are changed and deliberate behaviour (e.g. `student_rep`
+  being appointed rather than self-registering) is left alone.
+- Fix lanes are sequential with disjoint file ownership; parallel edits to `api.php` and
+  `Permissions.php` would clobber each other.
+- Every fix requires a regression test that fails without it; one review lens checks only that.
+- Named risks the reviewers must disprove rather than assume: a CSP that breaks the SPA, a constraint
+  migration that fails against the 4 existing duplicate evaluation groups and the 2320-02-12 duty row,
+  a pending-approval login message that leaks on the wrong-password path, and the concurrency test whose
+  10 ms barrier permits false passes.
+- The gate ends by logging into the containerised app and performing the roster save that returns 500
+  today, so the headline fix is proven by user journey rather than by a passing test.
+
+**Tests executed under the audit proper:** still 0 Playwright tests. Backend/parity suites are regression
+verification, not the role-based audit.
+
+**Exact next task**
+1. Read the remediation gate output; record every fix in `AUDIT_FINDINGS.md` with its verification status.
+2. Commit the remediation.
+3. Then decide, with the operator, whether to run the browser-based role testing or close the audit with
+   an honest UNTESTED section covering it.
+
+**Last verified checkpoint:** CHECKPOINT 7
+
 ## MASTER CHECKLIST
 
 ### 1. System discovery

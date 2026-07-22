@@ -71,10 +71,15 @@ class AcademicRegistrationTest extends TestCase
     {
         $this->submitEnrollment();
 
+        // No account exists, so no session is issued - and the reply cannot name
+        // the pending request either: the prober chose that password one request
+        // ago, so recognising it would classify the address for them.
         $this->postJson('/api/auth/login', [
             'identifier' => 'rediet.bekele@example.test',
             'password' => 'StPaul2026!',
         ])->assertStatus(422);
+
+        $this->assertGuest();
     }
 
     public function test_approving_creates_the_resident_with_the_requested_role_title_and_ward(): void
@@ -160,7 +165,7 @@ class AcademicRegistrationTest extends TestCase
         $this->assertSame('pending', $forged->refresh()->status);
     }
 
-    public function test_duplicate_email_is_rejected(): void
+    public function test_duplicate_email_creates_no_request(): void
     {
         User::factory()->create(['email' => 'taken@example.test']);
 
@@ -169,10 +174,12 @@ class AcademicRegistrationTest extends TestCase
             'email' => 'taken@example.test',
             'password' => 'StPaul2026!',
             'role' => 'resident',
-        ])->assertStatus(422);
+        ])->assertCreated();
+
+        $this->assertDatabaseMissing('admin_access_requests', ['email' => 'taken@example.test']);
     }
 
-    public function test_duplicate_pending_email_is_rejected(): void
+    public function test_duplicate_pending_email_creates_no_second_request(): void
     {
         $this->submitEnrollment();
 
@@ -181,9 +188,52 @@ class AcademicRegistrationTest extends TestCase
             'email' => 'rediet.bekele@example.test',
             'password' => 'StPaul2026!',
             'role' => 'consultant',
-        ])->assertStatus(422);
+        ])->assertCreated();
 
         $this->assertSame(1, AdminAccessRequest::query()->count());
+        $this->assertSame('resident', AdminAccessRequest::query()->firstOrFail()->requested_role);
+    }
+
+    /**
+     * C-SEC-004: free address, address with an account and address with a
+     * request already pending must be indistinguishable to an anonymous prober.
+     */
+    public function test_the_endpoint_does_not_disclose_whether_an_address_is_known(): void
+    {
+        User::factory()->create(['email' => 'taken@example.test']);
+        $this->submitEnrollment();
+
+        $probe = fn (string $email) => $this->postJson('/api/academic-access-requests', [
+            'fullName' => 'Unknown Person',
+            'email' => $email,
+            'password' => 'StPaul2026!',
+            'role' => 'resident',
+        ]);
+
+        $free = $probe('nobody@example.test');
+
+        foreach (['taken@example.test', 'rediet.bekele@example.test'] as $email) {
+            $response = $probe($email);
+            $this->assertSame($free->getStatusCode(), $response->getStatusCode());
+            $this->assertSame($free->getContent(), $response->getContent());
+        }
+    }
+
+    /**
+     * The silencing above must not swallow a genuinely invalid payload: an
+     * unknown ward still fails, whatever the email's state is.
+     */
+    public function test_an_unknown_ward_still_fails_for_an_address_that_already_has_an_account(): void
+    {
+        User::factory()->create(['email' => 'taken@example.test']);
+
+        $this->postJson('/api/academic-access-requests', [
+            'fullName' => 'Someone',
+            'email' => 'taken@example.test',
+            'password' => 'StPaul2026!',
+            'role' => 'resident',
+            'homeWardId' => 'no_such_ward',
+        ])->assertStatus(422);
     }
 
     public function test_invalid_role_is_rejected(): void

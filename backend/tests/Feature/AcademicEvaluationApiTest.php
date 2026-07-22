@@ -12,6 +12,7 @@ use App\Services\Academic\EvaluationFormService;
 use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -101,6 +102,70 @@ class AcademicEvaluationApiTest extends TestCase
             'author_id' => $this->resident->id,
             'subject_user_id' => $this->consultant->id,
             'ward_id' => $this->teachingWard->id,
+        ]);
+    }
+
+    public function test_one_author_evaluates_one_subject_once_per_date_and_form(): void
+    {
+        $payload = [
+            'evaluationDate' => now()->subDays(3)->toDateString(),
+            'subjectId' => $this->consultant->id,
+            'seniorPresent' => true,
+            'presenceMinutes' => 45,
+            'allPatientsReviewed' => true,
+            'mgmtPlanDocumented' => true,
+            'vteAssessed' => true,
+            'dischargeDiscussed' => true,
+            'medReviewDone' => true,
+            'criticalLabsReviewed' => true,
+            'pctPatientsSeen' => 80,
+            'roundDelayed' => false,
+        ];
+
+        $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', $payload)
+            ->assertCreated();
+
+        // Every analytics aggregate is a per-row mean, so a repeat is an
+        // extra vote on this consultant's record, not a harmless duplicate.
+        $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', $payload)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['subjectId']);
+
+        $this->assertSame(1, Evaluation::query()
+            ->where('author_id', $this->resident->id)
+            ->where('subject_user_id', $this->consultant->id)
+            ->count());
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/academic/analytics/summary?direction=consultant&subjectId='.$this->consultant->id)
+            ->assertOk()
+            ->assertJsonPath('evaluationCount', 1);
+
+        // Another date is a different round and stays legal.
+        $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', [
+                ...$payload,
+                'evaluationDate' => now()->subDays(4)->toDateString(),
+            ])
+            ->assertCreated();
+    }
+
+    public function test_the_database_refuses_a_duplicate_evaluation_even_without_the_controller(): void
+    {
+        $first = $this->createConsultantEvaluation();
+
+        $this->expectException(QueryException::class);
+
+        Evaluation::query()->create([
+            'form_id' => $first->form_id,
+            'form_key' => $first->form_key,
+            'author_id' => $first->author_id,
+            'subject_user_id' => $first->subject_user_id,
+            'evaluation_date' => $first->evaluation_date,
+            'ward_id' => $first->ward_id,
+            'placement_type' => $first->placement_type,
         ]);
     }
 

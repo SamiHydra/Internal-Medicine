@@ -132,8 +132,28 @@ class DevUserSeeder extends Seeder
             return array_values(array_slice($pool, 0, random_int(0, $max)));
         };
 
+        // One author may evaluate one subject once per date per form (the
+        // evaluations unique key). With 2 residents, 2 consultants and a 57-day
+        // window there are only 228 tuples per form, so independent random draws
+        // collided well inside 32 rows and aborted `db:seed` outright. Draw
+        // DISTINCT tuples from the shuffled product instead.
+        $distinctTuples = static function (array $authors, array $subjects, int $count): array {
+            $tuples = [];
+            foreach ($authors as $author) {
+                foreach ($subjects as $subject) {
+                    for ($dayOffset = 0; $dayOffset <= 56; $dayOffset++) {
+                        $tuples[] = [$author, $subject, $dayOffset];
+                    }
+                }
+            }
+
+            shuffle($tuples);
+
+            return array_slice($tuples, 0, $count);
+        };
+
         // Residents evaluating consultants (the MDT round form).
-        for ($i = 0; $i < 32; $i++) {
+        foreach ($distinctTuples($residents->all(), $consultants->all(), 32) as [$author, $subject, $dayOffset]) {
             $forms->store($mdtForm, [
                 'senior_present' => $chance(90),
                 'senior_joined_at' => sprintf('%02d:%02d', random_int(7, 9), [0, 15, 30, 45][random_int(0, 3)]),
@@ -149,16 +169,16 @@ class DevUserSeeder extends Seeder
                 'mdt_participants' => $sample($mdtPool, 5),
                 'system_issues' => $sample($issuePool, 3),
             ], [
-                'author_id' => $residents->random()->id,
-                'subject_user_id' => $consultants->random()->id,
-                'evaluation_date' => now()->subDays(random_int(0, 56))->toDateString(),
+                'author_id' => $author->id,
+                'subject_user_id' => $subject->id,
+                'evaluation_date' => now()->subDays($dayOffset)->toDateString(),
                 'ward_id' => $teachingWards->random()->id,
                 'placement_type' => 'ward',
             ]);
         }
 
         // Consultants evaluating residents.
-        for ($i = 0; $i < 22; $i++) {
+        foreach ($distinctTuples($consultants->all(), $residents->all(), 22) as [$author, $subject, $dayOffset]) {
             $forms->store($acgmeForm, [
                 'on_time' => $chance(88),
                 'prepared' => $chance(80),
@@ -173,9 +193,9 @@ class DevUserSeeder extends Seeder
                 'overall_rating' => random_int(2, 5),
                 'concerns' => $sample($concernPool, 3),
             ], [
-                'author_id' => $consultants->random()->id,
-                'subject_user_id' => $residents->random()->id,
-                'evaluation_date' => now()->subDays(random_int(0, 56))->toDateString(),
+                'author_id' => $author->id,
+                'subject_user_id' => $subject->id,
+                'evaluation_date' => now()->subDays($dayOffset)->toDateString(),
                 'ward_id' => $teachingWards->random()->id,
                 'placement_type' => 'ward',
             ]);

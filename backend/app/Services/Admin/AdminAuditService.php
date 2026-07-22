@@ -9,6 +9,12 @@ use Illuminate\Http\Request;
 class AdminAuditService
 {
     /**
+     * $entityId is an OPAQUE handle of at most 64 characters, not a uuid. Most
+     * callers pass a model id, but the duty roster keys its rows on a period
+     * ("2026-07") and the admin trail filters on the raw string either way.
+     * Keep the column and this contract in step: it is stored as a plain
+     * string precisely so a non-uuid handle stays legal.
+     *
      * @param  array<string, mixed>|null  $oldValues
      * @param  array<string, mixed>|null  $newValues
      */

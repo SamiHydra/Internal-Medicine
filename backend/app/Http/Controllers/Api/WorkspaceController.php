@@ -27,6 +27,7 @@ use App\Services\Admin\AppSettingsService;
 use App\Support\Authorization\Permissions;
 use App\Support\HospitalClock;
 use App\Support\Reports\ReportPeriodWindow;
+use App\Support\RoleTitles;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -411,20 +412,11 @@ class WorkspaceController extends Controller
             'email' => $user->email,
             'username' => $user->username,
             'role' => $user->role_key,
-            'title' => $user->title ?? $this->defaultTitle($user->role_key),
+            'title' => $user->title ?? RoleTitles::default($user->role_key),
             'active' => (bool) $user->active,
             'phone' => $user->phone,
             'passwordChangeRequired' => (bool) $user->password_change_required,
         ];
-    }
-
-    private function defaultTitle(string $roleKey): string
-    {
-        return match ($roleKey) {
-            'superadmin' => 'Maintenance',
-            'admin' => 'Administrator',
-            default => 'Nurse',
-        };
     }
 
     private function periodLabel(ReportingPeriod $period): string

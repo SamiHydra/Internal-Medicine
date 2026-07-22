@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\Admin\AdminAuditService;
 use App\Support\Authorization\Permissions;
 use App\Support\Authorization\Workspaces;
+use App\Support\RoleTitles;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -269,10 +270,6 @@ class UserController extends Controller
 
     private function defaultTitle(string $roleKey): string
     {
-        return match ($roleKey) {
-            'admin' => 'Administrator',
-            'student_rep' => 'Student representative',
-            default => 'Nurse',
-        };
+        return RoleTitles::default($roleKey);
     }
 }

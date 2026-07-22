@@ -75,11 +75,15 @@ class AdminRegistrationTest extends TestCase
     {
         $this->submitRequest();
 
-        // No account exists, so authentication fails.
+        // No account exists, so no session is issued - and the reply cannot name
+        // the pending request either: the prober chose that password one request
+        // ago, so recognising it would classify the address for them.
         $this->postJson('/api/auth/login', [
             'identifier' => 'meron.tadesse@example.test',
             'password' => 'StPaul2026!',
         ])->assertStatus(422);
+
+        $this->assertGuest();
     }
 
     public function test_an_admin_can_approve_and_the_new_admin_can_log_in(): void
@@ -160,7 +164,7 @@ class AdminRegistrationTest extends TestCase
         $this->assertSame(1, User::query()->whereRaw('lower(email) = ?', ['meron.tadesse@example.test'])->count());
     }
 
-    public function test_duplicate_pending_email_is_rejected(): void
+    public function test_duplicate_pending_email_creates_no_second_request(): void
     {
         $this->submitRequest();
 
@@ -168,10 +172,13 @@ class AdminRegistrationTest extends TestCase
             'fullName' => 'Someone Else',
             'email' => 'meron.tadesse@example.test',
             'password' => 'StPaul2026!',
-        ])->assertStatus(422);
+        ])->assertCreated();
+
+        $this->assertSame(1, AdminAccessRequest::query()->count());
+        $this->assertSame('Dr. Meron Tadesse', AdminAccessRequest::query()->firstOrFail()->full_name);
     }
 
-    public function test_existing_account_email_is_rejected(): void
+    public function test_existing_account_email_creates_no_request(): void
     {
         User::factory()->create(['email' => 'taken@example.test']);
 
@@ -179,6 +186,41 @@ class AdminRegistrationTest extends TestCase
             'fullName' => 'Someone',
             'email' => 'taken@example.test',
             'password' => 'StPaul2026!',
-        ])->assertStatus(422);
+        ])->assertCreated();
+
+        $this->assertDatabaseMissing('admin_access_requests', ['email' => 'taken@example.test']);
+    }
+
+    /**
+     * C-SEC-004: the three states an anonymous prober used to be able to tell
+     * apart - free address, address with an account, address with a request
+     * already pending - must now be indistinguishable, the way
+     * PasswordResetController@forgot already is.
+     */
+    public function test_the_endpoint_does_not_disclose_whether_an_address_is_known(): void
+    {
+        User::factory()->create(['email' => 'taken@example.test']);
+        $this->submitRequest();
+
+        $free = $this->postJson('/api/admin-access-requests', [
+            'fullName' => 'Unknown Person',
+            'email' => 'nobody@example.test',
+            'password' => 'StPaul2026!',
+        ]);
+        $account = $this->postJson('/api/admin-access-requests', [
+            'fullName' => 'Unknown Person',
+            'email' => 'taken@example.test',
+            'password' => 'StPaul2026!',
+        ]);
+        $pending = $this->postJson('/api/admin-access-requests', [
+            'fullName' => 'Unknown Person',
+            'email' => 'meron.tadesse@example.test',
+            'password' => 'StPaul2026!',
+        ]);
+
+        foreach ([$account, $pending] as $probe) {
+            $this->assertSame($free->getStatusCode(), $probe->getStatusCode());
+            $this->assertSame($free->getContent(), $probe->getContent());
+        }
     }
 }

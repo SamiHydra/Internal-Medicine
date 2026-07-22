@@ -81,11 +81,16 @@ RUN composer install --no-dev --prefer-dist --no-scripts --no-autoloader
 
 COPY backend/ ./
 
-# Container-only fix for a defect that makes `artisan migrate` impossible on
-# MariaDB (over-long index identifier). The repo working tree is untouched;
-# see docker/patches/apply-parity-patches.sh - it is an audit finding.
-COPY docker/patches/apply-parity-patches.sh /tmp/apply-parity-patches.sh
-RUN chmod +x /tmp/apply-parity-patches.sh && /tmp/apply-parity-patches.sh
+# This stage used to run docker/patches/apply-parity-patches.sh, a container-only
+# rewrite of the teaching_sessions unique index whose auto-generated name was 71
+# characters and so made `artisan migrate` impossible on MariaDB. That defect is
+# fixed in the repo (the migration now passes an explicit index name), the script
+# had nothing left to patch, and it has been deleted rather than kept as a
+# tripwire: it matched one exact source line, so any harmless reformat of that
+# migration would have failed the image build. The regression is now guarded by
+# V2OperationalConfigurationTest::test_no_schema_identifier_exceeds_the_64_character_limit_of_the_deployment_engine,
+# which checks every index, foreign key and table name and runs on BOTH lanes -
+# including the SQLite one, where over-long identifiers are otherwise invisible.
 
 RUN composer dump-autoload --optimize --no-dev --no-scripts \
     && php artisan package:discover --ansi
@@ -125,10 +130,18 @@ RUN composer install --prefer-dist --no-scripts --no-autoloader
 
 COPY backend/ ./
 
-# Same container-only migration fix as the app stage; without it every
-# RefreshDatabase test dies inside migrate:fresh and the MariaDB lane cannot run.
-COPY docker/patches/apply-parity-patches.sh /tmp/apply-parity-patches.sh
-RUN chmod +x /tmp/apply-parity-patches.sh && /tmp/apply-parity-patches.sh
+# V2OperationalConfigurationTest reads the REAL deploy script through
+# base_path('../deploy/deploy.sh') and asserts the atomic-deploy ordering
+# (readiness --strict before `artisan up` before the health probe before
+# queue:restart) plus the ERR trap that rolls back. Without deploy/ in the image
+# that test errors on a missing file, so the one check that guards the
+# production deployment procedure silently does not run in the MariaDB lane.
+# Copied rather than bind-mounted so the test image stays self-contained and
+# `compose run test` needs no host paths; editing deploy/ means rebuilding, the
+# same contract backend/ already has.
+COPY deploy/ /opt/imreport/current/deploy/
+
+# No parity source patches remain; see the note in the vendor-prod stage.
 
 RUN composer dump-autoload --no-scripts \
     && php artisan package:discover --ansi \

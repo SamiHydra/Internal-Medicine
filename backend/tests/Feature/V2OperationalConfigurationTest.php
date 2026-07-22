@@ -16,6 +16,8 @@ use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class V2OperationalConfigurationTest extends TestCase
@@ -133,6 +135,64 @@ class V2OperationalConfigurationTest extends TestCase
 
         $this->artisan('test:launch-readiness-warning')
             ->assertSuccessful();
+    }
+
+    public function test_no_schema_identifier_exceeds_the_64_character_limit_of_the_deployment_engine(): void
+    {
+        // MySQL and MariaDB cap identifiers at 64 characters; SQLite has no
+        // limit at all. So a migration whose auto-generated index name runs
+        // long passes the dev lane and the default test suite, then fails
+        // `php artisan migrate` outright on the engine the department server
+        // actually runs - which blocks deploy/deploy.sh, the backend-mariadb CI
+        // job, and every RefreshDatabase test in the MariaDB lane at once.
+        // Laravel derives these names in the Blueprint, identically on both
+        // drivers, so checking them here catches the defect on the lane where
+        // it is otherwise invisible.
+        $limit = 64;
+        $tooLong = [];
+        $tables = Schema::getTableListing();
+
+        // Without this the check passes vacuously on an empty schema, which is
+        // exactly the state a mis-set-up lane leaves behind.
+        $this->assertNotEmpty($tables, 'No tables were found, so nothing was actually checked.');
+
+        foreach ($tables as $qualifiedTable) {
+            $table = Str::afterLast($qualifiedTable, '.');
+
+            if (strlen($table) > $limit) {
+                $tooLong[] = sprintf('table %s (%d chars)', $table, strlen($table));
+            }
+
+            foreach (Schema::getIndexes($table) as $index) {
+                $name = (string) ($index['name'] ?? '');
+
+                // SQLite names implicit primary-key and unique indexes itself
+                // (sqlite_autoindex_*); those are not identifiers Laravel emits.
+                if (str_starts_with($name, 'sqlite_') || strlen($name) <= $limit) {
+                    continue;
+                }
+
+                $tooLong[] = sprintf('index %s on %s (%d chars)', $name, $table, strlen($name));
+            }
+
+            foreach (Schema::getForeignKeys($table) as $foreignKey) {
+                $name = (string) ($foreignKey['name'] ?? '');
+
+                if ($name === '' || strlen($name) <= $limit) {
+                    continue;
+                }
+
+                $tooLong[] = sprintf('foreign key %s on %s (%d chars)', $name, $table, strlen($name));
+            }
+        }
+
+        $this->assertSame(
+            [],
+            $tooLong,
+            "These identifiers are longer than MariaDB's 64-character limit, so `php artisan migrate` "
+                ."cannot run against the deployment engine. Give the index an explicit short name as its "
+                ."second argument:\n  ".implode("\n  ", $tooLong),
+        );
     }
 
     public function test_migration_verifier_rejects_a_vacuous_comparison_without_an_explicit_exception(): void

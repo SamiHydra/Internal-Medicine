@@ -9,9 +9,12 @@ use App\Models\User;
 use App\Models\Ward;
 use App\Services\Academic\RosterService;
 use App\Services\Academic\RotationCalendarService;
+use App\Services\Admin\AdminAuditService;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
@@ -472,6 +475,120 @@ class RosterTest extends TestCase
             DutyType::query()->where('slug', 'cardiology_ward_service')->value('ward_id'),
             DutyType::query()->where('slug', 'endocrinology_ward_service')->value('ward_id'),
         );
+    }
+
+    // ---- Audit-column regression: the period handle must survive the write ----
+
+    public function test_a_roster_month_save_stores_the_period_as_its_audit_entity_id(): void
+    {
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+
+        $this->actingAs($this->admin)
+            ->putJson('/api/admin/roster/2026/7', [
+                'assignments' => [
+                    ['userId' => $consultant->id, 'dutyTypeId' => $this->dutyType('nephrology_ward_service')->id],
+                ],
+            ])
+            ->assertOk();
+
+        // entity_id is an opaque handle, not a uuid. MariaDB's native uuid
+        // type rejected the period outright, so the whole save 500'd there.
+        $this->assertDatabaseHas('admin_audit_logs', [
+            'entity_type' => 'duty_roster',
+            'action' => 'save_roster_month',
+            'entity_id' => '2026-07',
+        ]);
+
+        // The admin trail still finds it again by that same raw handle, which
+        // is the only history admins have on a roster month.
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/admin-audit-logs?entity_type=duty_roster&entity_id=2026-07')
+            ->assertOk()
+            ->assertJsonPath('data.0.action', 'save_roster_month');
+    }
+
+    public function test_a_failing_audit_write_rolls_back_the_whole_roster_month(): void
+    {
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+        $keep = $this->assign($consultant, 'nephrology_ward_service', '2026-07-01', '2026-07-31');
+
+        $this->app->instance(AdminAuditService::class, new class extends AdminAuditService
+        {
+            public function record(
+                User $actor,
+                string $action,
+                string $entityType,
+                ?string $entityId = null,
+                ?array $oldValues = null,
+                ?array $newValues = null,
+                ?Request $request = null,
+            ): never {
+                throw new \RuntimeException('Simulated audit write failure.');
+            }
+        });
+
+        $this->actingAs($this->admin)
+            ->putJson('/api/admin/roster/2026/7', [
+                'assignments' => [
+                    ['userId' => $consultant->id, 'dutyTypeId' => $this->dutyType('dialysis')->id],
+                ],
+            ])
+            ->assertStatus(500);
+
+        // carveMonthlyWindow and bulkAssign each open their own transaction,
+        // so without an outer one the replacement would already be committed
+        // by the time the audit row failed.
+        $rows = DutyAssignment::query()->where('user_id', $consultant->id)->get();
+        $this->assertCount(1, $rows);
+        $this->assertSame($keep->id, $rows[0]->id);
+        $this->assertSame(0, DB::table('admin_audit_logs')->where('entity_type', 'duty_roster')->count());
+    }
+
+    // ---- Date-window regression: a typo is not a plan ----
+
+    public function test_the_daily_strip_rejects_a_date_outside_the_planning_window(): void
+    {
+        $consultant = User::factory()->role('consultant', 'Consultant')->create();
+        $transition = $this->dutyType('transition_ward_duty');
+
+        foreach (['2320-02-12', '1900-01-01'] as $date) {
+            $this->actingAs($this->admin)
+                ->postJson('/api/admin/roster/daily', [
+                    'userId' => $consultant->id,
+                    'dutyTypeId' => $transition->id,
+                    'date' => $date,
+                ])
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors(['date']);
+        }
+
+        $this->assertSame(0, DutyAssignment::query()->where('user_id', $consultant->id)->count());
+
+        // A date inside the window still writes.
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/roster/daily', [
+                'userId' => $consultant->id,
+                'dutyTypeId' => $transition->id,
+                'date' => now()->addMonth()->toDateString(),
+            ])
+            ->assertCreated();
+    }
+
+    public function test_a_rotation_calendar_cannot_start_outside_the_planning_window(): void
+    {
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/rotations/calendars', [
+                'trainingYear' => 3,
+                'academicYearLabel' => '2320/21',
+                'startsOn' => '2320-02-12',
+                'blockKind' => 'fixed_weeks',
+                'blockLengthWeeks' => 8,
+                'blocksCount' => 6,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['startsOn']);
+
+        $this->assertDatabaseCount('rotation_calendars', 0);
     }
 
     // ---- Review-pass regression: carving, not wholesale replacement ----

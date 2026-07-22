@@ -13,6 +13,7 @@ use App\Services\Admin\AdminAuditService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -24,6 +25,16 @@ use Illuminate\Validation\ValidationException;
  */
 class DutyRosterController extends Controller
 {
+    /**
+     * The window a duty date may fall in. The roster is planned a couple of
+     * years ahead at most, so anything outside it is a mistyped date picker
+     * rather than a plan: without this an admin typo writes an assignment
+     * centuries away that every later date query still has to carry.
+     */
+    private const EARLIEST_DUTY_DATE = '2020-01-01';
+
+    private const FORWARD_HORIZON_YEARS = 2;
+
     public function __construct(
         private readonly RosterService $rosterService,
         private readonly AdminAuditService $auditService,
@@ -187,27 +198,33 @@ class DutyRosterController extends Controller
 
         $this->assertMonthlyTypes(array_column($rows, 'duty_type_id'));
 
-        // Clearing a cell frees the user's month; a cross-month block is
-        // trimmed or split, never deleted outside this month.
-        foreach ($cleared as $entry) {
-            $this->rosterService->carveMonthlyWindow($entry['userId'], $monthStart->toDateString(), $monthEnd->toDateString());
-        }
+        // ONE transaction across the whole save. carveMonthlyWindow and
+        // bulkAssign each open their own, so without an outer one they commit
+        // independently and a failure in the trailing audit write leaves the
+        // roster half-planned with no record that anything happened.
+        DB::transaction(function () use ($request, $rows, $cleared, $monthStart, $monthEnd, $year, $month, $overrideDetails): void {
+            // Clearing a cell frees the user's month; a cross-month block is
+            // trimmed or split, never deleted outside this month.
+            foreach ($cleared as $entry) {
+                $this->rosterService->carveMonthlyWindow($entry['userId'], $monthStart->toDateString(), $monthEnd->toDateString());
+            }
 
-        $this->rosterService->bulkAssign($rows, 'admin', $request->user());
+            $this->rosterService->bulkAssign($rows, 'admin', $request->user());
 
-        $this->auditService->record(
-            $request->user(),
-            'save_roster_month',
-            'duty_roster',
-            sprintf('%04d-%02d', $year, $month),
-            null,
-            [
-                'assigned' => count($rows),
-                'cleared' => count($cleared),
-                'rotationOverrides' => $overrideDetails,
-            ],
-            $request,
-        );
+            $this->auditService->record(
+                $request->user(),
+                'save_roster_month',
+                'duty_roster',
+                sprintf('%04d-%02d', $year, $month),
+                null,
+                [
+                    'assigned' => count($rows),
+                    'cleared' => count($cleared),
+                    'rotationOverrides' => $overrideDetails,
+                ],
+                $request,
+            );
+        });
 
         return $this->month($year, $month);
     }
@@ -216,10 +233,23 @@ class DutyRosterController extends Controller
     {
         Gate::authorize('create', DutyAssignment::class);
 
+        // The window bounds WRITES only. This is the sole API that deletes a
+        // daily assignment, so applying it to the remove path too would strand
+        // every out-of-range row written before the bound existed - exactly the
+        // rows an admin needs to clean up - behind a 422 with no other way out.
+        $removing = $request->boolean('remove');
+
         $validated = $request->validate([
             'userId' => ['required', 'string', Rule::exists('users', 'id')],
             'dutyTypeId' => ['required', 'string', Rule::exists('duty_types', 'id')],
-            'date' => ['required', 'date'],
+            'date' => $removing
+                ? ['required', 'date']
+                : [
+                    'required',
+                    'date',
+                    'after_or_equal:'.self::EARLIEST_DUTY_DATE,
+                    'before_or_equal:'.Carbon::now()->addYears(self::FORWARD_HORIZON_YEARS)->toDateString(),
+                ],
             'remove' => ['sometimes', 'boolean'],
         ]);
 

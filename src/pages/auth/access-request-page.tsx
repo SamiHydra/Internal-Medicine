@@ -289,7 +289,7 @@ export function AccessRequestPage() {
       }
     }
 
-    const success = await submitAccessRequest({
+    const serverMessage = await submitAccessRequest({
       fullName: values.fullName,
       email: values.email,
       password: values.password,
@@ -300,14 +300,18 @@ export function AccessRequestPage() {
       }),
     })
 
-    if (!success) {
+    if (serverMessage === null) {
       return
     }
 
+    // Prefer the server's copy: an anonymous submission for an address that
+    // already has an account is discarded silently, and only that copy tells
+    // the applicant to sign in instead of waiting for a review.
     setSuccessMessage(
-      currentUser
-        ? 'Additional access request submitted for review.'
-        : 'Access request submitted. An administrator will review it before your account can sign in.',
+      serverMessage ||
+        (currentUser
+          ? 'Additional access request submitted for review.'
+          : 'Access request submitted. An administrator will review it before your account can sign in.'),
     )
     clinicalForm.reset({
       fullName: currentUser?.fullName ?? '',
@@ -341,7 +345,7 @@ export function AccessRequestPage() {
     }
 
     try {
-      await submitAcademicRegistration(client, {
+      const result = await submitAcademicRegistration(client, {
         fullName: values.fullName,
         email: values.email,
         password: values.password,
@@ -350,7 +354,8 @@ export function AccessRequestPage() {
         notes: values.notes ? values.notes : null,
       })
       setSuccessMessage(
-        'Academic enrollment request submitted. An administrator will review it before your account is created.',
+        result?.message ||
+          'Academic enrollment request submitted. An administrator will review it before your account is created.',
       )
       academicForm.reset(academicDefaults)
     } catch (error) {
@@ -371,19 +376,20 @@ export function AccessRequestPage() {
       return
     }
 
-    const success = await submitAdminAccessRequest({
+    const serverMessage = await submitAdminAccessRequest({
       fullName: values.fullName,
       email: values.email,
       password: values.password,
       notes: values.notes ? values.notes : undefined,
     })
 
-    if (!success) {
+    if (serverMessage === null) {
       return
     }
 
     setSuccessMessage(
-      'Admin access request submitted. An administrator will review it before your account is created.',
+      serverMessage ||
+        'Admin access request submitted. An administrator will review it before your account is created.',
     )
     adminForm.reset(adminDefaults)
   })

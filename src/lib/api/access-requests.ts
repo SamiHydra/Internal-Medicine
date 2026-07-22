@@ -7,7 +7,7 @@ export async function submitAccessRequest(
   payload: AccessRequestPayload,
   currentUser: UserProfile | null,
 ) {
-  const response = await client.post<{ signedIn: boolean }>('/api/access-requests', {
+  const response = await client.post<{ signedIn: boolean; message?: string }>('/api/access-requests', {
     fullName: payload.fullName,
     email: payload.email,
     password: payload.password,
@@ -17,5 +17,10 @@ export async function submitAccessRequest(
 
   return {
     signedIn: response.signedIn || Boolean(currentUser),
+    // The anonymous branch answers the same way whether the request was stored
+    // or silently discarded, and only its copy tells an applicant who already
+    // has an account to sign in instead. Dropping it here left the page
+    // promising a review that was never queued.
+    message: response.message ?? null,
   }
 }

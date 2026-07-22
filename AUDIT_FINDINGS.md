@@ -195,12 +195,22 @@ lane that does not match production is worse than no CI lane.
 
 | Field | Value |
 |---|---|
-| **Severity** | High |
+| **Severity** | Critical (100% failure of a core admin workflow on the production engine) |
 | **Category** | Backend / data integrity |
 | **Affected role(s)** | admin, superadmin |
 | **Affected module** | Duty roster |
-| **Verification** | Agent-reported from the MariaDB lane. **Not yet independently reproduced by the auditor.** |
-| **Fix status** | Open |
+| **Verification** | **FIXED - VERIFIED end to end on the parity stack** 2026-07-21 |
+| **Fix status** | **FIXED - VERIFIED** |
+
+**FIX** migration `2026_09_16_000010_relax_admin_audit_log_entity_id.php` widens `admin_audit_logs.entity_id`
+from native `uuid` to `string(64)` nullable (the column is a documented free-form key, not a UUID -
+`AuditLogController.php:74`). Plus `saveMonth` wrapped in a single `DB::transaction` so an audit failure
+can never leave partially-committed roster state (AUD-API-002b).
+
+**VERIFICATION - executed, not asserted, through nginx on the MariaDB stack (https://localhost:8443):**
+csrf 204 -> login 200 -> `PUT /api/admin/roster/2028/3` -> **HTTP 200** (was 500), and
+`admin_audit_logs` where `entity_type='duty_roster'` went from 5 rows to 6. The MariaDB suite that carried
+this failure is now **OK (314 tests, 2188 assertions), 0 failures, 0 errors** (was 7 failures / 3 errors).
 
 **Actual** `DutyRosterController.php:198-202` writes `sprintf('%04d-%02d', ...)` - i.e. the string
 `'2026-07'` - into `admin_audit_logs.entity_id`, which is a native `uuid` column. SQLite accepts it;

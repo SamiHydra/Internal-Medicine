@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\Authorization\Permissions;
+use App\Support\RoleTitles;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -26,6 +27,14 @@ class AuthController extends Controller
         $identifier = Str::lower(trim($validated['identifier']));
         $user = $this->findUserForIdentifier($identifier);
 
+        // Every unapproved state ends here, byte for byte. A distinct "your
+        // request is still awaiting approval" reply looks password-gated and is
+        // not: the public registration endpoints answer non-committally but
+        // still store the password the ANONYMOUS caller chose, so a prober who
+        // submits (email, password) and then signs in with the same pair reads
+        // the approval branch as "that address had no account" and the failure
+        // branch as "that address is taken". One extra request recovers the
+        // whole bit those endpoints exist to hide.
         if (! $user || ! Hash::check($validated['password'], $user->password)) {
             throw ValidationException::withMessages([
                 'identifier' => __('auth.failed'),
@@ -33,6 +42,18 @@ class AuthController extends Controller
         }
 
         if (! $user->active) {
+            // Same oracle in the nurse track, which DOES create an inactive
+            // users row carrying the caller-supplied password: a never-activated
+            // account must be indistinguishable from an unknown address. An
+            // account that has signed in before is safe to name - no anonymous
+            // prober can know its password - and that is the case where a
+            // deactivated member of staff needs the real reason.
+            if ($user->last_login_at === null) {
+                throw ValidationException::withMessages([
+                    'identifier' => __('auth.failed'),
+                ]);
+            }
+
             return response()->json([
                 'message' => 'This account is inactive.',
             ], 403);
@@ -124,7 +145,7 @@ class AuthController extends Controller
                 'username' => $user->username,
                 'role' => $user->role_key,
                 'roleLabel' => $user->role?->label,
-                'title' => $user->title ?? $this->defaultTitle($user->role_key),
+                'title' => $user->title ?? RoleTitles::default($user->role_key),
                 'active' => $user->active,
                 'phone' => $user->phone,
                 'passwordChangeRequired' => $user->password_change_required,
@@ -145,16 +166,5 @@ class AuthController extends Controller
             ])->values(),
             'permissions' => Permissions::forUser($user),
         ];
-    }
-
-    private function defaultTitle(string $roleKey): string
-    {
-        return match ($roleKey) {
-            'superadmin' => 'Maintenance',
-            'admin' => 'Administrator',
-            'resident' => 'Resident',
-            'consultant' => 'Consultant',
-            default => 'Nurse',
-        };
     }
 }

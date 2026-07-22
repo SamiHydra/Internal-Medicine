@@ -40,11 +40,24 @@ Route::prefix('auth')->group(function (): void {
     Route::post('/reset-password', [PasswordResetController::class, 'reset'])->middleware('throttle:5,1');
 
     Route::middleware('auth:sanctum')->group(function (): void {
-        Route::get('/me', [AuthController::class, 'me'])->middleware('active');
-        Route::post('/logout', [AuthController::class, 'logout']);
+        // Same per-user ceiling the rest of the API uses, and deliberately the
+        // same unprefixed limiter key, so /auth/me and /auth/logout cannot be
+        // used to sidestep it.
+        Route::middleware('throttle:300,1')->group(function (): void {
+            Route::get('/me', [AuthController::class, 'me'])->middleware('active');
+            Route::post('/logout', [AuthController::class, 'logout']);
+        });
+
         // Reachable while password_change_required is set (no 'password-changed'
         // gate here) so a user can clear a temporary/new-account password.
-        Route::post('/change-password', [AuthController::class, 'changePassword'])->middleware('active');
+        //
+        // Throttled far below the 300/min ceiling: every call costs a bcrypt
+        // verify (plus a re-hash on success) at BCRYPT_ROUNDS=12, so an
+        // unthrottled burst is a CPU amplifier. The third throttle argument is
+        // a limiter-key prefix; without it this route would share the API-wide
+        // counter and 429 after six ordinary requests anywhere in the app.
+        Route::post('/change-password', [AuthController::class, 'changePassword'])
+            ->middleware(['active', 'throttle:6,1,change-password']);
     });
 });
 

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AccessRequest;
 use App\Models\AuditLog;
 use App\Models\Department;
 use App\Models\Report;
@@ -175,16 +176,20 @@ class WorkspaceApiTest extends TestCase
         ])
             ->assertCreated()
             ->assertJsonPath('signedIn', false)
-            ->assertJsonPath('data.email', 'new.applicant@example.test')
-            ->assertJsonPath('data.requestedAssignments.0.departmentSlug', 'gi_neuro_inpatient');
+            // The anonymous branch is deliberately non-committal and returns no
+            // serialized request; the written rows are asserted below instead.
+            ->assertJsonPath('status', 'pending')
+            ->assertJsonMissingPath('data');
 
         $applicant = User::query()->where('email', 'new.applicant@example.test')->firstOrFail();
 
         $this->assertSame('nurse', $applicant->role_key);
-        $this->assertDatabaseHas('access_requests', [
-            'user_id' => $applicant->id,
-            'status' => 'pending',
-        ]);
+        $accessRequest = AccessRequest::query()->where('user_id', $applicant->id)->firstOrFail();
+        $this->assertSame('pending', $accessRequest->status);
+        $this->assertSame(
+            'gi_neuro_inpatient',
+            $accessRequest->items()->with('department')->firstOrFail()->department->slug,
+        );
         $this->assertDatabaseHas('notifications', [
             'recipient_id' => $this->admin->id,
             'type' => 'nurse_access_request',

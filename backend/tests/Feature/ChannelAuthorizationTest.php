@@ -15,6 +15,10 @@ use Tests\TestCase;
  * for ANY user, letting one user subscribe to another's private channel. The
  * comparison is now done as strings. No DB needed: we exercise the exact
  * function the channel callback calls, with manually-assigned UUID ids.
+ *
+ * The callback also has to re-assert the session gates itself: Gate::before
+ * does not run for Broadcast::channel callbacks and broadcasting/auth carries
+ * neither the 'active' nor the 'password-changed' middleware.
  */
 class ChannelAuthorizationTest extends TestCase
 {
@@ -22,6 +26,8 @@ class ChannelAuthorizationTest extends TestCase
     {
         $user = new User;
         $user->id = $id;
+        $user->active = true;
+        $user->password_change_required = false;
 
         return $user;
     }
@@ -52,5 +58,31 @@ class ChannelAuthorizationTest extends TestCase
         $this->assertSame((int) $a->id, (int) $b->id);
         // String comparison (the fix) keeps them distinct.
         $this->assertNotSame((string) $a->id, (string) $b->id);
+    }
+
+    public function test_a_deactivated_user_cannot_authorize_their_own_private_channel(): void
+    {
+        // Admin deactivation does not flush sessions, so a revoked account can
+        // still present a valid session cookie at broadcasting/auth.
+        $user = $this->userWithId('019ec0bf-68d4-7168-99e4-bbfd505a09cc');
+        $user->active = false;
+
+        $this->assertFalse(UserChannel::authorize($user, $user->id));
+    }
+
+    public function test_a_user_owing_a_password_change_cannot_authorize_their_own_private_channel(): void
+    {
+        $user = $this->userWithId('019ec0bf-68d4-7168-99e4-bbfd505a09cc');
+        $user->password_change_required = true;
+
+        $this->assertFalse(UserChannel::authorize($user, $user->id));
+    }
+
+    public function test_a_user_with_no_active_attribute_is_denied_rather_than_defaulting_open(): void
+    {
+        $user = new User;
+        $user->id = '019ec0bf-68d4-7168-99e4-bbfd505a09cc';
+
+        $this->assertFalse(UserChannel::authorize($user, $user->id));
     }
 }

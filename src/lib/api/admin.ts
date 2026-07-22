@@ -66,7 +66,10 @@ export async function submitAdminAccessRequest(
   client: LaravelApiClient,
   payload: SubmitAdminAccessRequestPayload,
 ) {
-  await client.post('/api/admin-access-requests', {
+  // The reply is non-committal by design and its copy is the only thing that
+  // tells an applicant who already has an account to sign in instead, so it has
+  // to reach the page rather than being discarded here.
+  return client.post<{ status: 'pending'; message?: string }>('/api/admin-access-requests', {
     fullName: payload.fullName,
     email: payload.email,
     password: payload.password,

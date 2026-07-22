@@ -9,6 +9,27 @@ import { landingPathForRole } from '@/routes/landing'
 const fieldClass =
   'h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 pr-11 text-[0.95rem] font-medium text-[#191c1d] outline-none transition focus:border-[#005db6] focus:bg-[#fbfdff]'
 
+/**
+ * Mirror of the server policy (AppServiceProvider: min 12 + mixedCase + numbers
+ * in production). This page is the only one a user owing a password change can
+ * reach, and it is throttled to 6 attempts a minute, so every rule the browser
+ * does not check costs one of those attempts - four unmirrored rules left only
+ * two for genuine typos before a bare "Too Many Attempts." lockout.
+ */
+function passwordPolicyError(value: string): string | null {
+  if (value.length < 12) {
+    return 'Use at least 12 characters for the new password.'
+  }
+  if (!/[a-z]/.test(value) || !/[A-Z]/.test(value)) {
+    return 'Include both an uppercase and a lowercase letter.'
+  }
+  if (!/\d/.test(value)) {
+    return 'Include at least one number.'
+  }
+
+  return null
+}
+
 export function ForcePasswordChangePage() {
   const navigate = useNavigate()
   const { currentUser, changePassword, logout } = useAppData()
@@ -23,8 +44,9 @@ export function ForcePasswordChangePage() {
     event.preventDefault()
     setError(null)
 
-    if (password.length < 8) {
-      setError('Use at least 8 characters for the new password.')
+    const policyError = passwordPolicyError(password)
+    if (policyError) {
+      setError(policyError)
       return
     }
     if (password !== confirmPassword) {

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AdminAuditLog;
 use App\Models\DutyAssignment;
 use App\Models\DutyType;
 use App\Models\EvaluationForm;
@@ -23,13 +24,48 @@ class MariaDbConcurrencyRegressionTest extends TestCase
     use RefreshDatabase;
 
     /**
-     * Parallel workers need to see committed fixtures. This test owns and
-     * explicitly removes its rows instead of relying on PHPUnit's parent
-     * transaction, which is invisible to their independent connections.
-     *
-     * @var list<string>
+     * How far ahead of "both workers are ready" the shared start instant is
+     * placed. It only has to cover the workers noticing the release file, so a
+     * quarter second is generous; it is not a source of skew, because both
+     * workers spin to the same absolute timestamp.
      */
-    protected $connectionsToTransact = [];
+    private const BARRIER_LEAD_SECONDS = 0.25;
+
+    /**
+     * Ceiling on how far apart the two workers may actually enter their
+     * critical sections. The previous barrier let one worker leave up to a full
+     * 10 ms poll interval after the other, which is longer than the operations
+     * being raced - so the workers ran one after the other and every assertion
+     * below passed without any contention ever occurring. Anything at or above
+     * this bound means the barrier stopped working and the test is no longer
+     * testing concurrency.
+     */
+    private const MAX_START_SKEW_SECONDS = 0.005;
+
+    /**
+     * Parallel workers connect independently, so on MariaDB they cannot see
+     * anything held open in PHPUnit's parent transaction. This class therefore
+     * commits its fixtures and removes them by hand in removeCommittedFixtures().
+     *
+     * Opting out ONLY on MariaDB matters. This used to be a flat
+     * `protected $connectionsToTransact = []` property, which applied on every
+     * driver - including the SQLite lane, where the test is skipped anyway.
+     * With no connection to transact, RefreshDatabase neither caches nor
+     * restores the shared in-memory PDO (it iterates connectionsToTransact() to
+     * do both), yet it still sets RefreshDatabaseState::$migrated. Every test
+     * class that ran after this one in the same process then got a brand-new
+     * empty :memory: database that was never migrated: RosterTest alone is
+     * 21/21 green, and 0/21 with "no such table: roles" when run after this
+     * class. Returning the default here keeps the SQLite lane untouched.
+     *
+     * @return list<string|null>
+     */
+    protected function connectionsToTransact(): array
+    {
+        return DB::connection()->getDriverName() === 'mariadb'
+            ? []
+            : [config('database.default')];
+    }
 
     /** @var list<string> */
     private array $testUserIds = [];
@@ -161,7 +197,14 @@ class MariaDbConcurrencyRegressionTest extends TestCase
                 'Both MariaDB worker processes did not reach the start barrier.',
             );
 
-            File::put($releaseFile, 'go');
+            // The barrier is a shared absolute instant, not "whenever you next
+            // notice this file". Written to a scratch name and renamed, because
+            // rename is atomic: a worker that read a half-written timestamp
+            // would still parse a valid - but much earlier - number and start
+            // on its own.
+            $startAt = microtime(true) + self::BARRIER_LEAD_SECONDS;
+            File::put($releaseFile.'.pending', sprintf('%.6F', $startAt));
+            File::move($releaseFile.'.pending', $releaseFile);
 
             foreach ($processes as $process) {
                 $process->wait();
@@ -175,6 +218,8 @@ class MariaDbConcurrencyRegressionTest extends TestCase
                 );
                 $results[] = json_decode(File::get($resultFile), true, flags: JSON_THROW_ON_ERROR);
             }
+
+            $this->assertWorkersActuallyRaced($action, $results);
 
             return $results;
         } finally {
@@ -227,6 +272,55 @@ class MariaDbConcurrencyRegressionTest extends TestCase
     }
 
     /**
+     * Guards the harness itself. Every outcome assertion in this class is
+     * satisfied just as happily by two workers that ran one after the other, so
+     * without this check a broken barrier turns the whole file into a green
+     * test that exercises nothing. Both facts have to hold: the workers left
+     * the barrier together, and their critical sections genuinely overlapped in
+     * time (the loser is expected to be parked on the winner's row lock, so its
+     * start must precede the winner's finish).
+     *
+     * @param  list<array<string, mixed>>  $results
+     */
+    private function assertWorkersActuallyRaced(string $action, array $results): void
+    {
+        $startedAt = [];
+        $finishedAt = [];
+
+        foreach ($results as $index => $result) {
+            $this->assertArrayHasKey('started_at', $result, sprintf('Worker %d reported no start instant.', $index + 1));
+            $this->assertArrayHasKey('finished_at', $result, sprintf('Worker %d reported no finish instant.', $index + 1));
+
+            $startedAt[] = (float) $result['started_at'];
+            $finishedAt[] = (float) $result['finished_at'];
+        }
+
+        $skew = abs($startedAt[0] - $startedAt[1]);
+
+        $this->assertLessThan(
+            self::MAX_START_SKEW_SECONDS,
+            $skew,
+            sprintf(
+                'The %s workers left the start barrier %.3F ms apart, so they did not race. '.
+                'The concurrency assertions that follow would pass on sequential execution.',
+                $action,
+                $skew * 1000,
+            ),
+        );
+
+        $this->assertLessThan(
+            min($finishedAt),
+            max($startedAt),
+            sprintf(
+                'The %s workers did not overlap: the later worker started %.3F ms after the earlier one finished, '.
+                'so nothing contended.',
+                $action,
+                (max($startedAt) - min($finishedAt)) * 1000,
+            ),
+        );
+    }
+
+    /**
      * @param  list<array<string, mixed>>  $results
      * @param  list<string>  $expected
      */
@@ -257,6 +351,12 @@ class MariaDbConcurrencyRegressionTest extends TestCase
 
         EvaluationFormField::query()->whereIn('form_id', $this->testDraftIds)->delete();
         EvaluationForm::query()->whereIn('id', $this->testDraftIds)->delete();
+
+        // TransferService audits its own writes, and admin_audit_logs holds a
+        // foreign key to users. Leaving those rows behind made the user delete
+        // fail, and because this class commits its fixtures the survivors then
+        // leaked into every later class in the run.
+        AdminAuditLog::query()->whereIn('user_id', $this->testUserIds)->delete();
 
         User::query()->whereIn('id', $this->testUserIds)->delete();
     }

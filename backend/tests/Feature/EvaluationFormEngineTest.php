@@ -277,10 +277,12 @@ class EvaluationFormEngineTest extends TestCase
         // The old evaluation stays pinned to the version it was answered on.
         $this->assertSame($v1->id, Evaluation::query()->findOrFail($firstId)->form_id);
 
-        // A new submission (with the new field) pins v2.
+        // A new submission (with the new field) pins v2. A different date,
+        // because one author evaluates one subject once per date per form.
         $secondId = $this->actingAs($this->resident)
             ->postJson('/api/academic/consultant-evaluations', [
                 ...$this->validConsultantPayload(),
+                'evaluationDate' => now()->subDays(2)->toDateString(),
                 'teachingPointsGiven' => true,
             ])
             ->assertCreated()

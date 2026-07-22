@@ -170,13 +170,21 @@ final class Permissions
             self::REPORTS_SUBMIT,
             self::NOTIFICATIONS_VIEW,
         ],
+        // Residents and consultants are addressed by the notification pipeline
+        // (morning-session reminders, transfer decisions), so they must be able
+        // to read and clear their own rows. NOTIFICATIONS_VIEW grants no
+        // cross-user visibility: NotificationController pins non-admin callers
+        // to their own recipient_id and every write goes through
+        // NotificationPolicy (owner-or-admin).
         'resident' => [
             self::AUTH_VIEW_SELF,
+            self::NOTIFICATIONS_VIEW,
             self::ACADEMIC_SUBMIT,
             self::MORNING_ATTENDANCE_RECORD,
         ],
         'consultant' => [
             self::AUTH_VIEW_SELF,
+            self::NOTIFICATIONS_VIEW,
             self::ACADEMIC_SUBMIT,
             self::TRANSFERS_CREATE,
             self::TRANSFERS_REVIEW,

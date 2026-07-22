@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -39,25 +40,41 @@ class AcademicRegistrationController extends Controller
 
         $email = strtolower(trim($validated['email']));
 
+        // Resolve the ward FIRST so a genuinely invalid payload still 422s; only
+        // the email-state checks below are silenced.
+        $homeWard = $this->resolveHomeWard($validated['home_ward_id'] ?? null);
+
+        // Hash BEFORE the state checks below and reuse the result on the write
+        // path (the 'hashed' cast passes an already-hashed value through). At
+        // BCRYPT_ROUNDS=12 that is ~370ms of work, so hashing only when a row is
+        // written made the "address is free" branch measurably slower than the
+        // silent ones and a stopwatch recovered the bit the identical body hides.
+        $passwordHash = Hash::make($validated['password']);
+
+        // Deliberately non-committal, exactly like PasswordResetController@forgot:
+        // "created", "that address already has an account" and "that address
+        // already has a request pending" all return this same body, so an
+        // anonymous prober cannot classify addresses (three states per probe at
+        // 10 requests/min/IP). The copy still tells a legitimate applicant what
+        // to do next without asserting which of the three states they are in.
+        $submitted = response()->json([
+            'status' => 'pending',
+            'message' => 'Your enrollment request was submitted and is awaiting approval. If you already have an account, sign in instead.',
+        ], 201);
+
         if (User::query()->whereRaw('lower(email) = ?', [$email])->exists()) {
-            throw ValidationException::withMessages([
-                'email' => 'An account with this email already exists. Sign in instead.',
-            ]);
+            return $submitted;
         }
 
         if (AdminAccessRequest::query()->where('status', 'pending')->whereRaw('lower(email) = ?', [$email])->exists()) {
-            throw ValidationException::withMessages([
-                'email' => 'An enrollment request with this email is already awaiting approval.',
-            ]);
+            return $submitted;
         }
-
-        $homeWard = $this->resolveHomeWard($validated['home_ward_id'] ?? null);
 
         $enrollmentRequest = AdminAccessRequest::query()->create([
             'full_name' => trim(preg_replace('/\s+/', ' ', $validated['full_name'])),
             'email' => $email,
             'username' => null,
-            'password' => $validated['password'],
+            'password' => $passwordHash,
             'requested_role' => $validated['role'],
             'status' => 'pending',
             'home_ward_id' => $homeWard?->id,
@@ -67,10 +84,7 @@ class AcademicRegistrationController extends Controller
 
         $this->notifyApprovers($enrollmentRequest);
 
-        return response()->json([
-            'status' => 'pending',
-            'message' => 'Your enrollment request was submitted and is awaiting approval.',
-        ], 201);
+        return $submitted;
     }
 
     private function resolveHomeWard(?string $identifier): ?Department
@@ -99,20 +113,33 @@ class AcademicRegistrationController extends Controller
         $roleLabel = $enrollmentRequest->requested_role === 'consultant' ? 'Consultant' : 'Resident';
 
         // Only superadmin + admin can approve the account queue.
-        User::query()
+        $recipientIds = User::query()
             ->where('active', true)
             ->whereIn('role_key', ['superadmin', 'admin'])
-            ->get()
-            ->each(fn (User $approver) => Notification::query()->create([
-                'recipient_id' => $approver->id,
-                'type' => 'admin_access_request',
-                'title' => 'Academic enrollment request',
-                'message' => "{$enrollmentRequest->full_name} requested a {$roleLabel} account.",
-                'related_route' => '/admin/users',
-                'related_entity' => 'admin_access_request',
-                'related_id' => $enrollmentRequest->id,
-                'created_at' => now(),
-            ]));
+            ->pluck('id');
+
+        if ($recipientIds->isEmpty()) {
+            return;
+        }
+
+        // One bulk insert rather than a round trip per approver: this runs inside
+        // an unauthenticated request, so its cost must not scale with the number
+        // of admins on the instance.
+        $model = new Notification;
+        $rows = $recipientIds->map(fn (string $recipientId): array => [
+            'id' => $model->newUniqueId(),
+            'recipient_id' => $recipientId,
+            'type' => 'admin_access_request',
+            'title' => 'Academic enrollment request',
+            'message' => "{$enrollmentRequest->full_name} requested a {$roleLabel} account.",
+            'related_route' => '/admin/users',
+            'related_entity' => 'admin_access_request',
+            'related_id' => $enrollmentRequest->id,
+            'read_at' => null,
+            'created_at' => now(),
+        ])->all();
+
+        Notification::query()->insert($rows);
     }
 
     /**

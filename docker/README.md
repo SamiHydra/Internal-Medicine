@@ -58,11 +58,16 @@ under 64 or explicitly named), so the real fix is one line in the repo:
 $table->unique([...], 'teaching_sessions_slot_unique');
 ```
 
-Because the audit brief forbids editing application source, the stack applies
-this fix to the **copy inside the image only**, via
-`docker/patches/apply-parity-patches.sh`. The repo working tree is untouched.
-That script fails the build loudly if the migration ever stops matching, and
-skips itself once the defect is fixed upstream.
+**Fixed upstream.** The migration now passes the explicit name, so the stack
+builds with no source patching at all;
+`docker/patches/apply-parity-patches.sh`, which used to rewrite the line inside
+the image, has been deleted. The regression is guarded instead by
+`V2OperationalConfigurationTest::test_no_schema_identifier_exceeds_the_64_character_limit_of_the_deployment_engine`,
+which walks every table, index and foreign key name after migrating and fails on
+anything over 64 characters. It runs on **both** lanes, including SQLite, where
+an over-long identifier is otherwise completely invisible - a strictly wider net
+than the deleted script's exact-string match, and one that cannot break the
+image build over a harmless reformat.
 
 Related: MariaDB has **no transactional DDL**. When this migration fails
 part-way it leaves `student_batches` and friends created but the `migrations`
@@ -431,10 +436,6 @@ docker/Dockerfile            frontend / php-base / vendor-prod / app / test / we
 docker/nginx.conf            deploy/nginx.conf adapted for containers
 docker/entrypoint.sh         wait-for-db, migrate, seed, cache, then exec
 docker/run-mariadb-tests.sh  the test-lane wrapper (ENTRYPOINT, so args reach phpunit)
-docker/patches/apply-parity-patches.sh
-                             CONTAINER-ONLY source fixes for defects that make
-                             MariaDB impossible. Each one is an audit finding;
-                             the repo working tree is never modified.
 docker/php/php.ini           production-shaped PHP (opcache on, display_errors off)
 docker/php/www.conf          FPM pool: TCP 9000, clear_env=no, slowlog at 5s
 .env.docker               production-shaped env for the CONTAINERS ONLY

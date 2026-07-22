@@ -105,8 +105,10 @@ type AppDataContextValue = {
   markNotificationsRead: (userId: string, notificationIds: string[]) => Promise<void>
   clearNotifications: (userId: string, notificationIds: string[]) => Promise<void>
   restoreNotifications: (notifications: NotificationItem[]) => Promise<void>
-  submitAccessRequest: (payload: AccessRequestPayload) => Promise<boolean>
-  submitAdminAccessRequest: (payload: SubmitAdminAccessRequestPayload) => Promise<boolean>
+  /** Resolves to the server's own confirmation copy, or null when it failed. */
+  submitAccessRequest: (payload: AccessRequestPayload) => Promise<string | null>
+  /** Resolves to the server's own confirmation copy, or null when it failed. */
+  submitAdminAccessRequest: (payload: SubmitAdminAccessRequestPayload) => Promise<string | null>
   createAdminAccount: (payload: CreateAdminAccountPayload) => Promise<boolean>
   approveAccessRequest: (requestId: string, reviewerId: string) => Promise<void>
   rejectAccessRequest: (requestId: string, reviewerId: string) => Promise<void>
@@ -1636,42 +1638,46 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [client, refreshDataWithOptions],
   )
 
+  // Both resolve to the server's own copy on success (null on failure). The
+  // submission endpoints answer identically whether the request was stored or
+  // silently discarded, so their message is the only guidance an applicant who
+  // already has an account ever gets.
   const submitAccessRequest = useCallback(
-    async (payload: AccessRequestPayload): Promise<boolean> => {
+    async (payload: AccessRequestPayload): Promise<string | null> => {
       if (!client) {
         toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
-        return false
+        return null
       }
 
       try {
-        await submitAccessRequestMutation(client, payload, currentUser)
+        const result = await submitAccessRequestMutation(client, payload, currentUser)
         await refreshDataWithOptions({
           includeAccessRequests: Boolean(currentUser),
         })
-        return true
+        return result.message ?? ''
       } catch (requestError) {
         toast.error(
           getMessage(requestError, 'Unable to submit the access request.'),
         )
-        return false
+        return null
       }
     },
     [client, currentUser, refreshDataWithOptions],
   )
 
   const submitAdminAccessRequest = useCallback(
-    async (payload: SubmitAdminAccessRequestPayload): Promise<boolean> => {
+    async (payload: SubmitAdminAccessRequestPayload): Promise<string | null> => {
       if (!client) {
         toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
-        return false
+        return null
       }
 
       try {
-        await submitAdminAccessRequestMutation(client, payload)
-        return true
+        const result = await submitAdminAccessRequestMutation(client, payload)
+        return result?.message ?? ''
       } catch (requestError) {
         toast.error(getMessage(requestError, 'Unable to submit the admin access request.'))
-        return false
+        return null
       }
     },
     [client],

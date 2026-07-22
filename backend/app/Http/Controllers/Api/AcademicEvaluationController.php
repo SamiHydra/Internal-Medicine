@@ -18,9 +18,12 @@ use App\Services\Academic\EvaluationFormService;
 use App\Services\Academic\RosterService;
 use App\Services\Admin\AdminAuditService;
 use App\Support\HospitalClock;
+use Closure;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -36,6 +39,9 @@ use Illuminate\Validation\ValidationException;
 class AcademicEvaluationController extends Controller
 {
     use SerializesAdminResources;
+
+    /** Raised by the in-transaction pre-check and by the unique-key backstop. */
+    private const DUPLICATE_SUBMISSION_MESSAGE = 'You have already submitted this evaluation for that person on that date.';
 
     public function __construct(
         private readonly AcademicAnalyticsService $analytics,
@@ -325,16 +331,26 @@ class AcademicEvaluationController extends Controller
             ->whereDate('week_ends_on', '>=', $date->toDateString())
             ->first();
 
-        $evaluation = $this->forms->store($form, $validated, [
-            'author_id' => $request->user()->id,
-            'subject_student_id' => $student->id,
-            'evaluation_date' => $validated['evaluation_date'],
-            'ward_id' => $placement?->ward_id,
-            'placement_type' => $placement !== null ? 'ward' : null,
-            'week_starts_on' => $formKey === 'student_weekly'
-                ? ($placement?->week_starts_on?->toDateString() ?? $date->copy()->startOfWeek()->toDateString())
-                : null,
-        ]);
+        $evaluation = $this->submitGuardingUniqueness(function () use ($form, $formKey, $validated, $request, $student, $placement, $date): Evaluation {
+            $this->assertNotAlreadySubmitted(
+                $request->user()->id,
+                'subject_student_id',
+                $student->id,
+                $validated['evaluation_date'],
+                $formKey,
+            );
+
+            return $this->forms->store($form, $validated, [
+                'author_id' => $request->user()->id,
+                'subject_student_id' => $student->id,
+                'evaluation_date' => $validated['evaluation_date'],
+                'ward_id' => $placement?->ward_id,
+                'placement_type' => $placement !== null ? 'ward' : null,
+                'week_starts_on' => $formKey === 'student_weekly'
+                    ? ($placement?->week_starts_on?->toDateString() ?? $date->copy()->startOfWeek()->toDateString())
+                    : null,
+            ]);
+        });
 
         $this->auditEvaluationSubmission(
             $request,
@@ -377,13 +393,23 @@ class AcademicEvaluationController extends Controller
         // Authorization in depth: the policy re-checks the same pairing rule.
         Gate::authorize('create', [$policyClass, $subject, $validated['evaluation_date']]);
 
-        $evaluation = $this->forms->store($form, $validated, [
-            'author_id' => $request->user()->id,
-            'subject_user_id' => $subject->id,
-            'evaluation_date' => $validated['evaluation_date'],
-            'ward_id' => $placement['ward_ref_id'],
-            'placement_type' => $placement['placement_type'],
-        ]);
+        $evaluation = $this->submitGuardingUniqueness(function () use ($form, $formKey, $validated, $request, $subject, $placement): Evaluation {
+            $this->assertNotAlreadySubmitted(
+                $request->user()->id,
+                'subject_user_id',
+                $subject->id,
+                $validated['evaluation_date'],
+                $formKey,
+            );
+
+            return $this->forms->store($form, $validated, [
+                'author_id' => $request->user()->id,
+                'subject_user_id' => $subject->id,
+                'evaluation_date' => $validated['evaluation_date'],
+                'ward_id' => $placement['ward_ref_id'],
+                'placement_type' => $placement['placement_type'],
+            ]);
+        });
 
         $this->auditEvaluationSubmission(
             $request,
@@ -399,6 +425,60 @@ class AcademicEvaluationController extends Controller
                 : $this->serializeResidentEvaluation($evaluation),
             201,
         );
+    }
+
+    /**
+     * Run a submission and translate the unique-key backstop into the same 422
+     * the pre-check raises. assertNotAlreadySubmitted() is a plain read that
+     * takes no lock and, with no row yet to lock, cannot serialise two
+     * overlapping submissions (a double-click, or a client retry after a
+     * timeout): both pass the check, and the loser hits
+     * evaluations_author_subject_date_form_unique. Nothing maps that to a
+     * response, so without this it surfaces as a 500.
+     *
+     * @param  \Closure(): Evaluation  $submit
+     */
+    private function submitGuardingUniqueness(Closure $submit): Evaluation
+    {
+        try {
+            return DB::transaction($submit);
+        } catch (UniqueConstraintViolationException) {
+            throw ValidationException::withMessages([
+                'subjectId' => self::DUPLICATE_SUBMISSION_MESSAGE,
+            ]);
+        }
+    }
+
+    /**
+     * One author evaluates one subject once per date per form. Analytics
+     * weights every row equally, so an unguarded repeat is an extra vote on
+     * someone's performance record rather than a harmless duplicate.
+     *
+     * The database carries the same rule as a unique key; this check runs in
+     * the same transaction as the insert so the key stays a backstop and
+     * callers see a validation message instead of a 500.
+     *
+     * @param  'subject_user_id'|'subject_student_id'  $subjectColumn
+     */
+    private function assertNotAlreadySubmitted(
+        string $authorId,
+        string $subjectColumn,
+        string $subjectId,
+        string $date,
+        string $formKey,
+    ): void {
+        $exists = Evaluation::query()
+            ->where('author_id', $authorId)
+            ->where($subjectColumn, $subjectId)
+            ->whereDate('evaluation_date', $date)
+            ->where('form_key', $formKey)
+            ->exists();
+
+        if ($exists) {
+            throw ValidationException::withMessages([
+                'subjectId' => self::DUPLICATE_SUBMISSION_MESSAGE,
+            ]);
+        }
     }
 
     /**
