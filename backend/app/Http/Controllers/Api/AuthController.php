@@ -16,6 +16,14 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
+    /**
+     * A valid bcrypt hash checked when no user matches the identifier, so an
+     * unknown identifier costs the same bcrypt work as a known one and response
+     * time cannot be used to tell which identifiers exist. Cost 12, matching the
+     * default BCRYPT_ROUNDS; regenerate it if that config changes.
+     */
+    private const NO_USER_PASSWORD_HASH = '$2y$12$FX6Hs3lmAm3ZXzMcBAWq0.CetT/jNh2m76HgshAKTJF6bm8hTYARO';
+
     public function login(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -35,7 +43,16 @@ class AuthController extends Controller
         // the approval branch as "that address had no account" and the failure
         // branch as "that address is taken". One extra request recovers the
         // whole bit those endpoints exist to hide.
-        if (! $user || ! Hash::check($validated['password'], $user->password)) {
+        // Always run the hash check, even with no user, against a constant hash
+        // so the response time is identical whether or not the identifier exists.
+        // A short-circuit here (no user => no bcrypt) is a timing oracle that
+        // recovers the very bit the constant auth.failed message above hides.
+        $passwordValid = Hash::check(
+            $validated['password'],
+            $user?->password ?? self::NO_USER_PASSWORD_HASH,
+        );
+
+        if (! $user || ! $passwordValid) {
             throw ValidationException::withMessages([
                 'identifier' => __('auth.failed'),
             ]);

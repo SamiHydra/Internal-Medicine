@@ -102,6 +102,23 @@ class AuthApiTest extends TestCase
         $this->assertGuest();
     }
 
+    public function test_login_with_an_unknown_identifier_still_runs_a_hash_check(): void
+    {
+        // Constant-time guard: an unknown identifier must still pay the bcrypt
+        // cost, otherwise response time distinguishes existing from non-existing
+        // accounts and defeats the constant auth.failed message. Asserting the
+        // hash check ran is deterministic where a timing assertion would be flaky.
+        Hash::spy();
+
+        $this->postJson('/api/auth/login', [
+            'identifier' => 'nobody.unknown@example.test',
+            'password' => 'whatever-it-does-not-matter',
+        ])->assertStatus(422);
+
+        Hash::shouldHaveReceived('check')->once();
+        $this->assertGuest();
+    }
+
     public function test_me_returns_current_user_assignments_and_permissions(): void
     {
         $user = User::factory()->create([
