@@ -117,6 +117,59 @@ class NotificationRoleAccessTest extends TestCase
         $this->actingAs($resident)->patchJson('/api/notifications/read-all')->assertForbidden();
     }
 
+    public function test_the_unread_filter_accepts_a_query_string_boolean(): void
+    {
+        $resident = User::factory()->role('resident', 'Resident')->create();
+        $unread = $this->createNotification($resident, 'Unread');
+        $read = $this->createNotification($resident, 'Read');
+        $read->forceFill(['read_at' => now()])->save();
+
+        // ?unread=true is the canonical query-string boolean; the plain boolean
+        // rule used to 422 on the string "true".
+        $this->actingAs($resident)
+            ->getJson('/api/notifications?unread=true')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $unread->id);
+
+        $this->actingAs($resident)
+            ->getJson('/api/notifications?unread=false')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $read->id);
+
+        // Genuine junk is still rejected.
+        $this->actingAs($resident)
+            ->getJson('/api/notifications?unread=maybe')
+            ->assertStatus(422);
+    }
+
+    public function test_restore_recreates_a_cleared_notification_under_its_original_id(): void
+    {
+        $resident = User::factory()->role('resident', 'Resident')->create();
+        $id = (string) Str::uuid();
+
+        $payload = ['notifications' => [[
+            'id' => $id,
+            'userId' => $resident->id,
+            'type' => 'report_locked',
+            'title' => 'Restored',
+            'message' => 'Restored message',
+        ]]];
+
+        // The restored row must keep the caller-supplied id (HasUuids used to mint
+        // a fresh one because id was not fillable), so the undo-clear flow can find
+        // it and a repeat restore is idempotent rather than duplicating.
+        $this->actingAs($resident)->postJson('/api/notifications/restore', $payload)
+            ->assertOk()
+            ->assertJsonPath('restored', 1)
+            ->assertJsonPath('data.0.id', $id);
+        $this->assertDatabaseHas('notifications', ['id' => $id, 'recipient_id' => $resident->id]);
+
+        $this->actingAs($resident)->postJson('/api/notifications/restore', $payload)->assertOk();
+        $this->assertSame(1, Notification::query()->where('id', $id)->count());
+    }
+
     private function createNotification(User $recipient, string $title): Notification
     {
         return Notification::query()->create([

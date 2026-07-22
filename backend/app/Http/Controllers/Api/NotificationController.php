@@ -19,7 +19,10 @@ class NotificationController extends Controller
         $validated = $request->validate([
             'recipient_id' => ['sometimes', 'uuid'],
             'type' => ['sometimes', 'string', 'max:64'],
-            'unread' => ['sometimes', 'boolean'],
+            // Accept the canonical query-string booleans. The plain `boolean`
+            // rule rejects the string "true"/"false" that a GET query sends, so
+            // ?unread=true was a 422; junk still 422s.
+            'unread' => ['sometimes', 'in:true,false,1,0'],
             'limit' => ['sometimes', 'integer', 'min:1', 'max:200'],
         ]);
         $user = $request->user();
@@ -35,7 +38,9 @@ class NotificationController extends Controller
         }
 
         if (array_key_exists('unread', $validated)) {
-            $validated['unread']
+            // The validated value is a string ("false" is truthy in PHP), so
+            // interpret it rather than testing it directly.
+            filter_var($validated['unread'], FILTER_VALIDATE_BOOLEAN)
                 ? $query->whereNull('read_at')
                 : $query->whereNotNull('read_at');
         }

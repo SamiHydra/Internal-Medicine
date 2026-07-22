@@ -16,6 +16,37 @@ Fix status: `Open` · `In progress` · `Fixed - unverified` · `Fixed - verified
 
 ## OPEN ISSUES
 
+### AUD-UI-020 - Out-of-window locked reports render as blank editable forms (DEFERRED, not fixed)
+
+| Field | Value |
+|---|---|
+| **Severity** | Medium |
+| **Category** | Frontend / data-contract |
+| **Affected role(s)** | nurse, admin |
+| **Verification** | Reproduced by Playwright (`clinical-report-lifecycle.spec.ts`) |
+| **Fix status** | **OPEN - deliberately deferred** |
+
+**What** `WorkspaceController::show` sends the SPA every reporting period but only the reports inside the
+default window (`ReportPeriodWindow`, last ~9 periods up to the current week). A locked/submitted report whose
+period falls OUTSIDE that window (deep history, or a future period) is therefore not loaded, and the SPA
+synthesizes a blank editable "Not started" form for it instead of showing its true locked/read-only state.
+
+**Why it is narrow, not critical** The normal flow locks the current week, which is always in-window. There is
+**no data-corruption risk**: the backend still rejects a save to a locked report with 422, so the worst case
+is a confusing render on out-of-window history, not a bad write. That is why it is Medium and was safe to
+defer while cost was constrained.
+
+**Why deferred rather than fixed now** The correct fix is a frontend render change (distinguish "period
+outside the loaded window" from "genuinely not started" - src/components/reports/report-form.tsx /
+src/data/selectors.ts / the reporting page), which would collide with concurrent UI work in progress. Best
+done as a focused ~10-minute frontend pass, ideally folded into that UI work.
+
+**Recommended fix** In the SPA, only render an editable "Not started" form for a period within the loaded
+window; for a displayed period whose report was not loaded, show a "load older periods" affordance (the
+`reportPeriodWindow=all` path already exists) or a neutral placeholder, never an editable blank.
+
+
+
 Surfaced 2026-07-21 by the Docker production-parity lane (MariaDB 11.4 + nginx + PHP-FPM), which exists
 precisely because none of these are observable on the SQLite dev lane.
 

@@ -12,8 +12,14 @@ class Notification extends Model
 
     public $timestamps = false;
 
+    // `id` is fillable so restore() can re-create a cleared notification under
+    // its ORIGINAL uuid (via updateOrCreate keyed on id). Without it HasUuids
+    // mints a fresh uuid on the create path, making undo-clear non-idempotent
+    // and defeating restore()'s own IDOR guard. The only client-supplied id
+    // path is restore(), which validates the uuid and refuses to write onto
+    // another recipient's row; every other write sets server-controlled values.
     protected $fillable = [
-        'recipient_id', 'type', 'title', 'message', 'related_route',
+        'id', 'recipient_id', 'type', 'title', 'message', 'related_route',
         'related_entity', 'related_id', 'read_at', 'created_at',
     ];
 
