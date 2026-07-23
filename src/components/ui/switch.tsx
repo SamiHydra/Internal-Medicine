@@ -12,6 +12,11 @@ export function Switch({
     <SwitchPrimitive.Root
       className={cn(
         'peer inline-flex h-6 w-11 items-center rounded-full border border-[#c9d2de] bg-[#e6ebf2] transition-colors data-[state=checked]:border-[#005db6] data-[state=checked]:bg-[#005db6]',
+        // The track is 24px tall, well under the 44px touch minimum. Rather than
+        // inflating the switch into a pill, extend the HIT AREA with a
+        // transparent pseudo-element on touch devices: same visual size, 44px
+        // tappable. Desktop (pointer: fine) is unaffected.
+        'pointer-coarse:relative pointer-coarse:after:absolute pointer-coarse:after:-inset-y-2.5 pointer-coarse:after:inset-x-0 pointer-coarse:after:content-[""]',
         className,
       )}
       {...props}

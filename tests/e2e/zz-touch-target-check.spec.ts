@@ -39,6 +39,39 @@ test.describe('pointer-coarse touch targets', () => {
     }
   })
 
+  test('the switch is tappable above its visual box (expanded hit area)', async ({ browser }) => {
+    // The switch track stays 24px tall by design; the fix widens the HIT area
+    // with a pseudo-element, which getBoundingClientRect cannot see. So verify
+    // it functionally: a tap ABOVE the visible track must still toggle it.
+    const context = await browser.newContext({
+      storageState: authFile('superadmin'),
+      viewport: { width: 393, height: 851 },
+      hasTouch: true,
+      isMobile: true,
+    })
+    const page = await context.newPage()
+    try {
+      await page.goto('/admin/settings', { waitUntil: 'domcontentloaded' })
+      await page.waitForTimeout(2500)
+
+      const toggle = page.locator('[role="switch"]').first()
+      await expect(toggle, 'settings must render at least one switch').toBeVisible({ timeout: 20_000 })
+
+      const before = await toggle.getAttribute('aria-checked')
+      const box = (await toggle.boundingBox())!
+      // 8px above the track: outside the visual box, inside the expanded target.
+      await page.mouse.click(box.x + box.width / 2, box.y - 8)
+      await page.waitForTimeout(400)
+
+      expect(
+        await toggle.getAttribute('aria-checked'),
+        'a tap just above the track must hit the expanded target and toggle it',
+      ).not.toBe(before)
+    } finally {
+      await context.close()
+    }
+  })
+
   test('desktop keeps its original 40px controls (fine pointer, unchanged)', async ({ browser }) => {
     const context = await browser.newContext({
       storageState: authFile('superadmin'),
