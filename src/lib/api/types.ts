@@ -50,12 +50,16 @@ export type AdminAccessRequest = {
   createdUserId: string | null
 }
 
+// Admin-created accounts. Every other role reaches the system through public
+// signup plus an approval queue; these two cannot. `admin` predates that flow,
+// and `student_rep` is appointed rather than self-declared, so it has no public
+// registration path at all and an administrator is the only way to mint one.
 export type CreateAdminAccountPayload = {
   fullName: string
   username: string
   email: string
   password: string
-  role: Extract<UserRole, 'admin'>
+  role: Extract<UserRole, 'admin' | 'student_rep'>
   title?: string
 }
 

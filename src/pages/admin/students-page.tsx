@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GraduationCap, Loader2, Plus, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { CreateStudentRepForm } from '@/components/admin/create-student-rep-form';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -781,13 +782,18 @@ export function StudentsPage() {
               </Button>
               {repAccounts.length === 0 ? (
                 <p className="text-sm leading-5 text-[#5f6670] sm:col-span-2 lg:col-span-4">
-                  No rep accounts yet: create users with the Student
-                  representative role in Users &amp; Access first. Reps can
-                  record held / not held only; they can never reach evaluations
-                  or scores.
+                  No rep accounts yet. Create one below, then assign it to a batch
+                  and scope.
                 </p>
               ) : null}
             </form>
+
+            <div className="mt-4 rounded-[0.35rem] bg-[#f8fafc] p-4 outline outline-1 outline-[#d9e0e7]/75">
+              <p className="mb-3 text-[13px] font-semibold text-[#1d3047]">
+                New rep account
+              </p>
+              <CreateStudentRepForm />
+            </div>
 
             <div>
               {reps.map((rep) => (

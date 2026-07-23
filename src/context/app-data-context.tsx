@@ -1745,7 +1745,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       if (!currentUser || !isAdminRole(currentUser.role)) {
-        toast.error('Only an authenticated administrator can create admin accounts.')
+        toast.error('Only an authenticated administrator can create accounts.')
         return false
       }
 
@@ -1756,7 +1756,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         })
         return true
       } catch (createError) {
-        toast.error(getMessage(createError, 'Unable to create the admin account.'))
+        toast.error(getMessage(createError, 'Unable to create the account.'))
         return false
       }
     },

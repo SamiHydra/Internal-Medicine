@@ -1,4 +1,5 @@
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   CheckCheck,
@@ -657,6 +658,21 @@ export function UserManagementPage() {
                   ? 'Users and their department assignments.'
                   : 'Residents, consultants, student reps, and administrators.'}
               </p>
+              {/* Reps are the one role with no public signup, so they are created
+                  by an admin. That happens on the Students page, beside the batch
+                  assignment it belongs to; this page manages accounts that exist. */}
+              {workspace === 'academic' ? (
+                <p className="mt-1 text-sm text-[#74777f]">
+                  Student representatives are created on the{' '}
+                  <Link
+                    to="/admin/academic/students"
+                    className="font-semibold text-[#005db6] underline-offset-2 hover:underline"
+                  >
+                    Students page
+                  </Link>
+                  . Everyone else signs up and is approved here.
+                </p>
+              ) : null}
             </div>
             <div className="flex w-full items-center gap-3 sm:w-auto">
               <div className="relative w-full sm:w-64">
