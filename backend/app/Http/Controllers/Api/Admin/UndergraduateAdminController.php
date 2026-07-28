@@ -129,7 +129,10 @@ class UndergraduateAdminController extends Controller
             return $locked;
         });
 
-        return response()->json($this->serializeBatch($batch));
+        // serializeBatch reads students_count, which route-model binding does
+        // not load. Without this the response reports studentCount 0 and any
+        // client that trusts it shows an empty batch.
+        return response()->json($this->serializeBatch($batch->loadCount('students')));
     }
 
     /** Historical batches are retained; DELETE performs an audited deactivation. */

@@ -133,12 +133,11 @@ class AuthController extends Controller
 
     private function findUserForIdentifier(string $identifier): ?User
     {
-        return User::query()
-            ->whereRaw('lower(email) = ?', [$identifier])
-            ->orWhereRaw("lower(coalesce(username, '')) = ?", [$identifier])
-            ->orderByRaw('case when lower(email) = ? then 0 else 1 end', [$identifier])
-            ->orderBy('created_at')
-            ->first();
+        // Email has precedence when an identifier could match both fields.
+        // Both columns are normalized on write, so these are two cheap indexed
+        // point lookups instead of one lower()/coalesce()/CASE table scan.
+        return User::query()->where('email', $identifier)->first()
+            ?? User::query()->where('username', $identifier)->oldest('created_at')->first();
     }
 
     /**

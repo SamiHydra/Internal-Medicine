@@ -67,10 +67,7 @@ function initialsFor(fullName: string) {
 
 function SectionEyebrow({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">{label}</p>
-    </div>
+    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">{label}</p>
   )
 }
 

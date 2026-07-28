@@ -33,6 +33,9 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Enforce frontend performance budget
+        run: npm run perf:budget
+
   backend-sqlite:
     name: Backend SQLite
     runs-on: ubuntu-latest

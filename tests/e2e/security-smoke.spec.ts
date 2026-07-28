@@ -24,7 +24,7 @@ test.describe('Cookie flags (Sanctum SPA session)', () => {
 
   test('session cookie is HttpOnly; XSRF token is readable; SameSite set', async ({ page, context }, testInfo) => {
     await page.goto('/admin')
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible()
     const cookies = await context.cookies()
     const xsrf = cookies.find((c) => c.name === 'XSRF-TOKEN')
     const session = cookies.find((c) => c.name !== 'XSRF-TOKEN' && c.httpOnly)
@@ -65,7 +65,7 @@ test.describe('XSS - reflected input is escaped, not executed', () => {
       await d.dismiss().catch(() => {})
     })
     await page.goto('/admin/users')
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible()
     const payload = '<img src=x onerror="window.__xss_fired=true">'
     await page.getByPlaceholder('Search name or email').fill(payload)
     await page.waitForTimeout(1200)

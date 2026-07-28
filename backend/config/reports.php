@@ -17,6 +17,10 @@ return [
     'window' => [
         'default_count' => (int) env('REPORT_WINDOW_DEFAULT_COUNT', 9),
         'max_count' => (int) env('REPORT_WINDOW_MAX_COUNT', 104),
+        // The week this system went live. Weeks before it are never exposed,
+        // because nothing was filed here then. Override locally (Y-m-d) when a
+        // seeded fixture carries more history than go-live would reveal.
+        'live_start' => env('REPORT_WINDOW_LIVE_START'),
     ],
 
     /*
@@ -52,5 +56,35 @@ return [
     */
     'notifications' => [
         'read_retention_days' => (int) env('NOTIFICATION_READ_RETENTION_DAYS', 90),
+    ],
+
+    /*
+    | Clinical audit/history retention is disabled (0) until hospital policy
+    | supplies an approved window. Expired sessions and cache rows are always
+    | operational data and are pruned independently.
+    */
+    'retention' => [
+        'audit_log_days' => (int) env('REPORT_AUDIT_RETENTION_DAYS', 0),
+        'admin_audit_log_days' => (int) env('ADMIN_AUDIT_RETENTION_DAYS', 0),
+        'status_history_days' => (int) env('REPORT_STATUS_HISTORY_RETENTION_DAYS', 0),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Local fixture size
+    |--------------------------------------------------------------------------
+    |
+    | How many trailing weeks of clinical reporting the LOCAL dev seeders build
+    | (DevClinicalDataSeeder, and the matching backfill in ReportingPeriodSeeder).
+    | The default is one year. Raise it to load-test a deeper archive without
+    | editing a seeder:
+    |
+    |     SEED_HISTORY_WEEKS=156 php artisan migrate:fresh --seed
+    |
+    | Has no effect in production or testing, where the dev seeders never run.
+    |
+    */
+    'dev_seed' => [
+        'history_weeks' => max(1, (int) env('SEED_HISTORY_WEEKS', 52)),
     ],
 ];

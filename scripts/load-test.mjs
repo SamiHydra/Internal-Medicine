@@ -11,7 +11,7 @@ const defaultCredentials = [
 const config = {
   baseUrl: envString('LOAD_BASE_URL', 'http://127.0.0.1:8000').replace(/\/+$/, ''),
   frontendOrigin: envString('LOAD_FRONTEND_ORIGIN', 'http://localhost:5173').replace(/\/+$/, ''),
-  users: envInt('LOAD_USERS', 200),
+  users: envInt('LOAD_USERS', 8),
   durationSeconds: envInt('LOAD_DURATION_SECONDS', 60),
   rampSeconds: envInt('LOAD_RAMP_SECONDS', 20),
   thinkMinMs: envInt('LOAD_THINK_MIN_MS', 250),
@@ -366,7 +366,9 @@ async function runVirtualUser(index, sessions, endAt) {
     const roll = Math.random()
 
     try {
-      if (roll < 0.6) {
+      if (roll < 0.45) {
+        await request(session, 'GET', '/api/workspace/revision', 'workspace-revision')
+      } else if (roll < 0.6) {
         await request(session, 'GET', workspacePath(), 'workspace')
       } else if (roll < 0.82) {
         const ids = sampleReportIds(session)
@@ -423,6 +425,19 @@ function printSummary(summary) {
 }
 
 async function main() {
+  const targetHostname = new URL(config.baseUrl).hostname
+  const isLoopback = ['127.0.0.1', 'localhost', '::1'].includes(targetHostname)
+  if (
+    !isLoopback &&
+    config.users > 25 &&
+    process.env.LOAD_ALLOW_HIGH_CONCURRENCY !== 'I_UNDERSTAND'
+  ) {
+    throw new Error(
+      'Refusing more than 25 virtual users against a non-local target. ' +
+        'Set LOAD_ALLOW_HIGH_CONCURRENCY=I_UNDERSTAND only after confirming a safe test environment.',
+    )
+  }
+
   const credentials = await loadCredentials()
   if (!credentials.length) {
     throw new Error('No credentials configured.')

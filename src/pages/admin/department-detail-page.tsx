@@ -131,6 +131,7 @@ export function DepartmentDetailPage() {
     { value: 'current' as const, label: 'Current week' },
     { value: 'last4' as const, label: 'Last 4 weeks' },
     { value: 'last8' as const, label: 'Last 8 weeks' },
+    { value: 'quarter' as const, label: 'Last quarter (13 weeks)' },
     { value: 'all' as const, label: 'All available data' },
   ] as const
   const reportingPeriodOptions = availablePeriods.map((period) => ({

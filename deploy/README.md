@@ -1,6 +1,6 @@
 # Department server deployment
 
-Production runs on one Ubuntu LTS server on the hospital LAN. Nginx serves the SPA and proxies `/api` and `/sanctum` to PHP-FPM from the same HTTPS origin. MariaDB, database-backed cache, sessions, and queues remain local to the server.
+Production runs on one Ubuntu LTS server on the hospital LAN. Nginx serves the SPA and proxies `/api` and `/sanctum` to PHP-FPM from the same HTTPS origin. MariaDB is local to the server. Cache, sessions, and queues may start on the database driver; Redis is the supported scale-up path once production measurements show database contention.
 
 ## Directory layout
 
@@ -20,6 +20,7 @@ The queue worker, Nginx, cron, and operators always use `/opt/imreport/current`.
 | File | Purpose | Install target |
 |---|---|---|
 | `nginx.conf` | Same-origin SPA and Laravel host | `/etc/nginx/sites-available/imreport` |
+| `php-fpm.conf` | Explicit worker limits, memory limit, recycling, timeout, and slow log | `/etc/php/8.3/fpm/pool.d/imreport.conf` |
 | `queue-worker.service` | Persistent database queue worker | `/etc/systemd/system/imreport-queue.service` |
 | `backup.sh` | Daily consistent dump, retention, secondary copy, integrity check | Cron at 02:00 |
 | `deploy.sh` | Locked, versioned, backup-first atomic deployment | Run from the source checkout |
@@ -46,7 +47,7 @@ The queue worker, Nginx, cron, and operators always use `/opt/imreport/current`.
    - `BACKUP_DIR=/var/backups/imreport`, `SECONDARY_BACKUP_DIR=/mnt/backup/imreport`, `MIN_FREE_DISK_GB=5`
    - `BACKUP_RESTORE_VERIFIED_AT=<ISO-8601 time of the latest successful restore drill>`
    - `ERROR_MONITORING_CHANNEL=<Sentry project or named scheduled log-review process>`
-8. Install the Nginx, systemd, logrotate, and firewall files.
+8. Install the Nginx, PHP-FPM pool, systemd, logrotate, and firewall files. Disable the distribution `www` pool if it is otherwise unused, then validate with `php-fpm8.3 -t` before reloading PHP-FPM.
 9. Install `/etc/cron.d/imreport` using the stable active-release link and the explicit service account:
 
    ```cron
@@ -62,6 +63,36 @@ The queue worker, Nginx, cron, and operators always use `/opt/imreport/current`.
 10. Run `sudo -u imreport /opt/imreport/source/deploy/deploy.sh --dry-run` and correct every missing prerequisite.
 11. Run `sudo -u imreport /opt/imreport/source/deploy/deploy.sh`.
 12. Confirm `cd /opt/imreport/current/backend && php artisan app:launch-readiness --strict` is green.
+
+## Capacity and Redis scale-up
+
+The committed PHP-FPM pool makes concurrency finite and observable instead of
+depending on distribution defaults. Before changing `pm.max_children`, measure
+p95 PHP worker RSS and MariaDB `Threads_connected` during a representative load
+test. Size the pool as:
+
+```text
+min(floor(RAM reserved for PHP / p95 worker RSS), MariaDB connection budget)
+```
+
+If database-backed cache/session/queue traffic is materially contributing to
+MariaDB latency, install a LAN-local Redis instance with authentication and
+persistence appropriate to Hospital IT policy, then set:
+
+```dotenv
+CACHE_STORE=redis
+SESSION_DRIVER=redis
+QUEUE_CONNECTION=redis
+QUEUE_WORKER_MODE=daemon
+REDIS_CLIENT=phpredis
+REDIS_HOST=127.0.0.1
+REDIS_PASSWORD=<managed secret>
+REDIS_PORT=6379
+```
+
+Run the same load test before and after the switch. Do not enable Redis merely
+from a development SQLite result: record workspace/API p95, MariaDB query time,
+PHP-FPM queue depth, and failed-job count as the acceptance evidence.
 
 ## TLS for the internal hostname
 

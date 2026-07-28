@@ -11,6 +11,7 @@ use App\Support\Audit\AuditRegistry;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Gate;
 
 class AuditLogController extends Controller
@@ -49,11 +50,11 @@ class AuditLogController extends Controller
         }
 
         if (isset($validated['date_from'])) {
-            $query->whereDate('changed_at', '>=', $validated['date_from']);
+            $query->where('changed_at', '>=', Carbon::parse($validated['date_from'])->startOfDay());
         }
 
         if (isset($validated['date_to'])) {
-            $query->whereDate('changed_at', '<=', $validated['date_to']);
+            $query->where('changed_at', '<', Carbon::parse($validated['date_to'])->addDay()->startOfDay());
         }
 
         return response()->json([
@@ -105,11 +106,11 @@ class AuditLogController extends Controller
         }
 
         if (isset($validated['date_from'])) {
-            $query->whereDate('created_at', '>=', $validated['date_from']);
+            $query->where('created_at', '>=', Carbon::parse($validated['date_from'])->startOfDay());
         }
 
         if (isset($validated['date_to'])) {
-            $query->whereDate('created_at', '<=', $validated['date_to']);
+            $query->where('created_at', '<', Carbon::parse($validated['date_to'])->addDay()->startOfDay());
         }
 
         return response()->json([

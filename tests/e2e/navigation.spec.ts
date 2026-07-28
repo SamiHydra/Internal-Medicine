@@ -26,7 +26,7 @@ const ROUTES: Record<Role, string[]> = {
 async function visit(page: Page, path: string) {
   await page.goto(path, { waitUntil: 'domcontentloaded' })
   // The authenticated shell renders a desktop "Sign out" control once loaded.
-  await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible({ timeout: 20_000 })
   // Not bounced to login (session intact) and not the 404 page.
   await expect(page).not.toHaveURL(/\/login/)
   await expect(page.getByText(/page not found|404/i)).toHaveCount(0)
@@ -57,7 +57,7 @@ test.describe('Nav links resolve (no dead links in the shell)', () => {
 
   test('every sidebar link navigates to a real page', async ({ page }) => {
     await page.goto('/admin')
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible()
     // Collect in-app links from the navigation landmark.
     const nav = page.getByRole('navigation').first()
     const hrefs = await nav.getByRole('link').evaluateAll((els) =>

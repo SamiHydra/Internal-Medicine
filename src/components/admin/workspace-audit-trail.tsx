@@ -20,44 +20,113 @@ import {
   formatAuditFieldValue,
   formatRelativeTimestamp,
   formatTimestamp,
+  humanizeAuditKey,
 } from '@/lib/dates'
 import { cn } from '@/lib/utils'
 
 const ALL = 'all'
 
 /**
- * Values that are ids rather than facts - shown in the detail drawer but never
- * in the one-line summary, where they would crowd out the readable parts.
+ * Keys that carry an identifier rather than a fact. Case-insensitive and
+ * snake_case aware, so `id`, `userId` and `batch_id` are all caught; the older
+ * pattern only matched camelCase and let a bare `id` through, which is how raw
+ * UUIDs ended up on screen.
  */
-const ID_KEY = /(^|[a-z])Id$/
+const ID_KEY = /(^|[a-z0-9_])(id|uuid)$/i
+
+/** A UUID is never meaningful to a reader, whatever key it arrives under. */
+const UUID_VALUE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+const isIdentifier = (key: string, value: unknown) =>
+  ID_KEY.test(key) || (typeof value === 'string' && UUID_VALUE.test(value))
 
 function summarize(entry: AdminAuditEntry): string | null {
   const values = entry.newValues ?? entry.oldValues
   if (!values) return null
 
   const parts = Object.entries(values)
-    .filter(([key, value]) => !ID_KEY.test(key) && value !== null && value !== '')
+    .filter(
+      ([key, value]) =>
+        !isIdentifier(key, value) && value !== null && value !== '',
+    )
     .slice(0, 3)
     .map(([key, value]) => {
-      const label = key
-        .replace(/([A-Z])/g, ' $1')
-        .replace(/^./, (char) => char.toUpperCase())
-        .trim()
+      const label = humanizeAuditKey(key)
 
-      if (typeof value === 'object') return label
+      if (isPlainObject(value)) return label
       return `${label}: ${formatAuditFieldValue(value)}`
     })
 
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/**
+ * Settings are stored as nested objects. Printing them as one line still reads
+ * as machinery, so a nested object becomes an indented list of its own labelled
+ * rows and only scalars are ever rendered as text.
+ */
+function AuditValue({ value }: { value: unknown }) {
+  if (isPlainObject(value)) {
+    const entries = Object.entries(value)
+
+    if (entries.length === 0) {
+      return <span className="text-[#74777f]">None</span>
+    }
+
+    return (
+      <ul className="mt-1 space-y-1 border-l border-[#dbe3ec] pl-3">
+        {entries.map(([key, nested]) => (
+          <li key={key} className="text-[13px] leading-5 text-[#1d3047]">
+            <span className="text-[#74777f]">{humanizeAuditKey(key)}: </span>
+            {isPlainObject(nested) ? (
+              <AuditValue value={nested} />
+            ) : (
+              formatAuditFieldValue(nested)
+            )}
+          </li>
+        ))}
+      </ul>
+    )
+  }
+
+  return <>{formatAuditFieldValue(value)}</>
+}
+
+function DetailRow({
+  label,
+  before,
+  after,
+  changed,
+}: {
+  label: string
+  before: unknown
+  after: unknown
+  changed: boolean
+}) {
   return (
     <div className="flex flex-col gap-0.5">
       <dt className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#526171]">
         {label}
       </dt>
-      <dd className="break-words text-[13px] text-[#1d3047]">{value}</dd>
+      <dd className="break-words text-[13px] leading-5 text-[#1d3047]">
+        {changed ? (
+          <span className="flex flex-wrap items-baseline gap-1.5">
+            <span className="text-[#74777f] line-through decoration-[#c4c6cf]">
+              {formatAuditFieldValue(before)}
+            </span>
+            <span aria-hidden className="text-[#9aa6b5]">
+              →
+            </span>
+            <span className="font-medium">{formatAuditFieldValue(after)}</span>
+          </span>
+        ) : (
+          <AuditValue value={after ?? before} />
+        )}
+      </dd>
     </div>
   )
 }
@@ -94,11 +163,18 @@ function AuditRow({ entry }: { entry: AdminAuditEntry }) {
   const [open, setOpen] = useState(false)
   const summary = summarize(entry)
 
+  // Identifier columns are dropped here too: the record's own id is already
+  // printed once in the footer below, so repeating UUIDs as labelled rows adds
+  // noise without adding information.
   const changedKeys = useMemo(() => {
     const keys = new Set<string>()
     Object.keys(entry.oldValues ?? {}).forEach((key) => keys.add(key))
     Object.keys(entry.newValues ?? {}).forEach((key) => keys.add(key))
-    return [...keys]
+
+    return [...keys].filter(
+      (key) =>
+        !isIdentifier(key, entry.newValues?.[key] ?? entry.oldValues?.[key]),
+    )
   }, [entry.oldValues, entry.newValues])
 
   const hasDetail = changedKeys.length > 0
@@ -172,12 +248,10 @@ function AuditRow({ entry }: { entry: AdminAuditEntry }) {
               return (
                 <DetailRow
                   key={key}
-                  label={key.replace(/([A-Z])/g, ' $1').trim()}
-                  value={
-                    changed
-                      ? `${formatAuditFieldValue(before)} → ${formatAuditFieldValue(after)}`
-                      : formatAuditFieldValue(after ?? before)
-                  }
+                  label={humanizeAuditKey(key)}
+                  before={before}
+                  after={after}
+                  changed={changed}
                 />
               )
             })}
@@ -193,26 +267,31 @@ function AuditRow({ entry }: { entry: AdminAuditEntry }) {
 }
 
 /**
- * The academic workspace's activity trail.
+ * A workspace's activity trail, used by both Clinical and Academic.
  *
- * Replaces a feed that read the `evaluations` table directly and therefore
- * only ever showed resident and consultant evaluations - every other academic
- * surface (morning sessions, teaching, roster, students, structure) was
- * invisible here even when it was being audited. This reads the real audit log
- * instead, scoped to the workspace by the server's registry, so a newly
- * audited surface appears without a change in this file.
+ * Reads the real audit log scoped to the workspace by the server's registry
+ * (which also returns the system-wide rows, so account and access changes show
+ * in both), rather than any one table. A newly audited surface therefore
+ * appears here without a change in this file.
  */
-export function AcademicAuditTrail() {
+export function WorkspaceAuditTrail({
+  workspace,
+  noun,
+}: {
+  workspace: 'clinical' | 'academic'
+  /** Used in the search label, the empty state, and the footer count. */
+  noun: string
+}) {
   const client = getApiBrowserClient()
   const [entityType, setEntityType] = useState(ALL)
   const [userId, setUserId] = useState(ALL)
   const [search, setSearch] = useState('')
 
   const { data, isPending, isError, error } = useQuery({
-    queryKey: ['academic-audit', entityType, userId],
+    queryKey: ['workspace-audit', workspace, entityType, userId],
     queryFn: () =>
       fetchWorkspaceAuditTrail(client!, {
-        workspace: 'academic',
+        workspace,
         entityType: entityType === ALL ? undefined : entityType,
         userId: userId === ALL ? undefined : userId,
         limit: 500,
@@ -282,7 +361,7 @@ export function AcademicAuditTrail() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search this trail"
-            aria-label="Search the academic audit trail"
+            aria-label={`Search the ${noun} audit trail`}
             className="pl-9"
           />
         </div>
@@ -295,13 +374,13 @@ export function AcademicAuditTrail() {
           <p className="py-8 text-center text-sm text-[#9d2a2a]">
             {error instanceof Error
               ? error.message
-              : 'Failed to load the academic audit trail.'}
+              : `Failed to load the ${noun} audit trail.`}
           </p>
         ) : entries.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-12 text-center">
             <History aria-hidden className="h-6 w-6 text-[#9aa6b5]" />
             <p className="text-sm font-medium text-[#44474e]">
-              No academic activity matches these filters.
+              No {noun} activity matches these filters.
             </p>
           </div>
         ) : (
@@ -312,7 +391,7 @@ export function AcademicAuditTrail() {
               ))}
             </div>
             <p className="mt-3 text-xs text-[#74777f]">
-              Showing {entries.length} of the 500 most recent academic actions.
+              Showing {entries.length} of the 500 most recent {noun} actions.
             </p>
           </>
         )}

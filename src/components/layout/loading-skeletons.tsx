@@ -35,10 +35,7 @@ function HeaderSkeleton({ compact = false, dark = false }: { compact?: boolean; 
   return (
     <div className={cn('flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-start sm:justify-between', dark ? 'border-white/10' : 'border-[#eef2f6]')}>
       <div className="min-w-0 flex-1 space-y-3">
-        <div className="flex items-center gap-2">
-          <Skeleton className={cn('h-3 w-[3px] rounded-full', dark && 'bg-white/24')} />
-          <Skeleton className={cn('h-2.5 w-32', dark && 'bg-white/18')} />
-        </div>
+        <Skeleton className={cn('h-2.5 w-32', dark && 'bg-white/18')} />
         <Skeleton className={cn(compact ? 'h-6 w-56' : 'h-8 w-full max-w-md', dark && 'bg-white/20')} />
         {!compact ? <Skeleton className={cn('h-3 w-full max-w-xl', dark && 'bg-white/14')} /> : null}
       </div>

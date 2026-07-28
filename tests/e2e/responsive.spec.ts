@@ -136,7 +136,7 @@ test.describe('Responsive shell - mobile tab bar & More sheet (admin @ phone)', 
 
     // The mobile shell is active, not the desktop one: the persistent desktop
     // "Sign out" control (sm:flex) is not rendered at phone width.
-    await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Notifications' })).toHaveCount(0)
 
     // Four primary tabs + a "More" overflow slot render at phone width.
     await expect(tabBar.getByRole('link', { name: /dashboard/i })).toBeVisible()

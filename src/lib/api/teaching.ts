@@ -250,6 +250,53 @@ export function cancelTeachingSession(client: LaravelApiClient, sessionId: strin
   })
 }
 
+// ---- Admin: weekly teaching-activity schedule ----
+
+export type TeachingScheduleScope = 'cohort' | 'subgroup'
+
+export type TeachingScheduleRecord = {
+  id: string
+  cohort: 'C1' | 'C2'
+  activityType: TeachingActivityType
+  /** ISO weekday, Monday = 1 … Sunday = 7. */
+  weekday: number
+  scope: TeachingScheduleScope
+  active: boolean
+}
+
+/** The scope is fixed by the activity: lectures/seminars run cohort-wide, bedside/rounds per subgroup. */
+export function scopeForActivity(activity: TeachingActivityType): TeachingScheduleScope {
+  return activity === 'lecture' || activity === 'seminar' ? 'cohort' : 'subgroup'
+}
+
+export async function fetchTeachingSchedules(
+  client: LaravelApiClient,
+): Promise<TeachingScheduleRecord[]> {
+  return (await client.get<{ data: TeachingScheduleRecord[] }>('/api/admin/teaching-schedules')).data
+}
+
+export function createTeachingSchedule(
+  client: LaravelApiClient,
+  payload: { cohort: 'C1' | 'C2'; activityType: TeachingActivityType; weekday: number; scope: TeachingScheduleScope },
+) {
+  return client.post<TeachingScheduleRecord>('/api/admin/teaching-schedules', payload)
+}
+
+/**
+ * Returns only the id and the new flag, NOT a full record: merge it into the
+ * cached schedule rather than replacing, or the rest of the row is lost.
+ */
+export function setTeachingScheduleActive(client: LaravelApiClient, scheduleId: string, active: boolean) {
+  return client.patch<{ id: string; active: boolean }>(
+    `/api/admin/teaching-schedules/${scheduleId}/active`,
+    { active },
+  )
+}
+
+export function deleteTeachingSchedule(client: LaravelApiClient, scheduleId: string) {
+  return client.delete(`/api/admin/teaching-schedules/${scheduleId}`)
+}
+
 export const ACTIVITY_LABELS: Record<TeachingActivityType, string> = {
   lecture: 'Lecture',
   seminar: 'Seminar',

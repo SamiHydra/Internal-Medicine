@@ -12,10 +12,7 @@ export const panelClass =
 /** Gold tick + blue uppercase label used to head every section. */
 export function SectionEyebrow({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#005db6]">{label}</p>
-    </div>
+    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#005db6]">{label}</p>
   )
 }
 

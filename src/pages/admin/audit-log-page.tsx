@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowRight, ChevronDown, History, Search, ShieldCheck } from 'lucide-react'
+import { ArrowRight, ChevronDown, History, Search } from 'lucide-react'
 
-import { AcademicAuditTrail } from '@/components/admin/academic-audit-trail'
+import { WorkspaceAuditTrail } from '@/components/admin/workspace-audit-trail'
 import { Badge } from '@/components/ui/badge'
-import { ListSkeleton } from '@/components/layout/loading-skeletons'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -16,10 +15,6 @@ import {
 import { departments, templateMap } from '@/config/templates'
 import { useAppData } from '@/context/app-data-context'
 import { useWorkspace } from '@/context/workspace-context'
-import { fetchAdminAuditTrail } from '@/lib/api/admin'
-import { getApiBrowserClient } from '@/lib/api/client'
-import { apiEnvSetupHint } from '@/lib/api/env'
-import type { AdminAuditEntry } from '@/lib/api/types'
 import { formatTimestamp } from '@/lib/dates'
 import { cn, formatCompactNumber } from '@/lib/utils'
 
@@ -42,33 +37,25 @@ function formatAuditValue(value: string | number | null) {
   return String(value)
 }
 
-function formatAuditDetailValue(value: unknown): string {
-  if (value === null || value === undefined || value === '') {
-    return '-'
-  }
-
-  if (typeof value === 'object') {
-    return JSON.stringify(value)
-  }
-
-  return String(value)
-}
-
 function SectionEyebrow({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">{label}</p>
-    </div>
+    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">{label}</p>
   )
 }
 
 /**
- * Academic workspace audit. The section chrome lives here; the trail itself is
- * AcademicAuditTrail, which reads the real workspace-scoped audit log rather
- * than the evaluations table this section used to be limited to.
+ * The workspace activity trail, identical in both workspaces. The section
+ * chrome lives here; the trail itself is WorkspaceAuditTrail, which reads the
+ * real workspace-scoped audit log (plus the system-wide rows) rather than any
+ * single table.
  */
-function AcademicAuditStream() {
+function WorkspaceAuditSection({
+  workspace,
+}: {
+  workspace: 'clinical' | 'academic'
+}) {
+  const isAcademic = workspace === 'academic'
+
   return (
     <motion.section
       initial={{ opacity: 0, y: 10 }}
@@ -80,255 +67,19 @@ function AcademicAuditStream() {
         <div className="border-b border-[#eef2f6] pb-5">
           <SectionEyebrow label="Audit stream" />
           <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
-            Academic activity
+            {isAcademic ? 'Academic activity' : 'Clinical activity'}
           </h2>
           <p className="mt-1 text-sm text-[#74777f]">
-            Every recorded academic action - evaluations, morning sessions, teaching,
-            roster, students and structure - newest first.
+            {isAcademic
+              ? 'Every recorded academic action - evaluations, morning sessions, teaching, roster, students and structure - newest first.'
+              : 'Every recorded clinical action - reports, assignments, templates, settings and access - newest first.'}
           </p>
         </div>
 
-        <AcademicAuditTrail />
-      </div>
-    </motion.section>
-  )
-}
-
-const ADMIN_ACTION_LABELS: Record<string, string> = {
-  upsert: 'Created',
-  create: 'Created',
-  update: 'Updated',
-  approve: 'Approved',
-  reject: 'Rejected',
-  delete: 'Removed',
-}
-
-function humanizeAction(action: string) {
-  return ADMIN_ACTION_LABELS[action] ?? `${action.charAt(0).toUpperCase()}${action.slice(1)}`
-}
-
-function ActionChip({ action }: { action: string }) {
-  const tone =
-    action === 'approve'
-      ? 'bg-[#edf7f0] text-[#1f6b3b]'
-      : action === 'reject' || action === 'delete'
-        ? 'bg-[#fceeee] text-[#ba1a1a]'
-        : 'bg-[#edf4fb] text-[#005db6]'
-
-  return (
-    <span className={cn('shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]', tone)}>
-      {humanizeAction(action)}
-    </span>
-  )
-}
-
-/**
- * Cross-cutting account & access actions (approvals, role/assignment changes) from
- * the AdminAuditLog. These belong to neither domain, so the section shows in BOTH
- * the clinical and academic workspaces.
- */
-function AdminActionsStream() {
-  const client = getApiBrowserClient()
-  const [entries, setEntries] = useState<AdminAuditEntry[]>([])
-  const [isLoading, setIsLoading] = useState(Boolean(client))
-  const [error, setError] = useState<string | null>(
-    client ? null : `The Laravel API is not configured. ${apiEnvSetupHint}`,
-  )
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
-
-  const toggleExpanded = (id: string) =>
-    setExpandedIds((current) => {
-      const next = new Set(current)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-      }
-      return next
-    })
-
-  useEffect(() => {
-    if (!client) {
-      return
-    }
-
-    let active = true
-    fetchAdminAuditTrail(client)
-      .then((data) => {
-        if (active) {
-          setEntries(data)
-          setError(null)
-        }
-      })
-      .catch((cause) => {
-        if (active) {
-          setError(cause instanceof Error ? cause.message : 'Failed to load account actions.')
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setIsLoading(false)
-        }
-      })
-
-    return () => {
-      active = false
-    }
-  }, [client])
-
-  return (
-    <motion.section
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: 'easeOut', delay: 0.04 }}
-      className={sectionClass}
-    >
-      <div className="space-y-5">
-        <div className="flex flex-col gap-4 border-b border-[#eef2f6] pb-5 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <SectionEyebrow label="Account" />
-            <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
-              Account &amp; access actions
-            </h2>
-            <p className="mt-1 text-sm text-[#74777f]">
-              Approvals, role and assignment changes - shown in both workspaces.
-            </p>
-          </div>
-          {!error && !isLoading ? (
-            <span className={cn(countChipClass, 'whitespace-nowrap')}>
-              <ShieldCheck className="h-3.5 w-3.5 text-[#005db6]" />
-              {formatCompactNumber(entries.length)} actions
-            </span>
-          ) : null}
-        </div>
-
-        {error ? (
-          <div className="rounded-[0.4rem] border border-dashed border-[#f1d1d1] bg-[#fff6f6] px-6 py-8 text-center text-sm text-[#9d2a2a]">
-            {error}
-          </div>
-        ) : isLoading ? (
-          <ListSkeleton rows={4} />
-        ) : entries.length ? (
-          <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
-            {entries.map((entry) => {
-              const changedKeys = [
-                ...new Set([
-                  ...Object.keys(entry.oldValues ?? {}),
-                  ...Object.keys(entry.newValues ?? {}),
-                ]),
-              ]
-              const hasDetail = changedKeys.length > 0 || Boolean(entry.entityId)
-              const expanded = expandedIds.has(entry.id)
-
-              return (
-                <div key={entry.id} className="border-b border-[#eef2f6] last:border-b-0">
-                  <div
-                    onClick={() => {
-                      if (hasDetail) {
-                        toggleExpanded(entry.id)
-                      }
-                    }}
-                    className={cn(
-                      'flex flex-wrap items-center gap-3 px-4 py-2.5 transition-colors duration-200',
-                      hasDetail && 'cursor-pointer hover:bg-[#f7f9fc]',
-                    )}
-                  >
-                    {hasDetail ? (
-                      <button
-                        type="button"
-                        aria-expanded={expanded}
-                        aria-label={`${expanded ? 'Hide' : 'Show'} action detail`}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          toggleExpanded(entry.id)
-                        }}
-                        className="shrink-0 rounded-[0.25rem] p-0.5 text-[#9aa7b8] outline-none transition-colors hover:text-[#005db6] focus-visible:text-[#005db6]"
-                      >
-                        <ChevronDown
-                          className={cn(
-                            'h-4 w-4 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
-                            expanded && 'rotate-180',
-                          )}
-                        />
-                      </button>
-                    ) : (
-                      <span aria-hidden className="w-5 shrink-0" />
-                    )}
-                    <ActionChip action={entry.action} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold capitalize text-[#000a1e]">
-                        {entry.entityType.replace(/_/g, ' ')}
-                      </span>
-                      <span className="block truncate text-[13px] leading-5 text-[#5f6670]">{entry.userName ?? 'System'}</span>
-                    </span>
-                    <span className="shrink-0 text-xs text-[#657180]">
-                      {entry.createdAt ? formatTimestamp(entry.createdAt) : '-'}
-                    </span>
-                  </div>
-
-                  {expanded && hasDetail ? (
-                    <div className="space-y-3 border-t border-[#eef2f6] bg-[#f7f9fc] px-4 py-3.5">
-                      {changedKeys.length ? (
-                        <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3] bg-white">
-                          <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-[#eef2f6] bg-[#f7f9fc] px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#526171]">
-                            <span>Field</span>
-                            <span>Before</span>
-                            <span>After</span>
-                          </div>
-                          {changedKeys.map((key) => (
-                            <div
-                              key={key}
-                              className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-[#f1f4f8] px-3 py-2 text-xs last:border-b-0"
-                            >
-                              <span className="truncate font-medium capitalize text-[#1d3047]">
-                                {key.replace(/_/g, ' ')}
-                              </span>
-                              <span className="break-words text-[#74777f]">
-                                {formatAuditDetailValue(entry.oldValues?.[key])}
-                              </span>
-                              <span className="break-words font-semibold text-[#000a1e]">
-                                {formatAuditDetailValue(entry.newValues?.[key])}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-[13px] leading-5 text-[#5f6670]">
-                          No field-level changes were recorded for this action.
-                        </p>
-                      )}
-                      <div className="flex flex-wrap items-center gap-2 text-[13px] leading-5 text-[#5f6670]">
-                        <span>By {entry.userName ?? 'System'}</span>
-                        {entry.entityId ? (
-                          <>
-                            <span className="text-[#9aa7b8]">·</span>
-                            <span>Target ID {entry.entityId}</span>
-                          </>
-                        ) : null}
-                        {entry.ipAddress ? (
-                          <>
-                            <span className="text-[#9aa7b8]">·</span>
-                            <span>{entry.ipAddress}</span>
-                          </>
-                        ) : null}
-                        {entry.createdAt ? (
-                          <>
-                            <span className="text-[#9aa7b8]">·</span>
-                            <span>{formatTimestamp(entry.createdAt)}</span>
-                          </>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <div className="rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-6 py-8 text-center text-sm text-[#74777f]">
-            No account actions recorded yet.
-          </div>
-        )}
+        <WorkspaceAuditTrail
+          workspace={workspace}
+          noun={isAcademic ? 'academic' : 'clinical'}
+        />
       </div>
     </motion.section>
   )
@@ -419,9 +170,13 @@ export function AuditLogPage() {
 
   return (
     <div className="space-y-6 px-4 py-5 md:px-6 md:py-8">
-      {workspace === 'academic' ? (
-        <AcademicAuditStream />
-      ) : (
+      <WorkspaceAuditSection
+        workspace={workspace === 'academic' ? 'academic' : 'clinical'}
+      />
+
+      {/* Clinical only: report cell edits are not admin actions, so they have
+          no equivalent in the academic workspace. */}
+      {workspace === 'academic' ? null : (
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -598,11 +353,6 @@ export function AuditLogPage() {
         </div>
       </motion.section>
       )}
-
-      {/* Clinical only: in the academic workspace the trail above already
-          covers these rows (academic + the system-wide ones), so rendering
-          both would list every account change twice. */}
-      {workspace === 'academic' ? null : <AdminActionsStream />}
     </div>
   )
 }

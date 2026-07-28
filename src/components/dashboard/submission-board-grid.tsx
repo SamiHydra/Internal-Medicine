@@ -38,12 +38,9 @@ export function SubmissionBoardGrid({
     <section className="rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7">
       <div className="space-y-5">
         <div className="border-b border-[#eef2f6] pb-5">
-          <div className="flex items-center gap-2">
-            <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
-              {eyebrow}
-            </p>
-          </div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+            {eyebrow}
+          </p>
           <h2 className="mt-2 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
             {title}
           </h2>
@@ -69,13 +66,16 @@ export function SubmissionBoardGrid({
                 ) : null}
                 <p className="mt-1 text-sm text-[#44474e]">{row.templateName}</p>
               </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+              {/* Phones scroll each department's weeks sideways. Wrapping them
+                  instead stacked ~150 rows of cards on a 390px screen and made
+                  this section 15,000px tall on its own. */}
+              <div className="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:mx-0 sm:grid sm:snap-none sm:grid-cols-3 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 [&::-webkit-scrollbar]:hidden">
                 {row.statuses.map((status) => (
                   <Link
                     key={`${row.departmentName}-${status.label}`}
                     to={status.href}
                     className={cn(
-                      'rounded-[0.4rem] border border-[#e6ecf3] px-3 py-3 text-sm font-medium transition-[transform,border-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#bcd0ea] motion-safe:active:scale-[0.98]',
+                      'w-[8.5rem] shrink-0 snap-start rounded-[0.4rem] border border-[#e6ecf3] px-3 py-3 text-sm font-medium transition-[transform,border-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#bcd0ea] motion-safe:active:scale-[0.98] sm:w-auto sm:shrink',
                       statusTone[status.status],
                     )}
                   >

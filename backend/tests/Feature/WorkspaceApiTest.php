@@ -19,6 +19,7 @@ use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
 use Tests\TestCase;
@@ -138,6 +139,51 @@ class WorkspaceApiTest extends TestCase
             ->getJson('/api/workspace')
             ->assertOk()
             ->assertJsonCount(6, 'state.roles');
+    }
+
+    public function test_workspace_revision_is_small_and_changes_when_visible_data_changes(): void
+    {
+        $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
+        $period = ReportingPeriod::query()->orderByDesc('week_start')->firstOrFail();
+        $report = $this->report($this->assignment($this->nurse, $department), $period);
+
+        $initialRevision = $this->actingAs($this->nurse)
+            ->getJson('/api/workspace/revision')
+            ->assertOk()
+            ->assertJsonStructure(['revision'])
+            ->json('revision');
+
+        $this->assertIsString($initialRevision);
+        $this->assertSame(64, strlen($initialRevision));
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->actingAs($this->nurse)->getJson('/api/workspace/revision')->assertOk();
+        $this->assertLessThanOrEqual(2, count(DB::getQueryLog()));
+        DB::disableQueryLog();
+
+        $this->travel(1)->second();
+        $report->touch();
+
+        $changedRevision = $this->actingAs($this->nurse)
+            ->getJson('/api/workspace/revision')
+            ->assertOk()
+            ->json('revision');
+
+        $this->assertNotSame($initialRevision, $changedRevision);
+    }
+
+    public function test_deferred_access_request_slice_is_available_without_reloading_workspace(): void
+    {
+        $this->actingAs($this->admin)
+            ->getJson('/api/workspace/access-requests?status=pending')
+            ->assertOk()
+            ->assertJsonStructure(['data']);
+
+        $this->actingAs($this->nurse)
+            ->getJson('/api/workspace/access-requests')
+            ->assertOk()
+            ->assertJsonStructure(['data']);
     }
 
     public function test_workspace_profiles_stay_workspace_agnostic_for_admins(): void

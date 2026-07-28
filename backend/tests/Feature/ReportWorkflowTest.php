@@ -18,6 +18,7 @@ use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ReportWorkflowTest extends TestCase
@@ -105,6 +106,55 @@ class ReportWorkflowTest extends TestCase
         ]);
         $this->assertEqualsWithDelta(3.846, (float) CalculatedMetric::query()->firstOrFail()->bor_percent, 0.001);
         $this->assertEquals(0, AuditLog::query()->count());
+    }
+
+    public function test_full_report_save_uses_a_bounded_number_of_queries(): void
+    {
+        $template = $this->assignment->template()
+            ->with('fieldDefinitions')
+            ->firstOrFail();
+        $activeDays = $template->active_days;
+        $values = [];
+
+        foreach ($template->fieldDefinitions as $definition) {
+            $value = match ($definition->field_kind) {
+                'integer', 'decimal' => 0,
+                'time' => '08:00',
+                'choice' => $definition->metadata['options'][0],
+                default => 'performance test',
+            };
+            $values[$definition->field_key] = [
+                'fieldId' => $definition->field_key,
+                'dailyValues' => array_fill_keys($activeDays, $value),
+            ];
+        }
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'values' => $values,
+        ])->assertCreated();
+
+        $queries = collect(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $fieldValueQueries = $queries->filter(
+            fn (array $query): bool => str_contains(strtolower($query['query']), 'report_field_values'),
+        );
+
+        $this->assertLessThanOrEqual(
+            6,
+            $fieldValueQueries->count(),
+            'A full report must preload, validate, calculate, and persist field values with a bounded number of queries.',
+        );
+        $this->assertLessThanOrEqual(
+            30,
+            $queries->count(),
+            sprintf('A full report save issued %d queries; the performance budget is 30.', $queries->count()),
+        );
     }
 
     public function test_submit_creates_history_and_admin_notifications(): void
@@ -459,7 +509,10 @@ class ReportWorkflowTest extends TestCase
                 ->getJson('/api/reports')
                 ->assertOk()
                 ->assertJsonCount(9, 'data')
-                ->assertJsonPath('meta.total', 9);
+                ->assertJsonPath('meta.total', 9)
+                ->assertJsonMissingPath('data.0.values')
+                ->assertJsonMissingPath('data.0.calculatedMetrics')
+                ->assertJsonMissingPath('data.0.quality');
             $defaultReportIds = collect($defaultResponse->json('data'))->pluck('id')->all();
 
             $this->assertEmpty(array_intersect($reports->take(2)->pluck('id')->all(), $defaultReportIds));

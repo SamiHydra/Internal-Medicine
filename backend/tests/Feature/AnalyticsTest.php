@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\WarmDashboardAnalytics;
 use App\Models\Department;
 use App\Models\Report;
 use App\Models\ReportAssignment;
@@ -16,6 +17,7 @@ use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class AnalyticsTest extends TestCase
@@ -182,6 +184,18 @@ class AnalyticsTest extends TestCase
         $service->summary($filters);
 
         $this->assertSame([], $sourceQueries, 'A dashboard cache hit must not fingerprint source tables.');
+    }
+
+    public function test_invalidation_queues_one_unique_warm_instead_of_running_it_in_the_request(): void
+    {
+        config()->set('queue.default', 'database');
+        Queue::fake();
+
+        $service = app(DashboardAnalyticsService::class);
+        $service->invalidate();
+        $service->invalidate();
+
+        Queue::assertPushed(WarmDashboardAnalytics::class, 1);
     }
 
     public function test_assignment_changes_invalidate_cached_dashboard_expectations(): void

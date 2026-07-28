@@ -66,7 +66,7 @@ test.describe('Accessibility - authenticated pages', () => {
   for (const route of ['/admin', '/admin/users', '/admin/settings', '/admin/academic']) {
     test(`a11y scan ${route}`, async ({ page }, testInfo) => {
       await page.goto(route, { waitUntil: 'domcontentloaded' })
-      await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible({ timeout: 20_000 })
+      await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible({ timeout: 20_000 })
       await page.waitForTimeout(800) // let charts/lazy content settle
       const { critical } = await runAxe(page, route.replace(/\//g, '_'), testInfo)
       expect(critical, `critical a11y on ${route}: ${critical.map((v) => v.id).join(', ')}`).toHaveLength(0)
@@ -79,7 +79,7 @@ test.describe('Accessibility - academic form (Radix Select labeling)', () => {
 
   test('a11y scan /academic/submit', async ({ page }, testInfo) => {
     await page.goto('/academic/submit', { waitUntil: 'domcontentloaded' })
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible({ timeout: 20_000 })
     await page.waitForTimeout(800)
     const { critical } = await runAxe(page, 'academic-submit', testInfo)
     expect(critical, `critical a11y on /academic/submit: ${critical.map((v) => v.id).join(', ')}`).toHaveLength(0)

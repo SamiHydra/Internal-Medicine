@@ -41,6 +41,9 @@ class AcademicEvaluationController extends Controller
             'direction' => ['sometimes', Rule::in(['consultant', 'resident'])],
             'subject_id' => ['sometimes', 'uuid'],
             'subjectId' => ['sometimes', 'uuid'],
+            // Filters to evaluations this person WROTE, the mirror of subject_id.
+            'author_id' => ['sometimes', 'uuid'],
+            'authorId' => ['sometimes', 'uuid'],
             'ward_id' => ['sometimes', 'uuid'],
             'wardId' => ['sometimes', 'uuid'],
             'date_from' => ['sometimes', 'date_format:Y-m-d'],
@@ -58,6 +61,7 @@ class AcademicEvaluationController extends Controller
         Gate::authorize('viewAny', $isResident ? ResidentEvaluation::class : ConsultantEvaluation::class);
 
         $subjectId = $validated['subject_id'] ?? $validated['subjectId'] ?? null;
+        $authorId = $validated['author_id'] ?? $validated['authorId'] ?? null;
         $wardId = $validated['ward_id'] ?? $validated['wardId'] ?? null;
         $dateFrom = $validated['date_from'] ?? $validated['dateFrom'] ?? null;
         $dateTo = $validated['date_to'] ?? $validated['dateTo'] ?? null;
@@ -67,6 +71,7 @@ class AcademicEvaluationController extends Controller
             ->forKey(EvaluationScoring::formKeyForDirection($direction))
             ->with(['author', 'subject', 'ward', 'answers'])
             ->when($subjectId, fn (Builder $q) => $q->where('subject_user_id', $subjectId))
+            ->when($authorId, fn (Builder $q) => $q->where('author_id', $authorId))
             ->when($wardId, fn (Builder $q) => $q->where('ward_id', $wardId))
             ->when($dateFrom, fn (Builder $q) => $q->whereDate('evaluation_date', '>=', $dateFrom))
             ->when($dateTo, fn (Builder $q) => $q->whereDate('evaluation_date', '<=', $dateTo))

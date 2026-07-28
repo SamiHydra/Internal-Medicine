@@ -110,7 +110,7 @@ test.describe('Consultant teaching attendance', () => {
 
   test('loads the current teaching attendance surface', async ({ page }) => {
     await page.goto('/academic/teaching', { waitUntil: 'domcontentloaded' })
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible()
     await expect(page.getByText(/student attendance|teaching/i).first()).toBeVisible()
   })
 })

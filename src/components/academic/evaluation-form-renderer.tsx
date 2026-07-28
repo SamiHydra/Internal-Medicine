@@ -388,7 +388,6 @@ export function EvaluationFormRenderer({
     >
       <section className={panelClass}>
         <div className="flex items-center gap-2">
-          <span aria-hidden="true" className="h-3.5 w-[3px] rounded-full bg-[#f0b429]" />
           <h2 className="font-display text-[1.25rem] font-bold tracking-[-0.02em] text-[#000a1e]">
             {subjectLabel}
           </h2>
@@ -417,7 +416,6 @@ export function EvaluationFormRenderer({
         return (
           <section key={section.section} className={panelClass}>
             <div className="flex items-center gap-2">
-              <span aria-hidden="true" className="h-3.5 w-[3px] rounded-full bg-[#f0b429]" />
               <h2 className="font-display text-[1.25rem] font-bold tracking-[-0.02em] text-[#000a1e]">
                 {section.section}
               </h2>

@@ -17,6 +17,8 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
 }
 
 const DEFAULT_GET_TIMEOUT_MS = 15_000
+const DEFAULT_MUTATION_TIMEOUT_MS = 30_000
+const CSRF_TIMEOUT_MS = 10_000
 const TRANSIENT_GET_STATUSES = new Set([502, 503, 504])
 
 export class ApiError extends Error {
@@ -62,10 +64,42 @@ function isUnsafeMethod(method: string) {
   return !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())
 }
 
+function requestAbortState(upstreamSignal: AbortSignal | null | undefined, timeoutMs: number) {
+  const controller = new AbortController()
+  let timedOut = false
+  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason)
+
+  if (upstreamSignal?.aborted) {
+    abortFromUpstream()
+  } else {
+    upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true })
+  }
+
+  const timeoutId =
+    timeoutMs > 0
+      ? globalThis.setTimeout(() => {
+          timedOut = true
+          controller.abort()
+        }, timeoutMs)
+      : null
+
+  return {
+    signal: controller.signal,
+    didTimeOut: () => timedOut,
+    cleanup: () => {
+      if (timeoutId !== null) {
+        globalThis.clearTimeout(timeoutId)
+      }
+      upstreamSignal?.removeEventListener('abort', abortFromUpstream)
+    },
+  }
+}
+
 export class LaravelApiClient {
   readonly baseUrl: string
 
   private csrfReady = false
+  private csrfRequest: Promise<void> | null = null
   private authListeners = new Set<AuthListener>()
 
   constructor(baseUrl: string) {
@@ -202,85 +236,88 @@ export class LaravelApiClient {
 
     const {
       query,
-      timeoutMs = method.toUpperCase() === 'GET' ? DEFAULT_GET_TIMEOUT_MS : 0,
+      timeoutMs =
+        method.toUpperCase() === 'GET'
+          ? DEFAULT_GET_TIMEOUT_MS
+          : DEFAULT_MUTATION_TIMEOUT_MS,
       ...requestInit
     } = options
     const isRetryableGet = method.toUpperCase() === 'GET'
     const maxAttempts = isRetryableGet ? 2 : 1
+    const abortState = requestAbortState(requestInit.signal, timeoutMs)
 
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const timeoutController = !requestInit.signal && timeoutMs > 0 ? new AbortController() : null
-      const timeoutId = timeoutController
-        ? window.setTimeout(() => timeoutController.abort(), timeoutMs)
-        : null
+    try {
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+          const response = await fetch(this.url(path, query), {
+            ...requestInit,
+            method,
+            headers,
+            body,
+            credentials: 'include',
+            signal: abortState.signal,
+          })
 
-      try {
-        const response = await fetch(this.url(path, query), {
-          ...requestInit,
-          method,
-          headers,
-          body,
-          credentials: 'include',
-          signal: requestInit.signal ?? timeoutController?.signal,
-        })
-
-        if (TRANSIENT_GET_STATUSES.has(response.status) && attempt + 1 < maxAttempts) {
-          await this.retryDelay(attempt)
-          continue
-        }
-
-        if (response.status === 204) {
-          return null as T
-        }
-
-        const payload = await this.parseResponse(response)
-
-        if (!response.ok) {
-          const apiError = new ApiError(
-            this.errorMessage(payload, response),
-            response.status,
-            payload,
-          )
-          // A mid-session 401 (session expired) or 419 (CSRF/session token mismatch)
-          // or the explicit inactive-account 403 on a non-auth endpoint means the
-          // Sanctum session is no longer usable.
-          // markSignedOut() drops the cached CSRF readiness (so the next unsafe
-          // request re-primes /sanctum/csrf-cookie) and redirects to /login, instead
-          // of stranding the user on an authenticated shell where every write 401/419s.
-          // Auth endpoints (/api/auth/me, /login) handle their own statuses.
-          if (
-            (response.status === 401 ||
-              response.status === 419 ||
-              isInactiveAccountError(apiError)) &&
-            !path.startsWith('/api/auth/')
-          ) {
-            this.markSignedOut()
+          if (TRANSIENT_GET_STATUSES.has(response.status) && attempt + 1 < maxAttempts) {
+            await this.retryDelay(attempt)
+            continue
           }
 
-          throw apiError
-        }
+          if (response.status === 204) {
+            return null as T
+          }
 
-        return payload as T
-      } catch (error) {
-        if (error instanceof ApiError) {
+          const payload = await this.parseResponse(response)
+
+          if (!response.ok) {
+            const apiError = new ApiError(
+              this.errorMessage(payload, response),
+              response.status,
+              payload,
+            )
+            // A mid-session 401 (session expired) or 419 (CSRF/session token mismatch)
+            // or the explicit inactive-account 403 on a non-auth endpoint means the
+            // Sanctum session is no longer usable.
+            // markSignedOut() drops the cached CSRF readiness (so the next unsafe
+            // request re-primes /sanctum/csrf-cookie) and redirects to /login, instead
+            // of stranding the user on an authenticated shell where every write 401/419s.
+            // Auth endpoints (/api/auth/me, /login) handle their own statuses.
+            if (
+              (response.status === 401 ||
+                response.status === 419 ||
+                isInactiveAccountError(apiError)) &&
+              !path.startsWith('/api/auth/')
+            ) {
+              this.markSignedOut()
+            }
+
+            throw apiError
+          }
+
+          return payload as T
+        } catch (error) {
+          if (error instanceof ApiError) {
+            throw error
+          }
+
+          if (
+            error instanceof TypeError &&
+            !abortState.signal.aborted &&
+            attempt + 1 < maxAttempts
+          ) {
+            await this.retryDelay(attempt)
+            continue
+          }
+
+          if (abortState.didTimeOut()) {
+            throw new ApiError('The server took too long to respond. Please try again.', 408)
+          }
+
           throw error
         }
-
-        if (attempt + 1 < maxAttempts) {
-          await this.retryDelay(attempt)
-          continue
-        }
-
-        if (timeoutController?.signal.aborted) {
-          throw new ApiError('The server took too long to respond. Please try again.', 408)
-        }
-
-        throw error
-      } finally {
-        if (timeoutId !== null) {
-          window.clearTimeout(timeoutId)
-        }
       }
+    } finally {
+      abortState.cleanup()
     }
 
     throw new ApiError('The API request failed.', 500)
@@ -295,19 +332,41 @@ export class LaravelApiClient {
       return
     }
 
-    const response = await fetch(this.url('/sanctum/csrf-cookie'), {
-      credentials: 'include',
-      headers: {
-        Accept: 'application/json',
-        'X-Requested-With': 'XMLHttpRequest',
-      },
-    })
+    this.csrfRequest ??= this.fetchCsrfCookie()
 
-    if (!response.ok) {
-      throw new ApiError('Unable to initialize the secure API session.', response.status)
+    try {
+      await this.csrfRequest
+      this.csrfReady = true
+    } finally {
+      this.csrfRequest = null
     }
+  }
 
-    this.csrfReady = true
+  private async fetchCsrfCookie() {
+    const abortState = requestAbortState(null, CSRF_TIMEOUT_MS)
+
+    try {
+      const response = await fetch(this.url('/sanctum/csrf-cookie'), {
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        signal: abortState.signal,
+      })
+
+      if (!response.ok) {
+        throw new ApiError('Unable to initialize the secure API session.', response.status)
+      }
+    } catch (error) {
+      if (abortState.didTimeOut()) {
+        throw new ApiError('The secure session setup took too long. Please try again.', 408)
+      }
+
+      throw error
+    } finally {
+      abortState.cleanup()
+    }
   }
 
   private url(path: string, query?: RequestOptions['query']) {

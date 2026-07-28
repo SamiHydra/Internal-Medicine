@@ -155,7 +155,7 @@ export function AcademicSubmissionsPage() {
       })
       .catch(() => {
         if (active) {
-          setPeople({ direction, people: [] })
+          setPeople({ direction, ratingWeight: 0.5, minEvaluationsForRank: 3, people: [] })
         }
       })
     return () => {
@@ -369,9 +369,8 @@ export function AcademicSubmissionsPage() {
                         </span>
                       </span>
                       <span className="hidden min-w-0 sm:block">
-                        <span className="inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-[#e3e9f1] bg-[#f4f7fb] px-2.5 py-1 text-[13px] font-medium text-[#44474e]">
-                          <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#005db6]" />
-                          <span className="truncate">{record.wardName ?? '-'}</span>
+                        <span className="block truncate text-[13px] text-[#5b6169]">
+                          {record.wardName ?? '-'}
                         </span>
                       </span>
                       <span className="hidden min-w-0 truncate text-sm text-[#5f6670] sm:block">

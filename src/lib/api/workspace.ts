@@ -5,6 +5,7 @@ import type {
   LiveAppStateLoadOptions,
   WorkspacePayload,
 } from '@/lib/api/types'
+import type { UserProfile } from '@/types/domain'
 
 export async function fetchCurrentUserProfile(
   client: LaravelApiClient,
@@ -22,6 +23,26 @@ export async function fetchCurrentUserProfile(
     currentUser: payload.user,
     profileRow: payload.user,
   }
+}
+
+/**
+ * The profile directory alone (GET /api/workspace/profiles).
+ *
+ * Rows are serialized by the same backend method as `state.profiles`, so the
+ * result can replace that slice directly. Prefer this over re-fetching the
+ * whole workspace with includeProfiles=1, which pulls ~214 KB of reports,
+ * audit logs, and notifications that the caller does not want.
+ */
+export async function fetchProfileDirectory(
+  client: LaravelApiClient,
+): Promise<UserProfile[]> {
+  return (await client.get<{ data: UserProfile[] }>('/api/workspace/profiles')).data
+}
+
+export async function fetchWorkspaceRevision(
+  client: LaravelApiClient,
+): Promise<string> {
+  return (await client.get<{ revision: string }>('/api/workspace/revision')).revision
 }
 
 export async function fetchLiveAppState(

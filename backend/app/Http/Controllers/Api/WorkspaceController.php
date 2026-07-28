@@ -24,10 +24,12 @@ use App\Services\Academic\MorningSessionService;
 use App\Services\Academic\RosterService;
 use App\Services\Academic\RotationPlanStateService;
 use App\Services\Admin\AppSettingsService;
+use App\Services\Workspace\WorkspaceRevisionService;
 use App\Support\Authorization\Permissions;
 use App\Support\HospitalClock;
 use App\Support\Reports\ReportPeriodWindow;
 use App\Support\RoleTitles;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -35,6 +37,66 @@ use Illuminate\Http\Request;
 class WorkspaceController extends Controller
 {
     use SerializesAdminResources;
+
+    public function __construct(
+        private readonly WorkspaceRevisionService $workspaceRevision,
+    ) {}
+
+    public function revision(Request $request): JsonResponse
+    {
+        return response()->json([
+            'revision' => $this->workspaceRevision->for($request->user()),
+        ]);
+    }
+
+    public function accessRequests(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'status' => ['sometimes', 'string', 'in:pending,approved,rejected'],
+        ]);
+        $user = $request->user();
+
+        $requests = AccessRequest::query()
+            ->with(['user', 'reviewer', 'items.department', 'items.template'])
+            ->when(
+                ! Permissions::isAdminRole($user->role_key),
+                fn (Builder $query) => $query->where('user_id', $user->id),
+            )
+            ->when(
+                isset($validated['status']),
+                fn (Builder $query) => $query->where('status', $validated['status']),
+            )
+            ->latest('requested_at')
+            ->limit(200)
+            ->get();
+
+        return response()->json([
+            'data' => $requests
+                ->map(fn (AccessRequest $accessRequest) => $this->serializeAccessRequest($accessRequest))
+                ->values(),
+        ]);
+    }
+
+    /**
+     * The profile directory on its own, for callers that need the user list but
+     * not the rest of the workspace bootstrap.
+     *
+     * Visibility matches `show()` exactly: admins see every user, everyone else
+     * sees only themselves. The serializer is shared, so the rows are
+     * byte-identical to `state.profiles` and the SPA can drop them straight in.
+     */
+    public function profiles(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $profiles = Permissions::isAdminRole($user->role_key)
+            ? User::query()->orderBy('full_name')->get()
+            : collect([$user]);
+
+        return response()->json([
+            'data' => $profiles->map(fn (User $profile) => $this->profile($profile))->values(),
+        ]);
+    }
 
     public function show(Request $request): JsonResponse
     {
@@ -240,6 +302,7 @@ class WorkspaceController extends Controller
         ];
 
         return response()->json([
+            'revision' => $this->workspaceRevision->for($user),
             'currentUser' => $this->profile($user),
             'academic' => $this->academicPayload($user, $isAdmin),
             'references' => [
@@ -300,40 +363,52 @@ class WorkspaceController extends Controller
         if ($isAdmin) {
             $today = HospitalClock::today()->toDateString();
             $todayDate = HospitalClock::today();
+            $tomorrow = $todayDate->addDay()->toDateString();
 
             $coveredYears = RotationCalendar::query()
                 ->where('active', true)
                 ->whereHas('blocks', fn ($query) => $query
-                    ->whereDate('starts_on', '<=', $today)
-                    ->whereDate('ends_on', '>=', $today))
+                    ->where('starts_on', '<', $tomorrow)
+                    ->where('ends_on', '>=', $today))
                 ->distinct()
                 ->pluck('training_year');
 
             $currentBlocks = RotationBlock::query()
                 ->with('calendar')
                 ->whereHas('calendar', fn ($query) => $query->where('active', true))
-                ->whereDate('starts_on', '<=', $today)
-                ->whereDate('ends_on', '>=', $today)
+                ->where('starts_on', '<', $tomorrow)
+                ->where('ends_on', '>=', $today)
                 ->get();
             $currentResidents = User::query()
                 ->where('role_key', 'resident')
                 ->where('active', true)
                 ->whereIn('training_year', $currentBlocks->pluck('calendar.training_year')->filter()->unique())
                 ->get();
+            $assignmentEndsBefore = CarbonImmutable::parse($currentBlocks->max('ends_on') ?? $today)
+                ->addDay()
+                ->toDateString();
+            $assignmentStartsOnOrAfter = CarbonImmutable::parse($currentBlocks->min('starts_on') ?? $today)
+                ->toDateString();
             $currentAssignments = DutyAssignment::query()
                 ->with('dutyType')
                 ->whereIn('user_id', $currentResidents->pluck('id'))
-                ->whereDate('starts_on', '<=', $currentBlocks->max('ends_on') ?? $today)
-                ->whereDate('ends_on', '>=', $currentBlocks->min('starts_on') ?? $today)
+                ->where('starts_on', '<', $assignmentEndsBefore)
+                ->where('ends_on', '>=', $assignmentStartsOnOrAfter)
                 ->whereHas('dutyType', fn ($query) => $query->where('granularity', 'monthly'))
                 ->get();
             $planStateService = app(RotationPlanStateService::class);
             $mixedRotationCells = 0;
             $rotationCellsNeedingReview = 0;
+            $residentsByTrainingYear = $currentResidents->groupBy('training_year');
+            $assignmentsByUser = $currentAssignments->groupBy('user_id');
 
             foreach ($currentBlocks as $block) {
-                foreach ($currentResidents->where('training_year', $block->calendar?->training_year) as $resident) {
-                    $state = $planStateService->cell($currentAssignments, $block, $resident->id);
+                foreach ($residentsByTrainingYear->get($block->calendar?->training_year, collect()) as $resident) {
+                    $state = $planStateService->cell(
+                        $assignmentsByUser->get($resident->id, collect()),
+                        $block,
+                        $resident->id,
+                    );
                     $mixedRotationCells += $state['status'] === 'mixed' ? 1 : 0;
                     $rotationCellsNeedingReview += $state['status'] !== 'empty'
                         && $state['requiresOverwriteConfirmation'] ? 1 : 0;
@@ -351,8 +426,8 @@ class WorkspaceController extends Controller
                     ->whereIn('role_key', ['resident', 'consultant'])
                     ->where('active', true)
                     ->whereDoesntHave('dutyAssignments', fn ($query) => $query
-                        ->whereDate('starts_on', '<=', $today)
-                        ->whereDate('ends_on', '>=', $today)
+                        ->where('starts_on', '<', $tomorrow)
+                        ->where('ends_on', '>=', $today)
                         ->whereHas('dutyType', fn ($typeQuery) => $typeQuery->where('granularity', 'monthly')))
                     ->count(),
                 'mixedRotationCells' => $mixedRotationCells,

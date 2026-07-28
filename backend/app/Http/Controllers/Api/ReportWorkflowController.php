@@ -44,8 +44,11 @@ class ReportWorkflowController extends Controller
         $reportPeriodWindow = $validated['report_period_window'] ?? $validated['reportPeriodWindow'] ?? ReportPeriodWindow::DEFAULT_WINDOW;
         $perPage = (int) ($validated['per_page'] ?? $validated['perPage'] ?? 100);
 
+        // The index is intentionally summary-only. Values, definitions, quality
+        // analysis, and metrics are loaded through show()/details() for reports
+        // the UI actually opens, avoiding a 100-report hydration spike.
         $query = Report::query()
-            ->with(['assignment.department', 'assignment.template', 'department', 'template.fieldDefinitions', 'reportingPeriod', 'fieldValues.fieldDefinition', 'calculatedMetric'])
+            ->with(['department:id,slug,name', 'template:id,slug,name'])
             ->latest('updated_at');
 
         if (! Permissions::isAdminRole($user->role_key)) {
@@ -73,7 +76,7 @@ class ReportWorkflowController extends Controller
         $reports = $query->paginate($perPage);
 
         return response()->json([
-            'data' => $reports->getCollection()->map(fn (Report $report) => $this->serializeReport($report))->values(),
+            'data' => $reports->getCollection()->map(fn (Report $report) => $this->serializeReportSummary($report))->values(),
             'meta' => [
                 'currentPage' => $reports->currentPage(),
                 'lastPage' => $reports->lastPage(),
@@ -231,6 +234,31 @@ class ReportWorkflowController extends Controller
     private function loadReport(Report $report): Report
     {
         return $report->loadMissing(['assignment.department', 'assignment.template', 'department', 'template.fieldDefinitions', 'reportingPeriod', 'fieldValues.fieldDefinition', 'calculatedMetric']);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function serializeReportSummary(Report $report): array
+    {
+        return [
+            'id' => $report->id,
+            'assignmentId' => $report->assignment_id,
+            'departmentId' => $report->department_id,
+            'departmentSlug' => $report->department?->slug,
+            'departmentName' => $report->department?->name,
+            'templateId' => $report->template_id,
+            'templateSlug' => $report->template?->slug,
+            'templateName' => $report->template?->name,
+            'reportingPeriodId' => $report->reporting_period_id,
+            'status' => $report->status,
+            'submittedAt' => $report->submitted_at?->toJSON(),
+            'lockedAt' => $report->locked_at?->toJSON(),
+            'createdById' => $report->created_by,
+            'updatedById' => $report->updated_by,
+            'createdAt' => $report->created_at?->toJSON(),
+            'updatedAt' => $report->updated_at?->toJSON(),
+        ];
     }
 
     /**

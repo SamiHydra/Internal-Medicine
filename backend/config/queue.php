@@ -1,5 +1,7 @@
 <?php
 
+use App\Jobs\SendNotificationDelivery;
+
 return [
 
     /*
@@ -21,6 +23,23 @@ return [
     | Read via config() so it survives config:cache (env() would not).
     */
     'worker_mode' => env('QUEUE_WORKER_MODE', 'cron'),
+
+    'transient_retry' => [
+        'limit' => (int) env('QUEUE_TRANSIENT_RETRY_LIMIT', 20),
+        'max_age_hours' => (int) env('QUEUE_TRANSIENT_RETRY_MAX_AGE_HOURS', 24),
+        'allowed_jobs' => [
+            SendNotificationDelivery::class,
+        ],
+        'exception_patterns' => [
+            'all notification channels failed',
+            'connection timed out',
+            'connection refused',
+            'could not connect',
+            'temporarily unavailable',
+            'too many requests',
+            'service unavailable',
+        ],
+    ],
 
     /*
     |--------------------------------------------------------------------------

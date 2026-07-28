@@ -86,6 +86,12 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
     // so the SPA can resolve currentUser (incl. passwordChangeRequired) and render
     // the forced change-password gate. Every other endpoint stays behind the gate.
     Route::get('/workspace', [WorkspaceController::class, 'show'])->withoutMiddleware('password-changed');
+    Route::get('/workspace/revision', [WorkspaceController::class, 'revision'])->withoutMiddleware('password-changed');
+    Route::get('/workspace/access-requests', [WorkspaceController::class, 'accessRequests']);
+    // The profile directory alone. Same rows and same shape the workspace
+    // payload carries, without the ~214 KB of reports/audit/notifications that
+    // callers needing only the directory were pulling with it.
+    Route::get('/workspace/profiles', [WorkspaceController::class, 'profiles']);
 
     Route::get('/reports', [ReportWorkflowController::class, 'index']);
     Route::post('/reports', [ReportWorkflowController::class, 'store']);

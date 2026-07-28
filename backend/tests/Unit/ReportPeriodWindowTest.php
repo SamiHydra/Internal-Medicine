@@ -11,6 +11,19 @@ use Tests\TestCase;
 class ReportPeriodWindowTest extends TestCase
 {
     /**
+     * The live start is configurable (a local fixture may seed history older
+     * than the real go-live date). Pin it for every test here so these assert
+     * the WINDOW's behaviour and never inherit whatever a developer has set in
+     * their own environment.
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['reports.window.live_start' => '2026-03-02']);
+    }
+
+    /**
      * Builds in-memory (unsaved) reporting periods starting from $start, one per
      * week, with deterministic ids. No database is touched.
      */
@@ -72,13 +85,67 @@ class ReportPeriodWindowTest extends TestCase
         Carbon::setTestNow('2026-06-08 12:00:00');
 
         try {
-            // First two weeks fall before LIVE_REPORTING_START (2026-03-02).
+            // First two weeks fall before the live start (2026-03-02).
             $periods = $this->periods(6, '2026-02-16');
             $ids = ReportPeriodWindow::ids($periods, ReportPeriodWindow::ALL_WINDOW);
 
             $this->assertNotContains('period-000', $ids); // 2026-02-16
             $this->assertNotContains('period-001', $ids); // 2026-02-23
             $this->assertContains('period-002', $ids);     // 2026-03-02 (live start)
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_configured_live_start_widens_the_visible_history(): void
+    {
+        Carbon::setTestNow('2026-06-08 12:00:00');
+
+        try {
+            $periods = $this->periods(6, '2026-02-16');
+
+            // Moving the live start earlier exposes the weeks the default hid,
+            // which is how a seeded multi-year archive becomes browsable.
+            config(['reports.window.live_start' => '2026-02-16']);
+            $ids = ReportPeriodWindow::ids($periods, ReportPeriodWindow::ALL_WINDOW);
+
+            $this->assertContains('period-000', $ids);
+            $this->assertContains('period-001', $ids);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_the_week_starting_today_is_included_on_its_first_day(): void
+    {
+        // 2026-07-27 is a Monday: the reporting week starts today. The hospital
+        // timezone puts its midnight BEFORE the period's UTC date, so comparing
+        // instants used to drop the open week for the whole of its first day.
+        Carbon::setTestNow('2026-07-27 09:00:00');
+
+        try {
+            $ids = ReportPeriodWindow::ids(
+                $this->periods(4, '2026-07-06'),
+                ReportPeriodWindow::DEFAULT_WINDOW,
+            );
+
+            $this->assertContains('period-003', $ids); // week beginning 2026-07-27
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_blank_live_start_config_falls_back_to_the_go_live_default(): void
+    {
+        Carbon::setTestNow('2026-06-08 12:00:00');
+
+        try {
+            // An unset or empty env var must not be read as "no floor at all".
+            config(['reports.window.live_start' => null]);
+            $ids = ReportPeriodWindow::ids($this->periods(6, '2026-02-16'), ReportPeriodWindow::ALL_WINDOW);
+
+            $this->assertNotContains('period-000', $ids);
+            $this->assertContains('period-002', $ids);
         } finally {
             Carbon::setTestNow();
         }

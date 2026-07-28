@@ -37,15 +37,9 @@ export function AcademicWorkspaceHero({
     >
       <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
         <div className="max-w-2xl">
-          <div className="flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              className="h-3 w-[3px] rounded-full bg-[#f0b429]"
-            />
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#f0b429]">
-              {eyebrow}
-            </p>
-          </div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#f0b429]">
+            {eyebrow}
+          </p>
           <h1 className="mt-2 font-display text-[1.6rem] font-bold leading-tight tracking-[-0.02em] text-white md:text-[1.95rem]">
             {title}
           </h1>

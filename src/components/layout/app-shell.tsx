@@ -306,7 +306,7 @@ export function AppShell({ children }: PropsWithChildren) {
       <aside
         id="desktop-sidebar"
         className={cn(
-          'fixed inset-y-0 left-0 z-40 hidden border-r border-[#0c2747] bg-[#04162f] transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] sm:block',
+          'fixed inset-y-0 left-0 z-40 hidden border-r border-[#0c2747] bg-[#04162f] transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] sm:block',
           collapsed ? 'w-[84px]' : 'w-[292px]',
         )}
       >
@@ -360,17 +360,14 @@ export function AppShell({ children }: PropsWithChildren) {
           collapsed ? 'sm:pl-[84px]' : 'sm:pl-[292px]',
         )}
       >
-        <div ref={mainContentRef} className="flex min-h-screen min-w-0 flex-col will-change-transform">
+        <div ref={mainContentRef} className="flex min-h-screen min-w-0 flex-col">
           <header className="sticky top-0 z-30 border-b border-[#e7ecf1] bg-white">
             <div className="flex items-center justify-between gap-4 px-4 py-3 md:px-6 lg:px-8">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="h-3.5 w-[3px] rounded-full bg-[#f0b429]" />
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
-                      {sectionEyebrow}
-                    </p>
-                  </div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+                    {sectionEyebrow}
+                  </p>
                   <h1 className="mt-1 truncate pb-0.5 font-display text-[1.3rem] font-bold leading-tight tracking-[-0.03em] text-[#000a1e] md:text-[1.5rem]">
                     {pageTitle}
                   </h1>
@@ -378,26 +375,29 @@ export function AppShell({ children }: PropsWithChildren) {
               </div>
 
               <div className="flex items-center gap-2.5 md:gap-3">
-                <div className="hidden items-center gap-2.5 rounded-[0.4rem] border border-[#e1e6ec] bg-white px-3.5 py-2 lg:flex">
-                  <span className="relative flex h-2 w-2 items-center justify-center">
+                {/* Ambient status reads as text, not as a control: no border, no
+                    display face. The dot still carries the syncing state. */}
+                <div className="hidden items-center gap-2 pr-1 text-[13px] text-[#5b6169] lg:flex">
+                  <span className="relative flex h-1.5 w-1.5 items-center justify-center">
                     {isSyncing ? (
                       <span className="absolute inset-0 animate-ping rounded-full bg-[#63a1ff]/55" />
                     ) : null}
-                    <span className="relative h-2 w-2 rounded-full bg-[#f0b429]" />
+                    <span className="relative h-1.5 w-1.5 rounded-full bg-[#f0b429]" />
                   </span>
-                  <div className="leading-tight">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#74777f]">
-                      {isSyncing ? 'Syncing' : 'Reporting period'}
-                    </p>
-                    <p className="font-display text-[0.92rem] font-semibold leading-none tracking-[-0.02em] text-[#000a1e]">
-                      {currentPeriodLabel}
-                    </p>
-                  </div>
+                  <span className="sr-only">
+                    {isSyncing ? 'Syncing. ' : ''}Reporting period:{' '}
+                  </span>
+                  {isSyncing ? 'Syncing' : currentPeriodLabel}
                 </div>
+
+                <span
+                  aria-hidden
+                  className="mx-1.5 hidden h-5 w-px bg-[#e7ecf1] lg:block"
+                />
 
                 <button
                   type="button"
-                  className="relative inline-flex h-10 w-10 items-center justify-center rounded-[0.4rem] border border-[#e1e6ec] bg-white text-[#44474e] transition-[transform,background-color,border-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#c8d5e6] hover:bg-[#f6f8fa] hover:text-[#000a1e] active:scale-[0.95] pointer-coarse:h-11 pointer-coarse:w-11"
+                  className="relative inline-flex h-9 w-9 items-center justify-center rounded-[0.35rem] text-[#5b6169] transition-[transform,background-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[#f1f4f8] hover:text-[#000a1e] active:scale-[0.95] pointer-coarse:h-11 pointer-coarse:w-11"
                   aria-label="Notifications"
                   onClick={() =>
                     navigate(
@@ -405,39 +405,43 @@ export function AppShell({ children }: PropsWithChildren) {
                     )
                   }
                 >
-                  <Bell className="h-4 w-4" />
+                  <Bell className="h-[18px] w-[18px]" />
                   {unreadCount ? (
-                    <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ba1a1a] px-1 text-[10px] font-bold text-white ring-2 ring-white">
+                    <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ba1a1a] px-1 text-[10px] font-bold text-white ring-2 ring-white">
                       {unreadCount}
                     </span>
                   ) : null}
                 </button>
 
-                <div className="hidden items-center gap-2.5 rounded-[0.4rem] border border-[#e1e6ec] bg-white py-1.5 pl-2.5 pr-1.5 sm:flex">
-                  <Avatar className="h-9 w-9 rounded-[0.35rem] bg-[#04162f] shadow-none">
-                    <AvatarFallback className="rounded-[0.35rem] bg-[#04162f] text-[0.78rem] font-bold text-[#f0b429]">
+                {/* Identity and sign out stay on the bar (no menu to open), but
+                    without the box that used to enclose them. */}
+                <div className="hidden items-center gap-2.5 pl-1 sm:flex">
+                  <Avatar className="h-8 w-8 rounded-[0.3rem] bg-[#04162f] shadow-none">
+                    <AvatarFallback className="rounded-[0.3rem] bg-[#04162f] text-[0.72rem] font-bold text-[#f0b429]">
                       {initials}
                     </AvatarFallback>
                   </Avatar>
-                  <div className="text-left">
-                    <p className="text-sm font-semibold leading-tight tracking-[-0.01em] text-[#000a1e]">
+                  <div className="hidden max-w-[12rem] text-left md:block">
+                    <p className="truncate text-[13.5px] font-semibold leading-tight tracking-[-0.01em] text-[#000a1e]">
                       {currentUser.fullName}
                     </p>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
+                    <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8794a5]">
                       {currentUser.title}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    aria-label="Sign out"
-                    className="ml-0.5 inline-flex h-9 w-9 items-center justify-center rounded-[0.3rem] border-l border-[#e1e6ec] pl-2 text-[#74777f] transition-[transform,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:text-[#ba1a1a] active:scale-[0.95]"
-                    onClick={() => {
-                      void logout()
-                    }}
-                  >
-                    <LogOut className="h-4 w-4" />
-                  </button>
                 </div>
+
+                <button
+                  type="button"
+                  aria-label="Sign out"
+                  title="Sign out"
+                  className="hidden h-9 w-9 items-center justify-center rounded-[0.35rem] text-[#8794a5] transition-[transform,background-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[#fbecec] hover:text-[#ba1a1a] active:scale-[0.95] sm:inline-flex pointer-coarse:h-11 pointer-coarse:w-11"
+                  onClick={() => {
+                    void logout()
+                  }}
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
 
                 <button
                   type="button"
@@ -469,7 +473,7 @@ export function AppShell({ children }: PropsWithChildren) {
           side="left"
           className="flex w-full max-w-[20rem] flex-col gap-0 border-r border-[#0c2747] p-0"
         >
-          <div className="flex h-full flex-col overflow-y-auto px-6 pt-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
+          <div className="scrollbar-on-dark flex h-full flex-col overflow-y-auto px-6 pt-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
             <SheetTitle className="sr-only">Account and navigation menu</SheetTitle>
             <BrandLockup compact inverted />
 

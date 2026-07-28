@@ -4,6 +4,7 @@ import type {
   ReportComment,
   ReportDetailRecord,
   ReportResponse,
+  ReportSummaryResponse,
   SaveReportPayload,
 } from '@/lib/api/types'
 
@@ -34,6 +35,15 @@ export async function deleteReportComment(
 
 const reportDetailBatchSize = 100
 
+/**
+ * Batches in flight at once. Every batch is a heavy query (a hundred reports
+ * with all their day cells), so releasing them all together does not make the
+ * answer arrive sooner - it just queues them inside the API and pushes the last
+ * ones past the client timeout. A deep range used to release thirty at once and
+ * abandon most of them.
+ */
+const reportDetailConcurrency = 3
+
 export async function fetchReportDetails(
   client: LaravelApiClient,
   reportIds: string[],
@@ -51,13 +61,21 @@ export async function fetchReportDetails(
       (index + 1) * reportDetailBatchSize,
     ),
   )
-  const responses = await Promise.all(
-    batches.map((batch) =>
-      client.get<ListResponse<ReportResponse>>('/api/reports/details', {
-        query: { ids: batch.join(',') },
-      }),
-    ),
-  )
+
+  const responses: ListResponse<ReportResponse>[] = []
+
+  for (let index = 0; index < batches.length; index += reportDetailConcurrency) {
+    const wave = await Promise.all(
+      batches.slice(index, index + reportDetailConcurrency).map((batch) =>
+        client.get<ListResponse<ReportResponse>>('/api/reports/details', {
+          query: { ids: batch.join(',') },
+        }),
+      ),
+    )
+
+    responses.push(...wave)
+  }
+
   const reports = responses.flatMap((response) => response.data)
 
   return Object.fromEntries(
@@ -76,14 +94,12 @@ export async function saveReport(
   client: LaravelApiClient,
   payload: SaveReportPayload,
 ) {
-  const report = await client.post<ReportResponse>('/api/reports', {
+  return client.post<ReportResponse>('/api/reports', {
     assignmentId: payload.assignmentId,
     reportingPeriodId: payload.reportingPeriodId,
     values: payload.values,
     submit: payload.submit ?? false,
   })
-
-  return report.id
 }
 
 export async function setReportLockState(
@@ -106,7 +122,7 @@ export async function listReports(
     perPage?: number
   },
 ) {
-  return client.get<ListResponse<ReportResponse>>('/api/reports', {
+  return client.get<ListResponse<ReportSummaryResponse>>('/api/reports', {
     query: {
       assignmentId: options?.assignmentId,
       reportingPeriodId: options?.reportingPeriodId,

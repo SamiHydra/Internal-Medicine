@@ -14,6 +14,8 @@ import { technicalSupport } from '@/config/support'
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
 import { useAppData } from '@/context/app-data-context'
 import { getApiBrowserClient } from '@/lib/api/client'
+import { landingPathForRole } from '@/routes/landing'
+import type { UserRole } from '@/types/domain'
 
 const loginSchema = z.object({
   identifier: z.string().trim().min(1),
@@ -21,6 +23,28 @@ const loginSchema = z.object({
 })
 
 type LoginValues = z.infer<typeof loginSchema>
+
+function preloadLandingPageForRole(role: UserRole) {
+  switch (role) {
+    case 'nurse':
+      return import('@/pages/nurse/nurse-dashboard-page')
+    case 'resident':
+    case 'consultant':
+      return import('@/pages/academic/academic-home-page')
+    case 'student_rep':
+      return import('@/pages/teaching/rep-log-page')
+    default:
+      return import('@/pages/admin/admin-dashboard-page')
+  }
+}
+
+/**
+ * Every authenticated route renders inside this shell, so it can be warmed
+ * before the role is known - unlike the landing page itself.
+ */
+function preloadAuthenticatedShell() {
+  return import('@/routes/route-guards')
+}
 
 export function LoginPage() {
   const {
@@ -46,9 +70,7 @@ export function LoginPage() {
 
   useEffect(() => {
     if (currentUser && !isSigningIn) {
-      navigate(currentUser.role === 'nurse' ? '/nurse' : '/admin', {
-        replace: true,
-      })
+      navigate(landingPathForRole(currentUser.role), { replace: true })
     }
   }, [currentUser, isSigningIn, navigate])
 
@@ -60,31 +82,15 @@ export function LoginPage() {
     })
   }, [])
 
-  useEffect(() => {
-    const preloadDashboards = () => {
-      void import('@/pages/nurse/nurse-dashboard-page')
-      void import('@/pages/admin/admin-dashboard-page')
-    }
-
-    if ('requestIdleCallback' in window) {
-      const idleHandle = window.requestIdleCallback(preloadDashboards, {
-        timeout: 800,
-      })
-
-      return () => {
-        window.cancelIdleCallback(idleHandle)
-      }
-    }
-
-    const timeoutHandle = globalThis.setTimeout(preloadDashboards, 250)
-    return () => {
-      globalThis.clearTimeout(timeoutHandle)
-    }
-  }, [])
-
   const onSubmit = form.handleSubmit(async (values) => {
     setError(null)
     setIsSigningIn(true)
+
+    // The shell is needed whatever the role, so fetch it alongside the auth
+    // request rather than waiting for the role to come back.
+    void preloadAuthenticatedShell().catch(() => {
+      // The route-level lazy loader owns the visible error/loading behavior.
+    })
     const role = await login(values.identifier, values.password)
 
     if (!role) {
@@ -93,12 +99,12 @@ export function LoginPage() {
       return
     }
 
-    if (role === 'nurse') {
-      await import('@/pages/nurse/nurse-dashboard-page')
-    } else {
-      await import('@/pages/admin/admin-dashboard-page')
-    }
-    navigate(role === 'nurse' ? '/nurse' : '/admin', { replace: true })
+    // Start only this role's landing chunk. Do not delay navigation while it
+    // downloads; the route fallback provides immediate loading feedback.
+    void preloadLandingPageForRole(role).catch(() => {
+      // The route-level lazy loader owns the visible error/loading behavior.
+    })
+    navigate(landingPathForRole(role), { replace: true })
   })
 
   const identifierError = form.formState.errors.identifier
@@ -122,8 +128,8 @@ export function LoginPage() {
             <div className="absolute inset-y-0 right-0 w-px bg-white/8" />
 
             <div className="relative z-10">
-              <div className="flex items-center gap-3">
-                <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
+              <div className="flex items-center gap-4">
+                <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[8px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
                   <img
                     src={stPaulosLogo}
                     alt="St Paul logo"
@@ -132,12 +138,12 @@ export function LoginPage() {
                 </div>
                 <div>
                   <p
-                    className="text-[1.55rem] font-extrabold leading-none tracking-[-0.03em] text-white"
+                    className="text-[2.15rem] font-extrabold leading-none tracking-[-0.03em] text-white"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
                     St Paul's
                   </p>
-                  <p className="mt-1 text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
+                  <p className="mt-1.5 text-[0.82rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
                     Internal Medicine
                   </p>
                 </div>
@@ -149,9 +155,9 @@ export function LoginPage() {
                 className="text-[3.95rem] font-extrabold leading-[0.92] tracking-[-0.055em] text-white lg:text-[4.3rem] xl:text-[4.7rem]"
                 style={{ fontFamily: 'Manrope, sans-serif' }}
               >
-                Clinical Operations
+                Department
                 <br />
-                <span className="text-[#63a1ff]">&amp; Academic Review</span>
+                <span className="text-[#63a1ff]">Management System</span>
               </h1>
               <div className="mt-6 h-px w-28 bg-[linear-gradient(90deg,#63a1ff_0%,#f0b429_100%)]" />
             </div>

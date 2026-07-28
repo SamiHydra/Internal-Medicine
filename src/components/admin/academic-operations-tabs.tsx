@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
 import { motion } from 'framer-motion';
-import { CalendarX2, GraduationCap, Loader2, Sunrise } from 'lucide-react';
-import { useState } from 'react';
+import { CalendarX2, ChevronRight, GraduationCap, Loader2, Sunrise } from 'lucide-react';
+import { useState } from 'react'
+import { Link } from 'react-router-dom';
 import {
   Bar,
   BarChart,
@@ -16,6 +17,7 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { AcademicWorkspaceHero } from '@/components/admin/academic-workspace-hero';
+import { cardRowClass } from '@/components/admin/metered-list';
 import { MorningDelayChart } from '@/components/admin/morning-delay-chart';
 import { StudentProgressTable } from '@/components/admin/student-progress-table';
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel';
@@ -148,29 +150,47 @@ export function MorningAnalyticsTab() {
             />
           </div>
         ) : (
-          <div className="mt-5 max-h-[31rem] overflow-y-auto rounded-[0.4rem] border border-[#e6ecf3]">
-            <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_80px_90px] gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-xs font-bold uppercase tracking-[0.1em] text-[#526171]">
+          <ul className="mt-6 flex max-h-[31rem] flex-col gap-2 overflow-y-auto pr-1">
+            <li
+              aria-hidden
+              className="hidden grid-cols-[minmax(0,1fr)_84px_72px_16px] items-center gap-5 px-4 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#9aa7b8] sm:grid"
+            >
               <span>Person</span>
               <span className="text-right">Present</span>
               <span className="text-right">Rate</span>
-            </div>
+            </li>
             {data.people.map((person) => (
-              <div
-                key={person.userId}
-                className="grid grid-cols-[minmax(0,1fr)_80px_90px] items-center gap-3 border-b border-[#eef2f6] px-4 py-2.5 text-sm transition-colors last:border-b-0 hover:bg-[#f7f9fc]"
-              >
-                <span className="truncate font-semibold text-[#000a1e]">
-                  {person.fullName}
-                </span>
-                <span className="text-right tabular-nums text-[#5b6169]">
-                  {person.presentCount}/{person.expectedCount}
-                </span>
-                <span className="text-right font-semibold tabular-nums text-[#005db6]">
-                  {Math.round(person.attendanceRate)}%
-                </span>
-              </div>
+              <li key={person.userId}>
+                {/* Opens the same detail page the leaderboard links to, which
+                    also carries this person's morning history. The direction
+                    follows their role: sending a resident to the consultant
+                    view would render every figure as zero. */}
+                <Link
+                  to={`/admin/academic/people/${person.userId}?direction=${
+                    person.role === 'resident' ? 'resident' : 'consultant'
+                  }`}
+                  className={`${cardRowClass} gap-5 grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_84px_72px_16px]`}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-semibold text-[#000a1e]">
+                      {person.fullName}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[12.5px] text-[#8794a5] sm:hidden">
+                      {person.presentCount}/{person.expectedCount} present ·{' '}
+                      {Math.round(person.attendanceRate)}%
+                    </span>
+                  </span>
+                  <span className="hidden text-right text-[13px] font-semibold tabular-nums text-[#5b6169] sm:block">
+                    {person.presentCount}/{person.expectedCount}
+                  </span>
+                  <span className="text-right text-[15px] font-bold tabular-nums text-[#004a92]">
+                    {Math.round(person.attendanceRate)}%
+                  </span>
+                  <ChevronRight className="hidden h-4 w-4 shrink-0 text-[#c4c6cf] transition-colors group-hover:text-[#005db6] sm:block" />
+                </Link>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </motion.section>
     </>

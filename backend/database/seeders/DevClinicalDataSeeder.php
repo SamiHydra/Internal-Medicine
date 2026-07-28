@@ -11,8 +11,10 @@ use App\Models\ReportingPeriod;
 use App\Models\ReportTemplate;
 use App\Models\User;
 use App\Services\Analytics\DashboardAnalyticsService;
+use App\Services\Reports\CriticalEventAlertService;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 /**
@@ -31,12 +33,44 @@ use Illuminate\Support\Str;
  */
 class DevClinicalDataSeeder extends Seeder
 {
-    /** Thirty weeks keeps every trend comfortably beyond six calendar months. */
-    private const HISTORY_PERIOD_COUNT = 30;
-
     private const RANDOM_SEED = 20260722;
 
     private const INSERT_BATCH_SIZE = 1000;
+
+    /** Trailing weeks whose critical values raise a real alert + action item. */
+    private const ALERT_WINDOW_WEEKS = 4;
+
+    /**
+     * How each unit behaves over the window, so the compliance and safety
+     * screens separate good units from struggling ones instead of showing one
+     * flat population. Assigned round-robin over the reporting slots.
+     *
+     * missRate      - weeks with no report at all (drives overdue / not-started)
+     * draftRate     - weeks started but never submitted
+     * lateRate      - weeks submitted after the deadline
+     * safetyFactor  - multiplier on deaths / HAI / pressure-ulcer likelihood
+     * surgeRate     - weeks whose headline volume spikes into outlier territory
+     * lullRate      - weeks whose volume collapses (closure, holiday, staff gap)
+     *
+     * @var list<array{label: string, missRate: int, draftRate: int, lateRate: int, safetyFactor: float, surgeRate: int, lullRate: int}>
+     */
+    private const UNIT_PROFILES = [
+        ['label' => 'exemplary', 'missRate' => 0, 'draftRate' => 1, 'lateRate' => 3, 'safetyFactor' => 0.4, 'surgeRate' => 1, 'lullRate' => 1],
+        ['label' => 'reliable', 'missRate' => 2, 'draftRate' => 3, 'lateRate' => 8, 'safetyFactor' => 0.8, 'surgeRate' => 2, 'lullRate' => 2],
+        ['label' => 'reliable', 'missRate' => 3, 'draftRate' => 4, 'lateRate' => 10, 'safetyFactor' => 1.0, 'surgeRate' => 2, 'lullRate' => 2],
+        ['label' => 'inconsistent', 'missRate' => 9, 'draftRate' => 8, 'lateRate' => 22, 'safetyFactor' => 1.5, 'surgeRate' => 4, 'lullRate' => 3],
+        ['label' => 'reliable', 'missRate' => 2, 'draftRate' => 3, 'lateRate' => 7, 'safetyFactor' => 0.7, 'surgeRate' => 2, 'lullRate' => 2],
+        ['label' => 'struggling', 'missRate' => 18, 'draftRate' => 12, 'lateRate' => 30, 'safetyFactor' => 2.2, 'surgeRate' => 5, 'lullRate' => 5],
+    ];
+
+    /**
+     * Headline volume field per template. A surge week multiplies these (and the
+     * fields derived from them) far enough above the trailing average to trip
+     * ReportQualityService's outlier check; a lull week collapses them.
+     *
+     * @var array<string, float>
+     */
+    private const SURGE_MULTIPLIER = ['surge' => 4.2, 'lull' => 0.18];
 
     /** Stored statuses only (not_started / overdue are derived from missing reports). */
     private const STATUS_CYCLE = [
@@ -47,16 +81,6 @@ class DevClinicalDataSeeder extends Seeder
         'submitted',
         'draft',
         'locked',
-    ];
-
-    /** Nurse-in-charge / reporting staff pool (stable per ward across the window). */
-    private const NURSES = [
-        'Abel Gemechu', 'Hana Abera', 'Sara Tadesse', 'Yonas Kebede', 'Marta Hailu',
-        'Bethlehem Tesfaye', 'Dawit Mekonnen', 'Selamawit Girma', 'Kalkidan Wolde',
-        'Eyob Assefa', 'Liya Bekele', 'Naod Fikru', 'Tigist Alemu', 'Robel Desta',
-        'Meron Tsegaye', 'Hewan Negash', 'Biruk Lemma', 'Saron Habte', 'Nahom Getachew',
-        'Rahel Solomon', 'Fitsum Ayele', 'Genet Worku', 'Helen Tamiru', 'Amanuel Birhanu',
-        'Lydia Demissie', 'Tewodros Kassa', 'Eden Mulugeta',
     ];
 
     private const RESIDENTS = [
@@ -113,12 +137,13 @@ class DevClinicalDataSeeder extends Seeder
             ->get()
             ->groupBy('template_id');
 
-        // More than six months gives weekly, monthly and quarterly charts realistic depth
-        // while remaining safe under the 128 MB PHP limit used in local dev.
+        // A full trailing year by default, so weekly, monthly and quarterly
+        // charts all have real depth. Raise SEED_HISTORY_WEEKS to load-test a
+        // deeper archive (see config/reports.php).
         $periods = ReportingPeriod::query()
             ->whereDate('week_start', '<=', now())
             ->orderByDesc('week_start')
-            ->limit(self::HISTORY_PERIOD_COUNT)
+            ->limit((int) config('reports.dev_seed.history_weeks', 52))
             ->get()
             ->reverse()
             ->values();
@@ -134,11 +159,15 @@ class DevClinicalDataSeeder extends Seeder
         $reportCount = 0;
         $now = now();
 
-        foreach ($departments as $deptIndex => $department) {
-            $nurse = $nurses[$deptIndex % $nurses->count()];
+        $missedCount = 0;
+        $surgeCount = 0;
+        $lullCount = 0;
+
+        foreach ($this->pairNursesToDepartments($nurses, $departments) as $slot => [$nurse, $department, $deptIndex]) {
             $templateSlug = $templateSlugs[$department->template_id] ?? 'inpatient_weekly';
             $days = $this->daysFor($templateDays[$department->template_id] ?? null);
-            $staff = $this->staffFor($deptIndex);
+            $staff = $this->staffFor($deptIndex, $nurse);
+            $profile = self::UNIT_PROFILES[$slot % count(self::UNIT_PROFILES)];
 
             $assignment = ReportAssignment::query()->updateOrCreate(
                 [
@@ -153,15 +182,21 @@ class DevClinicalDataSeeder extends Seeder
 
             foreach ($periods as $periodIndex => $period) {
                 $isLatest = $periodIndex === $periods->count() - 1;
-                // Leave a few of the latest-week reports unfiled so the donut shows open/not-started.
-                if ($isLatest && $deptIndex % 4 === 0) {
+
+                // Missed weeks. The current week is open for everyone bar the
+                // exemplary units (who file early), and history is missed at the
+                // unit's own rate - so overdue lists name the same struggling
+                // departments week after week, the way they would in real life.
+                if ($isLatest ? $profile['missRate'] > 0 : $this->chance($profile['missRate'])) {
+                    $missedCount++;
+
                     continue;
                 }
 
-                $status = self::STATUS_CYCLE[($deptIndex + $periodIndex) % count(self::STATUS_CYCLE)];
+                $status = $this->statusFor($profile, $slot, $periodIndex, $isLatest);
                 $filed = in_array($status, ['submitted', 'locked', 'edited_after_submission'], true);
                 $filedAt = $filed
-                    ? Carbon::parse($period->week_end)->endOfDay()->min($now)
+                    ? $this->filedAt($period, $profile, $now)
                     : null;
 
                 $report = Report::query()->updateOrCreate(
@@ -184,8 +219,25 @@ class DevClinicalDataSeeder extends Seeder
                 // volumes simply because the configured history window is larger.
                 $trend = 0.88 + (0.24 * $periodIndex / max($periods->count() - 1, 1));
 
+                // Never on the first weeks: the outlier check needs a settled
+                // baseline behind it before a spike reads as a spike.
+                $anomaly = null;
+                if ($periodIndex >= 8) {
+                    if ($this->chance($profile['surgeRate'])) {
+                        $anomaly = 'surge';
+                        $surgeCount++;
+                    } elseif ($this->chance($profile['lullRate'])) {
+                        $anomaly = 'lull';
+                        $lullCount++;
+                    }
+                }
+
+                if ($anomaly !== null) {
+                    $trend *= self::SURGE_MULTIPLIER[$anomaly];
+                }
+
                 foreach ($days as $day) {
-                    $map = $this->dailyValues($templateSlug, $department, $staff, $trend);
+                    $map = $this->dailyValues($templateSlug, $department, $staff, $trend, $profile, $anomaly);
 
                     foreach ($defs as $def) {
                         $valueRows[] = $this->valueRow($report->id, $def, $day, $map, $staff, $now);
@@ -204,15 +256,144 @@ class DevClinicalDataSeeder extends Seeder
             ReportFieldValue::query()->insert($valueRows);
         }
 
+        $alerts = $this->raiseCriticalEventAlerts($periods, $now);
+
         app(DashboardAnalyticsService::class)->invalidate();
 
         $this->command?->info(sprintf(
-            'Seeded %d reports and %d field values across %d departments x up to %d periods.',
+            'Seeded %d reports and %d field values across %d departments / %d nurses x up to %d periods.',
             $reportCount,
             $valueCount,
             $departments->count(),
+            $nurses->count(),
             $periods->count(),
         ));
+        $this->command?->info(sprintf(
+            'Realism: %d missed weeks, %d surge weeks, %d lull weeks, %d critical-event alerts raised.',
+            $missedCount,
+            $surgeCount,
+            $lullCount,
+            $alerts,
+        ));
+    }
+
+    /**
+     * Push the recent weeks' critical values (deaths, HAIs, pressure ulcers)
+     * through the real alert service, so the notification bell and the action
+     * item queue are populated by the same code path a live submission uses -
+     * rather than by rows invented here that could drift from it.
+     *
+     * Bounded to the trailing few weeks on purpose: every admin gets a
+     * notification per alert, and a full archive's worth would bury the inbox
+     * and add tens of thousands of rows nobody would ever read.
+     *
+     * @param  Collection<int, ReportingPeriod>  $periods
+     */
+    private function raiseCriticalEventAlerts(Collection $periods, Carbon $now): int
+    {
+        $recentPeriodIds = $periods->slice(-self::ALERT_WINDOW_WEEKS)->pluck('id')->all();
+
+        if ($recentPeriodIds === []) {
+            return 0;
+        }
+
+        $alerts = app(CriticalEventAlertService::class);
+        $raised = 0;
+
+        Report::query()
+            ->whereIn('reporting_period_id', $recentPeriodIds)
+            ->whereNotNull('submitted_at')
+            ->with(['department', 'template.fieldDefinitions', 'fieldValues'])
+            ->chunkById(100, function (Collection $reports) use ($alerts, $now, &$raised): void {
+                foreach ($reports as $report) {
+                    $raised += $alerts->notify($report, '/admin/reports/'.$report->id, $now) > 0 ? 1 : 0;
+                }
+            });
+
+        return $raised;
+    }
+
+    /**
+     * Decide who files what. Every department gets exactly one primary nurse so
+     * ward totals stay single-sourced (a second reporter on the same ward would
+     * double its census against a fixed bed count). Nurses left over once every
+     * department is covered join a high-volume outpatient clinic as a second
+     * reporter, which is both realistic (clinics run parallel sessions) and
+     * safe, because clinics carry no bed-count invariant.
+     *
+     * @param  Collection<int, User>  $nurses
+     * @param  Collection<int, Department>  $departments
+     * @return list<array{0: User, 1: Department, 2: int}> [nurse, department, department index]
+     */
+    private function pairNursesToDepartments(Collection $nurses, Collection $departments): array
+    {
+        $pairs = [];
+        $used = [];
+
+        foreach ($departments as $deptIndex => $department) {
+            $nurse = $nurses[$deptIndex % $nurses->count()];
+            $used[$nurse->id] = true;
+            $pairs[] = [$nurse, $department, $deptIndex];
+        }
+
+        $spare = $nurses->reject(fn (User $nurse) => isset($used[$nurse->id]))->values();
+
+        if ($spare->isEmpty()) {
+            return $pairs;
+        }
+
+        $clinics = $departments->values()->filter(fn (Department $d) => $d->family === 'outpatient')->values();
+
+        if ($clinics->isEmpty()) {
+            return $pairs;
+        }
+
+        foreach ($spare as $offset => $nurse) {
+            $clinic = $clinics[$offset % $clinics->count()];
+            $pairs[] = [$nurse, $clinic, (int) $departments->search(fn (Department $d) => $d->id === $clinic->id)];
+        }
+
+        return $pairs;
+    }
+
+    /**
+     * Stored status for a filed week. Drafts come from the unit's own
+     * draft rate rather than a fixed rotation, and the current week is never
+     * locked because nobody has closed it yet.
+     *
+     * @param  array{draftRate: int, ...}  $profile
+     */
+    private function statusFor(array $profile, int $slot, int $periodIndex, bool $isLatest): string
+    {
+        if ($this->chance($profile['draftRate'])) {
+            return 'draft';
+        }
+
+        if ($isLatest) {
+            return 'submitted';
+        }
+
+        $status = self::STATUS_CYCLE[($slot + $periodIndex) % count(self::STATUS_CYCLE)];
+
+        // The cycle's own draft slot is now owned by draftRate above.
+        return $status === 'draft' ? 'submitted' : $status;
+    }
+
+    /**
+     * When the week was filed. Most land on the closing day; a unit's late rate
+     * pushes some past the deadline so the punctuality view has real spread.
+     *
+     * @param  array{lateRate: int, ...}  $profile
+     */
+    private function filedAt(ReportingPeriod $period, array $profile, Carbon $now): Carbon
+    {
+        $filedAt = Carbon::parse($period->week_end)->endOfDay();
+
+        if ($this->chance($profile['lateRate'])) {
+            $filedAt = $filedAt->addDays(mt_rand(1, 5));
+        }
+
+        return $filedAt->min($now);
     }
 
     /**
@@ -231,14 +412,16 @@ class DevClinicalDataSeeder extends Seeder
 
     /**
      * Stable named staff for a department, so the "latest" text aggregates read like
-     * a real ward roster instead of changing every week.
+     * a real ward roster instead of changing every week. The nurse-in-charge is the
+     * account that actually files the report, so the text field and the audit trail
+     * never disagree.
      *
      * @return array{nurse: string, resident: string, physician: string}
      */
-    private function staffFor(int $deptIndex): array
+    private function staffFor(int $deptIndex, User $nurse): array
     {
         return [
-            'nurse' => self::NURSES[$deptIndex % count(self::NURSES)],
+            'nurse' => $nurse->full_name,
             'resident' => self::RESIDENTS[$deptIndex % count(self::RESIDENTS)],
             'physician' => self::PHYSICIANS[$deptIndex % count(self::PHYSICIANS)],
         ];
@@ -250,30 +433,43 @@ class DevClinicalDataSeeder extends Seeder
      * contradictory.
      *
      * @param  array{nurse: string, resident: string, physician: string}  $staff
+     * @param  array{safetyFactor: float, ...}  $profile
      * @return array<string, int|float|string>
      */
-    private function dailyValues(string $templateSlug, Department $department, array $staff, float $trend): array
-    {
+    private function dailyValues(
+        string $templateSlug,
+        Department $department,
+        array $staff,
+        float $trend,
+        array $profile,
+        ?string $anomaly,
+    ): array {
         return match ($templateSlug) {
-            'outpatient_weekly' => $this->outpatientDay($staff, $trend),
-            'inpatient_weekly' => $this->inpatientDay($department, $staff, $trend),
+            'outpatient_weekly' => $this->outpatientDay($staff, $trend, $anomaly),
+            'inpatient_weekly' => $this->inpatientDay($department, $staff, $trend, $profile, $anomaly),
             default => $this->procedureDay($templateSlug, $staff, $trend),
         };
     }
 
     /**
      * @param  array{nurse: string, resident: string, physician: string}  $staff
+     * @param  array{safetyFactor: float, ...}  $profile
      * @return array<string, int|float|string>
      */
-    private function inpatientDay(Department $department, array $staff, float $trend): array
+    private function inpatientDay(Department $department, array $staff, float $trend, array $profile, ?string $anomaly): array
     {
         $beds = $department->bed_count ?: 18;
-        $census = max(4, (int) round($beds * mt_rand(70, 95) / 100 * $trend));
-        $census = min($census, $beds);
-        $admitted = max(4, (int) round($census * mt_rand(90, 110) / 100));
+        // A surge overfills the ward (corridor beds, an outbreak); a lull empties
+        // it. Both are why the bed count stops being the ceiling on those weeks.
+        $census = max(1, (int) round($beds * mt_rand(70, 95) / 100 * $trend));
+        $census = $anomaly === null ? min($census, $beds) : $census;
+        $admitted = max(1, (int) round($census * mt_rand(90, 110) / 100));
 
-        $newPressureUlcer = $this->chance(10) ? 1 : 0;
-        $totalHai = $this->chance(20) ? mt_rand(1, 2) : 0;
+        // Struggling units carry visibly worse safety numbers, and a surge week
+        // drags them further - which is what makes the safety charts tell a story.
+        $safety = $profile['safetyFactor'] * ($anomaly === 'surge' ? 2.0 : 1.0);
+        $newPressureUlcer = $this->chance((int) round(10 * $safety)) ? mt_rand(1, 2) : 0;
+        $totalHai = $this->chance((int) round(20 * $safety)) ? mt_rand(1, 2) : 0;
 
         // Spread the HAI total across subtypes so the parts never exceed the whole.
         $haiKeys = ['hai_clabsi', 'hai_cauti', 'hai_pneumonia', 'hai_vap', 'hai_cdi'];
@@ -288,7 +484,7 @@ class DevClinicalDataSeeder extends Seeder
             'total_admitted_patients' => $admitted,
             'new_admitted_patients' => mt_rand(1, max(2, (int) round($admitted * 0.2))),
             'readmitted_30d' => $this->chance(30) ? 1 : 0,
-            'new_deaths' => $this->chance(12) ? 1 : 0,
+            'new_deaths' => $this->chance((int) round(12 * $safety)) ? 1 : 0,
             'new_pressure_ulcer' => $newPressureUlcer,
             'total_pressure_ulcer' => $newPressureUlcer + mt_rand(0, 2),
             'total_hai' => $totalHai,
@@ -313,26 +509,34 @@ class DevClinicalDataSeeder extends Seeder
      * @param  array{nurse: string, resident: string, physician: string}  $staff
      * @return array<string, int|float|string>
      */
-    private function outpatientDay(array $staff, float $trend): array
+    private function outpatientDay(array $staff, float $trend, ?string $anomaly): array
     {
-        $total = max(8, (int) round(mt_rand(25, 55) * $trend * mt_rand(85, 115) / 100));
+        $total = max(1, (int) round(mt_rand(25, 55) * $trend * mt_rand(85, 115) / 100));
         $followUp = (int) round($total * mt_rand(55, 70) / 100);
         $newSeen = (int) round($total * mt_rand(20, 32) / 100);
         if ($followUp + $newSeen > $total) {
             $newSeen = max(0, $total - $followUp);
         }
 
+        // A catch-up clinic clears a backlog fast; a lull leaves people waiting
+        // months. Waiting times move opposite to throughput, as they do in life.
+        $waitScale = match ($anomaly) {
+            'surge' => 1.9,
+            'lull' => 0.6,
+            default => 1.0,
+        };
+
         return [
             'total_patients_seen' => $total,
             'follow_up_patients' => $followUp,
             'new_patients_seen' => $newSeen,
             'not_seen_same_day' => mt_rand(0, (int) round($total * 0.08)),
-            'wait_time_new_days' => round(mt_rand(70, 300) / 10, 1),
-            'wait_time_followup_months' => round(mt_rand(10, 40) / 10, 1),
+            'wait_time_new_days' => round(mt_rand(70, 300) * $waitScale / 10, 1),
+            'wait_time_followup_months' => round(mt_rand(10, 40) * $waitScale / 10, 1),
             'failed_to_come' => mt_rand(2, 8),
             'not_seen_appointment' => mt_rand(0, 4),
             'clinic_start_time' => $this->time(8, [0, 15, 30, 45]),
-            'senior_physician_availability' => $this->availability(),
+            'senior_physician_availability' => $this->availability($anomaly),
             'nurse_in_charge' => $staff['nurse'],
         ];
     }
@@ -489,9 +693,18 @@ class DevClinicalDataSeeder extends Seeder
         return sprintf('%02d:%02d', $hour, $minutes[array_rand($minutes)]);
     }
 
-    private function availability(): string
+    private function availability(?string $anomaly = null): string
     {
         $roll = mt_rand(1, 100);
+
+        // A lull week is usually a lull *because* nobody senior was covering.
+        if ($anomaly === 'lull') {
+            return match (true) {
+                $roll <= 25 => 'Full day',
+                $roll <= 55 => 'Partial day',
+                default => 'Unavailable',
+            };
+        }
 
         return match (true) {
             $roll <= 70 => 'Full day',

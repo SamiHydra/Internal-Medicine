@@ -141,6 +141,7 @@ export type AcademicWorkspaceState = {
 }
 
 export type WorkspacePayload = {
+  revision: string
   currentUser: UserProfile
   academic?: AcademicWorkspaceState
   references: ApiReferenceState
@@ -178,6 +179,8 @@ export type ReportResponse = ReportRecord & {
     payload?: unknown
   }
 }
+
+export type ReportSummaryResponse = Omit<ReportResponse, 'values' | 'calculatedMetrics' | 'quality'>
 
 export type ListResponse<T> = {
   data: T[]
@@ -283,6 +286,7 @@ export type ConsultantEvaluationRecord = {
   roundDelayed: boolean
   mdtParticipants: string[]
   systemIssues: string[]
+  overallRating: number | null
   comment: string | null
   qualityScore: number
   extraAnswers?: ExtraEvaluationAnswer[]
@@ -384,10 +388,24 @@ export type AcademicPersonStat = {
   homeWardName: string | null
   evaluationCount: number
   averageScore: number
+  /** Mean 1-to-5 overall rating; null when none of the evaluations carry one. */
+  ratingAverage: number | null
+  /** The rating normalised to 0-100 (rating / 5 * 100); null when unrated. */
+  ratingScore: number | null
+  /** How many of the evaluations carried a rating (rest are legacy/unrated). */
+  ratedCount: number
+  /** Equal-weight blend of ratingScore and averageScore; the rank value. */
+  combinedScore: number
+  /** True when evaluationCount is below the confidence threshold. */
+  provisional: boolean
 }
 
 export type AcademicPeople = {
   direction: AcademicDirection
+  /** Weight given to the rating half of the combined score (0-1). */
+  ratingWeight: number
+  /** Below this evaluation count a person is flagged provisional. */
+  minEvaluationsForRank: number
   people: AcademicPersonStat[]
 }
 
@@ -539,7 +557,10 @@ export type AcademicAnalyticsQuery = {
 
 export type AcademicListQuery = {
   direction?: AcademicDirection
+  /** Evaluations written ABOUT this person. */
   subjectId?: string
+  /** Evaluations written BY this person; the mirror of subjectId. */
+  authorId?: string
   wardId?: string
   dateFrom?: string
   dateTo?: string

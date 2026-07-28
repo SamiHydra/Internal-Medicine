@@ -79,14 +79,19 @@ final class AcademicOperationsAnalyticsService
                 'people' => DB::table('morning_attendance')
                     ->join('users', 'users.id', '=', 'morning_attendance.user_id')
                     ->whereIn('morning_attendance.morning_session_id', $sessionIds)
-                    ->selectRaw('morning_attendance.user_id, users.full_name, count(*) as expected, sum(case when present then 1 else 0 end) as present')
-                    ->groupBy('morning_attendance.user_id', 'users.full_name')
+                    // role_key travels with the row so the dashboard can link
+                    // each person to their own page with the right evaluation
+                    // direction; without it a resident would open a consultant
+                    // view and read as all zeros.
+                    ->selectRaw('morning_attendance.user_id, users.full_name, users.role_key, count(*) as expected, sum(case when present then 1 else 0 end) as present')
+                    ->groupBy('morning_attendance.user_id', 'users.full_name', 'users.role_key')
                     ->orderByDesc(DB::raw('count(*)'))
                     ->limit(200)
                     ->get()
                     ->map(fn ($row) => [
                         'userId' => $row->user_id,
                         'fullName' => $row->full_name,
+                        'role' => $row->role_key,
                         'expectedCount' => (int) $row->expected,
                         'presentCount' => (int) $row->present,
                         'attendanceRate' => $row->expected > 0 ? round($row->present / $row->expected * 100, 1) : 0.0,

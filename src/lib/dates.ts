@@ -124,6 +124,20 @@ export function formatRelativeTimestamp(dateString: string | null | undefined) {
  * strings ("2320-02-12"), which read as machine output in a list a human is
  * scanning.
  */
+/**
+ * Turns a stored key into something readable: `new_pressure_ulcer` and
+ * `weeklyDeadlineDay` both become sentence case. Audit rows are read by
+ * administrators, not developers, so raw keys never reach the screen.
+ */
+export function humanizeAuditKey(key: string): string {
+  const spaced = key
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .trim()
+
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase()
+}
+
 export function formatAuditFieldValue(value: unknown): string {
   if (value === null || value === undefined || value === '') return '-'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
@@ -140,7 +154,28 @@ export function formatAuditFieldValue(value: unknown): string {
     return value
   }
 
-  if (typeof value === 'object') return JSON.stringify(value)
+  // Lists read as prose rather than as a JSON array. Identifier-looking
+  // strings ("new_pressure_ulcer") are humanized; anything else is left alone.
+  if (Array.isArray(value)) {
+    if (value.length === 0) return 'None'
+
+    return value
+      .map((item) =>
+        typeof item === 'string' && /^[a-z][a-z0-9_]*$/.test(item)
+          ? humanizeAuditKey(item)
+          : formatAuditFieldValue(item),
+      )
+      .join(', ')
+  }
+
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+    if (entries.length === 0) return 'None'
+
+    return entries
+      .map(([key, nested]) => `${humanizeAuditKey(key)}: ${formatAuditFieldValue(nested)}`)
+      .join(' · ')
+  }
 
   return String(value)
 }

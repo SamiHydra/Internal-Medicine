@@ -23,8 +23,11 @@ export function ReportAssignmentCard({
   href: string
   canEdit: boolean
 }) {
+  // Hover moves one property, the border. The card previously lifted, grew its
+  // shadow, and slid its arrow at the same time, which reads as noise across a
+  // grid of fourteen.
   return (
-    <article className="group flex h-full flex-col rounded-[0.4rem] border border-[#e3e9f1] bg-white p-4 shadow-[0_12px_30px_-26px_rgba(0,33,71,0.4)] transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:-translate-y-0.5 hover:border-[#bcd0ea] hover:shadow-[0_18px_38px_-24px_rgba(0,33,71,0.42)]">
+    <article className="flex h-full flex-col rounded-[0.4rem] border border-[#e3e9f1] bg-white p-4 shadow-[0_12px_30px_-26px_rgba(0,33,71,0.4)] transition-colors duration-150 hover:border-[#bcd0ea]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3
@@ -50,7 +53,7 @@ export function ReportAssignmentCard({
         <Button asChild size="sm" variant={canEdit ? 'default' : 'secondary'}>
           <Link to={href}>
             {canEdit ? 'Open' : 'View'}
-            <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5" />
+            <ArrowRight className="h-4 w-4" />
           </Link>
         </Button>
       </div>

@@ -34,6 +34,10 @@ class DatabaseSeeder extends Seeder
             // morning session, undergraduate) so those surfaces are explorable
             // instead of empty. Self-guards against production/testing.
             DevAcademicDataSeeder::class,
+            // Audit trails and the approval queues, which depend on the users,
+            // reports and sections all three seeders above create.
+            // Self-guards against production/testing.
+            DevGovernanceDataSeeder::class,
         ]);
     }
 }

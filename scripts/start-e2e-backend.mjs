@@ -23,6 +23,15 @@ const environment = {
   APP_URL: 'http://localhost:5173',
   DB_CONNECTION: 'sqlite',
   DB_DATABASE: databasePath,
+  // This database is disposable and every account shares one known password, so
+  // production-grade hashing only buys startup latency. At the seeded headcount
+  // (180+ accounts) the default cost dominated the whole gate's startup budget.
+  BCRYPT_ROUNDS: '4',
+  // The gate tests behaviour, not scale: a fixture deep enough for trends is
+  // plenty, and seeding a full year would push startup past the webServer
+  // timeout. Perf runs opt into a bigger archive by exporting this themselves,
+  // e.g. SEED_HISTORY_WEEKS=52 npm run test:e2e.
+  SEED_HISTORY_WEEKS: process.env.SEED_HISTORY_WEEKS ?? '30',
   CACHE_STORE: 'database',
   SESSION_DRIVER: 'database',
   SESSION_DOMAIN: '',

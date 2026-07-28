@@ -23,6 +23,26 @@ class AcademicAnalyticsService
     use CachesByContentStamp;
 
     /**
+     * Leaderboard rank = a normalised blend of two signals measured on
+     * different scales. The 1-to-5 overall rating (holistic judgement) is
+     * mapped onto 0-100 (rating / 5 * 100) so it shares the indicator score's
+     * scale, then the two are averaged with these weights. Equal weight by
+     * default: leadership can retune here without touching the blend logic.
+     * Kept in code (not an admin setting) so a single edit is the whole change;
+     * promote to AppSettings only if runtime tuning is actually needed.
+     */
+    private const RATING_WEIGHT = 0.5;
+
+    private const RATING_MAX = 5;
+
+    /**
+     * A person with fewer than this many evaluations is still listed and still
+     * ranked, but flagged `provisional` so the UI can mark that thin evidence -
+     * one 100% evaluation must not read as a settled #1.
+     */
+    private const MIN_EVALUATIONS_FOR_RANK = 3;
+
+    /**
      * Request-scoped memo: a single endpoint resolves one service instance and
      * reads the same filtered rows once. Keyed by the filter signature.
      *
@@ -138,21 +158,63 @@ class AcademicAnalyticsService
                     $subject = $subjectRows->first()->subject;
                     $count = $subjectRows->count();
 
+                    // Indicator score: % of the direction's yes/no items true,
+                    // averaged over every evaluation the person received.
+                    $scorePct = $count
+                        ? round($subjectRows->avg(fn (Evaluation $row) => EvaluationScoring::score($row, $filters->direction)), 1)
+                        : 0.0;
+
+                    // Rating: averaged over ONLY the evaluations that carry a
+                    // 1-to-5 rating. New submissions always do (the field is
+                    // mandatory now), but legacy consultant rows predate it, so
+                    // a person can have fewer rated rows than total.
+                    $ratedRows = $subjectRows->filter(fn (Evaluation $row) => $row->answer('overall_rating') !== null);
+                    $ratedCount = $ratedRows->count();
+                    $ratingAverage = $ratedCount
+                        ? round($ratedRows->avg(fn (Evaluation $row) => (int) $row->answer('overall_rating')), 2)
+                        : null;
+                    $ratingPct = $ratingAverage !== null
+                        ? round($ratingAverage / self::RATING_MAX * 100, 1)
+                        : null;
+
+                    // Combined rank value: equal-weight blend once both halves
+                    // exist on the same 0-100 scale. With no ratings yet the
+                    // blend degrades to score-only rather than dragging the
+                    // person down with a phantom zero.
+                    $combined = $ratingPct !== null
+                        ? round(self::RATING_WEIGHT * $ratingPct + (1 - self::RATING_WEIGHT) * $scorePct, 1)
+                        : $scorePct;
+
                     return [
                         'subjectId' => $subjectId,
                         'subjectName' => $subject?->full_name,
                         'homeWardName' => $subject?->homeWard?->name,
                         'evaluationCount' => $count,
-                        'averageScore' => $count ? round($subjectRows->avg(fn (Evaluation $row) => EvaluationScoring::score($row, $filters->direction)), 1) : 0.0,
+                        // Kept for back-compat and the score column.
+                        'averageScore' => $scorePct,
+                        'ratingAverage' => $ratingAverage,
+                        'ratingScore' => $ratingPct,
+                        'ratedCount' => $ratedCount,
+                        'combinedScore' => $combined,
+                        'provisional' => $count < self::MIN_EVALUATIONS_FOR_RANK,
                     ];
                 })
                 ->values()
-                ->sortByDesc('averageScore')
+                // Rank by the blended value. Tie-break on evaluation count so a
+                // better-evidenced person edges out a thin one at equal score,
+                // giving a stable, deterministic order.
+                ->sortBy([
+                    ['combinedScore', 'desc'],
+                    ['evaluationCount', 'desc'],
+                    ['subjectName', 'asc'],
+                ])
                 ->values()
                 ->all();
 
             return [
                 'direction' => $filters->direction,
+                'ratingWeight' => self::RATING_WEIGHT,
+                'minEvaluationsForRank' => self::MIN_EVALUATIONS_FOR_RANK,
                 'people' => $people,
             ];
         });

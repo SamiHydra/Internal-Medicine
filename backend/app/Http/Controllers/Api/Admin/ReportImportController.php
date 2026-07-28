@@ -16,6 +16,12 @@ use Symfony\Component\HttpFoundation\Response;
 
 class ReportImportController extends Controller
 {
+    private const MAX_ROWS = 25_000;
+
+    private const MAX_COLUMNS = 256;
+
+    private const MAX_CELL_BYTES = 65_536;
+
     public function __construct(
         private readonly ReportImportTemplateService $templates,
         private readonly ReportImportService $importer,
@@ -87,16 +93,34 @@ class ReportImportController extends Controller
         $rows = [];
         $handle = fopen($path, 'r');
 
-        // Skip a leading UTF-8 BOM (Excel's "CSV UTF-8" save prepends one, which
-        // would otherwise hide the first header column).
-        if (fread($handle, 3) !== "\xEF\xBB\xBF") {
-            rewind($handle);
-        }
+        try {
+            // Skip a leading UTF-8 BOM (Excel's "CSV UTF-8" save prepends one,
+            // which would otherwise hide the first header column).
+            if (fread($handle, 3) !== "\xEF\xBB\xBF") {
+                rewind($handle);
+            }
 
-        while (($row = fgetcsv($handle, escape: '')) !== false) {
-            $rows[] = array_map(fn ($cell): string => (string) ($cell ?? ''), $row);
+            while (($row = fgetcsv($handle, escape: '')) !== false) {
+                if (count($rows) >= self::MAX_ROWS) {
+                    throw ValidationException::withMessages(['file' => 'The import contains too many rows.']);
+                }
+
+                if (count($row) > self::MAX_COLUMNS) {
+                    throw ValidationException::withMessages(['file' => 'The import contains too many columns.']);
+                }
+
+                $rows[] = array_map(function ($cell): string {
+                    $value = (string) ($cell ?? '');
+                    if (strlen($value) > self::MAX_CELL_BYTES) {
+                        throw ValidationException::withMessages(['file' => 'An import cell is too large.']);
+                    }
+
+                    return $value;
+                }, $row);
+            }
+        } finally {
+            fclose($handle);
         }
-        fclose($handle);
 
         return $rows;
     }

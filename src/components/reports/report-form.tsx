@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { format } from 'date-fns'
 import { motion } from 'framer-motion'
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForm, useWatch, type FieldErrors } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
@@ -481,7 +481,11 @@ function ResolvedReportForm({
     : { status: 'idle' as const, error: null }
   const reportDetailsLoaded = !report?.id || isReportDetailLoaded(report.id)
   const reportStatus = deriveReportStatus(state, period.id, report)
-  const formSchema = createTemplateSchema(template)
+  const formSchema = useMemo(() => createTemplateSchema(template), [template])
+  const initialValues = useMemo(
+    () => createDefaultValues(template, report),
+    [report, template],
+  )
   const canView =
     currentUser.role !== 'nurse' || currentUser.id === assignment.nurseId
   const canEdit = reportStatus !== 'locked' && canView
@@ -508,14 +512,17 @@ function ResolvedReportForm({
 
   const form = useForm<ReportFormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: createDefaultValues(template, report),
-    mode: 'onChange',
+    defaultValues: initialValues,
+    // Whole-template Zod validation is intentionally kept off the keystroke
+    // path. Blur provides timely field feedback; submit still validates every
+    // cell through handleSubmit.
+    mode: 'onBlur',
+    reValidateMode: 'onBlur',
   })
   const watchedValues = useWatch({
     control: form.control,
     name: 'values',
   })
-  const watchedValuesSignature = JSON.stringify(watchedValues ?? {})
   const isLiveReportLookupPending = !report && (isDataRefreshing || isSyncing)
   const hasSavedCellValues = reportHasSavedCellValues(report)
   const shouldVerifyEmptySubmittedReport =
@@ -755,7 +762,7 @@ function ResolvedReportForm({
     reportDetailsLoaded,
     saveReport,
     template,
-    watchedValuesSignature,
+    watchedValues,
   ])
 
   const isWaitingForReportDetails =
@@ -1252,7 +1259,7 @@ function ResolvedReportForm({
 
                       <div className="space-y-3">
                         {sectionFields.map((field) => {
-                          const fieldValues = form.watch(`values.${field.id}` as const) ?? {}
+                          const fieldValues = watchedValues?.[field.id] ?? {}
                           const fieldErrors =
                             (form.formState.errors.values?.[field.id] as
                               | Partial<Record<Weekday, { message?: unknown }>>
@@ -1320,7 +1327,7 @@ function ResolvedReportForm({
                 <div className="xl:hidden">
                   <div className="space-y-3">
                     {sectionFields.map((field) => {
-                      const fieldValues = form.watch(`values.${field.id}` as const) ?? {}
+                      const fieldValues = watchedValues?.[field.id] ?? {}
                       const fieldErrors =
                         (form.formState.errors.values?.[field.id] as
                           | Partial<Record<Weekday, { message?: unknown }>>
@@ -1345,26 +1352,29 @@ function ResolvedReportForm({
                               >
                                 {field.label}
                               </Label>
-                              <p
-                                className={cn(
-                                  'mt-1 text-xs leading-5',
-                                  activeDayErrorMessage ? 'text-[#ba1a1a]' : 'text-[#74777f]',
-                                )}
-                              >
-                                {activeDayErrorMessage ??
-                                  (field.unit
-                                    ? `${weekdayLabels[activeMobileDay]} - ${field.unit}`
-                                    : `${weekdayLabels[activeMobileDay]} entry`)}
-                              </p>
+                              {/* The day picker directly above already names the
+                                  day, so this line only appears when it carries
+                                  something else: an error, or the unit. */}
+                              {activeDayErrorMessage || field.unit ? (
+                                <p
+                                  className={cn(
+                                    'mt-1 text-xs leading-5',
+                                    activeDayErrorMessage
+                                      ? 'text-[#ba1a1a]'
+                                      : 'text-[#74777f]',
+                                  )}
+                                >
+                                  {activeDayErrorMessage ?? field.unit}
+                                </p>
+                              ) : null}
                             </div>
-                            <div className="w-[6.2rem] shrink-0 rounded-[0.25rem] border border-[#d9e0e7] bg-white px-2.5 py-2 text-right">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#74777f]">
-                                Week
-                              </p>
-                              <p className="mt-1 truncate text-sm font-bold text-[#1d3047]">
-                                {renderComputedValue(field, fieldValues, template, watchedValues ?? {})}
-                              </p>
-                            </div>
+                            {/* One compact chip rather than a stacked box: the
+                                box was 100px wide and wrapped most labels onto
+                                a second and third line. */}
+                            <span className="shrink-0 whitespace-nowrap rounded-[0.25rem] border border-[#d9e0e7] bg-white px-2 py-1 text-[12px] font-bold tabular-nums text-[#1d3047]">
+                              <span className="font-semibold text-[#74777f]">Week </span>
+                              {renderComputedValue(field, fieldValues, template, watchedValues ?? {})}
+                            </span>
                           </div>
 
                           <FieldInput
@@ -1399,36 +1409,55 @@ function ResolvedReportForm({
           )
         })}
 
-        <div className="sticky bottom-[calc(env(safe-area-inset-bottom)+4.5rem)] z-20 rounded-[0.35rem] border border-[#e6ecf3] bg-[#f8fafc] p-4 shadow-[0_18px_30px_-24px_rgba(0,33,71,0.24)] sm:bottom-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-semibold text-[#000a1e]">
+        {/* On a phone this bar floats over the fields being typed into, so it
+            stays on one line: the explanatory sentence is desktop-only unless it
+            carries something to act on (an error, or queued offline changes). */}
+        <div className="sticky bottom-[calc(env(safe-area-inset-bottom)+4.5rem)] z-20 rounded-[0.35rem] border border-[#e6ecf3] bg-[#f8fafc] p-3 shadow-[0_18px_30px_-24px_rgba(0,33,71,0.24)] sm:bottom-4 sm:p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-semibold text-[#000a1e] sm:text-sm">
                 {hasQueuedSaveForReport
                   ? 'Offline changes queued'
                   : form.formState.isDirty
                     ? 'Unsaved changes present'
                     : 'All changes saved'}
               </p>
-              <p className="text-sm text-[#5b6169]">
+              <p
+                className={cn(
+                  'text-[13px] leading-5 text-[#5b6169] sm:text-sm',
+                  formErrorMessage || hasQueuedSaveForReport
+                    ? 'block'
+                    : 'hidden sm:block',
+                )}
+              >
                 {formErrorMessage ??
                   (hasQueuedSaveForReport
                     ? 'This report will sync automatically when the connection returns.'
                     : 'Weekly totals calculate automatically and remain read-only.')}
               </p>
             </div>
-            <div className="flex flex-wrap gap-3">
+            <div className="flex shrink-0 gap-2 sm:gap-3">
               <Button
                 variant="secondary"
+                size="sm"
                 type="button"
+                className="sm:h-12 sm:px-4 sm:text-sm"
                 onClick={saveDraft}
                 disabled={!canEdit || isSavingDraft || isSubmittingReport}
               >
                 {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {isSavingDraft ? 'Saving...' : 'Save draft'}
+                {isSavingDraft ? 'Saving...' : 'Save'}
+                <span className="hidden sm:inline">&nbsp;draft</span>
               </Button>
-              <Button type="submit" disabled={!canEdit || isSubmittingReport || isSavingDraft}>
+              <Button
+                type="submit"
+                size="sm"
+                className="sm:h-12 sm:px-4 sm:text-sm"
+                disabled={!canEdit || isSubmittingReport || isSavingDraft}
+              >
                 {isSubmittingReport ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {isSubmittingReport ? 'Submitting...' : 'Submit report'}
+                {isSubmittingReport ? 'Submitting...' : 'Submit'}
+                <span className="hidden sm:inline">&nbsp;report</span>
               </Button>
             </div>
           </div>

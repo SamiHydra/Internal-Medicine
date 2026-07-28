@@ -77,10 +77,17 @@ class ReportSubmissionService
                 $createdReport = true;
             }
 
-            $report->loadMissing(['assignment', 'template', 'department']);
+            // These are the same records already loaded for authorization and
+            // validation. Attach them directly instead of selecting each
+            // relation again for a newly-created report.
+            $report->setRelation('assignment', $assignment);
+            $report->setRelation('template', $assignment->template);
+            $report->setRelation('department', $assignment->department);
 
             $hasChanges = $this->persistValues($actor, $assignment, $report, $values, $hadSubmission, $now);
-            $this->qualityService->assertValid($report->refresh());
+            $report->unsetRelation('fieldValues');
+            $report->load('fieldValues.fieldDefinition');
+            $this->qualityService->assertValid($report);
             $nextStatus = $this->nextStatus($report, $hadSubmission, $hasChanges, $submit);
 
             $report->forceFill([
@@ -124,13 +131,13 @@ class ReportSubmissionService
 
             if ((! $hadSubmission && $submit) || ($hadSubmission && $hasChanges)) {
                 $this->criticalEventAlertService->notify($report, $this->relatedRoute($assignment, $period), $now);
-                $quality = $this->qualityService->analyze($report->refresh(), true);
+                $quality = $this->qualityService->analyze($report, true);
                 $this->trendAlertService->notify($report, $quality['warnings'] ?? [], $this->relatedRoute($assignment, $period), $now);
             }
 
-            $this->calculationService->upsertForReport($report->refresh());
+            $report->setRelation('calculatedMetric', $this->calculationService->upsertForReport($report));
 
-            return $report->load([
+            return $report->loadMissing([
                 'assignment.department',
                 'assignment.template',
                 'department',
@@ -160,6 +167,16 @@ class ReportSubmissionService
         $hasChanges = false;
         $activeDays = $assignment->template->active_days ?? [];
         $fieldDefinitions = $assignment->template->fieldDefinitions->keyBy('field_key');
+        $existingValues = ReportFieldValue::query()
+            ->where('report_id', $report->id)
+            ->get()
+            ->keyBy(fn (ReportFieldValue $value): string => $this->valueKey(
+                $value->field_definition_id,
+                $value->day_name,
+            ));
+        $upserts = [];
+        $deleteIds = [];
+        $auditRows = [];
 
         foreach ($values as $fieldKey => $fieldPayload) {
             $fieldDefinition = $fieldDefinitions->get($fieldKey);
@@ -187,11 +204,7 @@ class ReportSubmissionService
                     ]);
                 }
 
-                $existingValue = ReportFieldValue::query()
-                    ->where('report_id', $report->id)
-                    ->where('field_definition_id', $fieldDefinition->id)
-                    ->where('day_name', $dayName)
-                    ->first();
+                $existingValue = $existingValues->get($this->valueKey($fieldDefinition->id, $dayName));
                 $oldValueText = $this->valueToText($existingValue);
                 $coercedValue = $this->coerceValue($fieldDefinition, $rawValue, $fieldKey);
                 $newValueText = $this->valueArrayToText($coercedValue);
@@ -200,7 +213,8 @@ class ReportSubmissionService
                     $hasChanges = true;
 
                     if ($hadSubmission) {
-                        AuditLog::query()->create([
+                        $auditRows[] = [
+                            'id' => (new AuditLog)->newUniqueId(),
                             'report_id' => $report->id,
                             'field_definition_id' => $fieldDefinition->id,
                             'field_key' => $fieldDefinition->field_key,
@@ -212,28 +226,70 @@ class ReportSubmissionService
                             'changed_at' => $changedAt,
                             'department_id' => $assignment->department_id,
                             'template_id' => $assignment->template_id,
-                        ]);
+                        ];
                     }
                 }
 
                 if ($newValueText === null) {
-                    $existingValue?->delete();
+                    if ($existingValue) {
+                        $deleteIds[] = $existingValue->id;
+                    }
 
                     continue;
                 }
 
-                ReportFieldValue::query()->updateOrCreate(
-                    [
-                        'report_id' => $report->id,
-                        'field_definition_id' => $fieldDefinition->id,
-                        'day_name' => $dayName,
-                    ],
-                    $coercedValue,
-                );
+                // Do not rewrite unchanged rows. Apart from avoiding needless
+                // database work, this preserves the prior updateOrCreate()
+                // behaviour where an unchanged model is not marked dirty and
+                // its updated_at timestamp remains stable.
+                if ($oldValueText === $newValueText) {
+                    continue;
+                }
+
+                $upserts[] = [
+                    'id' => $existingValue?->id ?? (new ReportFieldValue)->newUniqueId(),
+                    'report_id' => $report->id,
+                    'field_definition_id' => $fieldDefinition->id,
+                    'day_name' => $dayName,
+                    ...$coercedValue,
+                    'created_at' => $existingValue?->created_at ?? $changedAt,
+                    'updated_at' => $changedAt,
+                ];
             }
         }
 
+        if ($deleteIds !== []) {
+            ReportFieldValue::query()->whereKey($deleteIds)->delete();
+        }
+
+        if ($upserts !== []) {
+            ReportFieldValue::query()->upsert(
+                $upserts,
+                [
+                    'report_id',
+                    'field_definition_id',
+                    'day_name',
+                ],
+                [
+                    'value_number',
+                    'value_text',
+                    'value_time',
+                    'value_json',
+                    'updated_at',
+                ],
+            );
+        }
+
+        if ($auditRows !== []) {
+            AuditLog::query()->insert($auditRows);
+        }
+
         return $hasChanges;
+    }
+
+    private function valueKey(string $fieldDefinitionId, string $dayName): string
+    {
+        return $fieldDefinitionId.'|'.$dayName;
     }
 
     /**

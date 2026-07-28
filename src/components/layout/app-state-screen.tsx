@@ -94,7 +94,6 @@ export function AppStateScreen({
 
           <div className="space-y-3.5">
             <div className="flex items-center gap-2">
-              <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
               <span
                 className="text-[11px] font-semibold uppercase tracking-[0.2em]"
                 style={{ color: label }}

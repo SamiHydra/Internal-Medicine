@@ -35,7 +35,7 @@ const statusOptions = [
   { value: 'overdue' as const, label: 'Overdue' },
 ] as const
 
-const timeRangeValues: ReportingTimeRange[] = ['current', 'last4', 'last8', 'all']
+const timeRangeValues: ReportingTimeRange[] = ['current', 'last4', 'last8', 'quarter', 'all']
 
 export function SubmissionBoardPage() {
   const { state, ensureProfileDirectoryData, reportPeriodWindow, refreshData } = useAppData()
@@ -176,6 +176,7 @@ export function SubmissionBoardPage() {
     { value: 'current' as const, label: 'Current week' },
     { value: 'last4' as const, label: 'Last 4 weeks' },
     { value: 'last8' as const, label: 'Last 8 weeks' },
+    { value: 'quarter' as const, label: 'Last quarter (13 weeks)' },
     { value: 'all' as const, label: 'All available data' },
   ] as const
   const timeRangeLabel =

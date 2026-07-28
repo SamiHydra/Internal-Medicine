@@ -21,6 +21,8 @@ const morningAnalyticsSchema = z.object({
   people: z.array(z.object({
     userId: z.string(),
     fullName: z.string(),
+    /** Decides which evaluation direction their detail page opens on. */
+    role: z.string().nullable().optional(),
     expectedCount: z.number(),
     presentCount: z.number(),
     attendanceRate: z.number(),

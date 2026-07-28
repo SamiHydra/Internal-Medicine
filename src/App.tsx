@@ -9,7 +9,26 @@ import { WorkspaceProvider } from '@/context/workspace-context'
 import { apiEnvSetupHint } from '@/lib/api/env'
 import { LoginPage } from '@/pages/auth/login-page'
 import { landingPathForRole } from '@/routes/landing'
-import { ProtectedRoute, ProtectedShell } from '@/routes/route-guards'
+
+// Keep the authenticated shell out of the public/login entry graph. The module
+// imports AppShell and its navigation dependencies, so loading it only when a
+// protected route is visited reduces login-page parsing and execution.
+const ProtectedRoute = lazy(() =>
+  import('@/routes/route-guards').then((module) => ({
+    default: module.ProtectedRoute,
+  })),
+)
+const ProtectedShell = lazy(() =>
+  import('@/routes/route-guards').then((module) => ({
+    default: module.ProtectedShell,
+  })),
+)
+
+// Keeping the import itself behind this compile-time branch prevents
+// production builds from emitting unreachable design-lab chunks.
+const DevRoutes = import.meta.env.DEV
+  ? lazy(() => import('@/routes/dev-routes'))
+  : null
 
 const DepartmentDetailPage = lazy(() =>
   import('@/pages/admin/department-detail-page').then((module) => ({
@@ -256,8 +275,10 @@ function App() {
     <BrowserRouter>
       <WorkspaceProvider>
         <ScrollToTop />
-        <Routes>
+        <Suspense fallback={<FullPageSkeleton label="Loading page" />}>
+          <Routes>
         <Route path="/" element={<HomeRedirect />} />
+        {DevRoutes ? <Route path="/design-lab/*" element={<DevRoutes />} /> : null}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={renderLazyRoute(<ForgotPasswordPage />)} />
         <Route path="/reset-password" element={renderLazyRoute(<ResetPasswordPage />)} />
@@ -396,7 +417,8 @@ function App() {
         </Route>
 
           <Route path="*" element={renderLazyRoute(<NotFoundPage />)} />
-        </Routes>
+          </Routes>
+        </Suspense>
       </WorkspaceProvider>
     </BrowserRouter>
   )

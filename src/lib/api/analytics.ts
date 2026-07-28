@@ -1,4 +1,5 @@
 import type { LaravelApiClient } from '@/lib/api/client'
+import { readBoundedCache, writeBoundedCache } from '@/lib/bounded-cache'
 import type { ReportFamily, ReportStatus } from '@/types/domain'
 
 export type AnalyticsQuery = Record<string, string | number | boolean | null | undefined>
@@ -131,6 +132,7 @@ export type AnalyticsRollupPayload = {
 }
 
 const DASHBOARD_ANALYTICS_CACHE_TTL_MS = 5 * 60 * 1000
+const DASHBOARD_ANALYTICS_CACHE_MAX_ENTRIES = 12
 
 type DashboardAnalyticsCacheEntry = {
   payload: DashboardAnalyticsPayload
@@ -152,7 +154,7 @@ export function getDashboardAnalyticsCacheKey(query?: AnalyticsQuery) {
 
 export function readCachedDashboardAnalytics(query?: AnalyticsQuery) {
   const cacheKey = getDashboardAnalyticsCacheKey(query)
-  const cachedEntry = dashboardAnalyticsCache.get(cacheKey)
+  const cachedEntry = readBoundedCache(dashboardAnalyticsCache, cacheKey)
 
   if (!cachedEntry) {
     return null
@@ -167,10 +169,12 @@ export function readCachedDashboardAnalytics(query?: AnalyticsQuery) {
 }
 
 function writeDashboardAnalyticsCache(query: AnalyticsQuery | undefined, payload: DashboardAnalyticsPayload) {
-  dashboardAnalyticsCache.set(getDashboardAnalyticsCacheKey(query), {
-    payload,
-    cachedAt: Date.now(),
-  })
+  writeBoundedCache(
+    dashboardAnalyticsCache,
+    getDashboardAnalyticsCacheKey(query),
+    { payload, cachedAt: Date.now() },
+    DASHBOARD_ANALYTICS_CACHE_MAX_ENTRIES,
+  )
 }
 
 export function clearDashboardAnalyticsCache() {

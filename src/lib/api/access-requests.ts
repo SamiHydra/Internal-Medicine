@@ -1,6 +1,34 @@
 import type { LaravelApiClient } from '@/lib/api/client'
 import type { AccessRequestPayload } from '@/lib/api/types'
-import type { UserProfile } from '@/types/domain'
+import type { AccessRequest, UserProfile } from '@/types/domain'
+
+export async function fetchAccessRequests(
+  client: LaravelApiClient,
+  options?: { pendingOnly?: boolean },
+): Promise<AccessRequest[]> {
+  type AccessRequestApi = Omit<AccessRequest, 'requestedAssignments'> & {
+    requestedAssignments: Array<{
+      departmentId: string
+      departmentSlug?: string | null
+      templateId: string
+      templateSlug?: string | null
+    }>
+  }
+
+  const response = await client.get<{
+    data: AccessRequestApi[]
+  }>('/api/workspace/access-requests', {
+    query: { status: options?.pendingOnly ? 'pending' : undefined },
+  })
+
+  return response.data.map((request) => ({
+    ...request,
+    requestedAssignments: request.requestedAssignments.map((assignment) => ({
+      departmentId: assignment.departmentSlug ?? assignment.departmentId,
+      templateId: assignment.templateSlug ?? assignment.templateId,
+    })),
+  }))
+}
 
 export async function submitAccessRequest(
   client: LaravelApiClient,

@@ -88,6 +88,7 @@ class EvaluationFormEngineTest extends TestCase
             'criticalLabsReviewed' => true,
             'pctPatientsSeen' => 80,
             'roundDelayed' => false,
+            'overallRating' => 4,
             'mdtParticipants' => ['consultant', 'nurse'],
             'systemIssues' => [],
         ];
@@ -765,7 +766,7 @@ class EvaluationFormEngineTest extends TestCase
     public function test_only_contract_fields_are_core_and_scores_follow_active_indicators(): void
     {
         foreach ([
-            'consultant_mdt' => ['senior_present', 'senior_joined_at', 'presence_minutes'],
+            'consultant_mdt' => ['senior_present', 'senior_joined_at', 'presence_minutes', 'overall_rating'],
             'resident_acgme' => ['overall_rating'],
         ] as $key => $expectedCore) {
             $form = EvaluationForm::query()->where('key', $key)->where('status', 'published')->firstOrFail();
@@ -888,5 +889,48 @@ class EvaluationFormEngineTest extends TestCase
         $extras = collect($created->json('extraAnswers'));
         $this->assertTrue((bool) $extras->firstWhere('key', 'teaching_points_given')['value']);
         $this->assertSame('Teaching points given', $extras->firstWhere('key', 'teaching_points_given')['label']);
+    }
+
+    public function test_consultant_form_offers_a_first_class_overall_rating(): void
+    {
+        // Parity with resident_acgme: the consultant form carries the same
+        // 1-to-5 rating, now MANDATORY and CORE so the combined leaderboard
+        // rank always has both halves (recorded only - not a score item).
+        $field = collect(
+            $this->actingAs($this->consultant)
+                ->getJson('/api/academic/evaluation-forms/consultant_mdt')
+                ->assertOk()
+                ->json('fields'),
+        )->firstWhere('key', 'overall_rating');
+
+        $this->assertNotNull($field, 'consultant_mdt should expose an overall_rating field');
+        $this->assertSame('rating', $field['type']);
+        $this->assertTrue($field['active']);
+        $this->assertTrue($field['isCore']);
+        $this->assertTrue($field['required']);
+
+        // A submitted rating round-trips as a first-class field, NOT as an
+        // admin-added extra answer.
+        $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', [
+                ...$this->validConsultantPayload(),
+                'overallRating' => 4,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('overallRating', 4)
+            ->assertJsonMissing(['key' => 'overall_rating']);
+    }
+
+    public function test_consultant_overall_rating_is_required_on_submission(): void
+    {
+        // The rating is mandatory: dropping it fails validation with the
+        // field's own key, exactly like the resident form already does.
+        $payload = $this->validConsultantPayload();
+        unset($payload['overallRating']);
+
+        $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', $payload)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['overall_rating']);
     }
 }

@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\ReportingPeriod;
 use App\Services\Analytics\AnalyticsExportService;
 use App\Services\Analytics\AnalyticsFilters;
 use App\Services\Analytics\AnalyticsService;
@@ -12,10 +11,8 @@ use App\Services\Analytics\InpatientAnalyticsService;
 use App\Services\Analytics\OutpatientAnalyticsService;
 use App\Services\Analytics\ProcedureAnalyticsService;
 use App\Support\Export\XlsxWriter;
-use App\Support\HospitalClock;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -118,68 +115,24 @@ class AnalyticsController extends Controller
     public function export(Request $request): Response
     {
         $validated = $request->validate([
-            'period' => ['sometimes', 'uuid', 'exists:reporting_periods,id'],
-            'periodId' => ['sometimes', 'uuid', 'exists:reporting_periods,id'],
-            'month' => ['sometimes', 'date_format:Y-m'],
             'format' => ['sometimes', 'in:csv,xlsx'],
         ]);
 
-        $periods = $this->resolveExportPeriods($validated);
-
-        if ($periods->isEmpty()) {
-            abort(404, 'No reporting period matched the export request.');
-        }
-
-        $label = $periods->count() === 1
-            ? ($periods->first()->week_start?->toDateString() ?? 'period')
-            : ($validated['month'] ?? 'periods');
-
         if (($validated['format'] ?? 'csv') === 'xlsx') {
-            $path = (new XlsxWriter)->toTempFile(
-                $this->exportService->header(),
-                $this->exportService->lazyRows($periods),
-            );
+            $path = (new XlsxWriter)->toMultiSheetTempFile($this->exportService->workbookSheets());
 
             return response()->download(
                 $path,
-                'st-paul-report-'.$label.'.xlsx',
+                'st-paul-all-clinical-submissions.xlsx',
                 ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
             )->deleteFileAfterSend();
         }
 
         return response()->streamDownload(
-            $this->exportService->streamCallback($periods),
-            'st-paul-report-'.$label.'.csv',
+            $this->exportService->streamCallback(),
+            'st-paul-all-clinical-submissions.csv',
             ['Content-Type' => 'text/csv; charset=UTF-8'],
         );
-    }
-
-    /**
-     * @param  array<string, mixed>  $validated
-     * @return Collection<int, ReportingPeriod>
-     */
-    private function resolveExportPeriods(array $validated): Collection
-    {
-        $periodId = $validated['period'] ?? $validated['periodId'] ?? null;
-        if ($periodId !== null) {
-            return ReportingPeriod::query()->whereKey($periodId)->get();
-        }
-
-        if (isset($validated['month'])) {
-            [$year, $month] = explode('-', $validated['month']);
-
-            return ReportingPeriod::query()
-                ->whereYear('week_start', (int) $year)
-                ->whereMonth('week_start', (int) $month)
-                ->orderBy('week_start')
-                ->get();
-        }
-
-        return ReportingPeriod::query()
-            ->whereDate('week_start', '<=', HospitalClock::today()->toDateString())
-            ->orderByDesc('week_start')
-            ->limit(1)
-            ->get();
     }
 
     private function filters(Request $request): AnalyticsFilters

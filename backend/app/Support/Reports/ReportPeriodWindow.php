@@ -25,6 +25,24 @@ class ReportPeriodWindow
     }
 
     /**
+     * The week the hospital started reporting through this system. Nothing
+     * earlier is ever exposed, because earlier weeks were never filed here and
+     * would read as a wall of missing reports.
+     *
+     * Configurable because a local fixture seeds a deeper archive than the real
+     * go-live date allows anyone to see - without this, most of a seeded
+     * multi-year history is invisible in the app no matter how much exists.
+     */
+    private static function liveStart(): Carbon
+    {
+        $configured = config('reports.window.live_start');
+
+        return Carbon::parse(is_string($configured) && $configured !== ''
+            ? $configured
+            : self::LIVE_REPORTING_START);
+    }
+
+    /**
      * Hard ceiling on how many periods any single payload may span - applied even
      * to the "all" window so the unpaginated workspace response stays bounded as
      * history accumulates.
@@ -47,12 +65,18 @@ class ReportPeriodWindow
         $sortedPeriods = $periods
             ->sortBy(fn (ReportingPeriod $period) => $period->week_start?->timestamp ?? 0)
             ->values();
-        $today = HospitalClock::today();
+        // Compare CALENDAR DATES, not instants. week_start is a plain date (UTC
+        // midnight) while HospitalClock::today() is midnight in the hospital's
+        // timezone, which is an earlier instant. Comparing them directly made a
+        // week that starts today look like it starts in the future, so the
+        // current week vanished from the workspace for the whole of its first
+        // day - every Monday, nobody could see or file the open week.
+        $today = HospitalClock::today()->toDateString();
         $currentPeriod = $sortedPeriods
-            ->filter(fn (ReportingPeriod $period): bool => $period->week_start?->lte($today) ?? false)
+            ->filter(fn (ReportingPeriod $period): bool => ($period->week_start?->toDateString() ?? '') <= $today)
             ->last() ?? $sortedPeriods->first();
         $currentStart = $currentPeriod->week_start;
-        $liveStart = Carbon::parse(self::LIVE_REPORTING_START);
+        $liveStart = self::liveStart();
 
         $visiblePeriods = $sortedPeriods
             ->filter(fn (ReportingPeriod $period): bool => ($period->week_start?->betweenIncluded($liveStart, $currentStart)) ?? false)

@@ -16,6 +16,7 @@ import {
 } from 'recharts'
 
 import { AcademicSetupBanner } from '@/components/admin/academic-setup-banner'
+import { AcademicLeaderboard } from '@/components/admin/academic-leaderboard'
 import {
   MorningAnalyticsTab,
   StudentsAnalyticsTab,
@@ -34,6 +35,7 @@ import {
   type AcademicWardOption,
 } from '@/lib/api/academic'
 import { getApiBrowserClient } from '@/lib/api/client'
+import { readBoundedCache, writeBoundedCache } from '@/lib/bounded-cache'
 import { apiEnvSetupHint } from '@/lib/api/env'
 import {
   academicChartPalette,
@@ -91,6 +93,7 @@ function rangeToDates(range: string): { dateFrom?: string; dateTo?: string } {
 let wardsCache: AcademicWardOption[] | null = null
 const analyticsCache = new Map<string, { summary: AcademicSummary; trend: AcademicTrend }>()
 const peopleCache = new Map<string, AcademicPeople>()
+const ACADEMIC_CACHE_MAX_ENTRIES = 12
 
 function analyticsKey(
   direction: string,
@@ -117,10 +120,7 @@ const sectionClass =
 
 function SectionEyebrow({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#005db6]">{label}</p>
-    </div>
+    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#005db6]">{label}</p>
   )
 }
 
@@ -202,10 +202,15 @@ export function AcademicDashboardPage() {
 
   // Default filters on mount; seed from the module cache so a Clinical→Academic
   // re-toggle paints instantly while fresh data revalidates in the background.
-  const cachedAnalytics = analyticsCache.get(
+  const cachedAnalytics = readBoundedCache(
+    analyticsCache,
     analyticsKey('consultant', undefined, undefined, undefined, undefined, 'weekly'),
   )
-  const cachedPeople = peopleCache.get(peopleKey('consultant', undefined, undefined, undefined)) ?? null
+  const cachedPeople =
+    readBoundedCache(
+      peopleCache,
+      peopleKey('consultant', undefined, undefined, undefined),
+    ) ?? null
 
   // The Phase 7 dashboard tabs: peer evaluations (the original dashboard),
   // morning punctuality, teaching occurrence, and student progress.
@@ -275,7 +280,12 @@ export function AcademicDashboardPage() {
       fetchAcademicTrend(client, { ...query, granularity }),
     ])
       .then(([fetchedSummary, fetchedTrend]) => {
-        analyticsCache.set(cacheKey, { summary: fetchedSummary, trend: fetchedTrend })
+        writeBoundedCache(
+          analyticsCache,
+          cacheKey,
+          { summary: fetchedSummary, trend: fetchedTrend },
+          ACADEMIC_CACHE_MAX_ENTRIES,
+        )
         if (!active) {
           return
         }
@@ -319,14 +329,19 @@ export function AcademicDashboardPage() {
       dateTo: dateRange.dateTo,
     })
       .then((fetched) => {
-        peopleCache.set(peopleCacheKey, fetched)
+        writeBoundedCache(
+          peopleCache,
+          peopleCacheKey,
+          fetched,
+          ACADEMIC_CACHE_MAX_ENTRIES,
+        )
         if (active) {
           setPeople(fetched)
         }
       })
       .catch(() => {
         if (active) {
-          setPeople({ direction, people: [] })
+          setPeople({ direction, ratingWeight: 0.5, minEvaluationsForRank: 3, people: [] })
         }
       })
     return () => {
@@ -481,12 +496,9 @@ export function AcademicDashboardPage() {
       >
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#f0b429]">
-                Academic review
-              </p>
-            </div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#f0b429]">
+              Academic review
+            </p>
             <h1 className="mt-2 font-display text-[1.6rem] font-bold leading-tight tracking-[-0.02em] text-white md:text-[1.95rem]">
               {isResident ? 'Resident performance trends' : 'Consultant round quality'}
             </h1>
@@ -695,51 +707,21 @@ export function AcademicDashboardPage() {
             <div className="border-b border-[#eef2f6] pb-5">
               <SectionEyebrow label="Leaderboard" />
               <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
-                {isResident ? 'Residents' : 'Consultants'} by average score
+                {isResident ? 'Residents' : 'Consultants'} by combined rank
               </h2>
               <p className="mt-1 text-sm text-[#74777f]">
-                Select a person to open their evaluation history.
+                Ranked by a blend of the 1–5 rating and the indicator score
+                {' '}({Math.round((people?.ratingWeight ?? 0.5) * 100)}% rating +{' '}
+                {100 - Math.round((people?.ratingWeight ?? 0.5) * 100)}% score). Select a person to open their history.
               </p>
             </div>
 
             {leaderboard.length ? (
-              <div className="mt-5 overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
-                <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)_90px_90px_44px] gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-[#74777f] sm:grid">
-                  <span>Name</span>
-                  <span>Home ward</span>
-                  <span className="text-right">Evals</span>
-                  <span className="text-right">Score</span>
-                  <span />
-                </div>
-                {leaderboard.map((entry) => (
-                  <Link
-                    key={entry.subjectId}
-                    to={`/admin/academic/people/${entry.subjectId}?direction=${direction}`}
-                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#eef2f6] px-4 py-2.5 text-sm transition-colors duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] last:border-b-0 hover:bg-[#f7f9fc] sm:grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)_90px_90px_44px]"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate font-semibold text-[#000a1e]">
-                        {entry.subjectName ?? 'Unknown'}
-                      </span>
-                      <span className="block truncate text-[13px] text-[#74777f] sm:hidden">
-                        {entry.homeWardName ?? '-'} · {entry.evaluationCount} evals · {Math.round(entry.averageScore)}%
-                      </span>
-                    </span>
-                    <span className="hidden min-w-0 truncate text-[#5b6169] sm:block">
-                      {entry.homeWardName ?? '-'}
-                    </span>
-                    <span className="hidden text-right font-semibold tabular-nums text-[#1d3047] sm:block">
-                      {entry.evaluationCount}
-                    </span>
-                    <span className="hidden text-right font-semibold tabular-nums text-[#005db6] sm:block">
-                      {Math.round(entry.averageScore)}%
-                    </span>
-                    <span className="flex justify-end text-[#9aa7b8]">
-                      <ArrowUpRight className="h-4 w-4" />
-                    </span>
-                  </Link>
-                ))}
-              </div>
+              <AcademicLeaderboard
+                entries={leaderboard}
+                direction={direction}
+                minEvaluationsForRank={people?.minEvaluationsForRank ?? 3}
+              />
             ) : (
               <div className="mt-5 rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-5 py-10 text-center text-sm text-[#74777f]">
                 No evaluations match the current filters.

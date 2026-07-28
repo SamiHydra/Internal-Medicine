@@ -20,7 +20,7 @@ async function measure(page: Page, label: string, testInfo: TestInfo) {
   const t0 = Date.now()
   await page.goto(label === 'login' ? '/login' : label, { waitUntil: 'load' })
   if (label !== 'login') {
-    await page.getByRole('button', { name: 'Sign out' }).first().waitFor({ timeout: 20_000 })
+    await page.getByRole('button', { name: 'Notifications' }).first().waitFor({ timeout: 20_000 })
   }
   await page.waitForLoadState('networkidle').catch(() => {})
   const wallMs = Date.now() - t0
@@ -86,7 +86,7 @@ test.describe('Performance metrics', () => {
 
     test('repeated navigation does not leak memory unboundedly', async ({ page }, testInfo) => {
       await page.goto('/admin', { waitUntil: 'load' })
-      await page.getByRole('button', { name: 'Sign out' }).first().waitFor({ timeout: 20_000 })
+      await page.getByRole('button', { name: 'Notifications' }).first().waitFor({ timeout: 20_000 })
       const heap: number[] = []
       const read = () =>
         page.evaluate(() => {

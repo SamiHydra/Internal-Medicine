@@ -28,8 +28,6 @@ import {
 
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { Delta, DeltaIcon, DeltaValue } from '@/components/delta'
-import { KpiCard, KpiGrid } from '@/components/dashboard/kpi-card'
-import { PageSkeleton } from '@/components/layout/loading-skeletons'
 import { Button } from '@/components/ui/button'
 import {
   fetchAndCacheDashboardAnalytics,
@@ -59,6 +57,7 @@ import {
   deriveReportStatus,
   getCurrentPeriod,
   getInpatientMonthlyOccupancySeries,
+  getOccupancyRelevantDepartmentIds,
   getInpatientMonthlyWardComparisonData,
   getInpatientWeeklyCountTrendSeries,
   getOutpatientMonthlyAvailabilityDepartmentComparisonData,
@@ -75,6 +74,7 @@ import {
   getReportForAssignmentPeriod,
   getLockDeadlineNote,
   getReportingPeriodsForRange,
+  emptyReportingRangeSummary,
   getReportingRangeSummary,
   getVisibleReportingPeriods,
   OUTPATIENT_AVAILABILITY_STATUSES,
@@ -119,6 +119,13 @@ const targetStatusLabel: Record<RagStatus, string> = {
   amber: 'Amber',
   red: 'Red',
   neutral: 'No target',
+}
+
+const targetStatusClass: Record<RagStatus, string> = {
+  green: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  amber: 'border-amber-200 bg-amber-50 text-amber-700',
+  red: 'border-rose-200 bg-rose-50 text-rose-700',
+  neutral: 'border-slate-200 bg-slate-50 text-slate-600',
 }
 
 function ChartEmptyState({
@@ -352,15 +359,12 @@ function SectionHeading({
           <Icon className="h-5 w-5" />
         </span>
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-            <p
-              className="text-[11px] font-semibold uppercase tracking-[0.2em]"
-              style={{ color: accent }}
-            >
-              {eyebrow}
-            </p>
-          </div>
+          <p
+            className="text-[11px] font-semibold uppercase tracking-[0.2em]"
+            style={{ color: accent }}
+          >
+            {eyebrow}
+          </p>
           <h2 className="mt-1 font-display text-[1.5rem] font-bold tracking-[-0.03em] text-[#000a1e] md:text-[1.7rem]">
             {title}
           </h2>
@@ -505,6 +509,25 @@ function formatAvailabilityTooltipValue(value: unknown, name: unknown, payload?:
 
 function formatChartTooltipLabel(label: unknown) {
   return String(label ?? '')
+}
+
+/**
+ * Trend tooltips read raw series values, and any "average across wards" scope
+ * divides by the ward count - which surfaced full binary floats to clinicians
+ * ("Deaths : 0.5714285714285714"). Whole numbers stay whole; anything else is
+ * cut to one decimal, which is all the precision a weekly ward average carries.
+ */
+function formatTrendTooltipValue(value: unknown, name: unknown) {
+  const numeric = Number(value)
+
+  if (value === null || value === undefined || Number.isNaN(numeric)) {
+    return ['-', String(name ?? '')] as [string, string]
+  }
+
+  return [
+    Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1),
+    String(name ?? ''),
+  ] as [string, string]
 }
 
 function dashboardDate(value: string) {
@@ -842,6 +865,73 @@ export function AdminDashboardPage() {
       },
     ]
   }, [])
+
+  /**
+   * Report cells the MONTHLY charts actually read. They do not read the whole
+   * range: each ward/clinic comparison renders one selected month, and only the
+   * occupancy trend spans every month - and that reads just the wards that have
+   * beds. Requesting every report in range instead fired one batch per hundred
+   * reports in parallel (thirty of them over a two-year range), which stampeded
+   * the API until the client gave up with "the server took too long".
+   *
+   * Split into two batches because they scale differently. The comparison cells
+   * are one month's worth no matter how wide the range is; the occupancy cells
+   * grow with it. Fetching them together meant widening the range stalled every
+   * chart on screen behind ward history none of them read, which is why picking
+   * "All available data" in monthly view felt like the page had frozen even
+   * though the visible charts had not changed. Now they load independently and
+   * only the occupancy card waits on the long one.
+   *
+   * Resolved here, above the loading early-return, so the effects below keep a
+   * stable hook order.
+   */
+  const detailReportingPeriodIds = new Set(trendPeriods.map((period) => period.id))
+  const comparisonPeriodIds = new Set(
+    [inpatientComparisonMonthKey, outpatientComparisonMonthKey, procedureComparisonMonthKey]
+      .map((monthKey) => resolveDashboardTrendBucket(monthlyTrendBuckets, monthKey))
+      .flatMap((bucket) => (bucket ? [...bucket.periodIds] : [])),
+  )
+  const occupancyDepartmentIds = new Set(
+    getOccupancyRelevantDepartmentIds(inpatientOccupancyScope),
+  )
+  // The month on screen - every ward/clinic/service comparison reads only these.
+  const comparisonReportIds = state.reports
+    .filter(
+      (report) =>
+        detailReportingPeriodIds.has(report.reportingPeriodId) &&
+        comparisonPeriodIds.has(report.reportingPeriodId),
+    )
+    .map((report) => report.id)
+  // Bedded wards across every month in range. Overlaps the batch above on the
+  // selected month; ensureReportDetails dedupes against its own in-flight set,
+  // so the shared cells are requested once by whichever effect runs first.
+  const occupancyReportIds = state.reports
+    .filter(
+      (report) =>
+        detailReportingPeriodIds.has(report.reportingPeriodId) &&
+        occupancyDepartmentIds.has(report.departmentId),
+    )
+    .map((report) => report.id)
+  const comparisonReportIdsKey = comparisonReportIds.join('|')
+  const occupancyReportIdsKey = occupancyReportIds.join('|')
+
+  // Declared first so the visible month is the batch that goes out first.
+  useEffect(() => {
+    if (trendScale !== 'monthly') {
+      return
+    }
+
+    void ensureReportDetails(comparisonReportIdsKey ? comparisonReportIdsKey.split('|') : [])
+  }, [comparisonReportIdsKey, ensureReportDetails, trendScale])
+
+  useEffect(() => {
+    if (trendScale !== 'monthly') {
+      return
+    }
+
+    void ensureReportDetails(occupancyReportIdsKey ? occupancyReportIdsKey.split('|') : [])
+  }, [ensureReportDetails, occupancyReportIdsKey, trendScale])
+
   const analyticsRangeStart = trendPeriods[0] ?? null
   const analyticsRangeEnd = trendPeriods.at(-1) ?? null
   const analyticsDateFrom =
@@ -900,22 +990,6 @@ export function AdminDashboardPage() {
       : dashboardAnalyticsQuery
         ? readCachedDashboardAnalytics(dashboardAnalyticsQuery)
         : null
-  const detailReportingPeriodIds = new Set(trendPeriods.map((period) => period.id))
-  const detailReportIds = state.reports
-    .filter((report) => detailReportingPeriodIds.has(report.reportingPeriodId))
-    .map((report) => report.id)
-  const detailReportIdsKey = detailReportIds.join('|')
-
-  useEffect(() => {
-    if (trendScale !== 'monthly') {
-      return
-    }
-
-    const detailReportIds = detailReportIdsKey ? detailReportIdsKey.split('|') : []
-
-    void ensureReportDetails(detailReportIds)
-  }, [detailReportIdsKey, ensureReportDetails, trendScale])
-
   useEffect(() => {
     const nextReportWindow = timeRange === 'all' ? 'all' : 'default'
 
@@ -982,28 +1056,39 @@ export function AdminDashboardPage() {
     timeRange,
   ])
 
-  const rangeSummary = getReportingRangeSummary(
+  const resolvedRangeSummary = getReportingRangeSummary(
     state,
     timeRange,
     effectivePeriodId,
     scopeFamily,
   )
 
-  if (!rangeSummary) {
-    return <PageSkeleton variant="analytics" />
-  }
+  /**
+   * Keep the page mounted while the first workspace payload lands.
+   *
+   * This used to `return <PageSkeleton />` whenever the summary was null, which
+   * is true for the whole of that first request - so the dashboard painted, then
+   * threw itself away for ~700ms, then came back, and the page height moved
+   * twice on the way. Scrolling through that window looked like the page
+   * breaking. Now the frame stays put and each data region shows its own
+   * loading state, which they all already support.
+   */
+  const isRangeLoading = !resolvedRangeSummary
+  const rangeSummary = resolvedRangeSummary ?? emptyReportingRangeSummary()
 
   const deadlineNote = getLockDeadlineNote(state, effectivePeriodId)
   const timeRangeLabels = {
     current: 'Current week',
     last4: 'Last 4 weeks',
     last8: 'Last 8 weeks',
+    quarter: 'Last quarter',
     all: 'All available data',
   } as const
   const timeRangeOptions = [
     { value: 'current' as const, label: 'Current week' },
     { value: 'last4' as const, label: 'Last 4 weeks' },
     { value: 'last8' as const, label: 'Last 8 weeks' },
+    { value: 'quarter' as const, label: 'Last quarter (13 weeks)' },
     { value: 'all' as const, label: 'All available data' },
   ] as const
   const trendScaleLabels = {
@@ -1095,6 +1180,17 @@ export function AdminDashboardPage() {
   // Inset the first/last time-series points so edge tick labels (e.g. "Apr 13")
   // render fully instead of being clipped by the card edge.
   const trendXPadding = { left: 12, right: 12 } as const
+  // How many x labels a trend card can physically show. A date label is ~40px
+  // wide in a ~550px card, so beyond roughly a dozen they collide; at a two-year
+  // weekly range (104 points) forcing every label produced an unreadable smear.
+  const maxTrendXLabels = 13
+  /**
+   * Show every label while they fit, then thin them evenly. Returns the recharts
+   * `interval` (labels to SKIP between rendered ticks), so 0 keeps the previous
+   * behaviour for the short ranges this dashboard was built around.
+   */
+  const trendTickInterval = (pointCount: number) =>
+    pointCount > maxTrendXLabels ? Math.ceil(pointCount / maxTrendXLabels) - 1 : 0
   // Distinct, accessible categorical hues. Blue stays primary; violet / teal / rose
   // add separation so multi-series lines are easy to tell apart (colorblind-safer).
   const grayscalePalette = {
@@ -1556,14 +1652,24 @@ export function AdminDashboardPage() {
     Boolean(dashboardAnalyticsQuery) &&
     !dashboardAnalytics &&
     dashboardAnalyticsRequestStatus === 'error'
-  const areTrendReportDetailsPending =
-    trendScale === 'monthly' &&
-    detailReportIds.some((reportId) => {
+  const isReportDetailBatchPending = (reportIds: readonly string[]) =>
+    reportIds.some((reportId) => {
       const detailState = getReportDetailLoadState(reportId).status
 
       return detailState === 'loading' || (detailState === 'idle' && !isReportDetailLoaded(reportId))
     })
-  const areOperationalChartsLoading = isDashboardAnalyticsPending || areTrendReportDetailsPending
+  const areTrendReportDetailsPending =
+    trendScale === 'monthly' && isReportDetailBatchPending(comparisonReportIds)
+  // Tracked separately from the batch above so a wide range only holds up the
+  // occupancy card, not the comparison charts that never read those cells.
+  const isOccupancyDetailPending =
+    trendScale === 'monthly' && isReportDetailBatchPending(occupancyReportIds)
+  // While the range itself is still arriving there is nothing to plot yet, so
+  // every chart shows its loading copy rather than "no data in this view" -
+  // which would otherwise read as a real, empty answer.
+  const areOperationalChartsLoading =
+    isRangeLoading || isDashboardAnalyticsPending || areTrendReportDetailsPending
+  const isOccupancyChartLoading = areOperationalChartsLoading || isOccupancyDetailPending
   const occupancyScopeDepartment =
     inpatientOccupancyScope === ALL_INPATIENT_POOLED
       ? null
@@ -1736,99 +1842,54 @@ export function AdminDashboardPage() {
     <div className="space-y-6 px-4 py-5 text-[#000a1e] md:space-y-8 md:px-6 md:py-8">
       <motion.section
         {...fadeIn}
-        className="rounded-[0.35rem] bg-[#ffffff] px-5 py-5 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-5"
+        className="overflow-hidden rounded-xl border border-[#dce3eb] bg-white shadow-[0_18px_50px_-42px_rgba(0,33,71,0.4)]"
       >
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] xl:items-start">
-          <div className="space-y-4">
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <div className="inline-flex items-center gap-2 rounded-[0.2rem] bg-[#edf4fb] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#00468c]">
-                  <Filter className="h-3.5 w-3.5" />
-                  Reporting dashboard
-                </div>
-                <div className="h-0.5 w-10 rounded-full bg-[#f3c14e]" />
-              </div>
-              <div className="space-y-2.5">
-                <h1 className="max-w-2xl font-display text-[1.5rem] font-bold leading-[1.05] tracking-[-0.03em] text-[#000a1e] md:text-[1.8rem] xl:text-[2rem]">
-                  {selectedRangeTitle}
-                </h1>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center rounded-full bg-[#edf1f5] px-2.5 py-1 text-xs font-semibold text-[#1d3047]">
-                    {trendScaleLabels[trendScale]}
-                  </span>
-                  <span className="inline-flex items-center rounded-full bg-[#edf4fb] px-2.5 py-1 text-xs font-semibold text-[#00468c]">
-                    {familyLabels[familyFilter]}
-                  </span>
-                  <span className="inline-flex items-center rounded-full bg-[#f6f8fa] px-2.5 py-1 text-xs font-medium text-[#5b6169]">
-                    {selectedRangeNote}
-                  </span>
-                </div>
-              </div>
+        <div>
+          <div className="flex flex-col gap-5 px-5 py-6 md:flex-row md:items-end md:justify-between md:px-7 md:py-7">
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.24em] text-[#005db6]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#f0b429]" aria-hidden="true" />
+                Reporting overview
+              </p>
+              <h1 className="mt-3 max-w-3xl font-display text-[1.65rem] font-bold leading-[1.08] tracking-[-0.035em] text-[#000a1e] md:text-[2rem]">
+                {selectedRangeTitle}
+              </h1>
+              <p className="mt-2 text-sm leading-6 text-[#64748b]">
+                {trendScaleLabels[trendScale]}
+                <span className="mx-2 text-[#c1cbd7]" aria-hidden="true">/</span>
+                {familyLabels[familyFilter]}
+                <span className="mx-2 text-[#c1cbd7]" aria-hidden="true">/</span>
+                {selectedRangeNote}
+              </p>
             </div>
-            <div className="space-y-4">
-              <KpiGrid columns={3}>
-                <KpiCard
-                  label="Delivered"
-                  value={<AnimatedMetric value={deliveredCount} variant="number" />}
-                  delta={trendDelta.delivered}
-                  hint="vs range start"
-                  accent="navy"
-                />
-                <KpiCard
-                  label="Still open"
-                  value={<AnimatedMetric value={openCount} variant="number" />}
-                  delta={trendDelta.open}
-                  hint="vs range start"
-                  accent="gold"
-                />
-                <KpiCard
-                  label="Delivery rate"
-                  value={`${deliveryRate}%`}
-                  delta={trendDelta.rate}
-                  deltaSuffix="pts"
-                  hint="vs range start"
-                  accent="steel"
-                  status={{
-                    tone: deliveryTargetTone,
-                    label: targetStatusLabel[deliveryTargetTone],
-                  }}
-                />
-              </KpiGrid>
-              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                <Button asChild variant="secondary" className="w-full sm:w-fit">
-                  <a
-                    href={apiEnv.baseUrl ? `${apiEnv.baseUrl}/api/analytics/export${effectivePeriodId ? `?period=${effectivePeriodId}` : ''}` : undefined}
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    Export CSV
-                  </a>
-                </Button>
-                <Button asChild variant="secondary" className="w-full sm:w-fit">
-                  <a
-                    href={apiEnv.baseUrl ? `${apiEnv.baseUrl}/api/analytics/export?format=xlsx${effectivePeriodId ? `&period=${effectivePeriodId}` : ''}` : undefined}
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    Export Excel
-                  </a>
-                </Button>
-              </div>
-            </div>
+            <Button
+              asChild
+              variant="secondary"
+              className="h-10 w-full shrink-0 border border-[#d7e0ea] bg-white px-4 shadow-none transition-colors hover:border-[#b8c7d8] hover:bg-[#f8fafc] sm:w-fit"
+            >
+              <a
+                href={apiEnv.baseUrl ? `${apiEnv.baseUrl}/api/analytics/export?format=xlsx` : undefined}
+                title="Download every historical submission in the same weekly form layout nurses use"
+              >
+                <Download className="h-4 w-4" />
+                Export clinical forms
+              </a>
+            </Button>
           </div>
-
-          <div className="self-start w-full max-w-[760px] space-y-3 xl:justify-self-end">
+          <div className="border-y border-[#e3e8ef] bg-[#f8fafc]/75">
             <button
               type="button"
               onClick={() => setFiltersOpen((value) => !value)}
               aria-expanded={filtersOpen}
               aria-controls="dashboard-scope-filters"
-              className="flex w-full items-center justify-between gap-3 rounded-[0.35rem] bg-[#f8fafc] px-4 py-3 text-left outline outline-1 outline-[#d9e0e7]/75 transition-transform duration-200 motion-safe:active:scale-[0.99] sm:hidden"
+              className="flex min-h-12 w-full items-center justify-between gap-3 px-5 py-3 text-left transition-colors hover:bg-[#f3f6f9] sm:hidden"
             >
               <span className="flex items-center gap-2 text-[13px] font-semibold text-[#1d3047]">
                 <Filter className="h-4 w-4 text-[#005db6]" />
                 Filters
               </span>
               <span className="flex min-w-0 items-center gap-2">
-                <span className="max-w-[9.5rem] truncate text-xs text-[#74777f]">
+                <span className="max-w-[10.5rem] truncate text-xs text-[#74777f]">
                   {timeRangeLabels[timeRange]} · {familyLabels[familyFilter]}
                 </span>
                 <ChevronDown
@@ -1841,89 +1902,163 @@ export function AdminDashboardPage() {
             </button>
             <div
               id="dashboard-scope-filters"
-              className={cn(filtersOpen ? 'block' : 'hidden', 'sm:block')}
+              className={cn(
+                filtersOpen ? 'grid' : 'hidden',
+                'gap-5 px-5 py-5 sm:grid sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end md:px-7',
+              )}
             >
-            <ReportingScopePanel
-              fields={[
-                {
-                  label: 'Time range',
-                  options: timeRangeOptions,
-                  placeholder: 'Time range',
-                  value: timeRange,
-                  onValueChange: (value) => {
-                    setTimeRange(value as ReportingTimeRange)
-                    setInpatientComparisonMonthKey('')
-                    setOutpatientComparisonMonthKey('')
-                    setProcedureComparisonMonthKey('')
+              <ReportingScopePanel
+                className="rounded-none bg-transparent p-0 outline-none"
+                fieldsClassName="grid-cols-1 sm:grid-cols-3"
+                fields={[
+                  {
+                    label: 'Time range',
+                    options: timeRangeOptions,
+                    placeholder: 'Time range',
+                    value: timeRange,
+                    onValueChange: (value) => {
+                      setTimeRange(value as ReportingTimeRange)
+                      setInpatientComparisonMonthKey('')
+                      setOutpatientComparisonMonthKey('')
+                      setProcedureComparisonMonthKey('')
+                    },
+                    triggerClassName: 'text-[0.95rem]',
                   },
-                  triggerClassName: 'text-[0.95rem]',
-                },
-                {
-                  label: 'Ending period',
-                  options: reportingPeriodOptions,
-                  placeholder: 'Ending period',
-                  value: effectivePeriodId,
-                  onValueChange: (value) => {
-                    setPeriodId(value)
-                    setInpatientComparisonMonthKey('')
-                    setOutpatientComparisonMonthKey('')
-                    setProcedureComparisonMonthKey('')
+                  {
+                    label: 'Ending period',
+                    options: reportingPeriodOptions,
+                    placeholder: 'Ending period',
+                    value: effectivePeriodId,
+                    onValueChange: (value) => {
+                      setPeriodId(value)
+                      setInpatientComparisonMonthKey('')
+                      setOutpatientComparisonMonthKey('')
+                      setProcedureComparisonMonthKey('')
+                    },
+                    triggerClassName: 'text-[0.95rem]',
                   },
-                  triggerClassName: 'text-[0.95rem]',
-                },
-                {
-                  label: 'Service line',
-                  options: serviceLineOptions,
-                  placeholder: 'Service line',
-                  value: familyFilter,
-                  onValueChange: (value) => setFamilyFilter(value as FamilyFilter),
-                  triggerClassName: 'text-[0.95rem]',
-                },
-              ]}
-            />
-            </div>
+                  {
+                    label: 'Service line',
+                    options: serviceLineOptions,
+                    placeholder: 'Service line',
+                    value: familyFilter,
+                    onValueChange: (value) => setFamilyFilter(value as FamilyFilter),
+                    triggerClassName: 'text-[0.95rem]',
+                  },
+                ]}
+              />
 
-            <div className="rounded-[0.35rem] bg-[#f8fafc] p-4 outline outline-1 outline-[#d9e0e7]/75">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#74777f]">
+                  View
+                </p>
                 <div
-                  className="flex w-full gap-1.5 rounded-[0.35rem] bg-white p-1.5 outline outline-1 outline-[#d4dde8] sm:inline-flex sm:w-auto"
+                  className="relative grid h-10 grid-cols-2 rounded-lg bg-[#e9eef4] p-1"
                   role="group"
                   aria-label="Trend grouping"
                 >
-                  {trendScaleOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={trendScale === option.value}
-                      onClick={() => {
-                        setTrendScale(option.value)
+                  {trendScaleOptions.map((option) => {
+                    const isActive = trendScale === option.value
 
-                        if (option.value === 'monthly') {
-                          setInpatientComparisonMonthKey('')
-                          setOutpatientComparisonMonthKey('')
-                          setProcedureComparisonMonthKey('')
-                        }
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={isActive}
+                        onClick={() => {
+                          setTrendScale(option.value)
 
-                        if (timeRange === 'current') {
-                          setTimeRange('last8')
-                          setInpatientComparisonMonthKey('')
-                          setOutpatientComparisonMonthKey('')
-                          setProcedureComparisonMonthKey('')
-                        }
-                      }}
-                      className={cn(
-                        'h-9 flex-1 rounded-[0.25rem] px-4 text-sm font-semibold transition-colors sm:min-w-[96px] sm:flex-none',
-                        trendScale === option.value
-                          ? 'bg-[#04162f] text-white'
-                          : 'text-[#44474e] hover:bg-[#eef2f6]',
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
+                          if (option.value === 'monthly') {
+                            setInpatientComparisonMonthKey('')
+                            setOutpatientComparisonMonthKey('')
+                            setProcedureComparisonMonthKey('')
+                          }
+
+                          if (timeRange === 'current') {
+                            setTimeRange('last8')
+                            setInpatientComparisonMonthKey('')
+                            setOutpatientComparisonMonthKey('')
+                            setProcedureComparisonMonthKey('')
+                          }
+                        }}
+                        className={cn(
+                          'relative min-w-[86px] rounded-md px-3 text-sm font-semibold transition-colors duration-200',
+                          isActive ? 'text-[#002147]' : 'text-[#64748b] hover:text-[#1d3047]',
+                        )}
+                      >
+                        {isActive ? (
+                          <motion.span
+                            layoutId="dashboard-trend-scale"
+                            className="absolute inset-0 rounded-md bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12)]"
+                            transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                          />
+                        ) : null}
+                        <span className="relative">{option.label}</span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             </div>
+          </div>
+          <div className="grid divide-y divide-[#e3e8ef] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+            <article className="px-5 py-5 md:px-7 md:py-6">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#64748b]">
+                  Delivered
+                </p>
+                <Delta value={trendDelta.delivered} variant="badge">
+                  <DeltaIcon variant="trend" />
+                  <DeltaValue suffix="%" />
+                </Delta>
+              </div>
+              <p className="mt-4 font-display text-[2rem] font-bold leading-none tracking-[-0.04em] tabular-nums text-[#000a1e]">
+                <AnimatedMetric value={deliveredCount} variant="number" />
+              </p>
+              <p className="mt-2 text-xs text-[#7a8796]">Compared with range start</p>
+            </article>
+
+            <article className="px-5 py-5 md:px-7 md:py-6">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#64748b]">
+                  Still open
+                </p>
+                <Delta value={trendDelta.open} variant="badge">
+                  <DeltaIcon variant="trend" />
+                  <DeltaValue suffix="%" />
+                </Delta>
+              </div>
+              <p className="mt-4 font-display text-[2rem] font-bold leading-none tracking-[-0.04em] tabular-nums text-[#000a1e]">
+                <AnimatedMetric value={openCount} variant="number" />
+              </p>
+              <p className="mt-2 text-xs text-[#7a8796]">Compared with range start</p>
+            </article>
+
+            <article className="px-5 py-5 md:px-7 md:py-6">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#64748b]">
+                  Delivery rate
+                </p>
+                <span
+                  className={cn(
+                    'rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]',
+                    targetStatusClass[deliveryTargetTone],
+                  )}
+                >
+                  {targetStatusLabel[deliveryTargetTone]}
+                </span>
+              </div>
+              <div className="mt-4 flex flex-wrap items-end gap-2">
+                <p className="font-display text-[2rem] font-bold leading-none tracking-[-0.04em] tabular-nums text-[#000a1e]">
+                  <AnimatedMetric value={deliveryRate} variant="percent" />
+                </p>
+                <Delta value={trendDelta.rate} variant="badge">
+                  <DeltaIcon variant="trend" />
+                  <DeltaValue suffix="pts" />
+                </Delta>
+              </div>
+              <p className="mt-2 text-xs text-[#7a8796]">Compared with range start</p>
+            </article>
           </div>
         </div>
       </motion.section>
@@ -2027,7 +2162,11 @@ export function AdminDashboardPage() {
                   </div>
                 </>
               ) : (
-                <ChartEmptyState message="No reports were scheduled for this view." />
+                <ChartFallback
+                  isLoading={isRangeLoading}
+                  loadingMessage="Loading reporting scope..."
+                  emptyMessage="No reports were scheduled for this view."
+                />
               )}
             </div>
             {totalExpected ? (
@@ -2138,7 +2277,7 @@ export function AdminDashboardPage() {
                         padding={trendXPadding}
                       />
                       <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
-                      <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
+                      <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={formatTrendTooltipValue} />
                       <Area
                         type="linear"
                         dataKey="delivered"
@@ -2292,14 +2431,14 @@ export function AdminDashboardPage() {
                             axisLine={chartAxisLine}
                             tickLine={chartTickLine}
                             tickMargin={12}
-                            interval={0}
+                            interval={trendTickInterval(inpatientFlowSeries.length)}
                             angle={-24}
                             textAnchor="end"
                             height={72}
                             padding={trendXPadding}
                           />
                           <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
+                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={formatTrendTooltipValue} />
                           <Area type="linear" dataKey="newAdmissions" name="Newly admitted" stroke="#005db6" fill="#005db6" fillOpacity={0.18} strokeWidth={3.2} dot={{ r: 2.6, strokeWidth: 0, fill: '#005db6' }} activeDot={{ ...lineActiveDot, fill: '#005db6' }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1100} animationEasing="ease-out" />
                           <Line type="linear" dataKey="discharges" name="Discharges" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1400} animationEasing="ease-out" />
                         </AreaChart>
@@ -2351,7 +2490,7 @@ export function AdminDashboardPage() {
                           <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                           <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                           <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
+                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={formatTrendTooltipValue} />
                           <Area type="linear" dataKey="deaths" name="Deaths" stroke={grayscalePalette.slate} fill={grayscalePalette.slate} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.slate }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.slate }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1000} animationEasing="ease-out" />
                           <Line type="linear" dataKey="ulcers" name="New pressure ulcers" stroke={grayscalePalette.steel} strokeWidth={2.7} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1200} animationEasing="ease-out" />
                           <Line type="linear" dataKey="hai" name="Total HAI" stroke={grayscalePalette.carbon} strokeWidth={2.7} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.carbon }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.carbon }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1400} animationEasing="ease-out" />
@@ -2410,7 +2549,11 @@ export function AdminDashboardPage() {
                     ]}
                   />
                   <div className="h-[360px]">
-                    {hasInpatientOccupancySignal ? (
+                    {/* Ward cells stream in a month at a time, so plotting before
+                        the batch settles would draw a curve that is missing its
+                        earlier months and then silently redraw. Hold the loading
+                        state until the whole range is in. */}
+                    {hasInpatientOccupancySignal && !isOccupancyDetailPending ? (
                       <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                         <AreaChart
                           data={inpatientOccupancySeries}
@@ -2440,7 +2583,7 @@ export function AdminDashboardPage() {
                       </ResponsiveContainer>
                     ) : (
                       <ChartFallback
-                        isLoading={areOperationalChartsLoading}
+                        isLoading={isOccupancyChartLoading}
                         loadingMessage="Loading inpatient occupancy data..."
                         emptyMessage={occupancyEmptyMessage}
                       />
@@ -2542,7 +2685,7 @@ export function AdminDashboardPage() {
                           <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                           <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                           <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
+                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={formatTrendTooltipValue} />
                           <Area type="linear" dataKey="seen" name="Seen" stroke={grayscalePalette.ink} fill={grayscalePalette.ink} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.ink }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1100} animationEasing="ease-out" />
                           <Line type="linear" dataKey="notSeenSameDay" name="Not seen same day" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1400} animationEasing="ease-out" />
                         </AreaChart>
@@ -2591,7 +2734,7 @@ export function AdminDashboardPage() {
                             <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                             <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                             <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
-                            <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
+                            <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={formatTrendTooltipValue} />
                             <Area type="linear" dataKey="totalSeen" name="Total seen" stroke={grayscalePalette.carbon} fill={grayscalePalette.carbon} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.carbon }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.carbon }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1000} animationEasing="ease-out" />
                             <Line type="linear" dataKey="newPatients" name="New" stroke={grayscalePalette.ink} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.ink }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1200} animationEasing="ease-out" />
                             <Line type="linear" dataKey="followUp" name="Follow-up" stroke={grayscalePalette.cloud} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.cloud }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.cloud }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1400} animationEasing="ease-out" />
@@ -2633,7 +2776,7 @@ export function AdminDashboardPage() {
                           <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                           <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                           <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
-                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} />
+                          <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={formatTrendTooltipValue} />
                           <Area type="linear" dataKey="wait" name="Follow-up wait (months)" stroke={grayscalePalette.ink} fill={grayscalePalette.ink} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.6, strokeWidth: 0, fill: grayscalePalette.ink }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1200} animationEasing="ease-out" />
                         </AreaChart>
                       )}
@@ -2729,7 +2872,7 @@ export function AdminDashboardPage() {
                             axisLine={chartAxisLine}
                             tickLine={chartTickLine}
                             tickMargin={12}
-                            interval={0}
+                            interval={trendTickInterval(outpatientAvailabilitySeries.length)}
                             height={42}
                             padding={trendXPadding}
                           />

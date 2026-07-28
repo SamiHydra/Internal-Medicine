@@ -43,9 +43,10 @@ if (config('queue.worker_mode') !== 'daemon') {
     Schedule::command('queue:work --stop-when-empty --max-time=50')->everyMinute()->timezone($businessTimezone)->withoutOverlapping(10);
 }
 
-// Re-attempt transiently-failed deliveries (e.g. a brief SMTP/SMS outage) so a
-// dropped clinical reminder is not silently lost, then prune long-dead failures
-// and old read notifications so neither table grows without bound.
-Schedule::command('queue:retry all')->hourly()->timezone($businessTimezone)->withoutOverlapping(10);
+// Retry only recent, allow-listed transient deliveries, at most once per job
+// UUID. Never replay every failed business/validation job indiscriminately.
+Schedule::command('queue:retry-transient')->everyThirtyMinutes()->timezone($businessTimezone)->withoutOverlapping(10);
 Schedule::command('queue:prune-failed --hours=720')->daily()->timezone($businessTimezone);
+Schedule::command('queue:prune-batches --hours=168 --unfinished=168 --cancelled=168')->daily()->timezone($businessTimezone);
 Schedule::command('reports:prune-notifications')->weeklyOn(0, '01:00')->timezone($businessTimezone)->withoutOverlapping(10);
+Schedule::command('app:prune-operational-data')->dailyAt('01:20')->timezone($businessTimezone)->withoutOverlapping(10);

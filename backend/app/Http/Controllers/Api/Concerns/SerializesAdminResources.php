@@ -229,6 +229,7 @@ trait SerializesAdminResources
             'roundDelayed' => (bool) $evaluation->answer('round_delayed'),
             'mdtParticipants' => $evaluation->answer('mdt_participants') ?? [],
             'systemIssues' => $evaluation->answer('system_issues') ?? [],
+            'overallRating' => $evaluation->answer('overall_rating'),
             'comment' => $evaluation->comment,
             'qualityScore' => round(EvaluationScoring::score($evaluation, 'consultant'), 1),
             'extraAnswers' => $this->extraEvaluationAnswers($evaluation, [
@@ -236,6 +237,7 @@ trait SerializesAdminResources
                 'all_patients_reviewed', 'mgmt_plan_documented', 'vte_assessed',
                 'discharge_discussed', 'med_review_done', 'critical_labs_reviewed',
                 'pct_patients_seen', 'round_delayed', 'mdt_participants', 'system_issues',
+                'overall_rating',
             ]),
             'createdAt' => $evaluation->created_at?->toJSON(),
             'updatedAt' => $evaluation->updated_at?->toJSON(),

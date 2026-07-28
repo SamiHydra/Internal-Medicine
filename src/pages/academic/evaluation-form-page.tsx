@@ -154,10 +154,7 @@ export function AcademicEvaluationFormPage() {
   return (
     <div className="space-y-6 px-4 py-6 md:px-6 md:py-8">
       <section className={panelClass}>
-        <div className="flex items-center gap-2">
-          <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-          <p className={eyebrowClass}>New evaluation</p>
-        </div>
+        <p className={eyebrowClass}>New evaluation</p>
         <h1 className="mt-1.5 font-display text-[1.5rem] font-bold leading-tight tracking-[-0.02em] text-[#000a1e] md:text-[1.7rem]">
           {heading}
         </h1>

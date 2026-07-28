@@ -22,6 +22,7 @@ import type {
   LiveAppStateLoadOptions,
   ApiReferenceState,
   ReportDetailRecord,
+  ReportResponse,
   SaveReportPayload,
   SubmitAdminAccessRequestPayload,
 } from '@/lib/api'
@@ -31,10 +32,13 @@ import {
   createEmptyReferenceState,
   ensureDepartmentReferenceData,
   fetchAdminAccessRequests as fetchAdminAccessRequestsQuery,
+  fetchAccessRequests,
   fetchCurrentUserProfile,
   fetchReportDetails,
   changePassword as changePasswordMutation,
   fetchLiveAppState,
+  fetchProfileDirectory,
+  fetchWorkspaceRevision,
   isAdminRole,
   loginWithPassword,
   reviewAccessRequest as reviewAccessRequestMutation,
@@ -75,7 +79,6 @@ import {
 import {
   clearWorkspaceCache,
   readLastWorkspaceCache,
-  readWorkspaceCache,
   writeWorkspaceCache,
   type WorkspaceCacheRecord,
 } from '@/lib/offline/workspace-cache'
@@ -180,6 +183,15 @@ const idleReportDetailLoadState: ReportDetailLoadState = {
   error: null,
 }
 
+function isPublicAuthPath(pathname: string) {
+  return (
+    pathname === '/login' ||
+    pathname === '/register' ||
+    pathname === '/forgot-password' ||
+    pathname.startsWith('/reset-password')
+  )
+}
+
 function getMessage(error: unknown, fallback: string) {
   if (typeof error === 'object' && error && 'message' in error) {
     const message = error.message
@@ -253,6 +265,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const isSigningOutRef = useRef(false)
   const profileDirectoryLoadedRef = useRef(false)
   const accessRequestDataLoadedRef = useRef(false)
+  const profileDirectoryRequestRef = useRef<Promise<void> | null>(null)
+  const accessRequestDataRequestRef = useRef<Promise<void> | null>(null)
   const historyDataLoadedRef = useRef(false)
   const loadedReportDetailIdsRef = useRef<Set<string>>(new Set())
   const pendingReportDetailIdsRef = useRef<Set<string>>(new Set())
@@ -260,6 +274,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   // Signature of the last applied background-poll payload. Lets an unchanged
   // poll skip the state replacement (and its full-tree re-render) entirely.
   const lastPolledStateSignatureRef = useRef<string | null>(null)
+  const workspaceRevisionRef = useRef<string | null>(null)
   const overdueSyncInFlightRef = useRef(false)
   const lastOverdueSyncAtRef = useRef(0)
   const syncPendingCountRef = useRef(0)
@@ -375,6 +390,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const resetDeferredDataState = useCallback(() => {
     profileDirectoryLoadedRef.current = false
     accessRequestDataLoadedRef.current = false
+    profileDirectoryRequestRef.current = null
+    accessRequestDataRequestRef.current = null
     historyDataLoadedRef.current = false
     loadedReportDetailIdsRef.current = new Set()
     pendingReportDetailIdsRef.current = new Set()
@@ -538,6 +555,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     pendingExplicitAuthUserIdRef.current = null
     referencesRef.current = createEmptyReferenceState()
     academicSignatureRef.current = null
+    workspaceRevisionRef.current = null
+    lastPolledStateSignatureRef.current = null
     currentUserIdRef.current = null
     currentStateRef.current = createEmptyAppState()
     syncPendingCountRef.current = 0
@@ -617,6 +636,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
 
         referencesRef.current = result.references
+        workspaceRevisionRef.current = result.revision
         reportPeriodWindowRef.current = reportPeriodWindow
 
         // Applied before the poll-skip below: a placement or setup-signal change
@@ -902,47 +922,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     let active = true
 
     void (async () => {
-      const {
-        data: { session },
-        error: sessionError,
-      } = await client.auth.getSession()
-
-      if (!active) {
-        return
-      }
-
-      if (sessionError) {
-        if (isLikelyOfflineError(sessionError)) {
-          const cachedWorkspace = readLastWorkspaceCache()
-
-          if (cachedWorkspace) {
-            applyWorkspaceCache(cachedWorkspace)
-            setError('Offline mode: showing the last saved workspace snapshot.')
-            toast.info('Offline workspace restored', {
-              description: 'You can keep working from the last synced data.',
-            })
-            return
-          }
-        }
-
-        setError(getMessage(sessionError, 'Unable to read the current session.'))
-        setIsBootstrapping(false)
-        setIsSyncing(false)
-        return
-      }
-
-      const userId = sessionUserId(session)
-      if (!userId) {
-        clearSignedOutState()
-        return
-      }
-
       try {
-        const cachedWorkspace = readWorkspaceCache(userId)
+        // /api/workspace is already authenticated and includes currentUser, so
+        // asking /api/auth/me first adds a strictly sequential request to every
+        // cold start. Restore the most recent cache optimistically, then let the
+        // workspace request confirm the active session and authoritative user.
+        const cachedWorkspace = readLastWorkspaceCache()
 
         if (cachedWorkspace) {
           applyWorkspaceCache(cachedWorkspace)
-          void loadUserState(userId, 'Unable to load the signed-in workspace.', {
+          void loadUserState(cachedWorkspace.userId, 'Unable to load the signed-in workspace.', {
             showBootstrapping: false,
           })
             .then((result) => {
@@ -960,8 +949,39 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           return
         }
 
+        // Public auth screens only need the small session probe to decide
+        // whether an existing session should be redirected. An anonymous login
+        // visit must not issue a knowingly unauthorized workspace request.
+        if (isPublicAuthPath(window.location.pathname)) {
+          const {
+            data: { session },
+            error: sessionError,
+          } = await client.auth.getSession()
+
+          if (sessionError) {
+            throw sessionError
+          }
+
+          const sessionId = sessionUserId(session)
+          if (!sessionId) {
+            clearSignedOutState()
+            return
+          }
+
+          const result = await loadUserState(
+            sessionId,
+            'Unable to load the signed-in workspace.',
+            { showBootstrapping: true },
+          )
+
+          if (result && isAdminRole(result.currentUser.role)) {
+            warmAdminReportDetails(result.state)
+          }
+          return
+        }
+
         const result = await loadUserState(
-          userId,
+          'authenticated-session',
           'Unable to load the signed-in workspace.',
           {
             showBootstrapping: true,
@@ -1076,17 +1096,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return
     }
 
-    const {
-      data: { session },
-      error: sessionError,
-    } = await client.auth.getSession()
-
-    if (sessionError) {
-      setError(getMessage(sessionError, 'Unable to refresh the current session.'))
-      return
-    }
-
-    const userId = sessionUserId(session)
+    const userId = currentUserIdRef.current
     if (!userId) {
       clearSignedOutState()
       return
@@ -1113,6 +1123,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const scheduleAdminLiveRefresh = useCallback(
     (delayMs = 700) => {
+      if (!client) {
+        return
+      }
+      const activeClient = client
+
       if (adminLiveRefreshTimerRef.current !== null) {
         window.clearTimeout(adminLiveRefreshTimerRef.current)
       }
@@ -1126,22 +1141,36 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         adminLiveRefreshInFlightRef.current = true
 
-        void refreshDataWithOptions({
-          // Keep the 60-second live pulse lightweight. Once an admin has opened
-          // Users or Audit, carrying those large optional collections on every
-          // dashboard poll makes the cost grow with the lifetime of the browser
-          // session. Dedicated screens/actions explicitly refresh them when
-          // needed; loadUserState preserves already-loaded deferred data here.
-          includeProfiles: false,
-          includeAccessRequests: false,
-          includeHistory: false,
-          reportPeriodWindow: reportPeriodWindowRef.current,
-        }).finally(() => {
-          adminLiveRefreshInFlightRef.current = false
-        })
+        void fetchWorkspaceRevision(activeClient)
+          .then((revision) => {
+            if (
+              workspaceRevisionRef.current !== null &&
+              revision === workspaceRevisionRef.current
+            ) {
+              return
+            }
+
+            return refreshDataWithOptions({
+              // Optional admin collections stay route-scoped. The lightweight
+              // revision endpoint prevents an unchanged tab from rebuilding
+              // and downloading the full workspace on every focus/poll.
+              includeProfiles: false,
+              includeAccessRequests: false,
+              includeHistory: false,
+              reportPeriodWindow: reportPeriodWindowRef.current,
+            })
+          })
+          .catch(() => {
+            // A failed freshness check should not disrupt the current screen.
+            // The next focus/poll retries it and explicit refreshes still fetch
+            // the workspace directly.
+          })
+          .finally(() => {
+            adminLiveRefreshInFlightRef.current = false
+          })
       }, delayMs)
     },
-    [refreshDataWithOptions],
+    [client, refreshDataWithOptions],
   )
 
   useEffect(() => {
@@ -1208,6 +1237,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       values: SaveReportPayload['values'],
       calculatedMetrics?: AppState['reports'][number]['calculatedMetrics'],
       quality?: AppState['reports'][number]['quality'],
+      serverReport?: ReportResponse,
     ) => {
       loadedReportDetailIdsRef.current.add(reportId)
 
@@ -1226,6 +1256,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           matchedReport = true
           return {
             ...report,
+            ...(serverReport ?? {}),
+            departmentId:
+              serverReport?.departmentSlug ?? serverReport?.departmentId ?? report.departmentId,
+            templateId:
+              serverReport?.templateSlug ?? serverReport?.templateId ?? report.templateId,
             values,
             calculatedMetrics: calculatedMetrics ?? report.calculatedMetrics,
             quality: quality ?? report.quality,
@@ -1233,7 +1268,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         })
 
         if (!matchedReport) {
-          return currentState
+          if (!serverReport) {
+            return currentState
+          }
+
+          nextReports.unshift({
+            ...serverReport,
+            departmentId: serverReport.departmentSlug ?? serverReport.departmentId,
+            templateId: serverReport.templateSlug ?? serverReport.templateId,
+            values,
+            calculatedMetrics: calculatedMetrics ?? serverReport.calculatedMetrics,
+            quality: quality ?? serverReport.quality,
+          })
         }
 
         const nextState = {
@@ -1250,130 +1296,44 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   )
 
   const applyServerSavedReport = useCallback(
-    async (payload: SaveReportPayload, reportId: string | null) => {
-      if (!client) {
-        return
-      }
-
+    (payload: SaveReportPayload, savedReport: ReportResponse) => {
       historyDataLoadedRef.current = false
-      await refreshDataWithOptions()
-
-      const savedReport =
-        (reportId
-          ? currentStateRef.current.reports.find((report) => report.id === reportId)
-          : null) ??
-        currentStateRef.current.reports.find(
-          (report) =>
-            report.assignmentId === payload.assignmentId &&
-            report.reportingPeriodId === payload.reportingPeriodId,
-        )
-      const savedReportId = reportId ?? savedReport?.id
-
-      if (!savedReportId) {
-        return
-      }
-
-      let savedValues = payload.values
-      let savedCalculatedMetrics = savedReport?.calculatedMetrics
-      let savedQuality = savedReport?.quality
-
-      try {
-        const reportDetailsById = await fetchReportDetails(client, [savedReportId])
-        const reportDetails = reportDetailsById[savedReportId]
-
-        if (reportDetails) {
-          savedValues = Object.keys(reportDetails.values).length
-            ? reportDetails.values
-            : payload.values
-          savedCalculatedMetrics = reportDetails.calculatedMetrics
-          savedQuality = reportDetails.quality
-        }
-      } catch (detailError) {
-        toast.error(
-          getMessage(
-            detailError,
-            'Report saved, but the saved cell values could not be refreshed.',
-          ),
-        )
-      }
 
       applySavedReportDetails(
-        savedReportId,
+        savedReport.id,
         payload,
-        savedValues,
-        savedCalculatedMetrics,
-        savedQuality,
+        Object.keys(savedReport.values ?? {}).length ? savedReport.values : payload.values,
+        savedReport.calculatedMetrics,
+        savedReport.quality,
+        savedReport,
       )
     },
-    [client, refreshDataWithOptions, applySavedReportDetails],
+    [applySavedReportDetails],
   )
 
-  // Batched variant of applyServerSavedReport for flushing the offline queue: one
-  // workspace refresh and one detail fetch for the whole batch, instead of a full
-  // refresh per queued save (which was O(N) refreshes on a slow reconnect - the
-  // exact scenario the offline queue is built for).
+  // Batched variant for flushing the offline queue. The save response already
+  // contains the canonical row, values, metrics, and quality, so applying it
+  // directly avoids an O(N) refresh/detail-fetch cascade after reconnect.
   const applyServerSavedReports = useCallback(
-    async (saves: Array<{ payload: SaveReportPayload; reportId: string | null }>) => {
-      if (!client || !saves.length) {
+    (saves: Array<{ payload: SaveReportPayload; report: ReportResponse }>) => {
+      if (!saves.length) {
         return
       }
 
       historyDataLoadedRef.current = false
-      await refreshDataWithOptions()
 
-      const resolved = saves
-        .map(({ payload, reportId }) => {
-          const savedReport =
-            (reportId
-              ? currentStateRef.current.reports.find((report) => report.id === reportId)
-              : null) ??
-            currentStateRef.current.reports.find(
-              (report) =>
-                report.assignmentId === payload.assignmentId &&
-                report.reportingPeriodId === payload.reportingPeriodId,
-            )
-          const savedReportId = reportId ?? savedReport?.id ?? null
-
-          return savedReportId ? { payload, savedReport, savedReportId } : null
-        })
-        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-
-      if (!resolved.length) {
-        return
-      }
-
-      let detailsById: Record<string, ReportDetailRecord> = {}
-      try {
-        detailsById = await fetchReportDetails(
-          client,
-          resolved.map((entry) => entry.savedReportId),
-        )
-      } catch (detailError) {
-        toast.error(
-          getMessage(
-            detailError,
-            'Reports saved, but the saved cell values could not be refreshed.',
-          ),
-        )
-      }
-
-      for (const { payload, savedReport, savedReportId } of resolved) {
-        const reportDetails = detailsById[savedReportId]
-        const savedValues =
-          reportDetails && Object.keys(reportDetails.values).length
-            ? reportDetails.values
-            : payload.values
-
+      for (const { payload, report } of saves) {
         applySavedReportDetails(
-          savedReportId,
+          report.id,
           payload,
-          savedValues,
-          reportDetails?.calculatedMetrics ?? savedReport?.calculatedMetrics,
-          reportDetails?.quality ?? savedReport?.quality,
+          Object.keys(report.values ?? {}).length ? report.values : payload.values,
+          report.calculatedMetrics,
+          report.quality,
+          report,
         )
       }
     },
-    [client, refreshDataWithOptions, applySavedReportDetails],
+    [applySavedReportDetails],
   )
 
   const flushQueuedReportSaves = useCallback(
@@ -1404,14 +1364,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         beginBackgroundSync()
         shouldEndBackgroundSync = true
 
-        const syncedSaves: Array<{ payload: SaveReportPayload; reportId: string | null }> = []
+        const syncedSaves: Array<{ payload: SaveReportPayload; report: ReportResponse }> = []
 
         for (const queuedSave of queuedSaves) {
           try {
-            const reportId = await saveReportMutation(client, queuedSave.payload)
+            const report = await saveReportMutation(client, queuedSave.payload)
             await removeQueuedReportSave(queuedSave.id)
             syncedCount += 1
-            syncedSaves.push({ payload: queuedSave.payload, reportId })
+            syncedSaves.push({ payload: queuedSave.payload, report })
           } catch (syncError) {
             if (isLikelyOfflineError(syncError)) {
               await recordQueuedReportSaveFailure(
@@ -1591,6 +1551,21 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [client, applyAuthenticatedProfile, loadUserState],
   )
 
+  const applyNotificationUpdate = useCallback(
+    (update: (notifications: NotificationItem[]) => NotificationItem[]) => {
+      setState((currentState) => {
+        const nextState = {
+          ...currentState,
+          notifications: update(currentState.notifications),
+        }
+        currentStateRef.current = nextState
+        persistWorkspaceCache(nextState)
+        return nextState
+      })
+    },
+    [persistWorkspaceCache],
+  )
+
   const markNotificationsRead = useCallback(
     async (userId: string, notificationIds: string[]): Promise<void> => {
       if (!client || !notificationIds.length) {
@@ -1598,15 +1573,20 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       try {
-        await updateNotificationReadState(client, userId, notificationIds)
-        await refreshDataWithOptions()
+        const response = await updateNotificationReadState(client, userId, notificationIds)
+        const updatedById = new Map(
+          (response?.data ?? []).map((notification) => [notification.id, notification]),
+        )
+        applyNotificationUpdate((notifications) =>
+          notifications.map((notification) => updatedById.get(notification.id) ?? notification),
+        )
       } catch (notificationError) {
         toast.error(
           getMessage(notificationError, 'Unable to mark notifications as read.'),
         )
       }
     },
-    [client, refreshDataWithOptions],
+    [applyNotificationUpdate, client],
   )
 
   const clearNotifications = useCallback(
@@ -1617,12 +1597,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       try {
         await clearNotificationsMutation(client, userId, notificationIds)
-        await refreshDataWithOptions()
+        const removedIds = new Set(notificationIds)
+        applyNotificationUpdate((notifications) =>
+          notifications.filter((notification) => !removedIds.has(notification.id)),
+        )
       } catch (notificationError) {
         toast.error(getMessage(notificationError, 'Unable to clear notifications.'))
       }
     },
-    [client, refreshDataWithOptions],
+    [applyNotificationUpdate, client],
   )
 
   const restoreNotifications = useCallback(
@@ -1632,13 +1615,20 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       try {
-        await restoreNotificationsMutation(client, notifications)
-        await refreshDataWithOptions()
+        const response = await restoreNotificationsMutation(client, notifications)
+        const restored = response?.data ?? notifications
+        applyNotificationUpdate((currentNotifications) => {
+          const restoredIds = new Set(restored.map((notification) => notification.id))
+          return [
+            ...restored,
+            ...currentNotifications.filter((notification) => !restoredIds.has(notification.id)),
+          ].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+        })
       } catch (notificationError) {
         toast.error(getMessage(notificationError, 'Unable to restore notifications.'))
       }
     },
-    [client, refreshDataWithOptions],
+    [applyNotificationUpdate, client],
   )
 
   // Both resolve to the server's own copy on success (null on failure). The
@@ -1806,14 +1796,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       try {
-        const reportId = await saveReportMutation(client, payload)
+        const report = await saveReportMutation(client, payload)
         const userId = currentUserIdRef.current ?? payload.actorId
 
         await removeQueuedReportSave(
           getReportSaveQueueId(userId, payload.assignmentId, payload.reportingPeriodId),
         )
         await refreshQueuedReportSaveState(userId)
-        await applyServerSavedReport(payload, reportId)
+        applyServerSavedReport(payload, report)
 
         return { saved: true, queued: false }
       } catch (saveError) {
@@ -2042,16 +2032,33 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return
       }
 
-      try {
-        await loadUserState(currentUserIdRef.current, 'Unable to load the user directory.', {
-          showBootstrapping: false,
-          includeProfiles: true,
-        })
-      } catch (loadError) {
-        toast.error(getMessage(loadError, 'Unable to load the user directory.'))
+      if (profileDirectoryRequestRef.current) {
+        return profileDirectoryRequestRef.current
       }
+
+      const request = (async () => {
+        try {
+        // Targeted fetch: the directory only. Re-running the full workspace
+        // load with includeProfiles=1 re-downloaded ~214 KB of reports, audit
+        // logs, and notifications to obtain one list, which was the second
+        // /api/workspace call on every admin page (INTERACTION_LATENCY_AUDIT).
+        const profiles = await fetchProfileDirectory(client)
+
+        const nextState = { ...currentStateRef.current, profiles }
+        currentStateRef.current = nextState
+        setState(nextState)
+        profileDirectoryLoadedRef.current = true
+        persistWorkspaceCache(nextState, { profileDirectoryLoaded: true })
+        } catch (loadError) {
+          toast.error(getMessage(loadError, 'Unable to load the user directory.'))
+        }
+      })().finally(() => {
+        profileDirectoryRequestRef.current = null
+      })
+      profileDirectoryRequestRef.current = request
+      return request
     },
-    [client, loadUserState],
+    [client, persistWorkspaceCache],
   )
 
   const ensureAccessRequestData = useCallback(
@@ -2060,16 +2067,38 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return
       }
 
-      try {
-        await loadUserState(currentUserIdRef.current, 'Unable to load access requests.', {
-          showBootstrapping: false,
-          includeAccessRequests: true,
-        })
-      } catch (loadError) {
-        toast.error(getMessage(loadError, 'Unable to load access requests.'))
+      if (accessRequestDataRequestRef.current) {
+        return accessRequestDataRequestRef.current
       }
+
+      const request = (async () => {
+        try {
+          const currentProfile = currentStateRef.current.profiles.find(
+            (profile) => profile.id === currentUserIdRef.current,
+          )
+          const accessRequests = await fetchAccessRequests(client, {
+            pendingOnly: currentProfile ? isAdminRole(currentProfile.role) : false,
+          })
+          const nextState = {
+            ...currentStateRef.current,
+            accessRequests,
+          }
+          currentStateRef.current = nextState
+          setState(nextState)
+          accessRequestDataLoadedRef.current = true
+          persistWorkspaceCache(nextState, {
+            accessRequestDataLoaded: true,
+          })
+        } catch (loadError) {
+          toast.error(getMessage(loadError, 'Unable to load access requests.'))
+        }
+      })().finally(() => {
+        accessRequestDataRequestRef.current = null
+      })
+      accessRequestDataRequestRef.current = request
+      return request
     },
-    [client, loadUserState],
+    [client, persistWorkspaceCache],
   )
 
   const ensureUserManagementData = useCallback(
@@ -2083,19 +2112,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       try {
-        // Users & Access needs both deferred collections. Fetch them together so
-        // the load-version guard does not discard one of two parallel workspace
-        // requests and trigger a second render/retry cycle.
-        await loadUserState(currentUserIdRef.current, 'Unable to load users and access requests.', {
-          showBootstrapping: false,
-          includeProfiles: true,
-          includeAccessRequests: true,
-        })
+        await Promise.all([
+          ensureProfileDirectoryData(),
+          ensureAccessRequestData(),
+        ])
       } catch (loadError) {
         toast.error(getMessage(loadError, 'Unable to load users and access requests.'))
       }
     },
-    [client, loadUserState],
+    [client, ensureAccessRequestData, ensureProfileDirectoryData],
   )
 
   const ensureHistoryData = useCallback(

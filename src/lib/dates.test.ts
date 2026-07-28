@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { formatAuditFieldValue, formatRelativeTimestamp } from '@/lib/dates'
+import {
+  formatAuditFieldValue,
+  formatRelativeTimestamp,
+  humanizeAuditKey,
+} from '@/lib/dates'
 
 describe('formatRelativeTimestamp', () => {
   beforeEach(() => {
@@ -59,7 +63,28 @@ describe('formatAuditFieldValue', () => {
     expect(formatAuditFieldValue('')).toBe('-')
   })
 
-  it('serializes objects rather than rendering [object Object]', () => {
-    expect(formatAuditFieldValue({ a: 1 })).toBe('{"a":1}')
+  it('renders objects as readable label/value pairs, not JSON', () => {
+    expect(formatAuditFieldValue({ weeklyDeadlineDay: 'monday' })).toBe(
+      'Weekly deadline day: monday',
+    )
+    expect(formatAuditFieldValue({})).toBe('None')
+  })
+
+  it('renders lists as prose and humanizes identifier-like entries', () => {
+    expect(formatAuditFieldValue(['new_deaths', 'hai_clabsi'])).toBe(
+      'New deaths, Hai clabsi',
+    )
+    expect(formatAuditFieldValue([1, 3, 5])).toBe('1, 3, 5')
+    expect(formatAuditFieldValue([])).toBe('None')
+  })
+})
+
+describe('humanizeAuditKey', () => {
+  it('reads snake_case and camelCase as a sentence', () => {
+    expect(humanizeAuditKey('new_pressure_ulcer')).toBe('New pressure ulcer')
+    expect(humanizeAuditKey('weeklyDeadlineDay')).toBe('Weekly deadline day')
+    expect(humanizeAuditKey('autoLockHoursAfterDeadline')).toBe(
+      'Auto lock hours after deadline',
+    )
   })
 })
