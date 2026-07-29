@@ -12,6 +12,7 @@ import {
   Bell,
   CheckCheck,
   CheckCircle2,
+  Download,
   FileLock2,
   PencilLine,
   RotateCcw,
@@ -164,6 +165,12 @@ const notificationMeta: Record<
     icon: TriangleAlert,
     iconTone: 'bg-[#fceeee] text-[#ba1a1a]',
     chipTone: 'border-[#f3cccc] bg-[#fceeee] text-[#ba1a1a]',
+  },
+  analytics_export_ready: {
+    label: 'Export ready',
+    icon: Download,
+    iconTone: 'bg-[#edf7f0] text-[#1f6b3b]',
+    chipTone: 'border-[#cfe7d9] bg-[#edf7f0] text-[#1f6b3b]',
   },
   nurse_access_request: {
     label: 'Access request',

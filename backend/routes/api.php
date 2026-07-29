@@ -131,7 +131,9 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
             Route::get('/yearly', [AnalyticsController::class, 'yearly']);
             Route::get('/departments', [AnalyticsController::class, 'departments']);
             Route::get('/wards', [AnalyticsController::class, 'wards']);
-            Route::get('/export', [AnalyticsController::class, 'export']);
+            Route::post('/exports', [AnalyticsController::class, 'queueExport']);
+            Route::get('/exports', [AnalyticsController::class, 'exports']);
+            Route::get('/exports/{analyticsExport}/download', [AnalyticsController::class, 'download']);
         });
 
     Route::prefix('academic')->group(function (): void {

@@ -50,6 +50,10 @@ import {
 
 const OPERATIONS_ANALYTICS_STALE_MS = 5 * 60 * 1000;
 
+function academicWindowLabel(window: { fromDate: string; toDate: string }) {
+  return `${format(parseISO(window.fromDate), 'MMM d, yyyy')} - ${format(parseISO(window.toDate), 'MMM d, yyyy')}`;
+}
+
 /** Loading shell shared by the three tabs. */
 function TabLoading() {
   return (
@@ -327,8 +331,8 @@ export function TeachingAnalyticsTab() {
         title={selectedBlock ? selectedBlock.batchLabel : 'Teaching delivery'}
         description={
           selectedBlock
-            ? `Held, missed, and pending teaching for ${selectedBlock.batchLabel}. Every chart below follows this block filter.`
-            : 'Held and missed teaching across all blocks. Choose a block to update every chart and follow-up count.'
+            ? `Held, missed, and pending teaching for ${selectedBlock.batchLabel}, ${academicWindowLabel(data.window)}. Every chart below follows this block filter.`
+            : `Held and missed teaching across all blocks, ${academicWindowLabel(data.window)}. Choose a block to update every chart and follow-up count.`
         }
         metrics={[
           {
@@ -598,7 +602,7 @@ export function StudentsAnalyticsTab() {
       <AcademicWorkspaceHero
         eyebrow="Student progress"
         title="Undergraduate performance"
-        description="Attendance, weekly evaluation movement, and final results across the active undergraduate programme."
+        description={`Attendance, weekly evaluation movement, and final results from ${academicWindowLabel(data.window)}.`}
         metrics={[
           {
             label: 'Students',

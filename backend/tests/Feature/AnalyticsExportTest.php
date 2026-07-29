@@ -2,17 +2,23 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\BuildAnalyticsExport;
+use App\Models\AnalyticsExport;
 use App\Models\Department;
 use App\Models\ReportAssignment;
 use App\Models\ReportingPeriod;
 use App\Models\ReportTemplate;
 use App\Models\User;
+use App\Services\Analytics\AnalyticsExportService;
+use App\Support\Export\XlsxWriter;
 use Database\Seeders\AppSettingSeeder;
 use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportFieldDefinitionSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class AnalyticsExportTest extends TestCase
@@ -115,19 +121,17 @@ class AnalyticsExportTest extends TestCase
             ],
         ])->assertCreated();
 
-        // A legacy period parameter must not narrow the new all-history export.
-        $response = $this->actingAs($this->admin)
-            ->get('/api/analytics/export?period='.$this->period->id);
+        $handle = fopen('php://temp', 'w+b');
+        $rowCount = app(AnalyticsExportService::class)->writeCsv($handle);
+        rewind($handle);
+        $csv = stream_get_contents($handle);
+        fclose($handle);
 
-        $response->assertOk();
-        $response->assertHeader('Content-Type', 'text/csv; charset=UTF-8');
-        $this->assertStringContainsString('attachment', $response->headers->get('Content-Disposition'));
-
-        $csv = $response->streamedContent();
         $lines = preg_split('/\r\n|\r|\n/', trim($csv));
         $rows = array_map('str_getcsv', $lines ?: []);
         $header = array_shift($rows);
 
+        $this->assertSame(count($rows), $rowCount);
         $this->assertContains('Assigned nurse', $header);
         $this->assertContains('Day', $header);
         $this->assertContains('Field key', $header);
@@ -185,17 +189,9 @@ class AnalyticsExportTest extends TestCase
             ],
         ])->assertOk();
 
-        $response = $this->actingAs($this->admin)
-            ->get('/api/analytics/export?format=xlsx');
-
-        $response->assertOk();
-        $response->assertHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        $disposition = (string) $response->headers->get('Content-Disposition');
-        $this->assertStringContainsString('attachment', $disposition);
-        $this->assertStringContainsString('.xlsx', $disposition);
-
-        // The body is a genuine .xlsx (zip) carrying the period's data.
-        $file = $response->baseResponse->getFile()->getPathname();
+        $file = (new XlsxWriter)->toMultiSheetTempFile(
+            app(AnalyticsExportService::class)->workbookSheets(),
+        );
         $this->assertTrue(is_file($file));
 
         $zip = new \ZipArchive;
@@ -237,16 +233,92 @@ class AnalyticsExportTest extends TestCase
         $this->assertStringContainsString('Old value', $editHistory);
         $this->assertStringContainsString('<v>20</v>', $editHistory);
         $this->assertStringContainsString('<v>25</v>', $editHistory);
+
+        unlink($file);
     }
 
-    public function test_nurses_cannot_export(): void
+    public function test_admin_can_queue_and_list_a_full_history_export(): void
+    {
+        Queue::fake();
+
+        $response = $this->actingAs($this->admin)
+            ->postJson('/api/analytics/exports', ['format' => 'csv'])
+            ->assertAccepted()
+            ->assertJsonPath('data.status', AnalyticsExport::STATUS_PENDING)
+            ->assertJsonPath('data.format', 'csv');
+
+        $exportId = $response->json('data.id');
+
+        Queue::assertPushed(
+            BuildAnalyticsExport::class,
+            fn (BuildAnalyticsExport $job): bool => $job->exportId === $exportId,
+        );
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/analytics/exports')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $exportId);
+    }
+
+    public function test_export_job_streams_csv_and_notifies_the_requesting_user(): void
+    {
+        Storage::fake('local');
+        $export = AnalyticsExport::query()->create([
+            'user_id' => $this->admin->id,
+            'status' => AnalyticsExport::STATUS_PENDING,
+            'format' => 'csv',
+        ]);
+
+        (new BuildAnalyticsExport($export->id))->handle(app(AnalyticsExportService::class));
+
+        $export->refresh();
+        $this->assertSame(AnalyticsExport::STATUS_READY, $export->status);
+        $this->assertGreaterThan(0, $export->row_count);
+        $this->assertGreaterThan(0, $export->byte_size);
+        $this->assertNotNull($export->expires_at);
+        Storage::disk('local')->assertExists($export->file_path);
+        $this->assertDatabaseHas('notifications', [
+            'recipient_id' => $this->admin->id,
+            'type' => 'analytics_export_ready',
+            'related_id' => $export->id,
+        ]);
+    }
+
+    public function test_only_export_owner_can_download_a_ready_file(): void
+    {
+        Storage::fake('local');
+        $path = "analytics-exports/{$this->admin->id}/ready.csv";
+        Storage::disk('local')->put($path, "Header\nValue\n");
+        $export = AnalyticsExport::query()->create([
+            'user_id' => $this->admin->id,
+            'status' => AnalyticsExport::STATUS_READY,
+            'format' => 'csv',
+            'file_path' => $path,
+            'file_name' => 'ready.csv',
+            'completed_at' => now(),
+            'expires_at' => now()->addDay(),
+        ]);
+        $otherAdmin = User::factory()->role('admin', 'Other admin')->create();
+
+        $this->actingAs($otherAdmin)
+            ->get("/api/analytics/exports/{$export->id}/download")
+            ->assertForbidden();
+
+        $this->actingAs($this->admin)
+            ->get("/api/analytics/exports/{$export->id}/download")
+            ->assertOk()
+            ->assertDownload('ready.csv');
+    }
+
+    public function test_nurses_cannot_queue_or_list_exports(): void
     {
         $this->actingAs($this->nurse)
-            ->get('/api/analytics/export?period='.$this->period->id)
+            ->postJson('/api/analytics/exports')
             ->assertForbidden();
 
         $this->actingAs($this->nurse)
-            ->get('/api/analytics/export?format=xlsx&period='.$this->period->id)
+            ->getJson('/api/analytics/exports')
             ->assertForbidden();
     }
 }

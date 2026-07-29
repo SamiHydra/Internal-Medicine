@@ -290,6 +290,27 @@ class AnalyticsTest extends TestCase
         );
     }
 
+    public function test_interactive_clinical_analytics_clamps_oversized_and_unbounded_windows(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-14 09:00:00'));
+
+        try {
+            $this->actingAs($this->admin)
+                ->getJson('/api/analytics/dashboard')
+                ->assertOk()
+                ->assertJsonPath('scope.dateFrom', '2025-09-14')
+                ->assertJsonPath('scope.dateTo', '2026-09-14');
+
+            $this->actingAs($this->admin)
+                ->getJson('/api/analytics/dashboard?date_from=2020-01-01&date_to=2026-09-14')
+                ->assertOk()
+                ->assertJsonPath('scope.dateFrom', '2025-09-14')
+                ->assertJsonPath('scope.dateTo', '2026-09-14');
+        } finally {
+            $this->travelBack();
+        }
+    }
+
     public function test_nurses_cannot_read_analytics(): void
     {
         $this->actingAs($this->nurse)

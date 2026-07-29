@@ -3,16 +3,17 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Services\Analytics\AnalyticsExportService;
+use App\Jobs\BuildAnalyticsExport;
+use App\Models\AnalyticsExport;
 use App\Services\Analytics\AnalyticsFilters;
 use App\Services\Analytics\AnalyticsService;
 use App\Services\Analytics\DashboardAnalyticsService;
 use App\Services\Analytics\InpatientAnalyticsService;
 use App\Services\Analytics\OutpatientAnalyticsService;
 use App\Services\Analytics\ProcedureAnalyticsService;
-use App\Support\Export\XlsxWriter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -24,7 +25,6 @@ class AnalyticsController extends Controller
         private readonly InpatientAnalyticsService $inpatientAnalytics,
         private readonly OutpatientAnalyticsService $outpatientAnalytics,
         private readonly ProcedureAnalyticsService $procedureAnalytics,
-        private readonly AnalyticsExportService $exportService,
     ) {}
 
     public function overview(Request $request): JsonResponse
@@ -112,25 +112,45 @@ class AnalyticsController extends Controller
         ]);
     }
 
-    public function export(Request $request): Response
+    public function queueExport(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'format' => ['sometimes', 'in:csv,xlsx'],
+            'format' => ['sometimes', 'in:csv'],
         ]);
 
-        if (($validated['format'] ?? 'csv') === 'xlsx') {
-            $path = (new XlsxWriter)->toMultiSheetTempFile($this->exportService->workbookSheets());
+        $export = AnalyticsExport::query()->create([
+            'user_id' => $request->user()->id,
+            'status' => AnalyticsExport::STATUS_PENDING,
+            'format' => $validated['format'] ?? 'csv',
+        ]);
 
-            return response()->download(
-                $path,
-                'st-paul-all-clinical-submissions.xlsx',
-                ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-            )->deleteFileAfterSend();
-        }
+        BuildAnalyticsExport::dispatch($export->id)->afterCommit();
 
-        return response()->streamDownload(
-            $this->exportService->streamCallback(),
-            'st-paul-all-clinical-submissions.csv',
+        return response()->json(['data' => $this->exportPayload($export)], 202);
+    }
+
+    public function exports(Request $request): JsonResponse
+    {
+        $exports = AnalyticsExport::query()
+            ->where('user_id', $request->user()->id)
+            ->latest()
+            ->limit(20)
+            ->get()
+            ->map($this->exportPayload(...));
+
+        return response()->json(['data' => $exports]);
+    }
+
+    public function download(Request $request, AnalyticsExport $analyticsExport): Response
+    {
+        abort_unless($analyticsExport->user_id === $request->user()->id, 403);
+        abort_unless($analyticsExport->status === AnalyticsExport::STATUS_READY, 409, 'The export is not ready.');
+        abort_if($analyticsExport->expires_at?->isPast(), 410, 'The export has expired.');
+        abort_unless($analyticsExport->file_path && Storage::disk('local')->exists($analyticsExport->file_path), 404);
+
+        return Storage::disk('local')->download(
+            $analyticsExport->file_path,
+            $analyticsExport->file_name ?? 'clinical-submissions-full-history.csv',
             ['Content-Type' => 'text/csv; charset=UTF-8'],
         );
     }
@@ -159,6 +179,28 @@ class AnalyticsController extends Controller
             'procedureCategory' => ['sometimes', 'string', 'max:80'],
         ]);
 
-        return AnalyticsFilters::fromArray($validated);
+        return AnalyticsFilters::fromArray($validated)->boundedInteractive();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function exportPayload(AnalyticsExport $export): array
+    {
+        return [
+            'id' => $export->id,
+            'status' => $export->status,
+            'format' => $export->format,
+            'fileName' => $export->file_name,
+            'rowCount' => $export->row_count,
+            'byteSize' => $export->byte_size,
+            'error' => $export->error,
+            'createdAt' => $export->created_at?->toIso8601String(),
+            'completedAt' => $export->completed_at?->toIso8601String(),
+            'expiresAt' => $export->expires_at?->toIso8601String(),
+            'downloadUrl' => $export->status === AnalyticsExport::STATUS_READY
+                ? "/api/analytics/exports/{$export->id}/download"
+                : null,
+        ];
     }
 }

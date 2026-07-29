@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { format } from 'date-fns'
 import { animate, motion, useReducedMotion } from 'framer-motion'
-import { Activity, BedDouble, ChevronDown, Download, Filter, Gauge, RefreshCw, Sparkles, Stethoscope } from 'lucide-react'
+import { Activity, BedDouble, ChevronDown, Filter, Gauge, RefreshCw, Sparkles, Stethoscope } from 'lucide-react'
 import {
   Area,
   AreaChart,
@@ -27,6 +27,7 @@ import {
 } from 'recharts'
 
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
+import { AnalyticsExportPanel } from '@/components/admin/analytics-export-panel'
 import { Delta, DeltaIcon, DeltaValue } from '@/components/delta'
 import { Button } from '@/components/ui/button'
 import {
@@ -40,7 +41,6 @@ import {
   type DashboardAnalyticsPayload,
 } from '@/lib/api/analytics'
 import { getApiBrowserClient } from '@/lib/api/client'
-import { apiEnv } from '@/lib/api/env'
 import { evaluateMetricTarget, type RagStatus } from '@/lib/performance-targets'
 import {
   Select,
@@ -753,8 +753,6 @@ export function AdminDashboardPage() {
   const {
     state,
     ensureReportDetails,
-    reportPeriodWindow,
-    refreshData,
     getReportDetailLoadState,
     isReportDetailLoaded,
   } = useAppData()
@@ -780,7 +778,6 @@ export function AdminDashboardPage() {
   const [procedureTrendScope, setProcedureTrendScope] = useState(ALL_PROCEDURE_SERVICES_TOTAL)
   const [procedureComparisonMonthKey, setProcedureComparisonMonthKey] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const requestedReportWindowRef = useRef<'default' | 'all' | null>(null)
   // ~15 charts otherwise run their mount count-up animation in the same first
   // frame (each ResponsiveContainer also forces a measure pass), which is the
   // dominant main-thread long task on dashboard open. Render charts at their
@@ -991,22 +988,6 @@ export function AdminDashboardPage() {
         ? readCachedDashboardAnalytics(dashboardAnalyticsQuery)
         : null
   useEffect(() => {
-    const nextReportWindow = timeRange === 'all' ? 'all' : 'default'
-
-    if (reportPeriodWindow === nextReportWindow) {
-      requestedReportWindowRef.current = null
-      return
-    }
-
-    if (requestedReportWindowRef.current === nextReportWindow) {
-      return
-    }
-
-    requestedReportWindowRef.current = nextReportWindow
-    void refreshData({ reportPeriodWindow: nextReportWindow })
-  }, [refreshData, reportPeriodWindow, timeRange])
-
-  useEffect(() => {
     const client = getApiBrowserClient()
 
     if (!client || !dashboardQueryKey) {
@@ -1082,6 +1063,7 @@ export function AdminDashboardPage() {
     last4: 'Last 4 weeks',
     last8: 'Last 8 weeks',
     quarter: 'Last quarter',
+    last26: 'Last 26 weeks',
     all: 'All available data',
   } as const
   const timeRangeOptions = [
@@ -1089,7 +1071,7 @@ export function AdminDashboardPage() {
     { value: 'last4' as const, label: 'Last 4 weeks' },
     { value: 'last8' as const, label: 'Last 8 weeks' },
     { value: 'quarter' as const, label: 'Last quarter (13 weeks)' },
-    { value: 'all' as const, label: 'All available data' },
+    { value: 'last26' as const, label: 'Last 26 weeks' },
   ] as const
   const trendScaleLabels = {
     weekly: 'Weekly trends',
@@ -1862,19 +1844,7 @@ export function AdminDashboardPage() {
                 {selectedRangeNote}
               </p>
             </div>
-            <Button
-              asChild
-              variant="secondary"
-              className="h-10 w-full shrink-0 border border-[#d7e0ea] bg-white px-4 shadow-none transition-colors hover:border-[#b8c7d8] hover:bg-[#f8fafc] sm:w-fit"
-            >
-              <a
-                href={apiEnv.baseUrl ? `${apiEnv.baseUrl}/api/analytics/export?format=xlsx` : undefined}
-                title="Download every historical submission in the same weekly form layout nurses use"
-              >
-                <Download className="h-4 w-4" />
-                Export clinical forms
-              </a>
-            </Button>
+            <AnalyticsExportPanel />
           </div>
           <div className="border-y border-[#e3e8ef] bg-[#f8fafc]/75">
             <button

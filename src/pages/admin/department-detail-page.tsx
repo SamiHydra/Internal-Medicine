@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { ArrowLeft } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
@@ -40,14 +40,11 @@ export function DepartmentDetailPage() {
     state,
     ensureHistoryData,
     ensureReportDetails,
-    reportPeriodWindow,
-    refreshData,
     resolveDepartmentSlug,
   } = useAppData()
   const resolvedDepartmentId = resolveDepartmentSlug(departmentId) ?? departmentId
   const [timeRange, setTimeRange] = useState<ReportingTimeRange>('last8')
   const [selectedPeriodId, setSelectedPeriodId] = useState('')
-  const requestedReportWindowRef = useRef<'default' | 'all' | null>(null)
   const currentPeriod = getCurrentPeriod(state)
   const availablePeriods = [...getVisibleReportingPeriods(state)].reverse()
   const fallbackPeriodId = currentPeriod?.id ?? availablePeriods[0]?.id ?? ''
@@ -71,22 +68,6 @@ export function DepartmentDetailPage() {
   useEffect(() => {
     void ensureHistoryData()
   }, [ensureHistoryData])
-
-  useEffect(() => {
-    const nextReportWindow = timeRange === 'all' ? 'all' : 'default'
-
-    if (reportPeriodWindow === nextReportWindow) {
-      requestedReportWindowRef.current = null
-      return
-    }
-
-    if (requestedReportWindowRef.current === nextReportWindow) {
-      return
-    }
-
-    requestedReportWindowRef.current = nextReportWindow
-    void refreshData({ reportPeriodWindow: nextReportWindow })
-  }, [refreshData, reportPeriodWindow, timeRange])
 
   useEffect(() => {
     const departmentReportIds = departmentReportIdsKey
@@ -132,7 +113,7 @@ export function DepartmentDetailPage() {
     { value: 'last4' as const, label: 'Last 4 weeks' },
     { value: 'last8' as const, label: 'Last 8 weeks' },
     { value: 'quarter' as const, label: 'Last quarter (13 weeks)' },
-    { value: 'all' as const, label: 'All available data' },
+    { value: 'last26' as const, label: 'Last 26 weeks' },
   ] as const
   const reportingPeriodOptions = availablePeriods.map((period) => ({
     label: period.label,

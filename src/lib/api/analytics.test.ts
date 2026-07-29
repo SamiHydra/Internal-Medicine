@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   clearDashboardAnalyticsCache,
+  fetchAnalyticsExports,
   fetchAndCacheDashboardAnalytics,
   fetchDashboardAnalytics,
   fetchQuarterlyAnalytics,
+  queueFullHistoryAnalyticsExport,
   readCachedDashboardAnalytics,
 } from '@/lib/api/analytics'
 import { LaravelApiClient } from '@/lib/api/client'
@@ -139,5 +141,29 @@ describe('fetchDashboardAnalytics', () => {
       '/api/analytics/quarterly?year=2026&family=inpatient',
     )
     expect(payload.data[0].quarterLabel).toBe('Q2 2026')
+  })
+
+  it('queues and lists full-history exports through the asynchronous endpoints', async () => {
+    const exportRecord = {
+      id: 'export-1',
+      status: 'pending' as const,
+      format: 'csv' as const,
+      fileName: null,
+      rowCount: 0,
+      byteSize: null,
+      error: null,
+      createdAt: '2026-09-14T09:00:00.000000Z',
+      completedAt: null,
+      expiresAt: null,
+      downloadUrl: null,
+    }
+    const client = new LaravelApiClient('http://127.0.0.1:8000')
+    const post = vi.spyOn(client, 'post').mockResolvedValue({ data: exportRecord })
+    const get = vi.spyOn(client, 'get').mockResolvedValue({ data: [exportRecord] })
+
+    await expect(queueFullHistoryAnalyticsExport(client)).resolves.toEqual(exportRecord)
+    await expect(fetchAnalyticsExports(client)).resolves.toEqual([exportRecord])
+    expect(post).toHaveBeenCalledWith('/api/analytics/exports', { format: 'csv' })
+    expect(get).toHaveBeenCalledWith('/api/analytics/exports')
   })
 })

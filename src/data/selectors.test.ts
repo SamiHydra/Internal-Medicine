@@ -315,6 +315,7 @@ describe('reporting time ranges', () => {
     })
 
     expect(getReportingPeriodsForRange(state, 'current', periods[2].id)).toEqual([periods[2]])
+    expect(getReportingPeriodsForRange(state, 'last26', periods[2].id)).toEqual(periods)
     expect(getReportingPeriodsForRange(state, 'all', periods[1].id)).toEqual([
       periods[0],
       periods[1],

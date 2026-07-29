@@ -39,6 +39,7 @@ export type NotificationType =
   | 'report_locked'
   | 'report_unlocked'
   | 'overdue_report'
+  | 'analytics_export_ready'
   | 'nurse_access_request'
   | 'admin_access_request'
   | 'access_request_reviewed'

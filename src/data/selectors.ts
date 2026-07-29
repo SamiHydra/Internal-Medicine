@@ -49,7 +49,13 @@ const liveReportingStartDate = resolveLiveReportingStart()
  * Ranges are counts of weekly reporting periods. `quarter` is 13 of them, the
  * standard clinical quarter, added because the clinic reports quarterly.
  */
-export type ReportingTimeRange = 'current' | 'last4' | 'last8' | 'quarter' | 'all'
+export type ReportingTimeRange =
+  | 'current'
+  | 'last4'
+  | 'last8'
+  | 'quarter'
+  | 'last26'
+  | 'all'
 
 /** Weeks in a quarter. */
 export const QUARTER_WEEKS = 13
@@ -303,7 +309,9 @@ export function getReportingPeriodsForRange(
   }
 
   const periodCount =
-    range === 'quarter'
+    range === 'last26'
+      ? 26
+      : range === 'quarter'
       ? QUARTER_WEEKS
       : range === 'last8'
         ? 8

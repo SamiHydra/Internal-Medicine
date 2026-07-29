@@ -131,6 +131,22 @@ export type AnalyticsRollupPayload = {
   data: AnalyticsRollupRow[]
 }
 
+export type AnalyticsExportStatus = 'pending' | 'processing' | 'ready' | 'failed'
+
+export type AnalyticsExportRecord = {
+  id: string
+  status: AnalyticsExportStatus
+  format: 'csv'
+  fileName: string | null
+  rowCount: number
+  byteSize: number | null
+  error: string | null
+  createdAt: string
+  completedAt: string | null
+  expiresAt: string | null
+  downloadUrl: string | null
+}
+
 const DASHBOARD_ANALYTICS_CACHE_TTL_MS = 5 * 60 * 1000
 const DASHBOARD_ANALYTICS_CACHE_MAX_ENTRIES = 12
 
@@ -244,4 +260,21 @@ export function fetchYearlyAnalytics(
   query?: AnalyticsQuery,
 ) {
   return fetchAnalytics<AnalyticsRollupPayload>(client, 'yearly', query)
+}
+
+export async function queueFullHistoryAnalyticsExport(client: LaravelApiClient) {
+  const payload = await client.post<{ data: AnalyticsExportRecord }>(
+    '/api/analytics/exports',
+    { format: 'csv' },
+  )
+
+  return payload.data
+}
+
+export async function fetchAnalyticsExports(client: LaravelApiClient) {
+  const payload = await client.get<{ data: AnalyticsExportRecord[] }>(
+    '/api/analytics/exports',
+  )
+
+  return payload.data
 }

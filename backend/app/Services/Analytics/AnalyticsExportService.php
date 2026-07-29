@@ -6,6 +6,7 @@ use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use PDO;
 
 /**
  * Exports every historically submitted clinical report.
@@ -144,14 +145,30 @@ class AnalyticsExportService
     {
         return function (): void {
             $handle = fopen('php://output', 'w');
-            fputcsv($handle, self::DATA_HEADER);
+            $this->writeCsv($handle);
 
-            foreach ($this->submittedDataRows() as $row) {
-                fputcsv($handle, array_map($this->sanitizeCell(...), $row));
+            if (is_resource($handle)) {
+                fclose($handle);
             }
-
-            fclose($handle);
         };
+    }
+
+    /**
+     * Write the full-history CSV to an already-open stream without buffering.
+     *
+     * @param  resource  $handle
+     */
+    public function writeCsv($handle): int
+    {
+        fputcsv($handle, self::DATA_HEADER);
+        $rowCount = 0;
+
+        foreach ($this->submittedDataRows() as $row) {
+            fputcsv($handle, array_map($this->sanitizeCell(...), $row));
+            $rowCount++;
+        }
+
+        return $rowCount;
     }
 
     /**
@@ -741,7 +758,7 @@ class AnalyticsExportService
      */
     public function submittedDataRows(): \Generator
     {
-        foreach ($this->submittedCellQuery()->cursor() as $row) {
+        foreach ($this->unbufferedCursor($this->submittedCellQuery()) as $row) {
             yield $this->dataRow($row);
         }
     }
@@ -883,6 +900,33 @@ class AnalyticsExportService
             ->orderBy('field_values.field_definition_id')
             ->orderBy('day_order')
             ->orderBy('field_values.id');
+    }
+
+    /**
+     * PDO MySQL buffers an entire result set by default, even when Laravel's
+     * cursor() API is used. Disable that client-side buffer for the one export
+     * query so worker memory remains flat as retained history grows.
+     *
+     * @return \Generator<int, object>
+     */
+    private function unbufferedCursor(Builder $query): \Generator
+    {
+        $connection = $query->getConnection();
+
+        if (! in_array($connection->getDriverName(), ['mysql', 'mariadb'], true)) {
+            yield from $query->cursor();
+
+            return;
+        }
+
+        $pdo = $connection->getPdo();
+        $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, false);
+
+        try {
+            yield from $query->cursor();
+        } finally {
+            $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, true);
+        }
     }
 
     /**
