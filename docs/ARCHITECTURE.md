@@ -87,7 +87,7 @@ In production there is no Vite proxy. Nginx serves the SPA and Laravel from the 
 │   ├── routes/
 │   │   ├── api.php                  # the entire /api surface
 │   │   ├── web.php                  # welcome view + /up health check
-│   │   └── console.php              # scheduler: overdue/reminders hourly, ensure-periods weekly, queue drain every minute
+│   │   └── console.php              # scheduler: reports, queue health, and shared-host queue drain
 │   ├── app/
 │   │   ├── Http/
 │   │   │   ├── Controllers/Api/         # AuthController, WorkspaceController, ReportWorkflowController, ...
@@ -313,9 +313,14 @@ Provides `serializeUser`, `serializeAssignment`, `serializeDepartment`, `seriali
 Schedule::command('reports:sync-overdue')->hourly();           // OverdueReportService::sync
 Schedule::command('reports:send-reminders')->hourly();         // ReportReminderService::sendDue
 Schedule::command('reports:ensure-periods')->weeklyOn(0, '00:05'); // ReportingPeriodService::ensureRollingWindow
-Schedule::command('queue:work --stop-when-empty --max-time=50')->everyMinute()->withoutOverlapping();
+Schedule::command('queue:monitor-health --json')->everyMinute()->withoutOverlapping();
+Schedule::command('queue:work --stop-when-empty --max-time=50 --queue=analytics,notifications,default')
+    ->everyMinute()->withoutOverlapping(); // shared-host fallback only
 ```
-Commands: `SyncOverdueReports`, `EnsureReportingPeriods` (`--past`/`--future`), `CreateSuperadmin`.
+Production runs separate persistent workers for `analytics,default` and
+`notifications,default`. Commands include `SyncOverdueReports`,
+`EnsureReportingPeriods` (`--past`/`--future`), `MonitorQueueHealth`, and
+`CreateSuperadmin`.
 
 ## Full API Surface
 

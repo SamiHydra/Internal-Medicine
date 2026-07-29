@@ -40,11 +40,12 @@ Schedule::call(fn () => Cache::put('scheduler:heartbeat', now()->toIso8601String
 // QUEUE_WORKER_MODE=daemon there and this line becomes a no-op (V2 guide 11.1).
 // Read through config(), NOT env(): env() returns null once config:cache runs.
 if (config('queue.worker_mode') !== 'daemon') {
-    Schedule::command('queue:work --stop-when-empty --max-time=50')->everyMinute()->timezone($businessTimezone)->withoutOverlapping(10);
+    Schedule::command('queue:work --stop-when-empty --max-time=50 --queue=analytics,notifications,default')->everyMinute()->timezone($businessTimezone)->withoutOverlapping(10);
 }
 
 // Retry only recent, allow-listed transient deliveries, at most once per job
 // UUID. Never replay every failed business/validation job indiscriminately.
+Schedule::command('queue:monitor-health --json')->everyMinute()->timezone($businessTimezone)->withoutOverlapping(10);
 Schedule::command('queue:retry-transient')->everyThirtyMinutes()->timezone($businessTimezone)->withoutOverlapping(10);
 Schedule::command('queue:prune-failed --hours=720')->daily()->timezone($businessTimezone);
 Schedule::command('queue:prune-batches --hours=168 --unfinished=168 --cancelled=168')->daily()->timezone($businessTimezone);

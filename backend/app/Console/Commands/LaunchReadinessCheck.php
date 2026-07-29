@@ -309,27 +309,33 @@ class LaunchReadinessCheck extends Command
             );
         }
 
-        // The persistent queue worker unit (replaces the cron-tick worker).
-        $unit = (string) config('operations.queue_worker_service', 'imreport-queue.service');
+        // The persistent named-queue workers replace the cron-tick worker.
+        $units = (array) config('operations.queue_worker_services', [
+            'imreport-queue.service',
+            'imreport-queue-notifications.service',
+        ]);
 
         if (config('queue.worker_mode') !== 'daemon') {
             $this->recordWarning(
-                'Persistent queue worker active',
-                'QUEUE_WORKER_MODE is not "daemon": the cron-tick worker is in use. On the department server set QUEUE_WORKER_MODE=daemon and install deploy/queue-worker.service.',
+                'Persistent queue workers active',
+                'QUEUE_WORKER_MODE is not "daemon": the cron-tick worker is in use. On the department server set QUEUE_WORKER_MODE=daemon and install both deploy queue-worker units.',
             );
         } elseif (PHP_OS_FAMILY !== 'Linux' || ! function_exists('shell_exec')) {
             $this->recordWarning(
-                'Persistent queue worker active',
-                sprintf('Manual check: systemctl is-active %s.', $unit),
+                'Persistent queue workers active',
+                sprintf('Manual check: systemctl is-active %s.', implode(' ', $units)),
             );
         } else {
-            $state = trim((string) shell_exec(sprintf('systemctl is-active %s 2>/dev/null', escapeshellarg($unit))));
-            $this->record(
-                $state === 'active',
-                'Persistent queue worker active',
-                sprintf('%s is active.', $unit),
-                sprintf('%s reports "%s". systemctl start %s and check journalctl -u %s.', $unit, $state === '' ? 'unknown' : $state, $unit, $unit),
-            );
+            foreach ($units as $unit) {
+                $unit = (string) $unit;
+                $state = trim((string) shell_exec(sprintf('systemctl is-active %s 2>/dev/null', escapeshellarg($unit))));
+                $this->record(
+                    $state === 'active',
+                    "Persistent queue worker active: {$unit}",
+                    sprintf('%s is active.', $unit),
+                    sprintf('%s reports "%s". systemctl start %s and check journalctl -u %s.', $unit, $state === '' ? 'unknown' : $state, $unit, $unit),
+                );
+            }
         }
 
         // The scheduler heartbeat: routes/console.php touches this cache key

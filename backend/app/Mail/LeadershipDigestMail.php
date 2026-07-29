@@ -18,7 +18,9 @@ class LeadershipDigestMail extends Mailable
      */
     public function __construct(
         public readonly array $digest,
-    ) {}
+    ) {
+        $this->onQueue('notifications');
+    }
 
     public function envelope(): Envelope
     {

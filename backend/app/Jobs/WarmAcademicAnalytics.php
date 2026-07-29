@@ -25,6 +25,11 @@ class WarmAcademicAnalytics implements ShouldBeUniqueUntilProcessing, ShouldQueu
 
     public array $backoff = [15, 60];
 
+    public function __construct()
+    {
+        $this->onQueue('analytics');
+    }
+
     public function handle(AcademicAnalyticsService $analytics): void
     {
         $analytics->warm();

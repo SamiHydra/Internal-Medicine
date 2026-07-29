@@ -23,7 +23,9 @@ class BuildAnalyticsExport implements ShouldQueue
 
     public function __construct(
         public readonly string $exportId,
-    ) {}
+    ) {
+        $this->onQueue('analytics');
+    }
 
     public function handle(AnalyticsExportService $service): void
     {

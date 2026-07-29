@@ -21,7 +21,8 @@ The queue worker, Nginx, cron, and operators always use `/opt/imreport/current`.
 |---|---|---|
 | `nginx.conf` | Same-origin SPA and Laravel host | `/etc/nginx/sites-available/imreport` |
 | `php-fpm.conf` | Explicit worker limits, memory limit, recycling, timeout, and slow log | `/etc/php/8.3/fpm/pool.d/imreport.conf` |
-| `queue-worker.service` | Persistent database queue worker | `/etc/systemd/system/imreport-queue.service` |
+| `queue-worker.service` | Analytics/default database queue worker | `/etc/systemd/system/imreport-queue.service` |
+| `queue-notifications-worker.service` | Isolated notification/default worker | `/etc/systemd/system/imreport-queue-notifications.service` |
 | `backup.sh` | Daily consistent dump, retention, secondary copy, integrity check | Cron at 02:00 |
 | `deploy.sh` | Locked, versioned, backup-first atomic deployment | Run from the source checkout |
 | `ufw.sh` | Hospital-LAN firewall rules | Run once |
@@ -43,11 +44,13 @@ The queue worker, Nginx, cron, and operators always use `/opt/imreport/current`.
    - `SANCTUM_STATEFUL_DOMAINS=im.hospital.internal`
    - `CORS_ALLOWED_ORIGINS=https://im.hospital.internal`
    - `QUEUE_WORKER_MODE=daemon`
-   - `TRUSTED_PROXIES=*`, `QUEUE_WORKER_SERVICE=imreport-queue.service`
+   - `TRUSTED_PROXIES=*`
+   - `QUEUE_WORKER_SERVICES=imreport-queue.service,imreport-queue-notifications.service`
+   - `QUEUE_DEPTH_WARNING=100`, `QUEUE_OLDEST_WARNING_SECONDS=300`
    - `BACKUP_DIR=/var/backups/imreport`, `SECONDARY_BACKUP_DIR=/mnt/backup/imreport`, `MIN_FREE_DISK_GB=5`
    - `BACKUP_RESTORE_VERIFIED_AT=<ISO-8601 time of the latest successful restore drill>`
    - `ERROR_MONITORING_CHANNEL=<Sentry project or named scheduled log-review process>`
-8. Install the Nginx, PHP-FPM pool, systemd, logrotate, and firewall files. Disable the distribution `www` pool if it is otherwise unused, then validate with `php-fpm8.3 -t` before reloading PHP-FPM.
+8. Install the Nginx, PHP-FPM pool, both queue-worker systemd units, logrotate, and firewall files. Enable `imreport-queue.service` and `imreport-queue-notifications.service`. Disable the distribution `www` pool if it is otherwise unused, then validate with `php-fpm8.3 -t` before reloading PHP-FPM.
 9. Install `/etc/cron.d/imreport` using the stable active-release link and the explicit service account:
 
    ```cron
@@ -63,6 +66,25 @@ The queue worker, Nginx, cron, and operators always use `/opt/imreport/current`.
 10. Run `sudo -u imreport /opt/imreport/source/deploy/deploy.sh --dry-run` and correct every missing prerequisite.
 11. Run `sudo -u imreport /opt/imreport/source/deploy/deploy.sh`.
 12. Confirm `cd /opt/imreport/current/backend && php artisan app:launch-readiness --strict` is green.
+
+## Queue worker layout
+
+The primary worker consumes `analytics,default`; the second consumes
+`notifications,default`. Analytics warms and exports therefore retain a worker
+even when an SMTP/SMS delivery is slow. `queue:monitor-health --json` runs each
+minute and logs every queue's depth and oldest-job age, warning above the
+configured thresholds.
+
+For the smallest install, one worker is supported only as an explicit fallback:
+disable `imreport-queue-notifications.service` and override the primary unit's
+command to:
+
+```text
+/usr/bin/php artisan queue:work --queue=analytics,notifications,default --tries=3 --backoff=10 --max-time=3600
+```
+
+The single-worker fallback sacrifices isolation and should be replaced by the
+two-unit layout when notification delivery is enabled.
 
 ## Capacity and Redis scale-up
 

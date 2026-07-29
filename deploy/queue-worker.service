@@ -1,6 +1,6 @@
-# The persistent queue worker (V2 guide 11.1), replacing the cron-tick
-# queue:work line. The ONE always-on process the on-prem move buys us; no
-# Redis, the queue stays on the database driver.
+# Primary worker for latency-sensitive analytics jobs plus ordinary default
+# work. Notification deliveries are isolated in queue-notifications-worker.service
+# so a slow mail/SMS gateway cannot occupy the analytics worker.
 #
 # Install:
 #   sudo cp deploy/queue-worker.service /etc/systemd/system/imreport-queue.service
@@ -21,7 +21,7 @@ Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/opt/imreport/current/backend
-ExecStart=/usr/bin/php artisan queue:work --tries=3 --backoff=10 --max-time=3600
+ExecStart=/usr/bin/php artisan queue:work --queue=analytics,default --tries=3 --backoff=10 --max-time=3600
 Restart=always
 RestartSec=5
 StandardOutput=append:/var/log/imreport-queue.log

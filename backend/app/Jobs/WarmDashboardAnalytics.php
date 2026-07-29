@@ -26,6 +26,11 @@ class WarmDashboardAnalytics implements ShouldBeUniqueUntilProcessing, ShouldQue
 
     public array $backoff = [15, 60];
 
+    public function __construct()
+    {
+        $this->onQueue('analytics');
+    }
+
     public function handle(DashboardAnalyticsService $analytics): void
     {
         $analytics->warm();

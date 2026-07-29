@@ -42,7 +42,8 @@ Safe at any time; users see at most a few seconds of delay.
 ```
 sudo systemctl restart php8.3-fpm      # the application
 sudo systemctl restart nginx           # the web server
-sudo systemctl restart imreport-queue  # emails & notifications
+sudo systemctl restart imreport-queue  # analytics and ordinary jobs
+sudo systemctl restart imreport-queue-notifications # email/SMS/digests
 sudo systemctl restart cron            # scheduled jobs
 ```
 
@@ -133,7 +134,8 @@ previous code release and prints the database recovery warning.
 |---|---|
 | Application errors | `/opt/imreport/shared/storage/logs/laravel.log` |
 | Scheduled jobs | `/opt/imreport/shared/storage/logs/schedule.log` |
-| Queue worker (emails/notifications) | `/var/log/imreport-queue.log` |
+| Analytics/default queue worker | `/var/log/imreport-queue.log` |
+| Notification queue worker | `/var/log/imreport-queue-notifications.log` |
 | Nightly backups | `/var/log/imreport-backup.log` |
 | Web server | `/var/log/nginx/error.log` |
 
@@ -142,6 +144,12 @@ previous code release and prints the database recovery warning.
 Set `ERROR_MONITORING_CHANNEL` in `backend.env` to the real operational path
 that watches these errors, such as a Sentry project name or a named daily
 Hospital IT log-review procedure. Leaving it blank makes strict readiness fail.
+
+The scheduler runs `php artisan queue:monitor-health --json` every minute.
+Warnings mean a named queue exceeded `QUEUE_DEPTH_WARNING` or a database-backed
+job waited longer than `QUEUE_OLDEST_WARNING_SECONDS`. Check both worker units
+and their logs; do not move analytics work onto the notification worker as a
+shortcut.
 
 ---
 

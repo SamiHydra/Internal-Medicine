@@ -55,7 +55,10 @@ The app scheduler currently runs:
 - `reports:sync-overdue` hourly
 - `reports:send-reminders` hourly
 - `reports:ensure-periods` Sundays at 00:05
-- `queue:work --stop-when-empty --max-time=50` every minute
+- `queue:monitor-health --json` every minute
+- `queue:work --stop-when-empty --max-time=50
+  --queue=analytics,notifications,default` every minute only when
+  `QUEUE_WORKER_MODE` is not `daemon`
 
 Verify by checking `storage/logs/schedule.log` and by testing that overdue report
 notifications update without someone visiting the SPA.
@@ -66,6 +69,9 @@ notifications update without someone visiting the SPA.
 - Configure SMS through `SMS_DRIVER`; use `log` locally and `http` with
   `SMS_HTTP_ENDPOINT`/`SMS_HTTP_TOKEN` for the production gateway.
 - Keep `QUEUE_CONNECTION=database` on shared hosting.
+- On the production server, enable both `imreport-queue.service`
+  (`analytics,default`) and `imreport-queue-notifications.service`
+  (`notifications,default`).
 - Verify a queued delivery sends both an email and SMS to a test user with a
   populated `email` and `phone`.
 

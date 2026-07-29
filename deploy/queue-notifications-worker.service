@@ -1,0 +1,25 @@
+# Isolated mail/SMS/digest worker. It also drains default work when the
+# notifications queue is empty, while never competing for analytics jobs.
+#
+# Install:
+#   sudo cp deploy/queue-notifications-worker.service /etc/systemd/system/imreport-queue-notifications.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now imreport-queue-notifications.service
+
+[Unit]
+Description=St Paul IM reporting notification queue worker
+After=network.target mariadb.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/imreport/current/backend
+ExecStart=/usr/bin/php artisan queue:work --queue=notifications,default --tries=3 --backoff=10 --max-time=3600
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/imreport-queue-notifications.log
+StandardError=append:/var/log/imreport-queue-notifications.log
+
+[Install]
+WantedBy=multi-user.target
