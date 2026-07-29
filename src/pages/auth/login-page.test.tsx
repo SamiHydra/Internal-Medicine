@@ -49,4 +49,24 @@ describe('LoginPage public entry', () => {
       expect(onAuthenticated).toHaveBeenCalledWith(user)
     })
   })
+
+  it('keeps decorative dividers out of the hero flex layout', () => {
+    api.get.mockReturnValue(new Promise(() => undefined))
+
+    const { container } = render(
+      <MemoryRouter initialEntries={['/login']}>
+        <LoginPage />
+      </MemoryRouter>,
+    )
+    const hero = container.querySelector('.login-hero')
+    const children = Array.from(hero?.children ?? [])
+
+    expect(children).toHaveLength(4)
+    expect(children[0]).toHaveClass('absolute')
+    expect(children[1]).toHaveClass('absolute')
+    expect(children[0]).not.toHaveClass('login-hero-content')
+    expect(children[1]).not.toHaveClass('login-hero-content')
+    expect(children[2]).toHaveClass('login-hero-content')
+    expect(children[3]).toHaveClass('login-hero-content')
+  })
 })

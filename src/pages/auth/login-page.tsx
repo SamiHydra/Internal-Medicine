@@ -171,7 +171,7 @@ export function LoginPage({
             <div className="absolute inset-y-0 left-0 w-px bg-white/10" />
             <div className="absolute inset-y-0 right-0 w-px bg-white/8" />
 
-            <div className="relative z-10">
+            <div className="login-hero-content relative z-10">
               <div className="flex items-center gap-4">
                 <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[8px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
                   <img
@@ -194,7 +194,7 @@ export function LoginPage({
               </div>
             </div>
 
-            <div className="relative z-10 max-w-[31rem]">
+            <div className="login-hero-content relative z-10 max-w-[31rem]">
               <h1
                 className="text-[3.95rem] font-extrabold leading-[0.92] tracking-[-0.055em] text-white lg:text-[4.3rem] xl:text-[4.7rem]"
                 style={{ fontFamily: 'Manrope, sans-serif' }}
