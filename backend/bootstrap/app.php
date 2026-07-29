@@ -4,6 +4,7 @@ use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsurePasswordChanged;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\EnsureRole;
+use App\Http\Middleware\RequireWorkspaceRevisionToken;
 use App\Http\Middleware\SecurityHeaders;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -53,6 +54,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'active' => EnsureActiveUser::class,
             'password-changed' => EnsurePasswordChanged::class,
             'permission' => EnsurePermission::class,
+            'revision-token' => RequireWorkspaceRevisionToken::class,
             'role' => EnsureRole::class,
         ]);
     })

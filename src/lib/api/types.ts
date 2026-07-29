@@ -142,6 +142,7 @@ export type AcademicWorkspaceState = {
 
 export type WorkspacePayload = {
   revision: string
+  revisionToken: string
   currentUser: UserProfile
   academic?: AcademicWorkspaceState
   references: ApiReferenceState

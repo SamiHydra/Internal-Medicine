@@ -34,6 +34,7 @@ use App\Http\Controllers\Api\TeachingSessionController;
 use App\Http\Controllers\Api\TransferRequestController;
 use App\Http\Controllers\Api\WorkspaceController;
 use Illuminate\Support\Facades\Route;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
 Route::prefix('auth')->group(function (): void {
     Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
@@ -66,6 +67,14 @@ Route::post('/access-requests', [AccessRequestSubmissionController::class, 'stor
 Route::post('/academic-access-requests', [AcademicRegistrationController::class, 'store'])->middleware('throttle:10,1');
 Route::post('/admin-access-requests', [AdminRegistrationController::class, 'store'])->middleware('throttle:10,1');
 
+// The workspace bootstrap issues a short-lived signed credential for this
+// read-only global ledger. Removing Sanctum's stateful wrapper here avoids a
+// database session read/write on every polling tab; no workspace data is
+// exposed, and forged/expired credentials are rejected before the ledger read.
+Route::get('/workspace/revision', [WorkspaceController::class, 'revision'])
+    ->middleware('revision-token')
+    ->withoutMiddleware(EnsureFrontendRequestsAreStateful::class);
+
 // Test-only: clears the rate-limiter store so the e2e suite can reset the
 // shared per-IP throttle bucket between specs (Laravel keys the default limiter
 // on domain+IP, not path, so all the public auth/registration endpoints share
@@ -87,7 +96,6 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
     // so the SPA can resolve currentUser (incl. passwordChangeRequired) and render
     // the forced change-password gate. Every other endpoint stays behind the gate.
     Route::get('/workspace', [WorkspaceController::class, 'show'])->withoutMiddleware('password-changed');
-    Route::get('/workspace/revision', [WorkspaceController::class, 'revision'])->withoutMiddleware('password-changed');
     Route::get('/workspace/access-requests', [WorkspaceController::class, 'accessRequests']);
     // The profile directory alone. Same rows and same shape the workspace
     // payload carries, without the ~214 KB of reports/audit/notifications that

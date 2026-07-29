@@ -22,6 +22,7 @@ use App\Services\Academic\RosterService;
 use App\Services\Academic\RotationPlanStateService;
 use App\Services\Admin\AppSettingsService;
 use App\Services\Workspace\WorkspaceRevisionService;
+use App\Services\Workspace\WorkspaceRevisionToken;
 use App\Support\Authorization\Permissions;
 use App\Support\HospitalClock;
 use App\Support\Reports\ReportPeriodWindow;
@@ -39,12 +40,16 @@ class WorkspaceController extends Controller
 
     public function __construct(
         private readonly WorkspaceRevisionService $workspaceRevision,
+        private readonly WorkspaceRevisionToken $workspaceRevisionToken,
     ) {}
 
     public function revision(Request $request): JsonResponse
     {
+        $userId = (string) $request->attributes->get('workspaceRevisionUserId');
+
         return response()->json([
-            'revision' => $this->workspaceRevision->for($request->user()),
+            'revision' => $this->workspaceRevision->current(),
+            'revisionToken' => $this->workspaceRevisionToken->issue($userId),
         ]);
     }
 
@@ -248,6 +253,7 @@ class WorkspaceController extends Controller
 
         return response()->json([
             'revision' => $this->workspaceRevision->for($user),
+            'revisionToken' => $this->workspaceRevisionToken->issue($user),
             'currentUser' => $this->profile($user),
             'academic' => $this->academicPayload($user, $isAdmin),
             'references' => [

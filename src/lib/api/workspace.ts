@@ -61,8 +61,14 @@ export async function fetchProfileDirectory(
 
 export async function fetchWorkspaceRevision(
   client: LaravelApiClient,
-): Promise<string> {
-  return (await client.get<{ revision: string }>('/api/workspace/revision')).revision
+  token: string,
+): Promise<{ revision: string; revisionToken: string }> {
+  return client.get<{ revision: string; revisionToken: string }>(
+    '/api/workspace/revision',
+    {
+      headers: { 'X-Workspace-Revision-Token': token },
+    },
+  )
 }
 
 export async function fetchLiveAppState(

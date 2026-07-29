@@ -236,31 +236,63 @@ class WorkspaceApiTest extends TestCase
         $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
         $period = ReportingPeriod::query()->orderByDesc('week_start')->firstOrFail();
         $report = $this->report($this->assignment($this->nurse, $department), $period);
-
-        $initialRevision = $this->actingAs($this->nurse)
-            ->getJson('/api/workspace/revision')
+        $workspace = $this->actingAs($this->nurse)
+            ->getJson('/api/workspace')
             ->assertOk()
-            ->assertJsonStructure(['revision'])
-            ->json('revision');
+            ->assertJsonStructure(['revision', 'revisionToken'])
+            ->json();
+        $revisionToken = $workspace['revisionToken'];
+
+        $initialResponse = $this
+            ->getJson('/api/workspace/revision', [
+                'X-Workspace-Revision-Token' => $revisionToken,
+            ])
+            ->assertOk()
+            ->assertJsonStructure(['revision', 'revisionToken']);
+        $initialRevision = $initialResponse->json('revision');
+        $revisionToken = $initialResponse->json('revisionToken');
 
         $this->assertIsString($initialRevision);
         $this->assertSame(64, strlen($initialRevision));
 
         DB::flushQueryLog();
         DB::enableQueryLog();
-        $this->actingAs($this->nurse)->getJson('/api/workspace/revision')->assertOk();
-        $this->assertLessThanOrEqual(2, count(DB::getQueryLog()));
+        $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $revisionToken,
+        ])->assertOk();
+        $this->assertCount(1, DB::getQueryLog());
         DB::disableQueryLog();
 
         $this->travel(1)->second();
         $report->touch();
 
-        $changedRevision = $this->actingAs($this->nurse)
-            ->getJson('/api/workspace/revision')
+        $changedRevision = $this
+            ->getJson('/api/workspace/revision', [
+                'X-Workspace-Revision-Token' => $revisionToken,
+            ])
             ->assertOk()
             ->json('revision');
 
         $this->assertNotSame($initialRevision, $changedRevision);
+    }
+
+    public function test_workspace_revision_rejects_missing_tampered_and_expired_credentials(): void
+    {
+        $token = $this->actingAs($this->nurse)
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->json('revisionToken');
+
+        $this->getJson('/api/workspace/revision')->assertStatus(428);
+        $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $token.'tampered',
+        ])->assertStatus(428);
+
+        $this->travel(12)->hours();
+        $this->travel(1)->second();
+        $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $token,
+        ])->assertStatus(428);
     }
 
     public function test_deferred_access_request_slice_is_available_without_reloading_workspace(): void

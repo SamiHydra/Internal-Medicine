@@ -316,6 +316,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   // poll skip the state replacement (and its full-tree re-render) entirely.
   const lastPolledStateSignatureRef = useRef<string | null>(null)
   const workspaceRevisionRef = useRef<string | null>(null)
+  const workspaceRevisionTokenRef = useRef<string | null>(null)
   const overdueSyncInFlightRef = useRef(false)
   const lastOverdueSyncAtRef = useRef(0)
   const syncPendingCountRef = useRef(0)
@@ -600,6 +601,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     referencesRef.current = createEmptyReferenceState()
     academicSignatureRef.current = null
     workspaceRevisionRef.current = null
+    workspaceRevisionTokenRef.current = null
     lastPolledStateSignatureRef.current = null
     currentUserIdRef.current = null
     currentStateRef.current = createEmptyAppState()
@@ -785,6 +787,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         referencesRef.current = result.references
         workspaceRevisionRef.current = result.revision
+        workspaceRevisionTokenRef.current = result.revisionToken
         reportPeriodWindowRef.current = reportPeriodWindow
 
         // Applied before the poll-skip below: a placement or setup-signal change
@@ -1311,8 +1314,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         adminLiveRefreshInFlightRef.current = true
 
-        void fetchWorkspaceRevision(activeClient)
-          .then((revision) => {
+        const revisionToken = workspaceRevisionTokenRef.current
+        if (!revisionToken) {
+          adminLiveRefreshInFlightRef.current = false
+          return
+        }
+
+        void fetchWorkspaceRevision(activeClient, revisionToken)
+          .then(({ revision, revisionToken: refreshedToken }) => {
+            workspaceRevisionTokenRef.current = refreshedToken
             if (
               workspaceRevisionRef.current !== null &&
               revision === workspaceRevisionRef.current

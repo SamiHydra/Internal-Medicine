@@ -18,6 +18,11 @@ class WorkspaceRevisionService
         // Keep the user argument so the controller contract remains unchanged.
         // A global revision may cause an occasional extra refresh for a user
         // who cannot see a write, but it can never miss a visible change.
+        return $this->current();
+    }
+
+    public function current(): string
+    {
         $version = (int) (DB::table('workspace_revisions')
             ->where('id', 1)
             ->value('version') ?? 0);
