@@ -409,6 +409,12 @@ export type AcademicPeople = {
   people: AcademicPersonStat[]
 }
 
+export type AcademicAnalyticsSnapshot = {
+  summary: AcademicSummary
+  trend: AcademicTrend
+  people: AcademicPeople
+}
+
 export type AcademicMySubmissions =
   | { direction: 'consultant'; data: ConsultantEvaluationRecord[] }
   | { direction: 'resident'; data: ResidentEvaluationRecord[] }

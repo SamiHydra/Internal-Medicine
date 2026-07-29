@@ -142,6 +142,7 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::get('/my-performance', [AcademicEvaluationController::class, 'myPerformance'])->middleware('permission:academic.submit');
         Route::get('/evaluation-forms/{key}', [AcademicEvaluationController::class, 'form'])->middleware('permission:academic.submit');
 
+        Route::get('/analytics/snapshot', [AcademicAnalyticsController::class, 'snapshot'])->middleware('permission:academic.view');
         Route::get('/analytics/summary', [AcademicAnalyticsController::class, 'summary'])->middleware('permission:academic.view');
         Route::get('/analytics/trend', [AcademicAnalyticsController::class, 'trend'])->middleware('permission:academic.view');
         Route::get('/analytics/people', [AcademicAnalyticsController::class, 'people'])->middleware('permission:academic.view');

@@ -1,5 +1,6 @@
 import type { LaravelApiClient } from '@/lib/api/client'
 import type {
+  AcademicAnalyticsSnapshot,
   AcademicAnalyticsQuery,
   AcademicAuditResponse,
   AcademicEvaluationListResponse,
@@ -93,6 +94,13 @@ export function fetchAcademicSummary(
   query: AcademicAnalyticsQuery = {},
 ) {
   return client.get<AcademicSummary>('/api/academic/analytics/summary', { query })
+}
+
+export function fetchAcademicSnapshot(
+  client: LaravelApiClient,
+  query: AcademicAnalyticsQuery = {},
+) {
+  return client.get<AcademicAnalyticsSnapshot>('/api/academic/analytics/snapshot', { query })
 }
 
 export function fetchAcademicTrend(

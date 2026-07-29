@@ -2,6 +2,7 @@
 
 namespace App\Services\Academic\Concerns;
 
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Cache;
@@ -39,6 +40,54 @@ trait CachesByContentStamp
         // Keep the service contract plain even when a custom cache store
         // returns an Arrayable or JsonSerializable implementation.
         return $this->plainCachePayload($payload);
+    }
+
+    /**
+     * The locked variant prevents a burst of identical cold requests from
+     * hydrating the same EAV graph concurrently. The cache is checked before
+     * and after acquiring the lock because another worker may finish while
+     * this request waits.
+     *
+     * @param  callable(): array<string, mixed>  $build
+     * @return array<string, mixed>
+     */
+    private function rememberByStampLocked(
+        string $prefix,
+        string $operation,
+        string $stamp,
+        callable $build,
+    ): array {
+        $key = sprintf('%s:v3:%s:%s', $prefix, $operation, md5($stamp));
+        $cached = Cache::get($key);
+
+        if (is_array($cached)) {
+            return $this->plainCachePayload($cached);
+        }
+
+        $buildAndStore = function () use ($key, $build): array {
+            $cached = Cache::get($key);
+
+            if (is_array($cached)) {
+                return $this->plainCachePayload($cached);
+            }
+
+            $payload = $this->plainCachePayload($build());
+            Cache::put($key, $payload, 300);
+
+            return $payload;
+        };
+
+        try {
+            return Cache::lock($key.':build', 30)->block(10, $buildAndStore);
+        } catch (LockTimeoutException) {
+            // A slow builder should not make the endpoint unavailable. Prefer
+            // its completed value, then fall back to one local build.
+            $cached = Cache::get($key);
+
+            return is_array($cached)
+                ? $this->plainCachePayload($cached)
+                : $buildAndStore();
+        }
     }
 
     /**

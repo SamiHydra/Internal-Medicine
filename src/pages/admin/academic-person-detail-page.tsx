@@ -22,9 +22,7 @@ import { ChartCard } from '@/components/dashboard/chart-card'
 import { InsightPanel } from '@/components/dashboard/insight-panel'
 import { AnalyticsContentSkeleton } from '@/components/layout/loading-skeletons'
 import {
-  fetchAcademicPeople,
-  fetchAcademicSummary,
-  fetchAcademicTrend,
+  fetchAcademicSnapshot,
   fetchAcademicWardOptions,
   listAcademicEvaluations,
   type AcademicWardOption,
@@ -246,30 +244,30 @@ export function AcademicPersonDetailPage() {
     }
     const cacheKey = personKey(userId, direction, query.wardId, query.dateFrom, query.dateTo)
     Promise.all([
-      fetchAcademicSummary(client, query),
-      fetchAcademicTrend(client, { ...query, granularity: 'weekly' }),
+      fetchAcademicSnapshot(client, { ...query, granularity: 'weekly' }),
       listAcademicEvaluations(client, { ...query, perPage: 50 }),
-      fetchAcademicPeople(client, query),
     ])
-      .then(([fetchedSummary, fetchedTrend, fetchedList, fetchedPeople]) => {
+      .then(([fetchedSnapshot, fetchedList]) => {
+        const fetchedHeaderStat =
+          fetchedSnapshot.people.people.find((entry) => entry.subjectId === userId) ?? null
         writeBoundedCache(
           personDataCache,
           cacheKey,
           {
-            summary: fetchedSummary,
-            trend: fetchedTrend,
+            summary: fetchedSnapshot.summary,
+            trend: fetchedSnapshot.trend,
             evaluations: fetchedList.data,
-            headerStat: fetchedPeople.people[0] ?? null,
+            headerStat: fetchedHeaderStat,
           },
           PERSON_CACHE_MAX_ENTRIES,
         )
         if (!active) {
           return
         }
-        setSummary(fetchedSummary)
-        setTrend(fetchedTrend)
+        setSummary(fetchedSnapshot.summary)
+        setTrend(fetchedSnapshot.trend)
         setEvaluations(fetchedList.data)
-        setHeaderStat(fetchedPeople.people[0] ?? null)
+        setHeaderStat(fetchedHeaderStat)
         setError(null)
       })
       .catch((fetchError) => {

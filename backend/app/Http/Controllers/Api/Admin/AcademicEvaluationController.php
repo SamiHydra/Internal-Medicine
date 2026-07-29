@@ -8,6 +8,7 @@ use App\Models\ConsultantEvaluation;
 use App\Models\Evaluation;
 use App\Models\ResidentEvaluation;
 use App\Models\User;
+use App\Services\Academic\AcademicAnalyticsService;
 use App\Services\Academic\EvaluationFormService;
 use App\Services\Admin\AdminAuditService;
 use App\Support\Academic\EvaluationScoring;
@@ -29,6 +30,7 @@ class AcademicEvaluationController extends Controller
     public function __construct(
         private readonly AdminAuditService $auditService,
         private readonly EvaluationFormService $forms,
+        private readonly AcademicAnalyticsService $analytics,
     ) {}
 
     /**
@@ -167,6 +169,7 @@ class AcademicEvaluationController extends Controller
             'placement' => $validated['placement'],
             'evaluatorName' => $validated['evaluatorName'],
         ], $request);
+        $this->analytics->scheduleWarm();
 
         return response()->json($this->serializeResidentEvaluation($evaluation), 201);
     }

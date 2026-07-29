@@ -8,8 +8,7 @@ import { ExternalEvaluationPanel } from '@/components/admin/external-evaluation-
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { TableSkeleton } from '@/components/layout/loading-skeletons'
 import {
-  fetchAcademicPeople,
-  fetchAcademicSummary,
+  fetchAcademicSnapshot,
   fetchAcademicWardOptions,
   listAcademicEvaluations,
   type AcademicWardOption,
@@ -21,7 +20,6 @@ import type {
   AcademicDirection,
   AcademicEvaluationRecord,
   AcademicPeople,
-  AcademicSummary,
 } from '@/lib/api/types'
 
 const ALL = 'all'
@@ -101,7 +99,6 @@ export function AcademicSubmissionsPage() {
 
   const [wards, setWards] = useState<AcademicWardOption[]>([])
   const [people, setPeople] = useState<AcademicPeople | null>(null)
-  const [, setSummary] = useState<AcademicSummary | null>(null)
   const [evaluations, setEvaluations] = useState<AcademicEvaluationRecord[]>([])
   const [lastPage, setLastPage] = useState(1)
   const [total, setTotal] = useState(0)
@@ -142,7 +139,7 @@ export function AcademicSubmissionsPage() {
       return
     }
     let active = true
-    fetchAcademicPeople(client, {
+    fetchAcademicSnapshot(client, {
       direction,
       wardId: wardId === ALL ? undefined : wardId,
       dateFrom: dateRange.dateFrom,
@@ -150,7 +147,7 @@ export function AcademicSubmissionsPage() {
     })
       .then((fetched) => {
         if (active) {
-          setPeople(fetched)
+          setPeople(fetched.people)
         }
       })
       .catch(() => {
@@ -163,7 +160,7 @@ export function AcademicSubmissionsPage() {
     }
   }, [client, direction, wardId, dateRange])
 
-  // Summary (KPIs) + the paginated list react to the full filter set.
+  // The paginated list reacts to the full filter set.
   useEffect(() => {
     if (!client) {
       return
@@ -181,15 +178,11 @@ export function AcademicSubmissionsPage() {
       dateFrom: dateRange.dateFrom,
       dateTo: dateRange.dateTo,
     }
-    Promise.all([
-      fetchAcademicSummary(client, query),
-      listAcademicEvaluations(client, { ...query, page, perPage: PER_PAGE }),
-    ])
-      .then(([fetchedSummary, fetchedList]) => {
+    listAcademicEvaluations(client, { ...query, page, perPage: PER_PAGE })
+      .then((fetchedList) => {
         if (!active) {
           return
         }
-        setSummary(fetchedSummary)
         setEvaluations(fetchedList.data)
         setLastPage(fetchedList.meta.lastPage)
         setTotal(fetchedList.meta.total)

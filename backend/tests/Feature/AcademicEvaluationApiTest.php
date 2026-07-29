@@ -381,6 +381,26 @@ class AcademicEvaluationApiTest extends TestCase
             ->assertJsonCount(1, 'points');
     }
 
+    public function test_snapshot_endpoint_returns_all_dashboard_views_and_preserves_authorization(): void
+    {
+        $this->createConsultantEvaluation([
+            'all_patients_reviewed' => true,
+            'vte_assessed' => true,
+        ]);
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/academic/analytics/snapshot?direction=consultant&granularity=weekly')
+            ->assertOk()
+            ->assertJsonPath('summary.evaluationCount', 1)
+            ->assertJsonPath('trend.granularity', 'weekly')
+            ->assertJsonCount(1, 'trend.points')
+            ->assertJsonPath('people.people.0.subjectId', $this->consultant->id);
+
+        $this->actingAs($this->resident)
+            ->getJson('/api/academic/analytics/snapshot?direction=consultant')
+            ->assertForbidden();
+    }
+
     public function test_people_endpoint_blends_rating_and_score_into_combined_rank(): void
     {
         // All six indicators true -> score 100%. A 1-to-5 rating of 3

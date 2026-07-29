@@ -28,9 +28,7 @@ import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { ChartCard } from '@/components/dashboard/chart-card'
 import { AnalyticsContentSkeleton } from '@/components/layout/loading-skeletons'
 import {
-  fetchAcademicPeople,
-  fetchAcademicSummary,
-  fetchAcademicTrend,
+  fetchAcademicSnapshot,
   fetchAcademicWardOptions,
   type AcademicWardOption,
 } from '@/lib/api/academic'
@@ -49,11 +47,9 @@ import {
   tooltipLineCursor,
 } from '@/lib/chart-theme'
 import type {
+  AcademicAnalyticsSnapshot,
   AcademicDirection,
   AcademicGranularity,
-  AcademicPeople,
-  AcademicSummary,
-  AcademicTrend,
 } from '@/lib/api/types'
 import { cn } from '@/lib/utils'
 
@@ -91,8 +87,7 @@ function rangeToDates(range: string): { dateFrom?: string; dateTo?: string } {
 // result is cached per filter signature: a re-toggle paints from cache instantly and
 // revalidates in the background, instead of blocking on the serialized dev API.
 let wardsCache: AcademicWardOption[] | null = null
-const analyticsCache = new Map<string, { summary: AcademicSummary; trend: AcademicTrend }>()
-const peopleCache = new Map<string, AcademicPeople>()
+const analyticsCache = new Map<string, AcademicAnalyticsSnapshot>()
 const ACADEMIC_CACHE_MAX_ENTRIES = 12
 
 function analyticsKey(
@@ -104,15 +99,6 @@ function analyticsKey(
   granularity: string,
 ): string {
   return [direction, wardId ?? '', subjectId ?? '', dateFrom ?? '', dateTo ?? '', granularity].join('|')
-}
-
-function peopleKey(
-  direction: string,
-  wardId: string | undefined,
-  dateFrom: string | undefined,
-  dateTo: string | undefined,
-): string {
-  return [direction, wardId ?? '', dateFrom ?? '', dateTo ?? ''].join('|')
 }
 
 const sectionClass =
@@ -206,12 +192,6 @@ export function AcademicDashboardPage() {
     analyticsCache,
     analyticsKey('consultant', undefined, undefined, undefined, undefined, 'weekly'),
   )
-  const cachedPeople =
-    readBoundedCache(
-      peopleCache,
-      peopleKey('consultant', undefined, undefined, undefined),
-    ) ?? null
-
   // The Phase 7 dashboard tabs: peer evaluations (the original dashboard),
   // morning punctuality, teaching occurrence, and student progress.
   const [opsTab, setOpsTab] = useState<'evaluations' | 'morning' | 'teaching' | 'students'>('evaluations')
@@ -223,9 +203,9 @@ export function AcademicDashboardPage() {
   const [granularity, setGranularity] = useState<AcademicGranularity>('weekly')
 
   const [wards, setWards] = useState<AcademicWardOption[]>(wardsCache ?? [])
-  const [summary, setSummary] = useState<AcademicSummary | null>(cachedAnalytics?.summary ?? null)
-  const [trend, setTrend] = useState<AcademicTrend | null>(cachedAnalytics?.trend ?? null)
-  const [people, setPeople] = useState<AcademicPeople | null>(cachedPeople)
+  const [snapshot, setSnapshot] = useState<AcademicAnalyticsSnapshot | null>(
+    cachedAnalytics ?? null,
+  )
   const [error, setError] = useState<string | null>(() =>
     client ? null : `The Laravel API is not configured. ${apiEnvSetupHint}`,
   )
@@ -254,7 +234,8 @@ export function AcademicDashboardPage() {
     }
   }, [client])
 
-  // Summary + trend react to the full filter set (including the selected person).
+  // One aggregate snapshot supplies summary, trend, and the uncollapsed
+  // leaderboard for the complete filter set.
   useEffect(() => {
     if (!client) {
       return
@@ -275,22 +256,18 @@ export function AcademicDashboardPage() {
       query.dateTo,
       granularity,
     )
-    Promise.all([
-      fetchAcademicSummary(client, query),
-      fetchAcademicTrend(client, { ...query, granularity }),
-    ])
-      .then(([fetchedSummary, fetchedTrend]) => {
+    fetchAcademicSnapshot(client, { ...query, granularity })
+      .then((fetched) => {
         writeBoundedCache(
           analyticsCache,
           cacheKey,
-          { summary: fetchedSummary, trend: fetchedTrend },
+          fetched,
           ACADEMIC_CACHE_MAX_ENTRIES,
         )
         if (!active) {
           return
         }
-        setSummary(fetchedSummary)
-        setTrend(fetchedTrend)
+        setSnapshot(fetched)
         setError(null)
       })
       .catch((fetchError) => {
@@ -310,44 +287,9 @@ export function AcademicDashboardPage() {
     }
   }, [client, direction, wardId, person, dateRange, granularity])
 
-  // The leaderboard is independent of the selected person so it never collapses.
-  useEffect(() => {
-    if (!client) {
-      return
-    }
-    let active = true
-    const peopleCacheKey = peopleKey(
-      direction,
-      wardId === ALL ? undefined : wardId,
-      dateRange.dateFrom,
-      dateRange.dateTo,
-    )
-    fetchAcademicPeople(client, {
-      direction,
-      wardId: wardId === ALL ? undefined : wardId,
-      dateFrom: dateRange.dateFrom,
-      dateTo: dateRange.dateTo,
-    })
-      .then((fetched) => {
-        writeBoundedCache(
-          peopleCache,
-          peopleCacheKey,
-          fetched,
-          ACADEMIC_CACHE_MAX_ENTRIES,
-        )
-        if (active) {
-          setPeople(fetched)
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setPeople({ direction, ratingWeight: 0.5, minEvaluationsForRank: 3, people: [] })
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [client, direction, wardId, dateRange])
+  const summary = snapshot?.summary ?? null
+  const trend = snapshot?.trend ?? null
+  const people = snapshot?.people ?? null
 
   const personOptions = useMemo(
     () => [
