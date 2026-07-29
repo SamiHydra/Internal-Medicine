@@ -89,13 +89,25 @@ two-unit layout when notification delivery is enabled.
 ## Capacity and Redis scale-up
 
 The committed PHP-FPM pool makes concurrency finite and observable instead of
-depending on distribution defaults. Before changing `pm.max_children`, measure
-p95 PHP worker RSS and MariaDB `Threads_connected` during a representative load
-test. Size the pool as:
+depending on distribution defaults. Keep 20 children on hardware comparable to
+the audited host. Before changing `pm.max_children`, measure p95 PHP worker RSS,
+MariaDB `Threads_connected`, and CPU/queue behavior during the standard peak
+and spike tests. Size the pool as:
 
 ```text
-min(floor(RAM reserved for PHP / p95 worker RSS), MariaDB connection budget)
+max_children = min(
+  floor(PHP_RAM_budget / (p95_worker_RSS × 1.25)),
+  floor(max_connections × 0.8) - reserved_non_FPM_connections,
+  CPU/load-tested_cap
+)
 ```
+
+The production-shaped audit measured p95 worker RSS at about 47 MiB. The
+committed 256 MiB PHP memory limit is an allocation ceiling, not observed
+worker RSS, and must not be used as the divisor. CPU is the observed binding
+constraint: never raise the child count from memory arithmetic alone. Retest
+the candidate value on the target host and reject it if ordinary API latency or
+FPM queue gates fail.
 
 If database-backed cache/session/queue traffic is materially contributing to
 MariaDB latency, install a LAN-local Redis instance with authentication and
