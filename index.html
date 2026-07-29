@@ -16,6 +16,261 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="St Paul" />
 
+    <style id="login-critical-css">
+      .login-shell {
+        position: relative;
+        min-height: 100vh;
+        overflow: hidden;
+        background: #f8f9fa;
+        padding: 0.75rem;
+      }
+      .login-main {
+        position: relative;
+        display: flex;
+        min-height: calc(100vh - 1.5rem);
+        max-width: 1460px;
+        margin: 0 auto;
+        align-items: center;
+      }
+      .login-card {
+        display: grid;
+        width: 100%;
+        overflow: hidden;
+        border-radius: 0.35rem;
+        background: #fff;
+        box-shadow: 0 28px 60px rgba(0, 33, 71, 0.12);
+        outline: 1px solid rgba(200, 213, 230, 0.3);
+      }
+      .login-hero {
+        display: none;
+      }
+      .login-panel {
+        position: relative;
+        display: flex;
+        align-items: center;
+        padding: 2.5rem 1.5rem;
+        background: #fff;
+      }
+      .login-panel > div:first-child {
+        position: absolute;
+        inset: 0 0 auto;
+        height: 0.25rem;
+        background: linear-gradient(90deg, #005db6 0%, #63a1ff 72%, #f0b429 100%);
+      }
+      .login-form {
+        width: 100%;
+        max-width: 20rem;
+        margin: 0 auto;
+        font-family: Inter, sans-serif;
+      }
+      .login-mobile-brand {
+        display: flex;
+        margin-bottom: 2.5rem;
+        align-items: center;
+        gap: 0.75rem;
+      }
+      .login-mobile-brand > div:first-child {
+        display: flex;
+        width: 3rem;
+        height: 3rem;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        border-radius: 6px;
+        background: #fff;
+        box-shadow: 0 12px 24px rgba(0, 33, 71, 0.14);
+        outline: 1px solid #d7dbe0;
+      }
+      .login-mobile-brand img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .login-mobile-brand p {
+        margin: 0;
+      }
+      .login-mobile-brand p:first-child {
+        color: #000a1e;
+        font: 800 1rem/1 Manrope, sans-serif;
+        letter-spacing: -0.03em;
+      }
+      .login-mobile-brand p:last-child {
+        margin-top: 0.25rem;
+        color: #005db6;
+        font-size: 0.62rem;
+        font-weight: 600;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+      }
+      .login-heading {
+        margin-bottom: 2.5rem;
+      }
+      .login-heading p {
+        margin: 0;
+      }
+      .login-heading > p:first-child {
+        margin-bottom: 0.75rem;
+        color: #005db6;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+      .login-heading h2 {
+        margin: 0 0 0.5rem;
+        color: #000a1e;
+        font: 800 2rem/normal Manrope, sans-serif;
+        letter-spacing: -0.035em;
+      }
+      .login-heading h2 + p {
+        color: #5b6169;
+        font-size: 0.875rem;
+        font-weight: 500;
+      }
+      .login-heading > div {
+        width: 6rem;
+        height: 1px;
+        margin-top: 1rem;
+        background: linear-gradient(90deg, #005db6 0%, #63a1ff 68%, #f0b429 100%);
+      }
+      .login-form form > * + * {
+        margin-top: 1.5rem;
+      }
+      .login-form form > div > * + * {
+        margin-top: 0.5rem;
+      }
+      .login-form label {
+        display: block;
+        color: #000a1e;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .login-form input {
+        width: 100%;
+        height: 3rem;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        border-radius: 0;
+        outline: 0;
+        padding: 0 2.75rem 0 1rem;
+        background: linear-gradient(180deg, #edf3fa 0%, #f7f9fb 100%);
+        color: #191c1d;
+        font-size: 0.95rem;
+        font-weight: 500;
+      }
+      .login-form button[type='submit'] {
+        display: flex;
+        width: 100%;
+        height: 3rem;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        border: 0;
+        border-radius: 3px;
+        background: #002147;
+        color: #fff;
+        font: 700 0.68rem/1 Manrope, sans-serif;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        box-shadow: 0 14px 28px rgba(0, 33, 71, 0.28);
+      }
+      @media (min-width: 640px) {
+        .login-shell {
+          padding: 1rem;
+        }
+        .login-panel {
+          padding-right: 2.5rem;
+          padding-left: 2.5rem;
+        }
+        .login-form button[type='submit'] {
+          font-size: 0.8rem;
+          letter-spacing: 0.12em;
+        }
+      }
+      @media (min-width: 768px) {
+        .login-shell {
+          padding: 1.25rem;
+        }
+        .login-main {
+          height: calc(100vh - 2.5rem);
+          min-height: 0;
+        }
+        .login-card {
+          height: 100%;
+          grid-template-columns: minmax(0, 1fr) minmax(480px, 545px);
+        }
+        .login-hero {
+          position: relative;
+          display: flex;
+          height: 100%;
+          flex-direction: column;
+          justify-content: space-between;
+          overflow: hidden;
+          padding: 3rem;
+          background: #04162f;
+          color: #fff;
+        }
+        .login-hero > div {
+          position: relative;
+          z-index: 10;
+        }
+        .login-hero h1 {
+          margin: 0;
+          color: #fff;
+          font: 800 3.95rem/0.92 Manrope, sans-serif;
+          letter-spacing: -0.055em;
+        }
+        .login-hero h1 span {
+          color: #63a1ff;
+        }
+        .login-panel {
+          height: 100%;
+          padding: 2rem 3rem;
+        }
+        .login-mobile-brand {
+          display: none;
+        }
+      }
+      @media (min-width: 1024px) {
+        .login-hero {
+          padding: 3.5rem;
+        }
+        .login-hero h1 {
+          font-size: 4.3rem;
+        }
+        .login-panel {
+          padding-right: 4rem;
+          padding-left: 4rem;
+        }
+        .login-form {
+          max-width: 21rem;
+        }
+      }
+      @media (min-width: 1280px) {
+        .login-shell {
+          padding: 1.5rem;
+        }
+        .login-main {
+          height: calc(100vh - 3rem);
+        }
+        .login-card {
+          grid-template-columns: minmax(0, 1.04fr) minmax(520px, 590px);
+        }
+        .login-hero {
+          padding: 4rem;
+        }
+        .login-hero h1 {
+          font-size: 4.7rem;
+        }
+        .login-panel {
+          padding-right: 5rem;
+          padding-left: 5rem;
+        }
+      }
+    </style>
+
     <title>St Paul Hospital Internal Medicine</title>
   </head>
   <body>

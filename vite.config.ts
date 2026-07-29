@@ -47,9 +47,36 @@ function stampServiceWorker() {
   }
 }
 
+function deferLoginRouteStyles() {
+  return {
+    name: 'defer-login-route-styles',
+    apply: 'build' as const,
+    closeBundle() {
+      const indexPath = path.resolve(__dirname, 'dist/index.html')
+      if (!fs.existsSync(indexPath)) {
+        return
+      }
+
+      const html = fs.readFileSync(indexPath, 'utf8')
+      const transformed = html.replace(
+        /<link rel="stylesheet"([^>]*href=["'][^"']+\.css["'][^>]*)>/g,
+        (stylesheet) => {
+          const preload = stylesheet
+            .replace('rel="stylesheet"', 'rel="preload" as="style"')
+            .replace('<link ', '<link data-deferred-app-styles ')
+
+          return `${preload}<noscript>${stylesheet}</noscript>`
+        },
+      )
+
+      fs.writeFileSync(indexPath, transformed)
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), stampServiceWorker()],
+  plugins: [react(), tailwindcss(), deferLoginRouteStyles(), stampServiceWorker()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

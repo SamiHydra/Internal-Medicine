@@ -1,21 +1,67 @@
 import { createRoot } from 'react-dom/client'
 
-import { AppProviders } from '@/app/providers'
 import './index.css'
-import App from './App.tsx'
+import type { SessionPayload } from '@/lib/api/types'
+import { landingPathForRole } from '@/routes/landing'
 
-createRoot(document.getElementById('root')!).render(
-  <AppProviders>
-    <App />
-  </AppProviders>,
-)
+function activateDeferredAppStyles() {
+  const stylesheet = document.querySelector<HTMLLinkElement>(
+    'link[data-deferred-app-styles]',
+  )
+
+  if (!stylesheet) {
+    return
+  }
+
+  // The document preloads this stylesheet without making it render-blocking.
+  // By the time the JavaScript route entry is ready, the CSS bytes are local;
+  // applying them before React renders avoids a later reflow.
+  stylesheet.rel = 'stylesheet'
+  stylesheet.removeAttribute('as')
+}
+
+activateDeferredAppStyles()
+
+const root = createRoot(document.getElementById('root')!)
+
+async function renderFullApplication() {
+  const [{ AppProviders }, { default: App }] = await Promise.all([
+    import('@/app/providers'),
+    import('./App.tsx'),
+  ])
+
+  root.render(
+    <AppProviders>
+      <App />
+    </AppProviders>,
+  )
+}
+
+async function renderPublicLogin() {
+  const { PublicLoginApp } = await import('@/app/public-login-app')
+
+  root.render(
+    <PublicLoginApp
+      onAuthenticated={async (user: SessionPayload['user']) => {
+        const destination = user.passwordChangeRequired
+          ? '/change-password'
+          : landingPathForRole(user.role)
+        window.history.replaceState(window.history.state, '', destination)
+        await renderFullApplication()
+      }}
+    />,
+  )
+}
+
+if (window.location.pathname.replace(/\/+$/, '') === '/login') {
+  void renderPublicLogin()
+} else {
+  void renderFullApplication()
+}
 
 // Register the offline-first service worker in production only (the Vite dev
 // server serves modules that must not be cached). Enables cold-start offline.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  // Registration is asynchronous and does not block the initial render. Starting
-  // it now lets the install/precache work overlap the rest of page loading
-  // instead of waiting for every image and font to fire the window load event.
   navigator.serviceWorker.register('/sw.js').catch(() => {
     // Service worker is a progressive enhancement; ignore registration errors.
   })
