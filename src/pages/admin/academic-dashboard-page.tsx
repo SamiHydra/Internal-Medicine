@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
 import { ArrowUpRight } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -33,6 +33,10 @@ import {
   type AcademicWardOption,
 } from '@/lib/api/academic'
 import { getApiBrowserClient } from '@/lib/api/client'
+import {
+  DASHBOARD_CHART_ANIMATION_DURATION_MS,
+  shouldAnimateDashboardChart,
+} from '@/lib/chart-motion'
 import { readBoundedCache, writeBoundedCache } from '@/lib/bounded-cache'
 import { apiEnvSetupHint } from '@/lib/api/env'
 import {
@@ -185,6 +189,7 @@ function CategoryTick({
 
 export function AcademicDashboardPage() {
   const client = getApiBrowserClient()
+  const reduceMotion = useReducedMotion()
 
   // Default filters on mount; seed from the module cache so a Clinical→Academic
   // re-toggle paints instantly while fresh data revalidates in the background.
@@ -528,6 +533,11 @@ export function AcademicDashboardPage() {
                     activeDot={{ ...lineActiveDot, fill: academicChartPalette.ink }}
                     strokeLinecap="round"
                     strokeLinejoin="round"
+                    isAnimationActive={shouldAnimateDashboardChart(trendData.length, {
+                      reduceMotion,
+                    })}
+                    animationDuration={DASHBOARD_CHART_ANIMATION_DURATION_MS}
+                    animationEasing="ease-out"
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -571,6 +581,7 @@ export function AcademicDashboardPage() {
                       fill={academicChartPalette.ink}
                       radius={[0, 6, 6, 0]}
                       maxBarSize={22}
+                      isAnimationActive={false}
                     >
                       <LabelList
                         dataKey="pct"
@@ -622,6 +633,7 @@ export function AcademicDashboardPage() {
                       fill={academicChartPalette.mist}
                       radius={[0, 6, 6, 0]}
                       maxBarSize={22}
+                      isAnimationActive={false}
                     >
                       <LabelList
                         dataKey="count"

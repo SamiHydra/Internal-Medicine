@@ -435,6 +435,7 @@ class WorkspaceController extends Controller
             'role' => $user->role_key,
             'title' => $user->title ?? RoleTitles::default($user->role_key),
             'active' => (bool) $user->active,
+            'sectionId' => $user->section_id,
             'phone' => $user->phone,
             'passwordChangeRequired' => (bool) $user->password_change_required,
         ];

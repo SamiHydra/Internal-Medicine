@@ -31,6 +31,13 @@ php artisan app:create-superadmin   # create the first login
 php artisan serve          # http://127.0.0.1:8000
 ```
 
+In a second terminal, start the named queue worker used by Excel exports and notifications:
+
+```bash
+cd backend
+php artisan queue:work --queue=analytics,notifications,default --tries=3 --timeout=300
+```
+
 ### 2. Frontend (Vite SPA)
 
 ```bash
@@ -86,6 +93,7 @@ Backend:
 ```bash
 cd backend
 php artisan serve
+php artisan queue:work --queue=analytics,notifications,default --tries=3 --timeout=300
 php artisan migrate
 php artisan db:seed
 php artisan test

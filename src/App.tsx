@@ -206,6 +206,16 @@ function InlineRouteFallback() {
   return <PageSkeleton />
 }
 
+function ConnectedLoginPage() {
+  const { currentUser, isBootstrapping, login } = useAppData()
+
+  if (currentUser && !isBootstrapping) {
+    return <Navigate to={landingPathForRole(currentUser.role)} replace />
+  }
+
+  return <LoginPage authenticate={login} />
+}
+
 function renderLazyRoute(node: ReactNode, fallback: 'page' | 'inline' = 'page') {
   return (
     <Suspense
@@ -281,7 +291,7 @@ function App() {
           <Routes>
         <Route path="/" element={<HomeRedirect />} />
         {DevRoutes ? <Route path="/design-lab/*" element={<DevRoutes />} /> : null}
-        <Route path="/login" element={<LoginPage />} />
+        <Route path="/login" element={<ConnectedLoginPage />} />
         <Route path="/forgot-password" element={renderLazyRoute(<ForgotPasswordPage />)} />
         <Route path="/reset-password" element={renderLazyRoute(<ResetPasswordPage />)} />
         <Route path="/register" element={renderLazyRoute(<AccessRequestPage />)} />

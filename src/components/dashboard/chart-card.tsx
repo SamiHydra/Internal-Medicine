@@ -20,7 +20,9 @@ function DeferredChartContent({ children }: { children: ReactNode }) {
         setShouldRender(true)
         observer.disconnect()
       },
-      { rootMargin: '400px 0px' },
+      // Prepare chart SVG before the card reaches the viewport so scrolling
+      // never exposes a skeleton-to-chart reveal.
+      { rootMargin: '800px 0px' },
     )
 
     observer.observe(containerRef.current)

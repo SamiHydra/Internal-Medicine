@@ -40,8 +40,10 @@ function preloadAuthenticatedShell() {
 type LoginUser = SessionPayload['user']
 
 export function LoginPage({
+  authenticate,
   onAuthenticated,
 }: {
+  authenticate?: (identifier: string, password: string) => Promise<LoginUser | null>
   onAuthenticated?: (user: LoginUser) => void | Promise<void>
 } = {}) {
   const location = useLocation()
@@ -129,24 +131,35 @@ export function LoginPage({
     void preloadAuthenticatedShell().catch(() => {
       // The route-level lazy loader owns the visible error/loading behavior.
     })
-    const client = getApiBrowserClient()
-    if (!client) {
-      setError('The API is not configured.')
-      setIsSigningIn(false)
-      return
-    }
-
     try {
-      const payload = await client.post<SessionPayload>('/api/auth/login', {
-        identifier: normalizedIdentifier,
-        password,
-      })
-      client.emitAuthStateChange('SIGNED_IN', { user: { id: payload.user.id } })
+      let user: LoginUser
 
-      void preloadLandingPageForRole(payload.user.role).catch(() => {
+      if (authenticate) {
+        const authenticatedUser = await authenticate(normalizedIdentifier, password)
+        if (!authenticatedUser) {
+          throw new Error('Unable to sign in.')
+        }
+        user = authenticatedUser
+      } else {
+        const client = getApiBrowserClient()
+        if (!client) {
+          setError('The API is not configured.')
+          setIsSigningIn(false)
+          return
+        }
+
+        const payload = await client.post<SessionPayload>('/api/auth/login', {
+          identifier: normalizedIdentifier,
+          password,
+        })
+        client.emitAuthStateChange('SIGNED_IN', { user: { id: payload.user.id } })
+        user = payload.user
+      }
+
+      void preloadLandingPageForRole(user.role).catch(() => {
         // The route-level lazy loader owns the visible error/loading behavior.
       })
-      await completeAuthentication(payload.user)
+      await completeAuthentication(user)
     } catch (loginError) {
       setError(
         loginError instanceof ApiError && loginError.status === 403

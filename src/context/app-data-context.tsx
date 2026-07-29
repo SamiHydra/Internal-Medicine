@@ -64,6 +64,7 @@ import {
   updateUserActiveState,
 } from '@/lib/api'
 import {
+  ApiError,
   getApiBrowserClient,
   isApiConfigured,
 } from '@/lib/api/client'
@@ -98,7 +99,6 @@ import type {
   NotificationItem,
   ReportRecord,
   UserProfile,
-  UserRole,
 } from '@/types/domain'
 
 type AppDataContextValue = {
@@ -110,7 +110,7 @@ type AppDataContextValue = {
   isConfigured: boolean
   missingEnvVars: string[]
   error: string | null
-  login: (email: string, password: string) => Promise<UserRole | null>
+  login: (email: string, password: string) => Promise<UserProfile | null>
   logout: () => Promise<void>
   markNotificationsRead: (userId: string, notificationIds: string[]) => Promise<void>
   clearNotifications: (userId: string, notificationIds: string[]) => Promise<void>
@@ -144,7 +144,7 @@ type AppDataContextValue = {
     departmentId: string,
     templateId: string,
   ) => Promise<void>
-  ensureProfileDirectoryData: () => Promise<void>
+  ensureProfileDirectoryData: (options?: { force?: boolean }) => Promise<void>
   ensureAccessRequestData: () => Promise<void>
   ensureUserManagementData: () => Promise<void>
   ensureHistoryData: () => Promise<void>
@@ -263,6 +263,15 @@ function hasAssignmentReference(
   templateId: string,
 ) {
   return Boolean(resolveAssignmentReference(references, departmentId, templateId))
+}
+
+function isInvalidSessionError(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError &&
+    (error.status === 401 ||
+      error.status === 419 ||
+      (error.status === 403 && error.message.toLowerCase().includes('account is inactive')))
+  )
 }
 
 function getAdminDashboardWarmReportIds(state: AppState): string[] {
@@ -922,6 +931,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           if (isSigningOutRef.current) {
             throw loadError
           }
+          if (isInvalidSessionError(loadError)) {
+            clearSignedOutState()
+            throw loadError
+          }
           if (!currentStateRef.current.currentUserId) {
             setState(createEmptyAppState())
             resetDeferredDataState()
@@ -942,6 +955,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       client,
       endBackgroundSync,
       persistWorkspaceCache,
+      clearSignedOutState,
       resetDeferredDataState,
       scheduleOverdueSync,
       syncReportDetailLoadStates,
@@ -1101,7 +1115,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               warmAdminReportDetails(result.state)
             })
             .catch((loadError) => {
-              if (!isSigningOutRef.current && !isLikelyOfflineError(loadError)) {
+              if (
+                !isSigningOutRef.current &&
+                !isInvalidSessionError(loadError) &&
+                !isLikelyOfflineError(loadError)
+              ) {
                 toast.error(getMessage(loadError, 'Unable to load the signed-in workspace.'))
               }
             })
@@ -1154,7 +1172,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         warmAdminReportDetails(result.state)
       } catch (loadError) {
         clearSignedOutState()
-        if (!isSigningOutRef.current) {
+        if (!isSigningOutRef.current && !isInvalidSessionError(loadError)) {
           setError(getMessage(loadError, 'Unable to load the signed-in workspace.'))
           toast.error(getMessage(loadError, 'Unable to load the signed-in workspace.'))
         }
@@ -1659,7 +1677,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }, [client, flushQueuedReportSaves, signedInUserId])
 
   const login = useCallback(
-    async (email: string, password: string): Promise<UserRole | null> => {
+    async (email: string, password: string): Promise<UserProfile | null> => {
       if (!client) {
         const message = `Laravel API is not configured. ${apiEnvSetupHint}`
         setError(message)
@@ -1690,7 +1708,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
 
         pendingExplicitAuthUserIdRef.current = null
-        return result.currentUser.role
+        return result.currentUser
       } catch (loginError) {
         pendingExplicitAuthUserIdRef.current = null
         suppressNextSignedInLoadRef.current = false
@@ -1712,6 +1730,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       isSigningOutRef.current = true
       await signOutMutation(client)
       clearSignedOutState()
+      isSigningOutRef.current = false
     } catch (logoutError) {
       isSigningOutRef.current = false
       toast.error(getMessage(logoutError, 'Unable to sign out.'))
@@ -2222,8 +2241,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   )
 
   const ensureProfileDirectoryData = useCallback(
-    async (): Promise<void> => {
-      if (!client || !currentUserIdRef.current || profileDirectoryLoadedRef.current) {
+    async (options?: { force?: boolean }): Promise<void> => {
+      if (
+        !client ||
+        !currentUserIdRef.current ||
+        (profileDirectoryLoadedRef.current && !options?.force)
+      ) {
         return
       }
 

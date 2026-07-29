@@ -242,10 +242,10 @@ class AnalyticsExportTest extends TestCase
         Queue::fake();
 
         $response = $this->actingAs($this->admin)
-            ->postJson('/api/analytics/exports', ['format' => 'csv'])
+            ->postJson('/api/analytics/exports', ['format' => 'xlsx'])
             ->assertAccepted()
             ->assertJsonPath('data.status', AnalyticsExport::STATUS_PENDING)
-            ->assertJsonPath('data.format', 'csv');
+            ->assertJsonPath('data.format', 'xlsx');
 
         $exportId = $response->json('data.id');
 
@@ -261,13 +261,13 @@ class AnalyticsExportTest extends TestCase
             ->assertJsonPath('data.0.id', $exportId);
     }
 
-    public function test_export_job_streams_csv_and_notifies_the_requesting_user(): void
+    public function test_export_job_builds_excel_and_notifies_the_requesting_user(): void
     {
         Storage::fake('local');
         $export = AnalyticsExport::query()->create([
             'user_id' => $this->admin->id,
             'status' => AnalyticsExport::STATUS_PENDING,
-            'format' => 'csv',
+            'format' => 'xlsx',
         ]);
 
         (new BuildAnalyticsExport($export->id))->handle(app(AnalyticsExportService::class));
@@ -277,6 +277,7 @@ class AnalyticsExportTest extends TestCase
         $this->assertGreaterThan(0, $export->row_count);
         $this->assertGreaterThan(0, $export->byte_size);
         $this->assertNotNull($export->expires_at);
+        $this->assertStringEndsWith('.xlsx', $export->file_name);
         Storage::disk('local')->assertExists($export->file_path);
         $this->assertDatabaseHas('notifications', [
             'recipient_id' => $this->admin->id,

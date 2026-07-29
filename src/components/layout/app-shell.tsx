@@ -397,7 +397,7 @@ export function AppShell({ children }: PropsWithChildren) {
 
                 <button
                   type="button"
-                  className="relative inline-flex h-9 w-9 items-center justify-center rounded-[0.35rem] text-[#5b6169] transition-[transform,background-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[#f1f4f8] hover:text-[#000a1e] active:scale-[0.95] pointer-coarse:h-11 pointer-coarse:w-11"
+                  className="relative inline-flex h-10 w-10 items-center justify-center rounded-[0.35rem] text-[#5b6169] transition-[transform,background-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[#f1f4f8] hover:text-[#000a1e] active:scale-[0.95] pointer-coarse:h-11 pointer-coarse:w-11"
                   aria-label="Notifications"
                   onClick={() =>
                     navigate(
@@ -435,7 +435,7 @@ export function AppShell({ children }: PropsWithChildren) {
                   type="button"
                   aria-label="Sign out"
                   title="Sign out"
-                  className="hidden h-9 w-9 items-center justify-center rounded-[0.35rem] text-[#8794a5] transition-[transform,background-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[#fbecec] hover:text-[#ba1a1a] active:scale-[0.95] sm:inline-flex pointer-coarse:h-11 pointer-coarse:w-11"
+                  className="hidden h-10 w-10 items-center justify-center rounded-[0.35rem] text-[#8794a5] transition-[transform,background-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[#fbecec] hover:text-[#ba1a1a] active:scale-[0.95] sm:inline-flex pointer-coarse:h-11 pointer-coarse:w-11"
                   onClick={() => {
                     void logout()
                   }}

@@ -13,7 +13,7 @@ test.describe('Tables, search, filter, pagination, empty states', () => {
 
     // Filter to a seeded nurse.
     await search.fill('Abel')
-    await expect(page.getByText('Abel Gemechu')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText('Abel Gemechu').first()).toBeVisible({ timeout: 10_000 })
 
     // Gibberish -> empty state.
     await search.fill('zzz-no-such-user-zzz')
@@ -21,7 +21,7 @@ test.describe('Tables, search, filter, pagination, empty states', () => {
 
     // Clearing restores the list.
     await search.fill('')
-    await expect(page.getByText('Abel Gemechu')).toBeVisible()
+    await expect(page.getByText('Abel Gemechu').first()).toBeVisible()
   })
 
   test('Academic submissions: list paginates', async ({ page }) => {

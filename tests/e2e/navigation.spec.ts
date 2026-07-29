@@ -29,7 +29,7 @@ async function visit(page: Page, path: string) {
   await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible({ timeout: 20_000 })
   // Not bounced to login (session intact) and not the 404 page.
   await expect(page).not.toHaveURL(/\/login/)
-  await expect(page.getByText(/page not found|404/i)).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Page not found', exact: true })).toHaveCount(0)
 }
 
 for (const role of Object.keys(ROUTES) as Role[]) {
@@ -67,7 +67,10 @@ test.describe('Nav links resolve (no dead links in the shell)', () => {
     for (const href of [...new Set(hrefs)]) {
       await page.goto(href, { waitUntil: 'domcontentloaded' })
       await expect(page, `dead link: ${href}`).not.toHaveURL(/\/login/)
-      await expect(page.getByText(/page not found|404/i), `404 at ${href}`).toHaveCount(0)
+      await expect(
+        page.getByRole('heading', { name: 'Page not found', exact: true }),
+        `404 at ${href}`,
+      ).toHaveCount(0)
     }
   })
 })

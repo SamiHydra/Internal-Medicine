@@ -71,3 +71,7 @@ dist-*/
 # placeholders and is a deliverable, so it is exempt from the .env.* rule above.
 !.env.docker
 artifacts/audit-2026-07-21/mobile/*.png
+
+# Generated performance/load-test output. This includes large runtime logs and
+# disposable benchmark credentials; keep the audit harness, not its run data.
+docker/audit/evidence/

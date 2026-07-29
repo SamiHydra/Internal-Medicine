@@ -10,10 +10,10 @@
   "theme_color": "#002147",
   "icons": [
     {
-      "src": "/favicon.svg",
-      "type": "image/svg+xml",
-      "sizes": "any",
-      "purpose": "any maskable"
+      "src": "/st-pauls-logo.jpg",
+      "type": "image/jpeg",
+      "sizes": "300x300",
+      "purpose": "any"
     }
   ]
 }

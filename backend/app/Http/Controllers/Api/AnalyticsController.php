@@ -115,13 +115,13 @@ class AnalyticsController extends Controller
     public function queueExport(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'format' => ['sometimes', 'in:csv'],
+            'format' => ['sometimes', 'in:csv,xlsx'],
         ]);
 
         $export = AnalyticsExport::query()->create([
             'user_id' => $request->user()->id,
             'status' => AnalyticsExport::STATUS_PENDING,
-            'format' => $validated['format'] ?? 'csv',
+            'format' => $validated['format'] ?? 'xlsx',
         ]);
 
         BuildAnalyticsExport::dispatch($export->id)->afterCommit();
@@ -148,10 +148,20 @@ class AnalyticsController extends Controller
         abort_if($analyticsExport->expires_at?->isPast(), 410, 'The export has expired.');
         abort_unless($analyticsExport->file_path && Storage::disk('local')->exists($analyticsExport->file_path), 404);
 
+        $isExcel = $analyticsExport->format === 'xlsx';
+
         return Storage::disk('local')->download(
             $analyticsExport->file_path,
-            $analyticsExport->file_name ?? 'clinical-submissions-full-history.csv',
-            ['Content-Type' => 'text/csv; charset=UTF-8'],
+            $analyticsExport->file_name ?? (
+                $isExcel
+                    ? 'clinical-submissions-full-history.xlsx'
+                    : 'clinical-submissions-full-history.csv'
+            ),
+            [
+                'Content-Type' => $isExcel
+                    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                    : 'text/csv; charset=UTF-8',
+            ],
         );
     }
 

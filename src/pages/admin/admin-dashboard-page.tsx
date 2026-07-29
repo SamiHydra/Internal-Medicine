@@ -41,7 +41,10 @@ import {
   type DashboardAnalyticsPayload,
 } from '@/lib/api/analytics'
 import { getApiBrowserClient } from '@/lib/api/client'
-import { evaluateMetricTarget, type RagStatus } from '@/lib/performance-targets'
+import {
+  DASHBOARD_CHART_ANIMATION_DURATION_MS,
+  shouldAnimateDashboardChart,
+} from '@/lib/chart-motion'
 import { prefetchRoute } from '@/routes/route-prefetch'
 import {
   Select,
@@ -73,7 +76,6 @@ import {
   getProcedureTotalThroughput,
   getProcedureWeeklyTrendSeries,
   getReportForAssignmentPeriod,
-  getLockDeadlineNote,
   getReportingPeriodsForRange,
   emptyReportingRangeSummary,
   getReportingRangeSummary,
@@ -113,20 +115,6 @@ type TrendBucket = {
   label: string
   periods: ReportingPeriod[]
   periodIds: Set<string>
-}
-
-const targetStatusLabel: Record<RagStatus, string> = {
-  green: 'Green',
-  amber: 'Amber',
-  red: 'Red',
-  neutral: 'No target',
-}
-
-const targetStatusClass: Record<RagStatus, string> = {
-  green: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  amber: 'border-amber-200 bg-amber-50 text-amber-700',
-  red: 'border-rose-200 bg-rose-50 text-rose-700',
-  neutral: 'border-slate-200 bg-slate-50 text-slate-600',
 }
 
 function ChartEmptyState({
@@ -208,7 +196,6 @@ function DeferredDashboardSection({
       return
     }
 
-    let mountTimer: number | null = null
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) {
@@ -216,24 +203,15 @@ function DeferredDashboardSection({
         }
 
         observer.disconnect()
-        // Leave a short input window after the shell becomes interactive. The
-        // old two-frame delay started thousands of chart callbacks directly
-        // under an immediate navigation click.
-        mountTimer = window.setTimeout(() => {
-          setHasEnteredViewport(true)
-        }, 500)
+        setHasEnteredViewport(true)
       },
-      { rootMargin: '0px 0px 160px' },
+      // Mount well before the section is visible. This keeps the initial page
+      // light without turning ordinary scrolling into a content reveal.
+      { rootMargin: '800px 0px' },
     )
 
     observer.observe(containerRef.current)
-
-    return () => {
-      observer.disconnect()
-      if (mountTimer !== null) {
-        window.clearTimeout(mountTimer)
-      }
-    }
+    return () => observer.disconnect()
   }, [eager, hasEnteredViewport])
 
   const shouldRender = eager || hasEnteredViewport
@@ -838,10 +816,6 @@ export function AdminDashboardPage() {
   const [procedureTrendScope, setProcedureTrendScope] = useState(ALL_PROCEDURE_SERVICES_TOTAL)
   const [procedureComparisonMonthKey, setProcedureComparisonMonthKey] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  // Mount charts at their final geometry. The former two-frame state flip made
-  // every Recharts animation begin together and produced more than 6,000
-  // animation-frame callbacks in the early-click trace.
-  const chartsAnimate = false
   useEffect(() => {
     const timer = window.setTimeout(() => {
       ;[
@@ -1119,7 +1093,6 @@ export function AdminDashboardPage() {
   const isRangeLoading = !resolvedRangeSummary
   const rangeSummary = resolvedRangeSummary ?? emptyReportingRangeSummary()
 
-  const deadlineNote = getLockDeadlineNote(state, effectivePeriodId)
   const timeRangeLabels = {
     current: 'Current week',
     last4: 'Last 4 weeks',
@@ -1135,10 +1108,6 @@ export function AdminDashboardPage() {
     { value: 'quarter' as const, label: 'Last quarter (13 weeks)' },
     { value: 'last26' as const, label: 'Last 26 weeks' },
   ] as const
-  const trendScaleLabels = {
-    weekly: 'Weekly trends',
-    monthly: 'Monthly trends',
-  } as const
   const trendScaleOptions = [
     { value: 'weekly' as const, label: 'Weekly' },
     { value: 'monthly' as const, label: 'Monthly' },
@@ -1261,29 +1230,13 @@ export function AdminDashboardPage() {
     availablePeriods.find((period) => period.id === effectivePeriodId) ??
     currentPeriod ??
     null
-  const rangeStart = trendPeriods[0] ?? selectedPeriod
   const rangeEnd = trendPeriods.at(-1) ?? selectedPeriod
-  const trendBucketLabel =
-    trendScale === 'monthly'
-      ? `${trendBuckets.length} ${trendBuckets.length === 1 ? 'month' : 'months'}`
-      : `${trendPeriods.length} reporting ${trendPeriods.length === 1 ? 'week' : 'weeks'}`
   const selectedRangeTitle =
     timeRange === 'current'
       ? selectedPeriod?.label ?? 'Current reporting period'
       : `${timeRangeLabels[timeRange]} through ${
           rangeEnd ? format(new Date(rangeEnd.weekEnd), 'MMM d, yyyy') : 'selected period'
         }`
-  const selectedRangeNote =
-    timeRange === 'current'
-      ? deadlineNote
-        ? `Deadline ${format(deadlineNote, 'EEE, MMM d')} at ${format(deadlineNote, 'HH:mm')}`
-        : 'No deadline set'
-      : rangeStart && rangeEnd
-        ? `${format(new Date(rangeStart.weekStart), 'MMM d')} - ${format(
-          new Date(rangeEnd.weekEnd),
-          'MMM d, yyyy',
-          )} / ${trendBucketLabel}`
-        : 'No reporting periods in range'
   const scopedAssignments = state.assignments.filter((assignment) =>
     assignment.active &&
     (familyFilter === 'all' ? true : departmentMap[assignment.departmentId].family === familyFilter),
@@ -1340,7 +1293,6 @@ export function AdminDashboardPage() {
   const deliveredCount = statusDistribution
     .filter((item) => deliveredStatuses.has(item.key))
     .reduce((sum, item) => sum + item.count, 0)
-  const openCount = Math.max(totalExpected - deliveredCount, 0)
   const deliveryRate = formatShare(deliveredCount, totalExpected)
   const statusFocusValue =
     statusFilter === 'all'
@@ -1757,6 +1709,7 @@ export function AdminDashboardPage() {
   const renderMonthlyComparison = ({
     data,
     series,
+    animateChart = false,
     valueFormatter,
     categoryFormatter,
     tooltipLabelFormatter,
@@ -1768,6 +1721,7 @@ export function AdminDashboardPage() {
   }: {
     data: Array<Record<string, unknown>>
     series: Array<{ key: string; name: string; color: string }>
+    animateChart?: boolean
     valueFormatter?: (value: unknown) => string
     categoryFormatter?: (value: unknown) => string
     tooltipLabelFormatter?: (label: unknown, payload?: readonly unknown[]) => string
@@ -1814,7 +1768,7 @@ export function AdminDashboardPage() {
           labelFormatter={tooltipLabelFormatter}
           formatter={tooltipFormatter}
         />
-        {series.map((entry, index) => (
+        {series.map((entry) => (
           <Bar
             key={entry.key}
             dataKey={entry.key}
@@ -1822,8 +1776,8 @@ export function AdminDashboardPage() {
             fill={entry.color}
             radius={[0, 5, 5, 0]}
             maxBarSize={single ? 30 : 16}
-            isAnimationActive={chartsAnimate && !reduceMotion}
-            animationDuration={1000 + index * 200}
+            isAnimationActive={animateChart}
+            animationDuration={DASHBOARD_CHART_ANIMATION_DURATION_MS}
             animationEasing="ease-out"
             activeBar={{ fillOpacity: 0.85 }}
           >
@@ -1879,14 +1833,11 @@ export function AdminDashboardPage() {
     bronchoscopy: grayscalePalette.steel,
     ligation: grayscalePalette.cloud,
   } as const
-  const metricTargets = state.settings.metricTargets ?? {}
-  const deliveryTargetTone = evaluateMetricTarget(deliveryRate, metricTargets.deliveryRate)
-
   return (
     <div className="space-y-6 px-4 py-5 text-[#000a1e] md:space-y-8 md:px-6 md:py-8">
       <motion.section
         {...fadeIn}
-        className="overflow-hidden rounded-xl border border-[#dce3eb] bg-white shadow-[0_18px_50px_-42px_rgba(0,33,71,0.4)]"
+        className="overflow-visible rounded-xl border border-[#dce3eb] bg-white shadow-[0_18px_50px_-42px_rgba(0,33,71,0.4)]"
       >
         <div>
           <div className="flex flex-col gap-5 px-5 py-6 md:flex-row md:items-end md:justify-between md:px-7 md:py-7">
@@ -1898,17 +1849,10 @@ export function AdminDashboardPage() {
               <h1 className="mt-3 max-w-3xl font-display text-[1.65rem] font-bold leading-[1.08] tracking-[-0.035em] text-[#000a1e] md:text-[2rem]">
                 {selectedRangeTitle}
               </h1>
-              <p className="mt-2 text-sm leading-6 text-[#64748b]">
-                {trendScaleLabels[trendScale]}
-                <span className="mx-2 text-[#c1cbd7]" aria-hidden="true">/</span>
-                {familyLabels[familyFilter]}
-                <span className="mx-2 text-[#c1cbd7]" aria-hidden="true">/</span>
-                {selectedRangeNote}
-              </p>
             </div>
             <AnalyticsExportPanel />
           </div>
-          <div className="border-y border-[#e3e8ef] bg-[#f8fafc]/75">
+          <div className="rounded-b-xl border-y border-[#e3e8ef] bg-[#f8fafc]/75">
             <button
               type="button"
               onClick={() => setFiltersOpen((value) => !value)}
@@ -2033,65 +1977,6 @@ export function AdminDashboardPage() {
               </div>
             </div>
           </div>
-          <div className="grid divide-y divide-[#e3e8ef] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-            <article className="px-5 py-5 md:px-7 md:py-6">
-              <div className="flex items-start justify-between gap-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#64748b]">
-                  Delivered
-                </p>
-                <Delta value={trendDelta.delivered} variant="badge">
-                  <DeltaIcon variant="trend" />
-                  <DeltaValue suffix="%" />
-                </Delta>
-              </div>
-              <p className="mt-4 font-display text-[2rem] font-bold leading-none tracking-[-0.04em] tabular-nums text-[#000a1e]">
-                <AnimatedMetric value={deliveredCount} variant="number" />
-              </p>
-              <p className="mt-2 text-xs text-[#7a8796]">Compared with range start</p>
-            </article>
-
-            <article className="px-5 py-5 md:px-7 md:py-6">
-              <div className="flex items-start justify-between gap-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#64748b]">
-                  Still open
-                </p>
-                <Delta value={trendDelta.open} variant="badge">
-                  <DeltaIcon variant="trend" />
-                  <DeltaValue suffix="%" />
-                </Delta>
-              </div>
-              <p className="mt-4 font-display text-[2rem] font-bold leading-none tracking-[-0.04em] tabular-nums text-[#000a1e]">
-                <AnimatedMetric value={openCount} variant="number" />
-              </p>
-              <p className="mt-2 text-xs text-[#7a8796]">Compared with range start</p>
-            </article>
-
-            <article className="px-5 py-5 md:px-7 md:py-6">
-              <div className="flex items-start justify-between gap-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#64748b]">
-                  Delivery rate
-                </p>
-                <span
-                  className={cn(
-                    'rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]',
-                    targetStatusClass[deliveryTargetTone],
-                  )}
-                >
-                  {targetStatusLabel[deliveryTargetTone]}
-                </span>
-              </div>
-              <div className="mt-4 flex flex-wrap items-end gap-2">
-                <p className="font-display text-[2rem] font-bold leading-none tracking-[-0.04em] tabular-nums text-[#000a1e]">
-                  <AnimatedMetric value={deliveryRate} variant="percent" />
-                </p>
-                <Delta value={trendDelta.rate} variant="badge">
-                  <DeltaIcon variant="trend" />
-                  <DeltaValue suffix="pts" />
-                </Delta>
-              </div>
-              <p className="mt-2 text-xs text-[#7a8796]">Compared with range start</p>
-            </article>
-          </div>
         </div>
       </motion.section>
 
@@ -2167,8 +2052,10 @@ export function AdminDashboardPage() {
                         cornerRadius={4}
                         stroke="rgba(255,255,255,0.96)"
                         strokeWidth={5}
-                        isAnimationActive={chartsAnimate && !reduceMotion}
-                        animationDuration={1200}
+                        isAnimationActive={shouldAnimateDashboardChart(statusDistribution.length, {
+                          reduceMotion,
+                        })}
+                        animationDuration={DASHBOARD_CHART_ANIMATION_DURATION_MS}
                         animationEasing="ease-out"
                       >
                         {statusDistribution.map((item) => (
@@ -2290,9 +2177,9 @@ export function AdminDashboardPage() {
                       />
                       <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
                       <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipFillCursor} />
-                      <Bar dataKey="delivered" name="Delivered" fill="#005db6" maxBarSize={34} radius={[6, 6, 0, 0]} isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1000} animationEasing="ease-out" />
-                      <Bar dataKey="open" name="Open" fill="#6c7f95" maxBarSize={34} radius={[6, 6, 0, 0]} isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1200} animationEasing="ease-out" />
-                      <Bar dataKey="overdue" name="Overdue" fill="#f0b429" maxBarSize={34} radius={[6, 6, 0, 0]} isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1400} animationEasing="ease-out" />
+                      <Bar dataKey="delivered" name="Delivered" fill="#005db6" maxBarSize={34} radius={[6, 6, 0, 0]} isAnimationActive={false} />
+                      <Bar dataKey="open" name="Open" fill="#6c7f95" maxBarSize={34} radius={[6, 6, 0, 0]} isAnimationActive={false} />
+                      <Bar dataKey="overdue" name="Overdue" fill="#f0b429" maxBarSize={34} radius={[6, 6, 0, 0]} isAnimationActive={false} />
                     </BarChart>
                   ) : (
                     <AreaChart
@@ -2321,8 +2208,7 @@ export function AdminDashboardPage() {
                         activeDot={{ ...lineActiveDot, fill: '#005db6' }}
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        isAnimationActive={chartsAnimate && !reduceMotion}
-                        animationDuration={1100}
+                        isAnimationActive={false}
                         animationEasing="ease-out"
                       />
                       <Line
@@ -2335,8 +2221,7 @@ export function AdminDashboardPage() {
                         activeDot={{ ...lineActiveDot, fill: '#6c7f95' }}
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        isAnimationActive={chartsAnimate && !reduceMotion}
-                        animationDuration={1300}
+                        isAnimationActive={false}
                         animationEasing="ease-out"
                       />
                       <Line
@@ -2350,8 +2235,7 @@ export function AdminDashboardPage() {
                         activeDot={{ ...lineActiveDot, fill: '#f0b429' }}
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        isAnimationActive={chartsAnimate && !reduceMotion}
-                        animationDuration={1500}
+                        isAnimationActive={false}
                         animationEasing="ease-out"
                       />
                     </AreaChart>
@@ -2370,12 +2254,7 @@ export function AdminDashboardPage() {
           eager={familyFilter !== 'all'}
           placeholderClassName="min-h-[64rem]"
         >
-          <motion.section
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, ease: 'easeOut' }}
-            className={sectionClass}
-          >
+          <section className={sectionClass}>
             <SectionAmbient />
             <div className="space-y-8">
             <SectionHeading
@@ -2447,6 +2326,9 @@ export function AdminDashboardPage() {
                       {trendScale === 'monthly' ? (
                         renderMonthlyComparison({
                           data: inpatientFlowSeries,
+                          animateChart: shouldAnimateDashboardChart(inpatientFlowSeries.length, {
+                            reduceMotion,
+                          }),
                           series: [
                             { key: 'newAdmissions', name: 'Newly admitted', color: grayscalePalette.ink },
                             { key: 'discharges', name: 'Discharges', color: grayscalePalette.steel },
@@ -2475,8 +2357,8 @@ export function AdminDashboardPage() {
                           />
                           <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
                           <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={formatTrendTooltipValue} />
-                          <Area type="linear" dataKey="newAdmissions" name="Newly admitted" stroke="#005db6" fill="#005db6" fillOpacity={0.18} strokeWidth={3.2} dot={{ r: 2.6, strokeWidth: 0, fill: '#005db6' }} activeDot={{ ...lineActiveDot, fill: '#005db6' }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1100} animationEasing="ease-out" />
-                          <Line type="linear" dataKey="discharges" name="Discharges" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1400} animationEasing="ease-out" />
+                          <Area type="linear" dataKey="newAdmissions" name="Newly admitted" stroke="#005db6" fill="#005db6" fillOpacity={0.18} strokeWidth={3.2} dot={{ r: 2.6, strokeWidth: 0, fill: '#005db6' }} activeDot={{ ...lineActiveDot, fill: '#005db6' }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={shouldAnimateDashboardChart(inpatientFlowSeries.length, { reduceMotion })} animationDuration={DASHBOARD_CHART_ANIMATION_DURATION_MS} animationEasing="ease-out" />
+                          <Line type="linear" dataKey="discharges" name="Discharges" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={shouldAnimateDashboardChart(inpatientFlowSeries.length, { reduceMotion })} animationDuration={DASHBOARD_CHART_ANIMATION_DURATION_MS} animationEasing="ease-out" />
                         </AreaChart>
                       )}
                       </ResponsiveContainer>
@@ -2527,9 +2409,9 @@ export function AdminDashboardPage() {
                           <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                           <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
                           <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={formatTrendTooltipValue} />
-                          <Area type="linear" dataKey="deaths" name="Deaths" stroke={grayscalePalette.slate} fill={grayscalePalette.slate} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.slate }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.slate }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1000} animationEasing="ease-out" />
-                          <Line type="linear" dataKey="ulcers" name="New pressure ulcers" stroke={grayscalePalette.steel} strokeWidth={2.7} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1200} animationEasing="ease-out" />
-                          <Line type="linear" dataKey="hai" name="Total HAI" stroke={grayscalePalette.carbon} strokeWidth={2.7} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.carbon }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.carbon }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1400} animationEasing="ease-out" />
+                          <Area type="linear" dataKey="deaths" name="Deaths" stroke={grayscalePalette.slate} fill={grayscalePalette.slate} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.slate }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.slate }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={false} />
+                          <Line type="linear" dataKey="ulcers" name="New pressure ulcers" stroke={grayscalePalette.steel} strokeWidth={2.7} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={false} />
+                          <Line type="linear" dataKey="hai" name="Total HAI" stroke={grayscalePalette.carbon} strokeWidth={2.7} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.carbon }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.carbon }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={false} />
                         </AreaChart>
                       )}
                       </ResponsiveContainer>
@@ -2612,9 +2494,9 @@ export function AdminDashboardPage() {
                             cursor={tooltipLineCursor}
                             labelFormatter={formatChartTooltipLabel}
                           />
-                          <Area type="linear" dataKey="bor" name="BOR %" stroke={grayscalePalette.ink} fill={grayscalePalette.ink} fillOpacity={0.18} strokeWidth={3.2} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.ink }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1100} animationEasing="ease-out" />
-                          <Line type="linear" dataKey="btr" name="BTR" stroke={grayscalePalette.carbon} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.carbon }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.carbon }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1300} animationEasing="ease-out" />
-                          <Line type="linear" dataKey="alos" name="ALOS" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1500} animationEasing="ease-out" />
+                          <Area type="linear" dataKey="bor" name="BOR %" stroke={grayscalePalette.ink} fill={grayscalePalette.ink} fillOpacity={0.18} strokeWidth={3.2} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.ink }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={false} />
+                          <Line type="linear" dataKey="btr" name="BTR" stroke={grayscalePalette.carbon} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.carbon }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.carbon }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={false} />
+                          <Line type="linear" dataKey="alos" name="ALOS" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={false} />
                         </AreaChart>
                       </ResponsiveContainer>
                     ) : (
@@ -2629,7 +2511,7 @@ export function AdminDashboardPage() {
               </div>
             ) : null}
             </div>
-          </motion.section>
+          </section>
         </DeferredDashboardSection>
       ) : null}
 
@@ -2638,12 +2520,7 @@ export function AdminDashboardPage() {
           eager={familyFilter !== 'all'}
           placeholderClassName="min-h-[76rem]"
         >
-          <motion.section
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, ease: 'easeOut' }}
-            className={sectionClass}
-          >
+          <section className={sectionClass}>
             <SectionAmbient />
             <div className="space-y-8">
             <SectionHeading
@@ -2713,6 +2590,9 @@ export function AdminDashboardPage() {
                         {trendScale === 'monthly' ? (
                           renderMonthlyComparison({
                             data: outpatientSeenSeries,
+                            animateChart: shouldAnimateDashboardChart(outpatientSeenSeries.length, {
+                              reduceMotion,
+                            }),
                             series: [
                               { key: 'seen', name: 'Seen', color: grayscalePalette.ink },
                               { key: 'notSeenSameDay', name: 'Not seen same day', color: grayscalePalette.steel },
@@ -2727,8 +2607,8 @@ export function AdminDashboardPage() {
                           <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                           <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
                           <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={formatTrendTooltipValue} />
-                          <Area type="linear" dataKey="seen" name="Seen" stroke={grayscalePalette.ink} fill={grayscalePalette.ink} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.ink }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1100} animationEasing="ease-out" />
-                          <Line type="linear" dataKey="notSeenSameDay" name="Not seen same day" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1400} animationEasing="ease-out" />
+                          <Area type="linear" dataKey="seen" name="Seen" stroke={grayscalePalette.ink} fill={grayscalePalette.ink} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.ink }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={shouldAnimateDashboardChart(outpatientSeenSeries.length, { reduceMotion })} animationDuration={DASHBOARD_CHART_ANIMATION_DURATION_MS} animationEasing="ease-out" />
+                          <Line type="linear" dataKey="notSeenSameDay" name="Not seen same day" stroke={grayscalePalette.steel} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={shouldAnimateDashboardChart(outpatientSeenSeries.length, { reduceMotion })} animationDuration={DASHBOARD_CHART_ANIMATION_DURATION_MS} animationEasing="ease-out" />
                         </AreaChart>
                       )}
                       </ResponsiveContainer>
@@ -2776,9 +2656,9 @@ export function AdminDashboardPage() {
                             <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                             <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
                             <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={formatTrendTooltipValue} />
-                            <Area type="linear" dataKey="totalSeen" name="Total seen" stroke={grayscalePalette.carbon} fill={grayscalePalette.carbon} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.carbon }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.carbon }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1000} animationEasing="ease-out" />
-                            <Line type="linear" dataKey="newPatients" name="New" stroke={grayscalePalette.ink} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.ink }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1200} animationEasing="ease-out" />
-                            <Line type="linear" dataKey="followUp" name="Follow-up" stroke={grayscalePalette.cloud} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.cloud }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.cloud }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1400} animationEasing="ease-out" />
+                            <Area type="linear" dataKey="totalSeen" name="Total seen" stroke={grayscalePalette.carbon} fill={grayscalePalette.carbon} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.4, strokeWidth: 0, fill: grayscalePalette.carbon }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.carbon }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={false} />
+                            <Line type="linear" dataKey="newPatients" name="New" stroke={grayscalePalette.ink} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.ink }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={false} />
+                            <Line type="linear" dataKey="followUp" name="Follow-up" stroke={grayscalePalette.cloud} strokeWidth={2.6} dot={{ r: 2.2, strokeWidth: 0, fill: grayscalePalette.cloud }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.cloud }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={false} />
                           </AreaChart>
                         )}
                       </ResponsiveContainer>
@@ -2818,7 +2698,7 @@ export function AdminDashboardPage() {
                           <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                           <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
                           <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={formatTrendTooltipValue} />
-                          <Area type="linear" dataKey="wait" name="Follow-up wait (months)" stroke={grayscalePalette.ink} fill={grayscalePalette.ink} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.6, strokeWidth: 0, fill: grayscalePalette.ink }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1200} animationEasing="ease-out" />
+                          <Area type="linear" dataKey="wait" name="Follow-up wait (months)" stroke={grayscalePalette.ink} fill={grayscalePalette.ink} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.6, strokeWidth: 0, fill: grayscalePalette.ink }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={false} />
                         </AreaChart>
                       )}
                       </ResponsiveContainer>
@@ -2858,7 +2738,7 @@ export function AdminDashboardPage() {
                           <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                           <YAxis tickFormatter={formatMinutesAsTime} tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={44} />
                           <Tooltip contentStyle={lightTooltipStyle} labelStyle={lightTooltipLabelStyle} itemStyle={lightTooltipItemStyle} cursor={tooltipLineCursor} formatter={(value) => [formatMinutesAsTime(Number(value)), 'Start time']} />
-                          <Area type="linear" dataKey="startMinutes" name="Clinic start" stroke={grayscalePalette.steel} fill={grayscalePalette.steel} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.6, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1200} animationEasing="ease-out" />
+                          <Area type="linear" dataKey="startMinutes" name="Clinic start" stroke={grayscalePalette.steel} fill={grayscalePalette.steel} fillOpacity={0.18} strokeWidth={3} dot={{ r: 2.6, strokeWidth: 0, fill: grayscalePalette.steel }} activeDot={{ ...lineActiveDot, fill: grayscalePalette.steel }} strokeLinecap="round" strokeLinejoin="round" isAnimationActive={false} />
                         </AreaChart>
                       )}
                       </ResponsiveContainer>
@@ -2926,7 +2806,7 @@ export function AdminDashboardPage() {
                             formatter={formatAvailabilityTooltipValue}
                             labelFormatter={formatChartTooltipLabel}
                           />
-                          {OUTPATIENT_AVAILABILITY_STATUSES.map((status, index) => (
+                          {OUTPATIENT_AVAILABILITY_STATUSES.map((status) => (
                             <Bar
                               key={status.key}
                               dataKey={status.key}
@@ -2934,9 +2814,7 @@ export function AdminDashboardPage() {
                               fill={outpatientAvailabilityPalette[status.key]}
                               radius={[7, 7, 0, 0]}
                               maxBarSize={34}
-                              isAnimationActive={chartsAnimate && !reduceMotion}
-                              animationDuration={1000 + index * 180}
-                              animationEasing="ease-out"
+                              isAnimationActive={false}
                             />
                           ))}
                         </BarChart>
@@ -2953,7 +2831,7 @@ export function AdminDashboardPage() {
               </div>
             </div>
             </div>
-          </motion.section>
+          </section>
         </DeferredDashboardSection>
       ) : null}
 
@@ -2962,12 +2840,7 @@ export function AdminDashboardPage() {
           eager={familyFilter !== 'all'}
           placeholderClassName="min-h-[64rem]"
         >
-          <motion.section
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, ease: 'easeOut' }}
-            className={sectionClass}
-          >
+          <section className={sectionClass}>
             <SectionAmbient />
             <div className="space-y-8">
             <SectionHeading
@@ -3039,6 +2912,9 @@ export function AdminDashboardPage() {
                       {trendScale === 'monthly' ? (
                         renderMonthlyComparison({
                           data: procedureMainSeries,
+                          animateChart: shouldAnimateDashboardChart(procedureMainSeries.length, {
+                            reduceMotion,
+                          }),
                           series: [
                             { key: 'total', name: 'Total throughput', color: grayscalePalette.ink },
                           ],
@@ -3073,8 +2949,10 @@ export function AdminDashboardPage() {
                             activeDot={{ ...lineActiveDot, fill: grayscalePalette.ink }}
                             strokeLinecap="round"
                             strokeLinejoin="round"
-                            isAnimationActive={chartsAnimate && !reduceMotion}
-                            animationDuration={1100}
+                            isAnimationActive={shouldAnimateDashboardChart(procedureMainSeries.length, {
+                              reduceMotion,
+                            })}
+                            animationDuration={DASHBOARD_CHART_ANIMATION_DURATION_MS}
                             animationEasing="ease-out"
                           />
                         </AreaChart>
@@ -3122,7 +3000,7 @@ export function AdminDashboardPage() {
                           cursor={tooltipFillCursor}
                           content={<ProcedureMixTooltip />}
                         />
-                        <Bar dataKey="value" name="Dialysis" maxBarSize={42} radius={[6, 6, 0, 0]} isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1200} animationEasing="ease-out">
+                        <Bar dataKey="value" name="Dialysis" maxBarSize={42} radius={[6, 6, 0, 0]} isAnimationActive={false}>
                           {resolvedDialysisMix.map((item) => (
                             <Cell key={item.key} fill={procedureMixColorMap[item.key as keyof typeof procedureMixColorMap]} />
                           ))}
@@ -3162,7 +3040,7 @@ export function AdminDashboardPage() {
                           cursor={tooltipFillCursor}
                           content={<ProcedureMixTooltip />}
                         />
-                        <Bar dataKey="value" name="Endoscopy" maxBarSize={42} radius={[6, 6, 0, 0]} isAnimationActive={chartsAnimate && !reduceMotion} animationDuration={1200} animationEasing="ease-out">
+                        <Bar dataKey="value" name="Endoscopy" maxBarSize={42} radius={[6, 6, 0, 0]} isAnimationActive={false}>
                           {resolvedEndoscopyMix.map((item) => (
                             <Cell key={item.key} fill={procedureMixColorMap[item.key as keyof typeof procedureMixColorMap]} />
                           ))}
@@ -3182,7 +3060,7 @@ export function AdminDashboardPage() {
               </div>
             ) : null}
             </div>
-          </motion.section>
+          </section>
         </DeferredDashboardSection>
       ) : null}
 

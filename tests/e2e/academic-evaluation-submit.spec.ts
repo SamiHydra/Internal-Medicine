@@ -114,6 +114,10 @@ test.describe('Academic evaluation submission (resident -> consultant)', () => {
 
       await page.locator('[aria-label="Consultant evaluated"]').click()
       await page.getByRole('option', { name: subject.fullName, exact: true }).click()
+      // The published form requires an overall rating. Selecting only the
+      // subject correctly leaves the form in validation state.
+      await page.getByRole('combobox', { name: 'Overall rating' }).click()
+      await page.getByRole('option', { name: '5', exact: true }).click()
       await page.getByRole('button', { name: /submit evaluation/i }).click()
 
       await expect(page.getByText('Evaluation submitted.')).toBeVisible({ timeout: 20_000 })

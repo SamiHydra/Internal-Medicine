@@ -147,7 +147,7 @@ describe('fetchDashboardAnalytics', () => {
     const exportRecord = {
       id: 'export-1',
       status: 'pending' as const,
-      format: 'csv' as const,
+      format: 'xlsx' as const,
       fileName: null,
       rowCount: 0,
       byteSize: null,
@@ -163,7 +163,7 @@ describe('fetchDashboardAnalytics', () => {
 
     await expect(queueFullHistoryAnalyticsExport(client)).resolves.toEqual(exportRecord)
     await expect(fetchAnalyticsExports(client)).resolves.toEqual([exportRecord])
-    expect(post).toHaveBeenCalledWith('/api/analytics/exports', { format: 'csv' })
+    expect(post).toHaveBeenCalledWith('/api/analytics/exports', { format: 'xlsx' })
     expect(get).toHaveBeenCalledWith('/api/analytics/exports')
   })
 })

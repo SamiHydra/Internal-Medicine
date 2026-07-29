@@ -47,6 +47,12 @@ const sectionClass =
   'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
 const countChipClass =
   'inline-flex items-center gap-2 self-start rounded-full bg-[#f4f7fb] px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#44474e] outline outline-1 outline-[#e3e9f1]'
+const requestQueueClass =
+  'overflow-hidden rounded-[0.55rem] border border-[#dce3eb] bg-white shadow-[0_18px_48px_-40px_rgba(0,33,71,0.42)]'
+const requestActionClass =
+  'h-9 px-3.5 shadow-none pointer-coarse:min-h-11'
+const requestRejectClass =
+  'h-9 px-3 text-[#a81919] hover:bg-[#fff1f1] hover:text-[#8f1010] pointer-coarse:min-h-11'
 const rosterPageSize = 20
 
 type ResidentApprovalDraft = {
@@ -235,133 +241,171 @@ export function UserManagementPage() {
 
   return (
     <div className="space-y-6 px-4 py-5 md:px-6 md:py-8">
-      <section className={cn('grid gap-6', workspace === 'clinical' && canApproveAdmins && 'lg:grid-cols-2')}>
+      <section
+        className={cn(
+          'grid items-start gap-6',
+          workspace === 'clinical' &&
+            canApproveAdmins &&
+            'min-[1680px]:grid-cols-2',
+        )}
+      >
         {workspace === 'clinical' ? (
-        <motion.section
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
-          className={sectionClass}
-        >
-          <div className="space-y-5">
-            <div className="flex flex-col gap-4 border-b border-[#eef2f6] pb-5 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <SectionEyebrow label="Pending" />
-                <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
-                  Access requests
-                </h2>
-                <p className="mt-1 text-sm text-[#74777f]">Review and approve nurse reporting access.</p>
-              </div>
-              <span className={countChipClass}>{pendingRequests.length} in queue</span>
-            </div>
-
-            {pendingRequests.length ? (
-              <div className="overflow-hidden rounded-[0.4rem] border border-[#cfe0f4]">
-                {pendingRequests.map((request) => {
-                  const expanded = expandedRequests.has(request.id)
-                  const requestedDepartments = request.requestedAssignments
-                    .map((assignment) => departments.find((entry) => entry.id === assignment.departmentId))
-                    .filter((department): department is (typeof departments)[number] => Boolean(department))
-
-                  return (
-                    <div key={request.id} className="border-b border-[#dbe8f6] bg-[#f6fbff] last:border-b-0">
-                      <div
-                        onClick={() => toggleExpandedRequest(request.id)}
-                        className="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-2.5 transition-colors duration-200 hover:bg-[#eef6ff]"
-                      >
-                        <button
-                          type="button"
-                          aria-expanded={expanded}
-                          aria-label={`${expanded ? 'Hide' : 'Show'} request details`}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            toggleExpandedRequest(request.id)
-                          }}
-                          className="shrink-0 rounded-[0.25rem] p-0.5 text-[#9aa7b8] outline-none transition-colors hover:text-[#005db6] focus-visible:text-[#005db6] pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-center"
-                        >
-                          <ChevronDown
-                            className={cn(
-                              'h-4 w-4 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
-                              expanded && 'rotate-180',
-                            )}
-                          />
-                        </button>
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#edf4fb] text-[11px] font-bold text-[#005db6]">
-                          {initialsFor(request.userName)}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-semibold text-[#000a1e]">
-                            {request.userName}
-                          </span>
-                          <span className="block truncate text-xs text-[#74777f]">{request.email}</span>
-                        </span>
-                        <span className="hidden shrink-0 text-xs text-[#74777f] sm:block">
-                          {requestedDepartments.length}{' '}
-                          {requestedDepartments.length === 1 ? 'dept' : 'depts'}
-                        </span>
-                        <div className="flex w-full shrink-0 items-center gap-2 [&>button]:flex-1 sm:w-auto sm:[&>button]:flex-none">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              void approveAccessRequest(request.id, currentUser.id)
-                            }}
-                          >
-                            <CheckCheck className="h-4 w-4" />
-                            Approve
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              void rejectAccessRequest(request.id, currentUser.id)
-                            }}
-                          >
-                            Reject
-                          </Button>
-                        </div>
-                      </div>
-
-                      {expanded ? (
-                        <div className="space-y-3 border-t border-[#dbe8f6] px-4 py-3.5">
-                          <div className="flex flex-wrap gap-2">
-                            {requestedDepartments.length ? (
-                              requestedDepartments.map((department) => (
-                                <span
-                                  key={`${request.id}-${department.id}`}
-                                  className="inline-flex items-center gap-2 rounded-full border border-[#e6ecf3] bg-white px-3 py-1.5 text-xs font-semibold text-[#44474e]"
-                                >
-                                  <span className="h-1.5 w-1.5 rounded-full bg-[#005db6]" />
-                                  {department.name}
-                                  <span className="text-[#9aa7b8]">/</span>
-                                  {serviceLineLabels[department.family]}
-                                </span>
-                              ))
-                            ) : (
-                              <span className="text-sm text-[#74777f]">No departments requested.</span>
-                            )}
-                          </div>
-                          {request.notes ? (
-                            <p className="text-sm leading-6 text-[#44474e]">{request.notes}</p>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-6 text-center">
-                <span className="flex h-11 w-11 items-center justify-center rounded-[0.4rem] bg-[#edf4fb] text-[#005db6]">
-                  <ShieldCheck className="h-5 w-5" />
+          <motion.section
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
+            className={requestQueueClass}
+          >
+            <div>
+              <div className="flex items-start justify-between gap-4 border-b border-[#e7ecf2] px-5 py-5 md:px-6">
+                <div className="min-w-0">
+                  <h2 className="font-display text-[1.25rem] font-bold tracking-[-0.02em] text-[#000a1e]">
+                    Access requests
+                  </h2>
+                  <p className="mt-1 text-sm leading-5 text-[#6e7580]">
+                    Nurse access to clinical reporting areas.
+                  </p>
+                </div>
+                <span className="inline-flex shrink-0 items-center gap-2 rounded-[0.3rem] bg-[#fff7e5] px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8a5a00]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#f0b429]" />
+                  {pendingRequests.length} pending
                 </span>
-                <p className="text-sm leading-6 text-[#5b6169]">No pending requests.</p>
               </div>
-            )}
-          </div>
-        </motion.section>
+
+              {pendingRequests.length ? (
+                <div className="divide-y divide-[#e7ecf2]">
+                  {pendingRequests.map((request) => {
+                    const expanded = expandedRequests.has(request.id)
+                    const requestedDepartments = request.requestedAssignments
+                      .map((assignment) =>
+                        departments.find((entry) => entry.id === assignment.departmentId),
+                      )
+                      .filter(
+                        (department): department is (typeof departments)[number] =>
+                          Boolean(department),
+                      )
+
+                    return (
+                      <div
+                        key={request.id}
+                        className={cn(
+                          'bg-white transition-colors duration-200',
+                          expanded && 'bg-[#f8fafc]',
+                        )}
+                      >
+                        <div
+                          onClick={() => toggleExpandedRequest(request.id)}
+                          className="group relative flex cursor-pointer flex-wrap items-center gap-3 py-3.5 pl-5 pr-14 transition-colors duration-200 hover:bg-[#f8fafc] sm:pr-5 md:px-6"
+                        >
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.35rem] bg-[#071b35] text-[11px] font-bold tracking-[0.04em] text-[#f0b429]">
+                            {initialsFor(request.userName)}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-semibold text-[#000a1e]">
+                              {request.userName}
+                            </span>
+                            <span className="block truncate text-xs text-[#74777f]">
+                              {request.email}
+                            </span>
+                          </span>
+                          <span className="hidden shrink-0 text-xs font-medium text-[#6e7580] md:block">
+                            {requestedDepartments.length}{' '}
+                            {requestedDepartments.length === 1
+                              ? 'department'
+                              : 'departments'}
+                          </span>
+                          <div className="flex w-full shrink-0 items-center gap-1.5 [&>button]:flex-1 sm:w-auto sm:[&>button]:flex-none">
+                            <Button
+                              size="sm"
+                              className={requestActionClass}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                void approveAccessRequest(request.id, currentUser.id)
+                              }}
+                            >
+                              <CheckCheck className="h-4 w-4" />
+                              Approve
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className={requestRejectClass}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                void rejectAccessRequest(request.id, currentUser.id)
+                              }}
+                            >
+                              Reject
+                            </Button>
+                          </div>
+                          <button
+                            type="button"
+                            aria-expanded={expanded}
+                            aria-label={`${expanded ? 'Hide' : 'Show'} request details`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              toggleExpandedRequest(request.id)
+                            }}
+                            className="absolute right-5 top-4 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[0.3rem] text-[#8b96a5] outline-none transition-colors hover:bg-[#edf3f8] hover:text-[#005db6] focus-visible:ring-2 focus-visible:ring-[#63a1ff]/45 sm:static pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+                          >
+                            <ChevronDown
+                              className={cn(
+                                'h-4 w-4 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
+                                expanded && 'rotate-180',
+                              )}
+                            />
+                          </button>
+                        </div>
+
+                        {expanded ? (
+                          <div className="space-y-3 border-t border-[#e7ecf2] bg-[#f8fafc] px-5 py-4 md:px-6 md:pl-[4.75rem]">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#6e7580]">
+                              Requested coverage
+                            </p>
+                            <div className="grid gap-x-6 sm:grid-cols-2">
+                              {requestedDepartments.length ? (
+                                requestedDepartments.map((department) => (
+                                  <div
+                                    key={`${request.id}-${department.id}`}
+                                    className="flex items-center justify-between gap-3 border-b border-[#e3e9f0] py-2 text-sm last:border-b-0"
+                                  >
+                                    <span className="font-semibold text-[#182235]">
+                                      {department.name}
+                                    </span>
+                                    <span className="text-xs text-[#6e7580]">
+                                      {serviceLineLabels[department.family]}
+                                    </span>
+                                  </div>
+                                ))
+                              ) : (
+                                <span className="text-sm text-[#74777f]">
+                                  No departments requested.
+                                </span>
+                              )}
+                            </div>
+                            {request.notes ? (
+                              <p className="border-l-2 border-[#c9d9ea] pl-3 text-sm leading-6 text-[#44474e]">
+                                {request.notes}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="flex min-h-[144px] flex-col items-center justify-center gap-3 bg-[#fbfcfd] px-6 text-center">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-[0.35rem] bg-[#edf4fb] text-[#005db6]">
+                    <ShieldCheck className="h-5 w-5" />
+                  </span>
+                  <p className="text-sm leading-6 text-[#5b6169]">
+                    All access requests are reviewed.
+                  </p>
+                </div>
+              )}
+            </div>
+          </motion.section>
         ) : null}
 
         {canApproveAdmins ? (
@@ -369,24 +413,26 @@ export function UserManagementPage() {
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, ease: 'easeOut' }}
-            className={sectionClass}
+            className={requestQueueClass}
           >
-            <div className="space-y-5">
-              <div className="flex flex-col gap-4 border-b border-[#eef2f6] pb-5 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <SectionEyebrow label="Pending" />
-                  <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
+            <div>
+              <div className="flex items-start justify-between gap-4 border-b border-[#e7ecf2] px-5 py-5 md:px-6">
+                <div className="min-w-0">
+                  <h2 className="font-display text-[1.25rem] font-bold tracking-[-0.02em] text-[#000a1e]">
                     Account requests
                   </h2>
-                  <p className="mt-1 text-sm text-[#74777f]">
-                    Approve to create the account, or reject.
+                  <p className="mt-1 text-sm leading-5 text-[#6e7580]">
+                    New accounts awaiting role approval.
                   </p>
                 </div>
-                <span className={countChipClass}>{pendingAccountRequests.length} in queue</span>
+                <span className="inline-flex shrink-0 items-center gap-2 rounded-[0.3rem] bg-[#fff7e5] px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8a5a00]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#f0b429]" />
+                  {pendingAccountRequests.length} pending
+                </span>
               </div>
 
               {pendingAccountRequests.length ? (
-                <div className="overflow-hidden rounded-[0.4rem] border border-[#cfe0f4]">
+                <div className="divide-y divide-[#e7ecf2]">
                   {pendingAccountRequests.map((request) => {
                     const expanded = expandedRequests.has(request.id)
                     const requestedRole = request.requestedRole as UserRole
@@ -400,29 +446,18 @@ export function UserManagementPage() {
                         (residentYear !== 3 || Boolean(residentGroup)))
 
                     return (
-                      <div key={request.id} className="border-b border-[#dbe8f6] bg-[#f6fbff] last:border-b-0">
+                      <div
+                        key={request.id}
+                        className={cn(
+                          'bg-white transition-colors duration-200',
+                          expanded && 'bg-[#f8fafc]',
+                        )}
+                      >
                         <div
                           onClick={() => toggleExpandedRequest(request.id)}
-                          className="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-2.5 transition-colors duration-200 hover:bg-[#eef6ff]"
+                          className="group relative flex cursor-pointer flex-wrap items-center gap-3 py-3.5 pl-5 pr-14 transition-colors duration-200 hover:bg-[#f8fafc] sm:pr-5 md:px-6"
                         >
-                          <button
-                            type="button"
-                            aria-expanded={expanded}
-                            aria-label={`${expanded ? 'Hide' : 'Show'} request details`}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              toggleExpandedRequest(request.id)
-                            }}
-                            className="shrink-0 rounded-[0.25rem] p-0.5 text-[#9aa7b8] outline-none transition-colors hover:text-[#005db6] focus-visible:text-[#005db6] pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-center"
-                          >
-                            <ChevronDown
-                              className={cn(
-                                'h-4 w-4 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
-                                expanded && 'rotate-180',
-                              )}
-                            />
-                          </button>
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#edf4fb] text-[11px] font-bold text-[#005db6]">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.35rem] bg-[#071b35] text-[11px] font-bold tracking-[0.04em] text-[#f0b429]">
                             {initialsFor(request.fullName)}
                           </span>
                           <span className="min-w-0 flex-1">
@@ -433,7 +468,7 @@ export function UserManagementPage() {
                           </span>
                           {/* Always visible: approving grants the badged role, so it
                               must be readable before Approve is reachable. */}
-                          <span className="shrink-0 rounded-full border border-[#cfe0f4] bg-white px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#005db6]">
+                          <span className="shrink-0 rounded-[0.25rem] bg-[#edf4fb] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-[#005394]">
                             {rolesByKey.get(requestedRole)?.label ??
                               roleLabels[requestedRole] ??
                               request.requestedRole}
@@ -441,7 +476,7 @@ export function UserManagementPage() {
                           {requestedRole === 'resident' ? (
                             <span
                               className={cn(
-                                'shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]',
+                                'shrink-0 rounded-[0.25rem] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em]',
                                 residentProfileComplete
                                   ? 'bg-[#edf7f0] text-[#1f6b3b]'
                                   : 'bg-[#fff3d6] text-[#805600]',
@@ -452,10 +487,10 @@ export function UserManagementPage() {
                                 : 'Year required'}
                             </span>
                           ) : null}
-                          <div className="flex w-full shrink-0 items-center gap-2 [&>button]:flex-1 sm:w-auto sm:[&>button]:flex-none">
+                          <div className="flex w-full shrink-0 items-center gap-1.5 [&>button]:flex-1 sm:w-auto sm:[&>button]:flex-none">
                             <Button
-                              variant="secondary"
                               size="sm"
+                              className={requestActionClass}
                               disabled={!residentProfileComplete}
                               title={
                                 residentProfileComplete
@@ -481,8 +516,9 @@ export function UserManagementPage() {
                               Approve
                             </Button>
                             <Button
-                              variant="destructive"
+                              variant="ghost"
                               size="sm"
+                              className={requestRejectClass}
                               onClick={(event) => {
                                 event.stopPropagation()
                                 void rejectAdminAccessRequest(request.id)
@@ -491,12 +527,29 @@ export function UserManagementPage() {
                               Reject
                             </Button>
                           </div>
+                          <button
+                            type="button"
+                            aria-expanded={expanded}
+                            aria-label={`${expanded ? 'Hide' : 'Show'} request details`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              toggleExpandedRequest(request.id)
+                            }}
+                            className="absolute right-5 top-4 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[0.3rem] text-[#8b96a5] outline-none transition-colors hover:bg-[#edf3f8] hover:text-[#005db6] focus-visible:ring-2 focus-visible:ring-[#63a1ff]/45 sm:static pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+                          >
+                            <ChevronDown
+                              className={cn(
+                                'h-4 w-4 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
+                                expanded && 'rotate-180',
+                              )}
+                            />
+                          </button>
                         </div>
 
                         {expanded ? (
-                          <div className="space-y-4 border-t border-[#dbe8f6] px-4 py-4">
+                          <div className="space-y-4 border-t border-[#e7ecf2] bg-[#f8fafc] px-5 py-4 md:px-6 md:pl-[4.75rem]">
                             {requestedRole === 'resident' ? (
-                              <div className="grid gap-4 border-l-[3px] border-[#f0b429] bg-white px-4 py-3.5 sm:grid-cols-2">
+                              <div className="grid gap-4 border-l-2 border-[#f0b429] bg-[#fffdf7] px-4 py-3.5 sm:grid-cols-2">
                                 <div className="space-y-1.5">
                                   <label className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#000a1e]">
                                     Confirm training year
@@ -564,11 +617,13 @@ export function UserManagementPage() {
                   })}
                 </div>
               ) : (
-                <div className="flex min-h-[160px] flex-col items-center justify-center gap-3 rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-6 text-center">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-[0.4rem] bg-[#edf4fb] text-[#005db6]">
+                <div className="flex min-h-[144px] flex-col items-center justify-center gap-3 bg-[#fbfcfd] px-6 text-center">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-[0.35rem] bg-[#edf4fb] text-[#005db6]">
                     <ShieldCheck className="h-5 w-5" />
                   </span>
-                  <p className="text-sm leading-6 text-[#5b6169]">No account requests awaiting approval.</p>
+                  <p className="text-sm leading-6 text-[#5b6169]">
+                    All account requests are reviewed.
+                  </p>
                 </div>
               )}
             </div>

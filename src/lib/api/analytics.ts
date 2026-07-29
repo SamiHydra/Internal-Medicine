@@ -136,7 +136,7 @@ export type AnalyticsExportStatus = 'pending' | 'processing' | 'ready' | 'failed
 export type AnalyticsExportRecord = {
   id: string
   status: AnalyticsExportStatus
-  format: 'csv'
+  format: 'csv' | 'xlsx'
   fileName: string | null
   rowCount: number
   byteSize: number | null
@@ -265,7 +265,7 @@ export function fetchYearlyAnalytics(
 export async function queueFullHistoryAnalyticsExport(client: LaravelApiClient) {
   const payload = await client.post<{ data: AnalyticsExportRecord }>(
     '/api/analytics/exports',
-    { format: 'csv' },
+    { format: 'xlsx' },
   )
 
   return payload.data

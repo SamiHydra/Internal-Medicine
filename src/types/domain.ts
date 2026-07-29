@@ -69,6 +69,7 @@ export interface UserProfile {
   role: UserRole
   title: string
   active: boolean
+  sectionId?: string | null
   phone?: string
   avatar?: string
   passwordChangeRequired?: boolean

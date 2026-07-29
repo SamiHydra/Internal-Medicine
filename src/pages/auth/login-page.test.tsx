@@ -1,4 +1,4 @@
-import { render, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -68,5 +68,48 @@ describe('LoginPage public entry', () => {
     expect(children[1]).not.toHaveClass('login-hero-content')
     expect(children[2]).toHaveClass('login-hero-content')
     expect(children[3]).toHaveClass('login-hero-content')
+  })
+
+  it('uses the full application authentication flow when one is provided', async () => {
+    const user = {
+      id: 'admin-1',
+      fullName: 'Audit Admin',
+      email: 'admin@stpaulos.local',
+      role: 'admin' as const,
+      title: 'Maintenance',
+      active: true,
+      passwordChangeRequired: false,
+    }
+    const authenticate = vi.fn().mockResolvedValue(user)
+    const onAuthenticated = vi.fn()
+    api.get.mockRejectedValue(new Error('Unauthenticated.'))
+
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <LoginPage
+          authenticate={authenticate}
+          onAuthenticated={onAuthenticated}
+        />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Sign In to Reporting Portal' }))
+        .not.toBeDisabled()
+    })
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Username or Email' }), {
+      target: { value: 'admin@stpaulos.local' },
+    })
+    fireEvent.change(screen.getByLabelText('Password'), {
+      target: { value: 'StPaul2026!' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign In to Reporting Portal' }))
+
+    await waitFor(() => {
+      expect(authenticate).toHaveBeenCalledWith('admin@stpaulos.local', 'StPaul2026!')
+      expect(onAuthenticated).toHaveBeenCalledWith(user)
+    })
+    expect(api.post).not.toHaveBeenCalled()
   })
 })

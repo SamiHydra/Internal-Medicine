@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\AnalyticsExport;
 use App\Models\Notification;
 use App\Services\Analytics\AnalyticsExportService;
+use App\Support\Export\XlsxWriter;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Storage;
@@ -35,26 +36,51 @@ class BuildAnalyticsExport implements ShouldQueue
             'error' => null,
         ])->save();
 
-        $relativePath = "analytics-exports/{$export->user_id}/{$export->id}.csv";
+        $format = $export->format === 'xlsx' ? 'xlsx' : 'csv';
+        $relativePath = "analytics-exports/{$export->user_id}/{$export->id}.{$format}";
         $disk = Storage::disk('local');
 
         if (! $disk->makeDirectory(dirname($relativePath))) {
             throw new RuntimeException('The analytics export directory could not be created.');
         }
 
-        $handle = fopen($disk->path($relativePath), 'wb');
+        if ($format === 'xlsx') {
+            $sheets = $service->workbookSheets();
+            $temporaryPath = (new XlsxWriter)->toMultiSheetTempFile($sheets);
+            $handle = fopen($temporaryPath, 'rb');
 
-        if ($handle === false) {
-            throw new RuntimeException('The analytics export file could not be opened.');
+            if ($handle === false) {
+                @unlink($temporaryPath);
+                throw new RuntimeException('The Excel export file could not be opened.');
+            }
+
+            try {
+                if (! $disk->put($relativePath, $handle)) {
+                    throw new RuntimeException('The Excel export file could not be stored.');
+                }
+            } finally {
+                fclose($handle);
+                @unlink($temporaryPath);
+            }
+
+            // One workbook sheet per submitted report, excluding the index and
+            // edit-history sheets.
+            $rowCount = max(0, count($sheets) - 2);
+        } else {
+            $handle = fopen($disk->path($relativePath), 'wb');
+
+            if ($handle === false) {
+                throw new RuntimeException('The analytics export file could not be opened.');
+            }
+
+            try {
+                $rowCount = $service->writeCsv($handle);
+            } finally {
+                fclose($handle);
+            }
         }
 
-        try {
-            $rowCount = $service->writeCsv($handle);
-        } finally {
-            fclose($handle);
-        }
-
-        $fileName = 'clinical-submissions-full-history-'.now()->format('Y-m-d-His').'.csv';
+        $fileName = 'clinical-submissions-full-history-'.now()->format('Y-m-d-His').".{$format}";
         $export->forceFill([
             'status' => AnalyticsExport::STATUS_READY,
             'file_path' => $relativePath,
@@ -70,7 +96,7 @@ class BuildAnalyticsExport implements ShouldQueue
             'recipient_id' => $export->user_id,
             'type' => 'analytics_export_ready',
             'title' => 'Clinical export ready',
-            'message' => 'Your full-history clinical CSV is ready to download.',
+            'message' => "Your full-history clinical {$format} export is ready to download.",
             'related_route' => '/admin/dashboard',
             'related_entity' => 'analytics_export',
             'related_id' => $export->id,
