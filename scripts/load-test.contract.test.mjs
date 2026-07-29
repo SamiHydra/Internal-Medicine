@@ -5,6 +5,7 @@ import {
   buildSessions,
   createMetrics,
   loadConfig,
+  reportIdsFromPage,
   summarize,
 } from './load-test.mjs'
 
@@ -46,4 +47,18 @@ test('summary separates attempted, successful, failed, and timed-out traffic', (
   assert.equal(result.totalTimeouts, 1)
   assert.equal(result.endpoints.workspace.p50Ms, 50)
   assert.equal(result.endpoints.workspace.p95Ms, 100)
+})
+
+test('report detail mix is primed from the paginated report endpoint', () => {
+  const payload = {
+    data: [
+      { id: 'report-1', status: 'draft' },
+      { id: null },
+      { id: 'report-2', status: 'submitted' },
+    ],
+    meta: { currentPage: 1, lastPage: 2, perPage: 20, total: 40 },
+  }
+
+  assert.deepEqual(reportIdsFromPage(payload), ['report-1', 'report-2'])
+  assert.deepEqual(reportIdsFromPage({ state: { reports: [{ id: 'legacy-report' }] } }), [])
 })

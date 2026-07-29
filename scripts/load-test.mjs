@@ -141,22 +141,37 @@ export class Session {
   }
 
   async primeWorkspace(metrics) {
-    const payload = await request(
-      this,
-      metrics,
-      'GET',
-      workspacePath(),
-      'workspace-prime',
-      { expectJson: true },
-      false,
-    )
+    const [, reportPage] = await Promise.all([
+      request(
+        this,
+        metrics,
+        'GET',
+        workspacePath(),
+        'workspace-prime',
+        { expectJson: true },
+        false,
+      ),
+      request(
+        this,
+        metrics,
+        'GET',
+        '/api/reports?per_page=20',
+        'reports-prime',
+        { expectJson: true },
+        false,
+      ),
+    ])
 
-    this.reportIds = Array.isArray(payload?.state?.reports)
-      ? payload.state.reports
-          .map((report) => report?.id)
-          .filter((id) => typeof id === 'string' && id.length > 0)
-      : []
+    this.reportIds = reportIdsFromPage(reportPage)
   }
+}
+
+export function reportIdsFromPage(payload) {
+  return Array.isArray(payload?.data)
+    ? payload.data
+        .map((report) => report?.id)
+        .filter((id) => typeof id === 'string' && id.length > 0)
+    : []
 }
 
 export function buildSessions(credentials, config) {
