@@ -87,6 +87,7 @@ import {
   writeWorkspaceCache,
   type WorkspaceCacheRecord,
 } from '@/lib/offline/workspace-cache'
+import { workspacePollDelay } from '@/lib/workspace-poll'
 import {
   getCurrentPeriod,
   getCurrentUser,
@@ -1349,31 +1350,46 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
     // Reverb is disabled on shared hosting and the data client's realtime
     // channel is a no-op shim, so live updates come from refreshing on focus /
-    // tab visibility. Every role gets that; admins additionally poll on a 60s
-    // fallback interval because they drive the live submission board. (Reduced
-    // from 20s: each poll rebuilds + re-transfers the full workspace payload, so
-    // the tighter cadence multiplied admin DB/transfer load for little UX gain;
-    // focus/visibilitychange refreshes still update near-instantly on tab return.)
+    // tab visibility. Admin fallback polls are randomized to avoid synchronized
+    // tabs and back off while hidden; focus still checks freshness immediately.
     const isAdmin = isAdminRole(signedInUserRole)
+    let fallbackPollId: number | null = null
+
+    const scheduleFallbackPoll = () => {
+      if (!isAdmin) {
+        return
+      }
+
+      if (fallbackPollId !== null) {
+        window.clearTimeout(fallbackPollId)
+      }
+
+      fallbackPollId = window.setTimeout(() => {
+        fallbackPollId = null
+        if (document.visibilityState === 'visible') {
+          scheduleAdminLiveRefresh(0)
+        }
+        scheduleFallbackPoll()
+      }, workspacePollDelay(document.visibilityState))
+    }
 
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') {
         scheduleAdminLiveRefresh(150)
       }
+      scheduleFallbackPoll()
     }
 
     window.addEventListener('focus', refreshWhenVisible)
     document.addEventListener('visibilitychange', refreshWhenVisible)
-    const fallbackPollId = isAdmin
-      ? window.setInterval(refreshWhenVisible, 60_000)
-      : null
+    scheduleFallbackPoll()
 
     return () => {
       window.removeEventListener('focus', refreshWhenVisible)
       document.removeEventListener('visibilitychange', refreshWhenVisible)
 
       if (fallbackPollId !== null) {
-        window.clearInterval(fallbackPollId)
+        window.clearTimeout(fallbackPollId)
       }
 
       if (adminLiveRefreshTimerRef.current !== null) {
