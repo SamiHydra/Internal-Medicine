@@ -6,6 +6,7 @@ import {
   createMetrics,
   loadConfig,
   reportIdsFromPage,
+  revisionTokenFromWorkspace,
   summarize,
 } from './load-test.mjs'
 
@@ -61,4 +62,13 @@ test('report detail mix is primed from the paginated report endpoint', () => {
 
   assert.deepEqual(reportIdsFromPage(payload), ['report-1', 'report-2'])
   assert.deepEqual(reportIdsFromPage({ state: { reports: [{ id: 'legacy-report' }] } }), [])
+})
+
+test('workspace priming retains only a non-empty signed revision credential', () => {
+  assert.equal(
+    revisionTokenFromWorkspace({ revisionToken: 'signed-poll-credential' }),
+    'signed-poll-credential',
+  )
+  assert.equal(revisionTokenFromWorkspace({ revisionToken: '' }), null)
+  assert.equal(revisionTokenFromWorkspace({}), null)
 })

@@ -114,6 +114,7 @@ export class Session {
     this.config = config
     this.jar = new CookieJar()
     this.reportIds = []
+    this.revisionToken = null
     this.role = 'unknown'
     this.sourceIp = `10.250.${Math.floor(index / 250)}.${(index % 250) + 1}`
   }
@@ -141,7 +142,7 @@ export class Session {
   }
 
   async primeWorkspace(metrics) {
-    const [, reportPage] = await Promise.all([
+    const [workspace, reportPage] = await Promise.all([
       request(
         this,
         metrics,
@@ -163,6 +164,10 @@ export class Session {
     ])
 
     this.reportIds = reportIdsFromPage(reportPage)
+    this.revisionToken = revisionTokenFromWorkspace(workspace)
+    if (!this.revisionToken) {
+      throw new Error('Workspace prime did not return a revision polling credential.')
+    }
   }
 }
 
@@ -172,6 +177,12 @@ export function reportIdsFromPage(payload) {
         .map((report) => report?.id)
         .filter((id) => typeof id === 'string' && id.length > 0)
     : []
+}
+
+export function revisionTokenFromWorkspace(payload) {
+  return typeof payload?.revisionToken === 'string' && payload.revisionToken.length > 0
+    ? payload.revisionToken
+    : null
 }
 
 export function buildSessions(credentials, config) {
@@ -489,7 +500,20 @@ async function runMeasuredRequest(session, metrics) {
 
   try {
     if (endpoint === 'workspace-revision') {
-      await request(session, metrics, 'GET', '/api/workspace/revision', endpoint)
+      const payload = await request(
+        session,
+        metrics,
+        'GET',
+        '/api/workspace/revision',
+        endpoint,
+        {
+          expectJson: true,
+          headers: {
+            'X-Workspace-Revision-Token': session.revisionToken,
+          },
+        },
+      )
+      session.revisionToken = revisionTokenFromWorkspace(payload) ?? session.revisionToken
     } else if (endpoint === 'workspace') {
       await request(session, metrics, 'GET', workspacePath(), endpoint)
     } else if (endpoint === 'report-details') {
@@ -543,6 +567,7 @@ async function prepareSession(session, metrics) {
 
       session.jar = new CookieJar()
       session.reportIds = []
+      session.revisionToken = null
       await sleep(500 * attempt)
     }
   }
