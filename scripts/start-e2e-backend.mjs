@@ -40,8 +40,8 @@ const environment = {
   QUEUE_CONNECTION: 'sync',
   MAIL_MAILER: 'array',
   BROADCAST_CONNECTION: 'log',
-  SANCTUM_STATEFUL_DOMAINS: 'localhost:5173,127.0.0.1:5173',
-  CORS_ALLOWED_ORIGINS: 'http://localhost:5173',
+  SANCTUM_STATEFUL_DOMAINS: 'localhost:5173,127.0.0.1:5173,localhost:4173,127.0.0.1:4173',
+  CORS_ALLOWED_ORIGINS: 'http://localhost:5173,http://localhost:4173',
 }
 
 // Cached Laravel configuration takes precedence over environment overrides.

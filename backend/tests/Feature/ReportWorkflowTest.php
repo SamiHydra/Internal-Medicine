@@ -510,6 +510,7 @@ class ReportWorkflowTest extends TestCase
                 ->assertOk()
                 ->assertJsonCount(9, 'data')
                 ->assertJsonPath('meta.total', 9)
+                ->assertJsonPath('meta.perPage', 100)
                 ->assertJsonMissingPath('data.0.values')
                 ->assertJsonMissingPath('data.0.calculatedMetrics')
                 ->assertJsonMissingPath('data.0.quality');
@@ -525,6 +526,11 @@ class ReportWorkflowTest extends TestCase
                 ->assertJsonPath('meta.total', 11)
                 ->assertJsonPath('meta.perPage', 5)
                 ->assertJsonPath('meta.lastPage', 3);
+
+            $this->actingAs($this->admin)
+                ->getJson('/api/reports?perPage=101')
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors('perPage');
         } finally {
             Carbon::setTestNow();
         }

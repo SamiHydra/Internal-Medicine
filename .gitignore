@@ -64,6 +64,7 @@ artifacts/pre-deployment-qa/PLAYWRIGHT_TESTS/.auth/
 tests/e2e/.auth/
 test-results/
 playwright-report/
+.lighthouseci/
 dist-*/
 
 # Docker production-parity stack: .env.docker holds only local throwaway

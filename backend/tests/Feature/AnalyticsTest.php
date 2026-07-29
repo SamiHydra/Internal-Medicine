@@ -253,6 +253,43 @@ class AnalyticsTest extends TestCase
         $this->assertEquals(6, $dialysisMix->firstWhere('key', 'chronicHd')['value']);
     }
 
+    public function test_eight_week_dashboard_payload_stays_under_100_kilobytes(): void
+    {
+        $assignments = $this->createSampleReports();
+
+        foreach (range(1, 7) as $weeksAgo) {
+            $period = $this->createReportingPeriod(
+                Carbon::parse($this->period->week_start)->subWeeks($weeksAgo)->toDateString(),
+            );
+
+            $this->submitReportForAssignment($assignments['inpatient'], $period, [
+                'total_admitted_patients' => $this->dailyValue('total_admitted_patients', 5),
+                'total_patient_days' => $this->dailyValue('total_patient_days', 30),
+            ]);
+            $this->submitReportForAssignment($assignments['outpatient'], $period, [
+                'total_patients_seen' => $this->dailyValue('total_patients_seen', 40),
+            ]);
+            $this->submitReportForAssignment($assignments['procedure'], $period, [
+                'dialysis_acute' => $this->dailyValue('dialysis_acute', 4),
+                'dialysis_chronic' => $this->dailyValue('dialysis_chronic', 6),
+            ]);
+        }
+
+        $response = $this->actingAs($this->admin)
+            ->getJson('/api/analytics/dashboard?date_from=2026-04-06&date_to=2026-05-31')
+            ->assertOk()
+            ->assertJsonCount(8, 'families.inpatient.weekly')
+            ->assertJsonCount(8, 'families.outpatient.weekly')
+            ->assertJsonCount(8, 'families.procedure.weekly');
+        $bytes = strlen((string) $response->getContent());
+
+        $this->assertLessThan(
+            100 * 1024,
+            $bytes,
+            "Eight-week dashboard payload is {$bytes} bytes; contract maximum is 102400.",
+        );
+    }
+
     public function test_nurses_cannot_read_analytics(): void
     {
         $this->actingAs($this->nurse)

@@ -74,6 +74,72 @@ jobs:
       - name: Test backend with SQLite
         run: php artisan test
 
+  lighthouse:
+    name: Mobile Lighthouse budgets
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: dom, fileinfo, mbstring, pdo_sqlite
+          coverage: none
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Install frontend dependencies and Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Build production frontend
+        env:
+          VITE_API_BASE_URL: http://localhost:4173
+          VITE_RELEASE_SHA: ${{ github.sha }}
+          VITE_RUM_SAMPLE_RATE: '0'
+        run: npm run build
+
+      - name: Enforce login and authenticated-shell budgets
+        run: |
+          node scripts/start-e2e-backend.mjs > "$RUNNER_TEMP/lighthouse-backend.log" 2>&1 &
+          backend_pid=$!
+          npm run preview -- --host 127.0.0.1 --port 4173 --strictPort > "$RUNNER_TEMP/lighthouse-preview.log" 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" "$backend_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..120}; do
+            if curl --fail --silent http://127.0.0.1:8000/up >/dev/null &&
+               curl --fail --silent http://localhost:4173/login >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 120 ]; then
+              cat "$RUNNER_TEMP/lighthouse-backend.log"
+              cat "$RUNNER_TEMP/lighthouse-preview.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          npm run perf:lighthouse
+
+      - name: Upload Lighthouse reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          path: .lighthouseci
+          if-no-files-found: ignore
+
   backend-mariadb:
     name: Backend MariaDB
     runs-on: ubuntu-latest

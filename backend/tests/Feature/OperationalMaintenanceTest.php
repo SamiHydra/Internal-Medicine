@@ -39,9 +39,30 @@ class OperationalMaintenanceTest extends TestCase
             ['key' => 'expired-lock', 'owner' => 'test', 'expiration' => now()->subMinute()->timestamp],
             ['key' => 'active-lock', 'owner' => 'test', 'expiration' => now()->addHour()->timestamp],
         ]);
+        DB::table('performance_metrics')->insert([
+            [
+                'user_id' => null,
+                'metric' => 'LCP',
+                'value' => 1800,
+                'route_name' => '/admin',
+                'device_class' => 'desktop',
+                'release_sha' => 'old',
+                'created_at' => now()->subDays(91),
+            ],
+            [
+                'user_id' => null,
+                'metric' => 'CLS',
+                'value' => 0.01,
+                'route_name' => '/admin',
+                'device_class' => 'mobile',
+                'release_sha' => 'current',
+                'created_at' => now()->subDays(2),
+            ],
+        ]);
 
         $this->artisan('app:prune-operational-data')
             ->expectsOutputToContain('1 expired sessions pruned.')
+            ->expectsOutputToContain('1 real-user performance metrics older than 90 days pruned.')
             ->expectsOutputToContain('Skipped report audit rows; retention is disabled.')
             ->assertExitCode(0);
 
@@ -51,6 +72,8 @@ class OperationalMaintenanceTest extends TestCase
         $this->assertDatabaseHas('cache', ['key' => 'active']);
         $this->assertDatabaseMissing('cache_locks', ['key' => 'expired-lock']);
         $this->assertDatabaseHas('cache_locks', ['key' => 'active-lock']);
+        $this->assertDatabaseMissing('performance_metrics', ['release_sha' => 'old']);
+        $this->assertDatabaseHas('performance_metrics', ['release_sha' => 'current']);
     }
 
     public function test_transient_retry_leaves_unapproved_failed_job_types_untouched(): void

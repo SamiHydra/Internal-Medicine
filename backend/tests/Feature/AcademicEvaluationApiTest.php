@@ -296,7 +296,13 @@ class AcademicEvaluationApiTest extends TestCase
             ->assertJsonPath('direction', 'consultant')
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('meta.total', 1)
+            ->assertJsonPath('meta.perPage', 25)
             ->assertJsonPath('data.0.subjectId', $this->consultant->id);
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/academic/evaluations?perPage=101')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('perPage');
 
         $this->actingAs($this->resident)
             ->getJson('/api/admin/academic/evaluations?direction=consultant')

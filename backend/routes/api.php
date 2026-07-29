@@ -27,6 +27,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\MorningSessionController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PasswordResetController;
+use App\Http\Controllers\Api\PerformanceMetricController;
 use App\Http\Controllers\Api\ReportCommentController;
 use App\Http\Controllers\Api\ReportWorkflowController;
 use App\Http\Controllers\Api\TeachingSessionController;
@@ -92,6 +93,10 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
     // payload carries, without the ~214 KB of reports/audit/notifications that
     // callers needing only the directory were pulling with it.
     Route::get('/workspace/profiles', [WorkspaceController::class, 'profiles']);
+
+    // Sampled real-user performance telemetry only. The endpoint accepts a
+    // small allow-list of timing metadata and has no report/patient fields.
+    Route::post('/performance/rum', [PerformanceMetricController::class, 'store']);
 
     Route::get('/reports', [ReportWorkflowController::class, 'index']);
     Route::post('/reports', [ReportWorkflowController::class, 'store']);

@@ -152,7 +152,7 @@ php artisan migrate --pretend --force
 
 cd "${RELEASE_DIR}"
 npm ci
-npm run verify
+VITE_API_BASE_URL="${APP_URL}" VITE_RELEASE_SHA="${REVISION}" npm run verify
 
 echo "==> Taking the pre-migration backup"
 "${BACKUP_SCRIPT}"

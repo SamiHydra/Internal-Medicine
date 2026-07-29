@@ -54,6 +54,13 @@ class WorkspaceApiTest extends TestCase
         ]);
     }
 
+    public function test_default_workspace_payload_stays_under_200_kilobytes(): void
+    {
+        $this->markTestSkipped(
+            'TODO PERF-03: enable after the workspace bootstrap is trimmed and the growth fixture is bounded.',
+        );
+    }
+
     public function test_workspace_hydrates_frontend_state_and_scopes_nurses(): void
     {
         $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();

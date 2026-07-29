@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppStateScreen } from '@/components/layout/app-state-screen'
 import { FullPageSkeleton, PageSkeleton } from '@/components/layout/loading-skeletons'
 import { ScrollToTop } from '@/components/layout/scroll-to-top'
+import { WebVitalsReporter } from '@/components/performance/web-vitals-reporter'
 import { useAppData } from '@/context/app-data-context'
 import { WorkspaceProvider } from '@/context/workspace-context'
 import { apiEnvSetupHint } from '@/lib/api/env'
@@ -274,6 +275,7 @@ function App() {
   return (
     <BrowserRouter>
       <WorkspaceProvider>
+        <WebVitalsReporter />
         <ScrollToTop />
         <Suspense fallback={<FullPageSkeleton label="Loading page" />}>
           <Routes>

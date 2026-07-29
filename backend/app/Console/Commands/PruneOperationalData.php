@@ -62,6 +62,13 @@ class PruneOperationalData extends Command
             'report status-history rows',
             $dryRun,
         );
+        $total += $this->pruneByRetention(
+            'performance_metrics',
+            'created_at',
+            (int) config('operations.performance_metric_retention_days', 90),
+            'real-user performance metrics',
+            $dryRun,
+        );
 
         $verb = $dryRun ? 'eligible' : 'pruned';
         $this->info("{$total} row(s) {$verb} in total.");

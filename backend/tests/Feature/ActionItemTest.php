@@ -112,7 +112,13 @@ class ActionItemTest extends TestCase
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.status', 'open')
             ->assertJsonPath('data.0.source', 'critical_event')
+            ->assertJsonPath('meta.perPage', 50)
             ->assertJsonPath('meta.openCount', 1);
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/action-items?perPage=101')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('perPage');
     }
 
     public function test_admin_can_resolve_an_action_item(): void

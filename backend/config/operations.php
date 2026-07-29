@@ -14,4 +14,5 @@ return [
     'backup_restore_verified_at' => env('BACKUP_RESTORE_VERIFIED_AT'),
     'backup_restore_max_age_days' => (int) env('BACKUP_RESTORE_MAX_AGE_DAYS', 90),
     'error_monitoring_channel' => env('ERROR_MONITORING_CHANNEL'),
+    'performance_metric_retention_days' => (int) env('PERFORMANCE_METRIC_RETENTION_DAYS', 90),
 ];
