@@ -42,6 +42,7 @@ import {
 } from '@/lib/api/analytics'
 import { getApiBrowserClient } from '@/lib/api/client'
 import { evaluateMetricTarget, type RagStatus } from '@/lib/performance-targets'
+import { prefetchRoute } from '@/routes/route-prefetch'
 import {
   Select,
   SelectContent,
@@ -187,6 +188,64 @@ function ChartFallback({
     <ChartLoadingState message={loadingMessage} />
   ) : (
     <ChartEmptyState message={emptyMessage} />
+  )
+}
+
+function DeferredDashboardSection({
+  children,
+  eager = false,
+  placeholderClassName,
+}: {
+  children: ReactNode
+  eager?: boolean
+  placeholderClassName: string
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [hasEnteredViewport, setHasEnteredViewport] = useState(false)
+
+  useEffect(() => {
+    if (eager || hasEnteredViewport || !containerRef.current) {
+      return
+    }
+
+    let mountTimer: number | null = null
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) {
+          return
+        }
+
+        observer.disconnect()
+        // Leave a short input window after the shell becomes interactive. The
+        // old two-frame delay started thousands of chart callbacks directly
+        // under an immediate navigation click.
+        mountTimer = window.setTimeout(() => {
+          setHasEnteredViewport(true)
+        }, 500)
+      },
+      { rootMargin: '0px 0px 160px' },
+    )
+
+    observer.observe(containerRef.current)
+
+    return () => {
+      observer.disconnect()
+      if (mountTimer !== null) {
+        window.clearTimeout(mountTimer)
+      }
+    }
+  }, [eager, hasEnteredViewport])
+
+  const shouldRender = eager || hasEnteredViewport
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn(!shouldRender && placeholderClassName)}
+      style={shouldRender ? { contentVisibility: 'auto' } : undefined}
+    >
+      {shouldRender ? children : null}
+    </div>
   )
 }
 
@@ -779,29 +838,23 @@ export function AdminDashboardPage() {
   const [procedureTrendScope, setProcedureTrendScope] = useState(ALL_PROCEDURE_SERVICES_TOTAL)
   const [procedureComparisonMonthKey, setProcedureComparisonMonthKey] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  // ~15 charts otherwise run their mount count-up animation in the same first
-  // frame (each ResponsiveContainer also forces a measure pass), which is the
-  // dominant main-thread long task on dashboard open. Render charts at their
-  // final geometry on first paint, then enable animation one frame later so only
-  // subsequent data/filter changes animate. No change to displayed values.
-  const [chartsAnimate, setChartsAnimate] = useState(false)
-  // When viewing all families, the outpatient + procedure sections are below the
-  // fold but still mount their charts in the first synchronous commit. Defer them
-  // to the frame after first paint so the above-the-fold status + inpatient
-  // content paints without competing for the main thread. A filtered view always
-  // renders its primary section immediately (no deferral).
-  const [showSecondarySections, setShowSecondarySections] = useState(false)
+  // Mount charts at their final geometry. The former two-frame state flip made
+  // every Recharts animation begin together and produced more than 6,000
+  // animation-frame callbacks in the early-click trace.
+  const chartsAnimate = false
   useEffect(() => {
-    let secondFrame = 0
-    const firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        setChartsAnimate(true)
-        setShowSecondarySections(true)
-      })
-    })
+    const timer = window.setTimeout(() => {
+      ;[
+        '/admin/submissions',
+        '/admin/action-items',
+        '/admin/users',
+        '/admin/audit',
+        '/admin/settings',
+      ].forEach(prefetchRoute)
+    }, 400)
+
     return () => {
-      cancelAnimationFrame(firstFrame)
-      cancelAnimationFrame(secondFrame)
+      window.clearTimeout(timer)
     }
   }, [])
   const availablePeriods = getVisibleReportingPeriods(state)
@@ -2313,14 +2366,18 @@ export function AdminDashboardPage() {
       </motion.section>
 
       {showInpatientSection ? (
-        <motion.section
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
-          className={sectionClass}
+        <DeferredDashboardSection
+          eager={familyFilter !== 'all'}
+          placeholderClassName="min-h-[64rem]"
         >
-          <SectionAmbient />
-          <div className="space-y-8">
+          <motion.section
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
+            className={sectionClass}
+          >
+            <SectionAmbient />
+            <div className="space-y-8">
             <SectionHeading
               icon={BedDouble}
               accent="#002147"
@@ -2571,19 +2628,24 @@ export function AdminDashboardPage() {
                 </div>
               </div>
             ) : null}
-          </div>
-        </motion.section>
+            </div>
+          </motion.section>
+        </DeferredDashboardSection>
       ) : null}
 
-      {showOutpatientSection && (familyFilter !== 'all' || showSecondarySections) ? (
-        <motion.section
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
-          className={sectionClass}
+      {showOutpatientSection ? (
+        <DeferredDashboardSection
+          eager={familyFilter !== 'all'}
+          placeholderClassName="min-h-[76rem]"
         >
-          <SectionAmbient />
-          <div className="space-y-8">
+          <motion.section
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
+            className={sectionClass}
+          >
+            <SectionAmbient />
+            <div className="space-y-8">
             <SectionHeading
               icon={Stethoscope}
               accent="#005db6"
@@ -2890,19 +2952,24 @@ export function AdminDashboardPage() {
                 </div>
               </div>
             </div>
-          </div>
-        </motion.section>
+            </div>
+          </motion.section>
+        </DeferredDashboardSection>
       ) : null}
 
-      {showProcedureSection && (familyFilter !== 'all' || showSecondarySections) ? (
-        <motion.section
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
-          className={sectionClass}
+      {showProcedureSection ? (
+        <DeferredDashboardSection
+          eager={familyFilter !== 'all'}
+          placeholderClassName="min-h-[64rem]"
         >
-          <SectionAmbient />
-          <div className="space-y-8">
+          <motion.section
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
+            className={sectionClass}
+          >
+            <SectionAmbient />
+            <div className="space-y-8">
             <SectionHeading
               icon={Activity}
               accent="#0f766e"
@@ -3114,8 +3181,9 @@ export function AdminDashboardPage() {
                 ) : null}
               </div>
             ) : null}
-          </div>
-        </motion.section>
+            </div>
+          </motion.section>
+        </DeferredDashboardSection>
       ) : null}
 
     </div>

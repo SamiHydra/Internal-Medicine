@@ -47,6 +47,7 @@ const sectionClass =
   'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
 const countChipClass =
   'inline-flex items-center gap-2 self-start rounded-full bg-[#f4f7fb] px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#44474e] outline outline-1 outline-[#e3e9f1]'
+const rosterPageSize = 20
 
 type ResidentApprovalDraft = {
   trainingYear: string
@@ -90,7 +91,10 @@ export function UserManagementPage() {
   const [selectedUserId, setSelectedUserId] = useState<string>('')
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('')
   const [rosterSearch, setRosterSearch] = useState('')
+  const [rosterPage, setRosterPage] = useState(1)
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(() => new Set())
+  const deferredDirectoryRef = useRef<HTMLDivElement>(null)
+  const [showDirectorySections, setShowDirectorySections] = useState(false)
 
   const [expandedRequests, setExpandedRequests] = useState<Set<string>>(() => new Set())
   const [residentApprovalDrafts, setResidentApprovalDrafts] = useState<
@@ -156,6 +160,32 @@ export function UserManagementPage() {
     refreshAdminAccessRequests,
   ])
 
+  useEffect(() => {
+    if (showDirectorySections || !deferredDirectoryRef.current) {
+      return
+    }
+
+    let mountTimer: number | null = null
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) {
+        return
+      }
+
+      observer.disconnect()
+      mountTimer = window.setTimeout(() => {
+        setShowDirectorySections(true)
+      }, 300)
+    })
+    observer.observe(deferredDirectoryRef.current)
+
+    return () => {
+      observer.disconnect()
+      if (mountTimer !== null) {
+        window.clearTimeout(mountTimer)
+      }
+    }
+  }, [showDirectorySections])
+
   if (!currentUser) {
     return null
   }
@@ -196,6 +226,12 @@ export function UserManagementPage() {
           profile.email.toLowerCase().includes(rosterQuery),
       )
     : orderedProfiles
+  const rosterPageCount = Math.max(1, Math.ceil(filteredProfiles.length / rosterPageSize))
+  const activeRosterPage = Math.min(rosterPage, rosterPageCount)
+  const visibleProfiles = filteredProfiles.slice(
+    (activeRosterPage - 1) * rosterPageSize,
+    activeRosterPage * rosterPageSize,
+  )
 
   return (
     <div className="space-y-6 px-4 py-5 md:px-6 md:py-8">
@@ -541,6 +577,12 @@ export function UserManagementPage() {
 
       </section>
 
+      <div
+        ref={deferredDirectoryRef}
+        className={cn('space-y-6', !showDirectorySections && 'min-h-[72rem]')}
+      >
+        {showDirectorySections ? (
+          <>
       {workspace === 'clinical' ? (
       <motion.section
         initial={{ opacity: 0, y: 10 }}
@@ -676,7 +718,10 @@ export function UserManagementPage() {
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9aa7b8]" />
                 <Input
                   value={rosterSearch}
-                  onChange={(event) => setRosterSearch(event.target.value)}
+                  onChange={(event) => {
+                    setRosterSearch(event.target.value)
+                    setRosterPage(1)
+                  }}
                   placeholder="Search name or email"
                   className="h-10 pl-9 text-sm"
                 />
@@ -700,7 +745,7 @@ export function UserManagementPage() {
                 <span className="w-[112px] shrink-0 text-right">Action</span>
               </div>
 
-              {filteredProfiles.map((profile) => {
+              {visibleProfiles.map((profile) => {
                 const assignments = state.assignments.filter(
                   (assignment) => assignment.nurseId === profile.id,
                 )
@@ -836,6 +881,36 @@ export function UserManagementPage() {
                   </div>
                 )
               })}
+
+              {rosterPageCount > 1 ? (
+                <div className="flex items-center justify-between gap-3 border-t border-[#eef2f6] bg-[#f7f9fc] px-4 py-3">
+                  <p className="text-xs font-medium text-[#74777f]">
+                    Page {activeRosterPage} of {rosterPageCount}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={activeRosterPage === 1}
+                      onClick={() => setRosterPage(Math.max(1, activeRosterPage - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={activeRosterPage === rosterPageCount}
+                      onClick={() =>
+                        setRosterPage(Math.min(rosterPageCount, activeRosterPage + 1))
+                      }
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-6 py-10 text-center text-sm text-[#74777f]">
@@ -844,6 +919,9 @@ export function UserManagementPage() {
           )}
         </div>
       </motion.section>
+          </>
+        ) : null}
+      </div>
     </div>
   )
 }

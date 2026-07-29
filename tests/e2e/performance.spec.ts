@@ -63,6 +63,11 @@ async function measure(page: Page, label: string, testInfo: TestInfo) {
   return record
 }
 
+function p95(samples: number[]) {
+  const sorted = [...samples].sort((left, right) => left - right)
+  return sorted[Math.ceil(sorted.length * 0.95) - 1]
+}
+
 test.describe('Performance metrics', () => {
   test('login page load metrics', async ({ page }, testInfo) => {
     const m = await measure(page, 'login', testInfo)
@@ -82,6 +87,77 @@ test.describe('Performance metrics', () => {
     test('admin academic dashboard metrics', async ({ page }, testInfo) => {
       const m = await measure(page, '/admin/academic', testInfo)
       expect(m.wallMs).toBeLessThan(20_000)
+    })
+
+    test('admin navigation stays within interaction budgets', async ({ page }, testInfo) => {
+      test.setTimeout(90_000)
+
+      const sampleTransition = async ({
+        link,
+        readyHeading,
+        settleMs,
+      }: {
+        link: string
+        readyHeading: string
+        settleMs: number
+      }) => {
+        const samples: number[] = []
+
+        for (let index = 0; index < 3; index += 1) {
+          await page.goto('/admin', { waitUntil: 'load' })
+          const navLink = page.getByRole('link', { name: link, exact: true })
+          await navLink.waitFor({ state: 'visible' })
+          if (settleMs) {
+            await page.waitForTimeout(settleMs)
+          }
+
+          const started = Date.now()
+          await navLink.click()
+          await page.getByRole('heading', { name: readyHeading, exact: true }).first().waitFor()
+          samples.push(Date.now() - started)
+        }
+
+        return samples
+      }
+
+      const results = {
+        submissionsEarly: await sampleTransition({
+          link: 'Submissions',
+          readyHeading: 'Current reporting board',
+          settleMs: 0,
+        }),
+        submissionsSettled: await sampleTransition({
+          link: 'Submissions',
+          readyHeading: 'Current reporting board',
+          settleMs: 1500,
+        }),
+        usersSettled: await sampleTransition({
+          link: 'Users & Access',
+          readyHeading: 'Users & Access',
+          settleMs: 1500,
+        }),
+        auditSettled: await sampleTransition({
+          link: 'Audit Log',
+          readyHeading: 'Audit Log',
+          settleMs: 1500,
+        }),
+        settingsSettled: await sampleTransition({
+          link: 'Settings',
+          readyHeading: 'Settings',
+          settleMs: 1500,
+        }),
+      }
+
+      await testInfo.attach('navigation-budget.json', {
+        body: JSON.stringify(results, null, 2),
+        contentType: 'application/json',
+      })
+
+      expect(p95(results.submissionsEarly)).toBeLessThan(400)
+      expect(p95(results.submissionsSettled)).toBeLessThanOrEqual(250)
+      expect(p95(results.usersSettled)).toBeLessThanOrEqual(200)
+      expect(p95(results.auditSettled)).toBeLessThanOrEqual(200)
+      expect(p95(results.settingsSettled)).toBeLessThanOrEqual(250)
     })
 
     test('repeated navigation does not leak memory unboundedly', async ({ page }, testInfo) => {

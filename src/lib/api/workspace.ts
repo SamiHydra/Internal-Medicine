@@ -37,20 +37,26 @@ export async function fetchCurrentUserProfile(
 export async function fetchProfileDirectory(
   client: LaravelApiClient,
 ): Promise<UserProfile[]> {
-  const profiles: UserProfile[] = []
-  let page = 1
-  let lastPage = 1
+  const firstPage = await client.get<ListResponse<UserProfile>>('/api/workspace/profiles', {
+    query: { page: 1, perPage: 100 },
+  })
+  const lastPage = firstPage.meta?.lastPage ?? 1
 
-  do {
-    const response = await client.get<ListResponse<UserProfile>>('/api/workspace/profiles', {
-      query: { page, perPage: 100 },
-    })
-    profiles.push(...response.data)
-    lastPage = response.meta?.lastPage ?? 1
-    page += 1
-  } while (page <= lastPage)
+  if (lastPage === 1) {
+    return firstPage.data
+  }
 
-  return profiles
+  // Each response remains capped at 100 rows, while the directory route avoids
+  // a serial nine-request waterfall at the audited roster size.
+  const remainingPages = await Promise.all(
+    Array.from({ length: lastPage - 1 }, (_, index) =>
+      client.get<ListResponse<UserProfile>>('/api/workspace/profiles', {
+        query: { page: index + 2, perPage: 100 },
+      }),
+    ),
+  )
+
+  return [firstPage, ...remainingPages].flatMap((response) => response.data)
 }
 
 export async function fetchWorkspaceRevision(
