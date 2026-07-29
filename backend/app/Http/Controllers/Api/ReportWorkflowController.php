@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportingPeriod;
+use App\Models\ReportStatusHistory;
 use App\Services\Reports\ReportLockingService;
 use App\Services\Reports\ReportQualityService;
 use App\Services\Reports\ReportSubmissionService;
@@ -34,6 +35,8 @@ class ReportWorkflowController extends Controller
             'reportingPeriodId' => ['sometimes', 'uuid'],
             'report_period_window' => ['sometimes', 'string', 'in:default,all'],
             'reportPeriodWindow' => ['sometimes', 'string', 'in:default,all'],
+            'period_ids' => ['sometimes', 'string'],
+            'periodIds' => ['sometimes', 'string'],
             'page' => ['sometimes', 'integer', 'min:1'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
             'perPage' => ['sometimes', 'integer', 'min:1', 'max:100'],
@@ -42,6 +45,11 @@ class ReportWorkflowController extends Controller
         $assignmentId = $validated['assignment_id'] ?? $validated['assignmentId'] ?? null;
         $reportingPeriodId = $validated['reporting_period_id'] ?? $validated['reportingPeriodId'] ?? null;
         $reportPeriodWindow = $validated['report_period_window'] ?? $validated['reportPeriodWindow'] ?? ReportPeriodWindow::DEFAULT_WINDOW;
+        $periodIds = $this->validatedIds(
+            $validated['period_ids'] ?? $validated['periodIds'] ?? null,
+            maximum: 26,
+            field: 'periodIds',
+        );
         $perPage = (int) ($validated['per_page'] ?? $validated['perPage'] ?? 100);
 
         // The index is intentionally summary-only. Values, definitions, quality
@@ -63,6 +71,8 @@ class ReportWorkflowController extends Controller
 
         if ($reportingPeriodId !== null) {
             $query->where('reporting_period_id', $reportingPeriodId);
+        } elseif ($periodIds !== []) {
+            $query->whereIn('reporting_period_id', $periodIds);
         } else {
             $periodIds = ReportPeriodWindow::ids(
                 ReportingPeriod::query()->orderBy('week_start')->get(),
@@ -82,6 +92,86 @@ class ReportWorkflowController extends Controller
                 'lastPage' => $reports->lastPage(),
                 'perPage' => $reports->perPage(),
                 'total' => $reports->total(),
+            ],
+        ]);
+    }
+
+    public function periods(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'perPage' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+        $periods = ReportingPeriod::query()
+            ->orderByDesc('week_start')
+            ->paginate((int) ($validated['per_page'] ?? $validated['perPage'] ?? 26));
+
+        return response()->json([
+            'data' => $periods->getCollection()
+                ->map(fn (ReportingPeriod $period) => [
+                    'id' => $period->id,
+                    'weekStart' => $period->week_start?->startOfDay()->toJSON(),
+                    'weekEnd' => $period->week_end?->startOfDay()->toJSON(),
+                    'deadlineAt' => $period->deadline_at?->toJSON(),
+                    'label' => sprintf(
+                        '%s - %s',
+                        $period->week_start?->format('M j'),
+                        $period->week_end?->format('M j, Y'),
+                    ),
+                ])
+                ->values(),
+            'meta' => [
+                'currentPage' => $periods->currentPage(),
+                'lastPage' => $periods->lastPage(),
+                'perPage' => $periods->perPage(),
+                'total' => $periods->total(),
+            ],
+        ]);
+    }
+
+    public function statusHistory(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'perPage' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+        $user = $request->user();
+        $query = ReportStatusHistory::query()
+            ->with(['changedBy', 'report.department', 'report.template'])
+            ->when(! Permissions::isAdminRole($user->role_key), fn ($historyQuery) => $historyQuery
+                ->whereHas('report.assignment', fn ($assignmentQuery) => $assignmentQuery
+                    ->where('nurse_id', $user->id)
+                    ->where('active', true)))
+            ->latest('changed_at');
+        $history = $query->paginate((int) ($validated['per_page'] ?? $validated['perPage'] ?? 100));
+        $reports = $history->getCollection()
+            ->pluck('report')
+            ->filter()
+            ->unique('id')
+            ->values();
+
+        return response()->json([
+            'data' => $history->getCollection()
+                ->map(fn (ReportStatusHistory $entry) => [
+                    'id' => $entry->id,
+                    'reportId' => $entry->report_id,
+                    'status' => $entry->status,
+                    'changedById' => $entry->changed_by,
+                    'changedByName' => $entry->changed_by_name ?? $entry->changedBy?->full_name ?? 'Unknown user',
+                    'changedAt' => $entry->changed_at?->toJSON(),
+                    'note' => $entry->note,
+                ])
+                ->values(),
+            'reports' => $reports
+                ->map(fn (Report $report) => $this->serializeReportSummary($report))
+                ->values(),
+            'meta' => [
+                'currentPage' => $history->currentPage(),
+                'lastPage' => $history->lastPage(),
+                'perPage' => $history->perPage(),
+                'total' => $history->total(),
             ],
         ]);
     }
@@ -259,6 +349,30 @@ class ReportWorkflowController extends Controller
             'createdAt' => $report->created_at?->toJSON(),
             'updatedAt' => $report->updated_at?->toJSON(),
         ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function validatedIds(?string $value, int $maximum, string $field): array
+    {
+        if ($value === null || trim($value) === '') {
+            return [];
+        }
+
+        $ids = collect(explode(',', $value))
+            ->map(fn (string $id): string => trim($id))
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($ids->count() > $maximum || $ids->contains(fn (string $id): bool => ! Str::isUuid($id))) {
+            throw ValidationException::withMessages([
+                $field => ["Provide at most {$maximum} valid ids."],
+            ]);
+        }
+
+        return $ids->all();
     }
 
     /**

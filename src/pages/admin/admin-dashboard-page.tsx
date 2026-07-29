@@ -752,6 +752,7 @@ function buildAnalyticsProcedureMixData(
 export function AdminDashboardPage() {
   const {
     state,
+    ensureReportSummaryData,
     ensureReportDetails,
     getReportDetailLoadState,
     isReportDetailLoaded,
@@ -814,6 +815,14 @@ export function AdminDashboardPage() {
     : currentPeriodId
   const scopeFamily = familyFilter === 'all' ? undefined : familyFilter
   const trendPeriods = getReportingPeriodsForRange(state, timeRange, effectivePeriodId)
+  const trendPeriodIdsKey = trendPeriods.map(({ id }) => id).join('|')
+  useEffect(() => {
+    const periodIds = trendPeriodIdsKey ? trendPeriodIdsKey.split('|') : []
+    if (periodIds.length) {
+      void ensureReportSummaryData({ periodIds })
+    }
+  }, [ensureReportSummaryData, trendPeriodIdsKey])
+
   const trendBuckets: TrendBucket[] =
     trendScale === 'monthly'
       ? trendPeriods.reduce<TrendBucket[]>((buckets, period) => {

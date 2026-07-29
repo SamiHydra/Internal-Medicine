@@ -2,6 +2,7 @@ import { hydrateTemplatesFromApi } from '@/config/template-registry'
 import { fetchSession } from '@/lib/api/auth'
 import type { LaravelApiClient } from '@/lib/api/client'
 import type {
+  ListResponse,
   LiveAppStateLoadOptions,
   WorkspacePayload,
 } from '@/lib/api/types'
@@ -36,7 +37,20 @@ export async function fetchCurrentUserProfile(
 export async function fetchProfileDirectory(
   client: LaravelApiClient,
 ): Promise<UserProfile[]> {
-  return (await client.get<{ data: UserProfile[] }>('/api/workspace/profiles')).data
+  const profiles: UserProfile[] = []
+  let page = 1
+  let lastPage = 1
+
+  do {
+    const response = await client.get<ListResponse<UserProfile>>('/api/workspace/profiles', {
+      query: { page, perPage: 100 },
+    })
+    profiles.push(...response.data)
+    lastPage = response.meta?.lastPage ?? 1
+    page += 1
+  } while (page <= lastPage)
+
+  return profiles
 }
 
 export async function fetchWorkspaceRevision(

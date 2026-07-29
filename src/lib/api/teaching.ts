@@ -170,9 +170,23 @@ export async function fetchStudents(
   client: LaravelApiClient,
   batchId?: string,
 ): Promise<StudentRecord[]> {
-  const query = batchId ? `?batchId=${batchId}` : ''
+  const students: StudentRecord[] = []
+  let page = 1
+  let lastPage = 1
 
-  return (await client.get<{ data: StudentRecord[] }>(`/api/admin/students${query}`)).data
+  do {
+    const response = await client.get<{
+      data: StudentRecord[]
+      meta: { lastPage: number }
+    }>('/api/admin/students', {
+      query: { batchId, page, perPage: 100 },
+    })
+    students.push(...response.data)
+    lastPage = response.meta?.lastPage ?? 1
+    page += 1
+  } while (page <= lastPage)
+
+  return students
 }
 
 export function createStudent(

@@ -28,7 +28,8 @@ class AuditLogController extends Controller
             'changed_by' => ['sometimes', 'uuid'],
             'date_from' => ['sometimes', 'date_format:Y-m-d'],
             'date_to' => ['sometimes', 'date_format:Y-m-d'],
-            'limit' => ['sometimes', 'integer', 'min:1', 'max:500'],
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'perPage' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
         $query = AuditLog::query()
             ->with(['fieldDefinition', 'changedBy', 'department', 'template'])
@@ -57,11 +58,18 @@ class AuditLogController extends Controller
             $query->where('changed_at', '<', Carbon::parse($validated['date_to'])->addDay()->startOfDay());
         }
 
+        $logs = $query->paginate((int) ($validated['perPage'] ?? 100));
+
         return response()->json([
-            'data' => $query
-                ->limit($validated['limit'] ?? 200)
-                ->get()
-                ->map(fn (AuditLog $auditLog) => $this->serializeAuditLog($auditLog)),
+            'data' => $logs->getCollection()
+                ->map(fn (AuditLog $auditLog) => $this->serializeAuditLog($auditLog))
+                ->values(),
+            'meta' => [
+                'currentPage' => $logs->currentPage(),
+                'lastPage' => $logs->lastPage(),
+                'perPage' => $logs->perPage(),
+                'total' => $logs->total(),
+            ],
         ]);
     }
 

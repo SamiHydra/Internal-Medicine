@@ -23,6 +23,7 @@ import type {
   ApiReferenceState,
   ReportDetailRecord,
   ReportResponse,
+  ReportSummaryResponse,
   SaveReportPayload,
   SubmitAdminAccessRequestPayload,
 } from '@/lib/api'
@@ -34,9 +35,13 @@ import {
   fetchAdminAccessRequests as fetchAdminAccessRequestsQuery,
   fetchAccessRequests,
   fetchCurrentUserProfile,
+  fetchCellAuditLogs,
+  fetchReportAssignments,
   fetchReportDetails,
+  fetchReportStatusHistory,
   changePassword as changePasswordMutation,
   fetchLiveAppState,
+  listAllReportSummaries,
   fetchProfileDirectory,
   fetchWorkspaceRevision,
   isAdminRole,
@@ -90,6 +95,7 @@ import type {
   AppSettings,
   AppState,
   NotificationItem,
+  ReportRecord,
   UserProfile,
   UserRole,
 } from '@/types/domain'
@@ -141,6 +147,7 @@ type AppDataContextValue = {
   ensureAccessRequestData: () => Promise<void>
   ensureUserManagementData: () => Promise<void>
   ensureHistoryData: () => Promise<void>
+  ensureReportSummaryData: (options?: EnsureReportSummaryOptions) => Promise<void>
   ensureReportDetails: (
     reportIds: string[],
     options?: EnsureReportDetailsOptions,
@@ -171,6 +178,13 @@ type ReportDetailLoadState = {
 type EnsureReportDetailsOptions = {
   force?: boolean
   silent?: boolean
+}
+
+type EnsureReportSummaryOptions = {
+  periodIds?: string[]
+  assignmentId?: string
+  reportingPeriodId?: string
+  force?: boolean
 }
 
 type SaveReportResult = {
@@ -217,6 +231,29 @@ function hasReportDetailData(report: AppState['reports'][number]) {
       (value) => value !== null && value !== undefined && value !== '',
     ),
   )
+}
+
+function reportSummaryRecord(report: ReportSummaryResponse): ReportRecord {
+  return {
+    id: report.id,
+    assignmentId: report.assignmentId,
+    departmentId: report.departmentSlug ?? report.departmentId,
+    templateId: report.templateSlug ?? report.templateId,
+    reportingPeriodId: report.reportingPeriodId,
+    createdById: report.createdById,
+    updatedById: report.updatedById,
+    createdAt: report.createdAt,
+    updatedAt: report.updatedAt,
+    submittedAt: report.submittedAt,
+    lockedAt: report.lockedAt,
+    status: report.status,
+    values: {},
+    calculatedMetrics: {
+      borPercent: null,
+      btr: null,
+      alos: null,
+    },
+  }
 }
 
 function hasAssignmentReference(
@@ -268,6 +305,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const profileDirectoryRequestRef = useRef<Promise<void> | null>(null)
   const accessRequestDataRequestRef = useRef<Promise<void> | null>(null)
   const historyDataLoadedRef = useRef(false)
+  const loadedReportPeriodIdsRef = useRef<Set<string>>(new Set())
+  const reportSummaryRequestsRef = useRef<Map<string, Promise<void>>>(new Map())
+  const adminAssignmentsLoadedRef = useRef(false)
   const loadedReportDetailIdsRef = useRef<Set<string>>(new Set())
   const pendingReportDetailIdsRef = useRef<Set<string>>(new Set())
   const reportPeriodWindowRef = useRef<NonNullable<LiveAppStateLoadOptions['reportPeriodWindow']>>('default')
@@ -393,6 +433,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     profileDirectoryRequestRef.current = null
     accessRequestDataRequestRef.current = null
     historyDataLoadedRef.current = false
+    loadedReportPeriodIdsRef.current = new Set()
+    reportSummaryRequestsRef.current = new Map()
+    adminAssignmentsLoadedRef.current = false
     loadedReportDetailIdsRef.current = new Set()
     pendingReportDetailIdsRef.current = new Set()
     reportPeriodWindowRef.current = 'default'
@@ -599,6 +642,110 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [resetDeferredDataState],
   )
 
+  const ensureReportSummaryData = useCallback(
+    async (options: EnsureReportSummaryOptions = {}): Promise<void> => {
+      if (!client || !currentUserIdRef.current) {
+        return
+      }
+
+      const periodIds = [
+        ...new Set(
+          options.periodIds?.filter(Boolean) ??
+            (options.reportingPeriodId ? [options.reportingPeriodId] : []),
+        ),
+      ].sort()
+      const currentProfile = currentStateRef.current.profiles.find(
+        ({ id }) => id === currentUserIdRef.current,
+      )
+      const needsAdminAssignments =
+        Boolean(currentProfile && isAdminRole(currentProfile.role)) &&
+        !adminAssignmentsLoadedRef.current
+      const periodsAlreadyLoaded =
+        periodIds.length > 0 &&
+        periodIds.every((periodId) => loadedReportPeriodIdsRef.current.has(periodId))
+
+      if (!options.force && periodsAlreadyLoaded && !needsAdminAssignments) {
+        return
+      }
+
+      const requestKey = JSON.stringify({
+        periodIds,
+        assignmentId: options.assignmentId ?? null,
+        reportingPeriodId: options.reportingPeriodId ?? null,
+        assignments: needsAdminAssignments,
+      })
+      const existingRequest = reportSummaryRequestsRef.current.get(requestKey)
+
+      if (existingRequest) {
+        return existingRequest
+      }
+
+      beginBackgroundSync()
+      const request = (async () => {
+        const [summaries, assignments] = await Promise.all([
+          listAllReportSummaries(client, {
+            periodIds: periodIds.length ? periodIds : undefined,
+            assignmentId: options.assignmentId,
+            reportingPeriodId: options.reportingPeriodId,
+          }),
+          needsAdminAssignments ? fetchReportAssignments(client) : Promise.resolve(null),
+        ])
+        const incomingReports = summaries.map(reportSummaryRecord)
+
+        setState((currentState) => {
+          const reportsById = new Map(currentState.reports.map((report) => [report.id, report]))
+
+          incomingReports.forEach((report) => {
+            const existing = reportsById.get(report.id)
+            reportsById.set(
+              report.id,
+              existing &&
+                loadedReportDetailIdsRef.current.has(report.id) &&
+                existing.updatedAt === report.updatedAt
+                ? {
+                    ...report,
+                    values: existing.values,
+                    calculatedMetrics: existing.calculatedMetrics,
+                    quality: existing.quality,
+                  }
+                : report,
+            )
+          })
+
+          const nextState = {
+            ...currentState,
+            reports: [...reportsById.values()],
+            assignments: assignments ?? currentState.assignments,
+          }
+
+          currentStateRef.current = nextState
+          persistWorkspaceCache(nextState)
+          return nextState
+        })
+
+        periodIds.forEach((periodId) => loadedReportPeriodIdsRef.current.add(periodId))
+        if (assignments) {
+          adminAssignmentsLoadedRef.current = true
+        }
+        syncReportDetailLoadStates(incomingReports.map(({ id }) => id))
+      })()
+        .finally(() => {
+          reportSummaryRequestsRef.current.delete(requestKey)
+          endBackgroundSync()
+        })
+
+      reportSummaryRequestsRef.current.set(requestKey, request)
+      return request
+    },
+    [
+      beginBackgroundSync,
+      client,
+      endBackgroundSync,
+      persistWorkspaceCache,
+      syncReportDetailLoadStates,
+    ],
+  )
+
   const loadUserState = useCallback(
     async (
       userId: string,
@@ -673,7 +820,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         const existingReportsById = Object.fromEntries(
           currentStateRef.current.reports.map((report) => [report.id, report]),
         ) as Record<string, AppState['reports'][number]>
-        const mergedReports = result.state.reports.map((report) => {
+        const workspaceReports =
+          result.state.reports.length > 0
+            ? result.state.reports
+            : currentStateRef.current.reports
+        const mergedReports = workspaceReports.map((report) => {
           const existingReport = existingReportsById[report.id]
           const canReuseLoadedDetails =
             existingReport &&
@@ -709,7 +860,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             )
             .map((report) => report.id),
         )
-        syncReportDetailLoadStates(result.state.reports.map((report) => report.id))
+        syncReportDetailLoadStates(mergedReports.map((report) => report.id))
         const mergedProfiles = includeProfiles
           ? result.state.profiles
           : [
@@ -724,6 +875,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           profiles: mergedProfiles,
           roles: result.state.roles ?? currentStateRef.current.roles,
           reports: mergedReports,
+          assignments:
+            result.state.assignments.length > 0
+              ? result.state.assignments
+              : currentStateRef.current.assignments,
           accessRequests: includeAccessRequests
             ? result.state.accessRequests
             : currentStateRef.current.accessRequests,
@@ -1111,6 +1266,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         reportPeriodWindow: options?.reportPeriodWindow ?? reportPeriodWindowRef.current,
       })
 
+      const loadedPeriodIds = [...loadedReportPeriodIdsRef.current]
+      if (result && loadedPeriodIds.length > 0) {
+        await ensureReportSummaryData({
+          periodIds: loadedPeriodIds,
+          force: true,
+        })
+      }
+
       if (result && isAdminRole(result.currentUser.role)) {
         warmAdminReportDetails(currentStateRef.current)
       }
@@ -1119,7 +1282,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         toast.error(getMessage(refreshError, 'Unable to refresh the live dashboard data.'))
       }
     }
-  }, [client, clearSignedOutState, loadUserState, warmAdminReportDetails])
+  }, [
+    client,
+    clearSignedOutState,
+    ensureReportSummaryData,
+    loadUserState,
+    warmAdminReportDetails,
+  ])
 
   const scheduleAdminLiveRefresh = useCallback(
     (delayMs = 700) => {
@@ -2115,12 +2284,22 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         await Promise.all([
           ensureProfileDirectoryData(),
           ensureAccessRequestData(),
+          ensureReportSummaryData({
+            periodIds: currentStateRef.current.reportingPeriods
+              .slice(-1)
+              .map(({ id }) => id),
+          }),
         ])
       } catch (loadError) {
         toast.error(getMessage(loadError, 'Unable to load users and access requests.'))
       }
     },
-    [client, ensureAccessRequestData, ensureProfileDirectoryData],
+    [
+      client,
+      ensureAccessRequestData,
+      ensureProfileDirectoryData,
+      ensureReportSummaryData,
+    ],
   )
 
   const ensureHistoryData = useCallback(
@@ -2129,16 +2308,45 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return
       }
 
+      beginBackgroundSync()
       try {
-        await loadUserState(currentUserIdRef.current, 'Unable to load report history.', {
-          showBootstrapping: false,
-          includeHistory: true,
+        const currentProfile = currentStateRef.current.profiles.find(
+          ({ id }) => id === currentUserIdRef.current,
+        )
+        const [{ history, reports }, auditLogs] = await Promise.all([
+          fetchReportStatusHistory(client),
+          currentProfile && isAdminRole(currentProfile.role)
+            ? fetchCellAuditLogs(client)
+            : Promise.resolve([]),
+        ])
+        const reportRows = reports.map(reportSummaryRecord)
+
+        setState((currentState) => {
+          const reportsById = new Map(currentState.reports.map((report) => [report.id, report]))
+          reportRows.forEach((report) => {
+            if (!reportsById.has(report.id)) {
+              reportsById.set(report.id, report)
+            }
+          })
+          const nextState = {
+            ...currentState,
+            reports: [...reportsById.values()],
+            statusHistory: history,
+            auditLogs,
+          }
+
+          currentStateRef.current = nextState
+          persistWorkspaceCache(nextState, { historyDataLoaded: true })
+          return nextState
         })
+        historyDataLoadedRef.current = true
       } catch (loadError) {
         toast.error(getMessage(loadError, 'Unable to load report history.'))
+      } finally {
+        endBackgroundSync()
       }
     },
-    [client, loadUserState],
+    [beginBackgroundSync, client, endBackgroundSync, persistWorkspaceCache],
   )
 
   const resolveDepartmentSlug = useCallback((departmentIdOrSlug: string): string | null => {
@@ -2189,6 +2397,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       ensureAccessRequestData,
       ensureUserManagementData,
       ensureHistoryData,
+      ensureReportSummaryData,
       ensureReportDetails,
       reportPeriodWindow: reportPeriodWindowRef.current,
       resolveDepartmentSlug,
@@ -2231,6 +2440,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       ensureAccessRequestData,
       ensureUserManagementData,
       ensureHistoryData,
+      ensureReportSummaryData,
       ensureReportDetails,
       resolveDepartmentSlug,
       refreshDataWithOptions,

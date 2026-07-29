@@ -99,8 +99,10 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
     Route::post('/performance/rum', [PerformanceMetricController::class, 'store']);
 
     Route::get('/reports', [ReportWorkflowController::class, 'index']);
+    Route::get('/reporting-periods', [ReportWorkflowController::class, 'periods']);
     Route::post('/reports', [ReportWorkflowController::class, 'store']);
     Route::get('/reports/details', [ReportWorkflowController::class, 'details']);
+    Route::get('/reports/status-history', [ReportWorkflowController::class, 'statusHistory']);
     Route::get('/reports/{report}', [ReportWorkflowController::class, 'show']);
     Route::put('/reports/{report}', [ReportWorkflowController::class, 'update']);
     Route::post('/reports/{report}/submit', [ReportWorkflowController::class, 'submit']);

@@ -1486,34 +1486,29 @@ export function ReportForm({
   const { isSyncing, isDataRefreshing } = useAppSync()
   const assignment = appData.state.assignments.find((entry) => entry.id === assignmentId)
   const period = appData.state.reportingPeriods.find((entry) => entry.id === periodId)
+  const { ensureReportSummaryData } = appData
+  const summaryLookupKey = `${assignmentId}:${periodId}`
+  const [resolvedSummaryKey, setResolvedSummaryKey] = useState('')
   const isRouteDataLoading =
     appData.isBootstrapping || isDataRefreshing || isSyncing
 
-  // AUD-UI-020: the default period window only loads recent reports, but every
-  // period is listed, so opening a period OUTSIDE that window finds no report
-  // and would render an editable "Not started" blank even when a locked report
-  // exists for it. Pull the full window once before trusting the empty result,
-  // so a real locked/submitted report loads and renders read-only. The common
-  // in-window case resolves a report immediately and never triggers this.
-  const resolvedReport = getReportForAssignmentPeriod(appData.state, assignmentId, periodId)
-  const needsFullReportWindow =
-    Boolean(assignmentId) &&
-    Boolean(periodId) &&
-    !resolvedReport &&
-    appData.reportPeriodWindow !== 'all'
-  const requestedFullWindowRef = useRef(false)
-
   useEffect(() => {
-    // Reset the one-shot guard if the route points at a different report.
-    requestedFullWindowRef.current = false
-  }, [assignmentId, periodId])
+    let active = true
 
-  useEffect(() => {
-    if (needsFullReportWindow && !isRouteDataLoading && !requestedFullWindowRef.current) {
-      requestedFullWindowRef.current = true
-      void appData.refreshData({ reportPeriodWindow: 'all' })
+    if (assignmentId && periodId) {
+      void ensureReportSummaryData({ assignmentId, reportingPeriodId: periodId })
+        .catch(() => undefined)
+        .then(() => {
+          if (active) {
+            setResolvedSummaryKey(summaryLookupKey)
+          }
+        })
     }
-  }, [needsFullReportWindow, isRouteDataLoading, appData])
+
+    return () => {
+      active = false
+    }
+  }, [assignmentId, ensureReportSummaryData, periodId, summaryLookupKey])
 
   if (!assignmentId || !periodId) {
     return (
@@ -1583,13 +1578,13 @@ export function ReportForm({
     )
   }
 
-  // Hold the editable form back until the full window has loaded, so an
-  // out-of-window locked report is never briefly presented as a blank draft.
-  if (needsFullReportWindow) {
+  // Never present a missing summary as a blank editable draft until the
+  // assignment/period-specific lookup has confirmed that no report exists.
+  if (resolvedSummaryKey !== summaryLookupKey) {
     return (
       <ReportStatePanel
         title="Loading report"
-        description="Fetching the full reporting history to confirm this report's status."
+        description="Confirming this report's current status."
       />
     )
   }

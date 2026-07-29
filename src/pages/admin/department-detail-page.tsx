@@ -39,6 +39,7 @@ export function DepartmentDetailPage() {
   const {
     state,
     ensureHistoryData,
+    ensureReportSummaryData,
     ensureReportDetails,
     resolveDepartmentSlug,
   } = useAppData()
@@ -51,11 +52,13 @@ export function DepartmentDetailPage() {
   const effectivePeriodId = availablePeriods.some((period) => period.id === selectedPeriodId)
     ? selectedPeriodId
     : fallbackPeriodId
-  const reportingPeriodIds = new Set(
-    getReportingPeriodsForRange(state, timeRange, effectivePeriodId).map(
-      (period) => period.id,
-    ),
-  )
+  const reportingPeriodIdsList = getReportingPeriodsForRange(
+    state,
+    timeRange,
+    effectivePeriodId,
+  ).map((period) => period.id)
+  const reportingPeriodIdsKey = reportingPeriodIdsList.join('|')
+  const reportingPeriodIds = new Set(reportingPeriodIdsList)
   const departmentReportIdsKey = state.reports
     .filter(
       (report) =>
@@ -68,6 +71,13 @@ export function DepartmentDetailPage() {
   useEffect(() => {
     void ensureHistoryData()
   }, [ensureHistoryData])
+
+  useEffect(() => {
+    const periodIds = reportingPeriodIdsKey ? reportingPeriodIdsKey.split('|') : []
+    if (periodIds.length) {
+      void ensureReportSummaryData({ periodIds })
+    }
+  }, [ensureReportSummaryData, reportingPeriodIdsKey])
 
   useEffect(() => {
     const departmentReportIds = departmentReportIdsKey

@@ -14,6 +14,7 @@ import type {
   SubmitAdminAccessRequestPayload,
 } from '@/lib/api/types'
 import type { Department, ReportTemplateConfig } from '@/types/domain'
+import type { AuditLogEntry, ReportAssignment } from '@/types/domain'
 
 function fieldMetadata(field: ReportTemplateConfig['fields'][number]) {
   return {
@@ -51,6 +52,56 @@ export async function updateAssignmentActiveState(
   active: boolean,
 ) {
   await client.patch(`/api/admin/assignments/${assignmentId}`, { active })
+}
+
+type AssignmentResponse = {
+  id: string
+  nurseId: string
+  departmentId: string
+  departmentSlug: string | null
+  templateId: string
+  templateSlug: string | null
+  approvedAt: string
+  active: boolean
+}
+
+export async function fetchReportAssignments(
+  client: LaravelApiClient,
+): Promise<ReportAssignment[]> {
+  const assignments: ReportAssignment[] = []
+  let page = 1
+  let lastPage = 1
+
+  do {
+    const response = await client.get<{
+      data: AssignmentResponse[]
+      meta: { lastPage: number }
+    }>('/api/admin/assignments', {
+      query: { page, perPage: 100 },
+    })
+    assignments.push(...response.data.map((assignment) => ({
+      id: assignment.id,
+      nurseId: assignment.nurseId,
+      departmentId: assignment.departmentSlug ?? assignment.departmentId,
+      templateId: assignment.templateSlug ?? assignment.templateId,
+      approvedAt: assignment.approvedAt,
+      active: assignment.active,
+    })))
+    lastPage = response.meta?.lastPage ?? 1
+    page += 1
+  } while (page <= lastPage)
+
+  return assignments
+}
+
+export async function fetchCellAuditLogs(
+  client: LaravelApiClient,
+): Promise<AuditLogEntry[]> {
+  return (
+    await client.get<{ data: AuditLogEntry[] }>('/api/admin/audit-logs', {
+      query: { page: 1, perPage: 100 },
+    })
+  ).data
 }
 
 export async function reviewAccessRequest(

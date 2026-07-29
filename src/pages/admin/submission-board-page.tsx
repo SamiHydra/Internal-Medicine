@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 
@@ -35,10 +35,10 @@ const statusOptions = [
   { value: 'overdue' as const, label: 'Overdue' },
 ] as const
 
-const timeRangeValues: ReportingTimeRange[] = ['current', 'last4', 'last8', 'quarter', 'all']
+const timeRangeValues: ReportingTimeRange[] = ['current', 'last4', 'last8', 'quarter', 'last26']
 
 export function SubmissionBoardPage() {
-  const { state, ensureProfileDirectoryData, reportPeriodWindow, refreshData } = useAppData()
+  const { state, ensureProfileDirectoryData, ensureReportSummaryData } = useAppData()
   const currentPeriod = getCurrentPeriod(state)
   const currentPeriodId = currentPeriod?.id ?? ''
   // Honor deep-links from the dashboard (e.g. the Outstanding-reports card) so the
@@ -68,27 +68,9 @@ export function SubmissionBoardPage() {
   const [serviceLineFilter, setServiceLineFilter] =
     useState<ServiceLineFilter>(initialServiceLine)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialStatus)
-  const requestedReportWindowRef = useRef<'default' | 'all' | null>(null)
-
   useEffect(() => {
     void ensureProfileDirectoryData()
   }, [ensureProfileDirectoryData])
-
-  useEffect(() => {
-    const nextReportWindow = timeRange === 'all' ? 'all' : 'default'
-
-    if (reportPeriodWindow === nextReportWindow) {
-      requestedReportWindowRef.current = null
-      return
-    }
-
-    if (requestedReportWindowRef.current === nextReportWindow) {
-      return
-    }
-
-    requestedReportWindowRef.current = nextReportWindow
-    void refreshData({ reportPeriodWindow: nextReportWindow })
-  }, [refreshData, reportPeriodWindow, timeRange])
 
   // All board derivations are memoized on their real inputs so a poll-driven
   // re-render (or an unrelated state change) does not rebuild the grid; only a
@@ -120,6 +102,14 @@ export function SubmissionBoardPage() {
       ),
     [state, timeRange, effectivePeriodId, serviceLineFilter],
   )
+  const rangePeriodIdsKey = rangeSummary?.periods.map(({ id }) => id).join('|') ?? ''
+
+  useEffect(() => {
+    const periodIds = rangePeriodIdsKey ? rangePeriodIdsKey.split('|') : []
+    if (periodIds.length) {
+      void ensureReportSummaryData({ periodIds })
+    }
+  }, [ensureReportSummaryData, rangePeriodIdsKey])
 
   // Index nurse names once instead of a state.profiles.find() per board row.
   const profileNameById = useMemo(() => {
@@ -177,7 +167,7 @@ export function SubmissionBoardPage() {
     { value: 'last4' as const, label: 'Last 4 weeks' },
     { value: 'last8' as const, label: 'Last 8 weeks' },
     { value: 'quarter' as const, label: 'Last quarter (13 weeks)' },
-    { value: 'all' as const, label: 'All available data' },
+    { value: 'last26' as const, label: 'Last 26 weeks' },
   ] as const
   const timeRangeLabel =
     timeRangeOptions.find((option) => option.value === timeRange)?.label ??

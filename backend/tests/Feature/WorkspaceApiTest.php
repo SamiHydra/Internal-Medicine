@@ -10,6 +10,8 @@ use App\Models\ReportAssignment;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportingPeriod;
 use App\Models\ReportStatusHistory;
+use App\Models\Student;
+use App\Models\StudentBatch;
 use App\Models\User;
 use Database\Seeders\AppSettingSeeder;
 use Database\Seeders\DepartmentSeeder;
@@ -56,9 +58,65 @@ class WorkspaceApiTest extends TestCase
 
     public function test_default_workspace_payload_stays_under_200_kilobytes(): void
     {
-        $this->markTestSkipped(
-            'TODO PERF-03: enable after the workspace bootstrap is trimmed and the growth fixture is bounded.',
+        $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
+        $period = ReportingPeriod::query()->orderByDesc('week_start')->firstOrFail();
+        $nurses = User::factory()->count(105)->create();
+
+        $nurses->each(function (User $nurse) use ($department, $period): void {
+            $this->report($this->assignment($nurse, $department), $period);
+        });
+
+        $batch = StudentBatch::query()->create([
+            'cohort' => 'C1',
+            'label' => 'PERF-03 growth fixture',
+            'starts_on' => now()->subMonth(),
+            'ends_on' => now()->addMonth(),
+            'active' => true,
+        ]);
+        foreach (range(1, 105) as $index) {
+            Student::query()->create([
+                'batch_id' => $batch->id,
+                'full_name' => sprintf('Growth Student %03d', $index),
+                'external_id' => sprintf('PERF03-%03d', $index),
+                'subgroup' => $index % 2 === 0 ? 'A' : 'B',
+                'active' => true,
+            ]);
+        }
+
+        $workspace = $this->actingAs($this->admin)
+            ->getJson('/api/workspace?includeProfiles=1&includeHistory=1&reportPeriodWindow=all')
+            ->assertOk()
+            ->assertJsonCount(1, 'state.profiles')
+            ->assertJsonCount(0, 'state.assignments')
+            ->assertJsonCount(0, 'state.reports')
+            ->assertJsonCount(0, 'state.statusHistory')
+            ->assertJsonCount(0, 'state.auditLogs')
+            ->assertJsonCount(26, 'state.reportingPeriods');
+
+        $this->assertLessThan(
+            200 * 1024,
+            strlen($workspace->getContent()),
+            'The identity/reference workspace bootstrap exceeded 200 KiB.',
         );
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/workspace/profiles')
+            ->assertOk()
+            ->assertJsonCount(100, 'data')
+            ->assertJsonPath('meta.perPage', 100)
+            ->assertJsonPath('meta.lastPage', 2);
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/assignments')
+            ->assertOk()
+            ->assertJsonCount(100, 'data')
+            ->assertJsonPath('meta.perPage', 100)
+            ->assertJsonPath('meta.lastPage', 2);
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/students')
+            ->assertOk()
+            ->assertJsonCount(100, 'data')
+            ->assertJsonPath('meta.perPage', 100)
+            ->assertJsonPath('meta.lastPage', 2);
     }
 
     public function test_workspace_hydrates_frontend_state_and_scopes_nurses(): void
@@ -107,19 +165,44 @@ class WorkspaceApiTest extends TestCase
             ->assertJsonCount(1, 'state.profiles')
             ->assertJsonCount(1, 'state.assignments')
             ->assertJsonPath('state.assignments.0.departmentId', 'gi_neuro_inpatient')
-            ->assertJsonCount(1, 'state.reports')
-            ->assertJsonPath('state.reports.0.id', $report->id)
-            ->assertJsonCount(1, 'state.statusHistory')
+            ->assertJsonCount(0, 'state.reports')
+            ->assertJsonCount(0, 'state.statusHistory')
             ->assertJsonCount(0, 'state.auditLogs');
+        $this->actingAs($this->nurse)
+            ->getJson("/api/reports?periodIds={$period->id}")
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $report->id);
+        $this->actingAs($this->nurse)
+            ->getJson('/api/reports/status-history')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
 
         $this->actingAs($this->admin)
             ->getJson('/api/workspace?includeHistory=1&includeProfiles=1')
             ->assertOk()
             ->assertJsonPath('references.departmentDbIdBySlug.gi_neuro_inpatient', $department->id)
-            ->assertJsonCount(3, 'state.profiles')
-            ->assertJsonCount(2, 'state.assignments')
-            ->assertJsonFragment(['id' => $otherReport->id])
-            ->assertJsonCount(1, 'state.auditLogs');
+            ->assertJsonCount(1, 'state.profiles')
+            ->assertJsonCount(0, 'state.assignments')
+            ->assertJsonCount(0, 'state.reports')
+            ->assertJsonCount(0, 'state.auditLogs');
+        $this->actingAs($this->admin)
+            ->getJson('/api/workspace/profiles')
+            ->assertOk()
+            ->assertJsonCount(3, 'data');
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/assignments')
+            ->assertOk()
+            ->assertJsonCount(2, 'data');
+        $this->actingAs($this->admin)
+            ->getJson("/api/reports?periodIds={$period->id}")
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonFragment(['id' => $otherReport->id]);
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/audit-logs')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
     }
 
     public function test_workspace_exposes_the_role_registry_with_its_workspace_split(): void
@@ -203,9 +286,9 @@ class WorkspaceApiTest extends TestCase
         // resolve display names by id from it, so it must never be split by
         // workspace even though the admin roster is.
         $profileIds = $this->actingAs($this->admin)
-            ->getJson('/api/workspace?includeProfiles=1')
+            ->getJson('/api/workspace/profiles')
             ->assertOk()
-            ->json('state.profiles.*.id');
+            ->json('data.*.id');
 
         $this->assertEqualsCanonicalizing(
             [$this->admin->id, $this->nurse->id, $this->otherNurse->id, $resident->id, $consultant->id, $studentRep->id],
@@ -301,7 +384,7 @@ class WorkspaceApiTest extends TestCase
         $this->assertTrue(password_verify('NewPassword123!', $this->nurse->refresh()->password));
     }
 
-    public function test_workspace_report_summaries_default_to_recent_period_window_and_can_load_all_history(): void
+    public function test_report_summaries_are_paginated_while_workspace_stays_bounded(): void
     {
         Carbon::setTestNow('2026-05-26 12:00:00');
 
@@ -317,18 +400,23 @@ class WorkspaceApiTest extends TestCase
             $reports = $periods->map(fn (ReportingPeriod $period): Report => $this->report($assignment, $period));
 
             $defaultResponse = $this->actingAs($this->admin)
-                ->getJson('/api/workspace')
+                ->getJson('/api/reports')
                 ->assertOk()
-                ->assertJsonCount(9, 'state.reports');
-            $defaultReportIds = collect($defaultResponse->json('state.reports'))->pluck('id')->all();
+                ->assertJsonCount(9, 'data');
+            $defaultReportIds = collect($defaultResponse->json('data'))->pluck('id')->all();
 
             $this->assertEmpty(array_intersect($reports->take(2)->pluck('id')->all(), $defaultReportIds));
             $this->assertEqualsCanonicalizing($reports->slice(2)->pluck('id')->all(), $defaultReportIds);
 
             $this->actingAs($this->admin)
+                ->getJson('/api/reports?reportPeriodWindow=all')
+                ->assertOk()
+                ->assertJsonCount(11, 'data');
+            $this->actingAs($this->admin)
                 ->getJson('/api/workspace?reportPeriodWindow=all')
                 ->assertOk()
-                ->assertJsonCount(11, 'state.reports');
+                ->assertJsonCount(0, 'state.reports')
+                ->assertJsonCount(11, 'state.reportingPeriods');
         } finally {
             Carbon::setTestNow();
         }

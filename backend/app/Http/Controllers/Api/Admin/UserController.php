@@ -33,6 +33,9 @@ class UserController extends Controller
             'workspace' => ['sometimes', Rule::in(Workspaces::selectable())],
             'active' => ['sometimes', 'boolean'],
             'q' => ['sometimes', 'string', 'max:100'],
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'perPage' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
 
         $query = User::query()
@@ -69,8 +72,18 @@ class UserController extends Controller
             });
         }
 
+        $users = $query->paginate((int) ($validated['per_page'] ?? $validated['perPage'] ?? 100));
+
         return response()->json([
-            'data' => $query->get()->map(fn (User $user) => $this->serializeUser($user)),
+            'data' => $users->getCollection()
+                ->map(fn (User $user) => $this->serializeUser($user))
+                ->values(),
+            'meta' => [
+                'currentPage' => $users->currentPage(),
+                'lastPage' => $users->lastPage(),
+                'perPage' => $users->perPage(),
+                'total' => $users->total(),
+            ],
         ]);
     }
 

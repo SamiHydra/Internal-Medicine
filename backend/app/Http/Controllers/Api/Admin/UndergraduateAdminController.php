@@ -166,15 +166,25 @@ class UndergraduateAdminController extends Controller
 
         $validated = $request->validate([
             'batchId' => ['sometimes', 'uuid'],
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'perPage' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
+        $students = Student::query()
+            ->with('batch')
+            ->when(isset($validated['batchId']), fn ($query) => $query->where('batch_id', $validated['batchId']))
+            ->orderBy('full_name')
+            ->paginate((int) ($validated['perPage'] ?? 100));
 
         return response()->json([
-            'data' => Student::query()
-                ->with('batch')
-                ->when(isset($validated['batchId']), fn ($query) => $query->where('batch_id', $validated['batchId']))
-                ->orderBy('full_name')
-                ->get()
-                ->map(fn (Student $student) => $this->serializeStudent($student)),
+            'data' => $students->getCollection()
+                ->map(fn (Student $student) => $this->serializeStudent($student))
+                ->values(),
+            'meta' => [
+                'currentPage' => $students->currentPage(),
+                'lastPage' => $students->lastPage(),
+                'perPage' => $students->perPage(),
+                'total' => $students->total(),
+            ],
         ]);
     }
 

@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { ClipboardList, LockKeyhole, Rows3 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import {
@@ -32,7 +32,7 @@ const serviceLineOptions = [
 ] as const
 
 export function ReportSelectionPage() {
-  const { state, currentUser } = useAppData()
+  const { state, currentUser, ensureReportSummaryData } = useAppData()
   const [serviceLineFilter, setServiceLineFilter] = useState<'all' | ReportFamily>('all')
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>('')
 
@@ -42,6 +42,14 @@ export function ReportSelectionPage() {
   const effectivePeriodId = availablePeriods.some((period) => period.id === selectedPeriodId)
     ? selectedPeriodId
     : fallbackPeriodId
+  const reportingPeriodIdsKey = state.reportingPeriods.map(({ id }) => id).join('|')
+
+  useEffect(() => {
+    const periodIds = reportingPeriodIdsKey ? reportingPeriodIdsKey.split('|') : []
+    if (periodIds.length) {
+      void ensureReportSummaryData({ periodIds })
+    }
+  }, [ensureReportSummaryData, reportingPeriodIdsKey])
 
   if (!currentUser) {
     return null

@@ -7,6 +7,7 @@ import type {
   ReportSummaryResponse,
   SaveReportPayload,
 } from '@/lib/api/types'
+import type { ReportStatusHistoryEntry, ReportingPeriod } from '@/types/domain'
 
 export async function fetchReportComments(
   client: LaravelApiClient,
@@ -117,6 +118,7 @@ export async function listReports(
   options?: {
     assignmentId?: string
     reportingPeriodId?: string
+    periodIds?: string[]
     reportPeriodWindow?: 'default' | 'all'
     page?: number
     perPage?: number
@@ -126,11 +128,55 @@ export async function listReports(
     query: {
       assignmentId: options?.assignmentId,
       reportingPeriodId: options?.reportingPeriodId,
+      periodIds: options?.periodIds?.join(','),
       reportPeriodWindow: options?.reportPeriodWindow ?? 'default',
       page: options?.page,
       perPage: options?.perPage,
     },
   })
+}
+
+export async function listAllReportSummaries(
+  client: LaravelApiClient,
+  options?: Parameters<typeof listReports>[1],
+) {
+  const reports: ReportSummaryResponse[] = []
+  let page = 1
+  let lastPage = 1
+
+  do {
+    const response = await listReports(client, {
+      ...options,
+      page,
+      perPage: 100,
+    })
+    reports.push(...response.data)
+    lastPage = response.meta?.lastPage ?? 1
+    page += 1
+  } while (page <= lastPage)
+
+  return reports
+}
+
+export async function fetchReportingPeriods(
+  client: LaravelApiClient,
+  perPage = 26,
+) {
+  return (
+    await client.get<ListResponse<ReportingPeriod>>('/api/reporting-periods', {
+      query: { page: 1, perPage },
+    })
+  ).data
+}
+
+export async function fetchReportStatusHistory(client: LaravelApiClient) {
+  const response = await client.get<
+    ListResponse<ReportStatusHistoryEntry> & { reports: ReportSummaryResponse[] }
+  >('/api/reports/status-history', {
+    query: { page: 1, perPage: 100 },
+  })
+
+  return { history: response.data, reports: response.reports }
 }
 
 export async function syncOverdueNotifications(client: LaravelApiClient) {

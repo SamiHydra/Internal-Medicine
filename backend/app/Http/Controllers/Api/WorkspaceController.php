@@ -5,14 +5,11 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Api\Concerns\SerializesAdminResources;
 use App\Http\Controllers\Controller;
 use App\Models\AccessRequest;
-use App\Models\AuditLog;
 use App\Models\Department;
 use App\Models\DutyAssignment;
 use App\Models\RepAssignment;
-use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportingPeriod;
-use App\Models\ReportStatusHistory;
 use App\Models\ReportTemplate;
 use App\Models\Role;
 use App\Models\RotationBlock;
@@ -37,6 +34,8 @@ use Illuminate\Http\Request;
 class WorkspaceController extends Controller
 {
     use SerializesAdminResources;
+
+    private const INTERACTIVE_PERIOD_COUNT = 26;
 
     public function __construct(
         private readonly WorkspaceRevisionService $workspaceRevision,
@@ -89,12 +88,37 @@ class WorkspaceController extends Controller
     {
         $user = $request->user();
 
-        $profiles = Permissions::isAdminRole($user->role_key)
-            ? User::query()->orderBy('full_name')->get()
-            : collect([$user]);
+        if (! Permissions::isAdminRole($user->role_key)) {
+            return response()->json([
+                'data' => [$this->profile($user)],
+                'meta' => [
+                    'currentPage' => 1,
+                    'lastPage' => 1,
+                    'perPage' => 100,
+                    'total' => 1,
+                ],
+            ]);
+        }
+
+        $validated = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'perPage' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+        $profiles = User::query()
+            ->orderBy('full_name')
+            ->paginate((int) ($validated['per_page'] ?? $validated['perPage'] ?? 100));
 
         return response()->json([
-            'data' => $profiles->map(fn (User $profile) => $this->profile($profile))->values(),
+            'data' => $profiles->getCollection()
+                ->map(fn (User $profile) => $this->profile($profile))
+                ->values(),
+            'meta' => [
+                'currentPage' => $profiles->currentPage(),
+                'lastPage' => $profiles->lastPage(),
+                'perPage' => $profiles->perPage(),
+                'total' => $profiles->total(),
+            ],
         ]);
     }
 
@@ -113,10 +137,7 @@ class WorkspaceController extends Controller
 
         $user = $request->user();
         $isAdmin = Permissions::isAdminRole($user->role_key);
-        $includeProfiles = $this->booleanOption($validated, 'include_profiles', 'includeProfiles');
         $includeAccessRequests = $this->booleanOption($validated, 'include_access_requests', 'includeAccessRequests');
-        $includeHistory = $this->booleanOption($validated, 'include_history', 'includeHistory');
-        $reportPeriodWindow = $this->stringOption($validated, 'report_period_window', 'reportPeriodWindow', ReportPeriodWindow::DEFAULT_WINDOW);
 
         // Nurses only receive ACTIVE field definitions, so soft-disabled fields
         // drop out of their entry forms. Admins still receive every field so
@@ -128,59 +149,31 @@ class WorkspaceController extends Controller
             ->orderBy('name')
             ->get();
         $departments = Department::query()->orderBy('name')->get();
-        $periods = ReportingPeriod::query()->orderBy('week_start')->get();
-        $visiblePeriodIds = ReportPeriodWindow::ids($periods, $reportPeriodWindow);
+        $allPeriods = ReportingPeriod::query()->orderBy('week_start')->get();
+        $visiblePeriodIds = ReportPeriodWindow::ids($allPeriods, ReportPeriodWindow::ALL_WINDOW);
+        $periods = $allPeriods
+            ->whereIn('id', array_slice($visiblePeriodIds, -self::INTERACTIVE_PERIOD_COUNT))
+            ->values();
 
-        $profiles = $includeProfiles && $isAdmin
-            ? User::query()->orderBy('full_name')->get()
-            : collect([$user]);
+        // The bootstrap is an identity/reference document. Full profile,
+        // assignment, report, and history collections live behind their
+        // paginated route endpoints and are loaded only by pages that use them.
+        $profiles = collect([$user]);
 
-        $assignments = ReportAssignment::query()
-            ->with(['department', 'template'])
-            ->when(! $isAdmin, fn (Builder $query) => $query
+        $assignments = $isAdmin
+            ? collect()
+            : ReportAssignment::query()
+                ->with(['department', 'template'])
                 ->where('nurse_id', $user->id)
-                ->where('active', true))
-            ->latest('approved_at')
-            ->get();
-
-        $reports = Report::query()
-            ->with(['department', 'template', 'calculatedMetric'])
-            ->when(! empty($visiblePeriodIds), fn (Builder $query) => $query->whereIn('reporting_period_id', $visiblePeriodIds))
-            ->when(empty($visiblePeriodIds), fn (Builder $query) => $query->whereRaw('1 = 0'))
-            ->when(! $isAdmin, fn (Builder $query) => $query->whereHas('assignment', fn (Builder $assignmentQuery) => $assignmentQuery
-                ->where('nurse_id', $user->id)
-                ->where('active', true)))
-            ->latest('updated_at')
-            // The period window already bounds this set; the limit is a memory
-            // backstop so a pathological dataset can never overrun PHP's
-            // memory_limit on shared hosting. Field values are loaded lazily
-            // (values => {}) so each row here is lightweight.
-            ->limit(10000)
-            ->get();
-
-        $reportIds = $reports->pluck('id')->all();
+                ->where('active', true)
+                ->latest('approved_at')
+                ->get();
 
         $accessRequests = $includeAccessRequests
             ? AccessRequest::query()
                 ->with(['user', 'reviewer', 'items.department', 'items.template'])
                 ->when(! $isAdmin, fn (Builder $query) => $query->where('user_id', $user->id))
                 ->latest('requested_at')
-                ->get()
-            : collect();
-
-        $statusHistory = $includeHistory && ! empty($reportIds)
-            ? ReportStatusHistory::query()
-                ->with('changedBy')
-                ->whereIn('report_id', $reportIds)
-                ->latest('changed_at')
-                ->get()
-            : collect();
-
-        $auditLogs = $includeHistory && $isAdmin && ! empty($reportIds)
-            ? AuditLog::query()
-                ->with(['fieldDefinition', 'changedBy', 'department', 'template'])
-                ->whereIn('report_id', $reportIds)
-                ->latest('changed_at')
                 ->get()
             : collect();
 
@@ -235,48 +228,9 @@ class WorkspaceController extends Controller
                 'deadlineAt' => $period->deadline_at?->toJSON(),
                 'label' => $this->periodLabel($period),
             ])->values(),
-            'reports' => $reports->map(fn (Report $report) => [
-                'id' => $report->id,
-                'assignmentId' => $report->assignment_id,
-                'departmentId' => $report->department?->slug ?? $report->department_id,
-                'templateId' => $report->template?->slug ?? $report->template_id,
-                'reportingPeriodId' => $report->reporting_period_id,
-                'createdById' => $report->created_by,
-                'updatedById' => $report->updated_by,
-                'createdAt' => $report->created_at?->toJSON(),
-                'updatedAt' => $report->updated_at?->toJSON(),
-                'submittedAt' => $report->submitted_at?->toJSON(),
-                'lockedAt' => $report->locked_at?->toJSON(),
-                'status' => $report->status,
-                'values' => (object) [],
-                'calculatedMetrics' => [
-                    'borPercent' => $this->nullableFloat($report->calculatedMetric?->bor_percent),
-                    'btr' => $this->nullableFloat($report->calculatedMetric?->btr),
-                    'alos' => $this->nullableFloat($report->calculatedMetric?->alos),
-                ],
-            ])->values(),
-            'statusHistory' => $statusHistory->map(fn (ReportStatusHistory $history) => [
-                'id' => $history->id,
-                'reportId' => $history->report_id,
-                'status' => $history->status,
-                'changedById' => $history->changed_by,
-                'changedByName' => $history->changed_by_name ?? $history->changedBy?->full_name ?? 'Unknown user',
-                'changedAt' => $history->changed_at?->toJSON(),
-                'note' => $history->note,
-            ])->values(),
-            'auditLogs' => $auditLogs->map(fn (AuditLog $auditLog) => [
-                'id' => $auditLog->id,
-                'reportId' => $auditLog->report_id,
-                'fieldId' => $auditLog->day_name ? "{$auditLog->field_key}.{$auditLog->day_name}" : $auditLog->field_key,
-                'fieldLabel' => ($auditLog->fieldDefinition?->label ?? $auditLog->field_key).($auditLog->day_name ? " ({$auditLog->day_name})" : ''),
-                'oldValue' => $auditLog->old_value,
-                'newValue' => $auditLog->new_value,
-                'changedById' => $auditLog->changed_by,
-                'changedByName' => $auditLog->changed_by_name ?? $auditLog->changedBy?->full_name ?? 'Unknown user',
-                'changedAt' => $auditLog->changed_at?->toJSON(),
-                'departmentId' => $auditLog->department?->slug ?? $auditLog->department_id,
-                'templateId' => $auditLog->template?->slug ?? $auditLog->template_id,
-            ])->values(),
+            'reports' => [],
+            'statusHistory' => [],
+            'auditLogs' => [],
             'notifications' => $notifications->map(fn ($notification) => [
                 'id' => $notification->id,
                 'userId' => $notification->recipient_id,
@@ -289,16 +243,7 @@ class WorkspaceController extends Controller
                 'relatedReportId' => $notification->related_id,
             ])->values(),
             'settings' => app(AppSettingsService::class)->structured(),
-            'pendingDrafts' => $reports
-                ->where('status', 'draft')
-                ->map(fn (Report $report) => [
-                    'reportId' => $report->id,
-                    'assignmentId' => $report->assignment_id,
-                    'reportingPeriodId' => $report->reporting_period_id,
-                    'lastSavedAt' => $report->updated_at?->toJSON(),
-                ])
-                ->sortByDesc('lastSavedAt')
-                ->values(),
+            'pendingDrafts' => [],
         ];
 
         return response()->json([
@@ -474,11 +419,6 @@ class WorkspaceController extends Controller
         return (bool) ($validated[$snakeKey] ?? $validated[$camelKey] ?? false);
     }
 
-    private function stringOption(array $validated, string $snakeKey, string $camelKey, string $default): string
-    {
-        return (string) ($validated[$snakeKey] ?? $validated[$camelKey] ?? $default);
-    }
-
     private function profile(User $user): array
     {
         return [
@@ -501,10 +441,5 @@ class WorkspaceController extends Controller
             $period->week_start?->format('M j'),
             $period->week_end?->format('M j, Y'),
         );
-    }
-
-    private function nullableFloat(mixed $value): ?float
-    {
-        return $value === null ? null : (float) $value;
     }
 }

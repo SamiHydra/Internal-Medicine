@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Bell, ClipboardList, PencilLine, Sparkles } from 'lucide-react'
+import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 
 import {
@@ -17,8 +18,14 @@ import { formatTimestamp } from '@/lib/dates'
 import { formatCompactNumber } from '@/lib/utils'
 
 export function NurseDashboardPage() {
-  const { state, currentUser } = useAppData()
+  const { state, currentUser, ensureReportSummaryData } = useAppData()
   const currentPeriod = useCurrentReportingPeriod()
+
+  useEffect(() => {
+    if (currentPeriod) {
+      void ensureReportSummaryData({ periodIds: [currentPeriod.id] })
+    }
+  }, [currentPeriod, ensureReportSummaryData])
 
   if (!currentUser) {
     return null
