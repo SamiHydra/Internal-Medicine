@@ -13,7 +13,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e": "node scripts/run-e2e.mjs",
-    "verify": "npm run lint && npm run test:run && npm run build && npm run perf:budget",
+    "test:load-contract": "node --test scripts/load-test.contract.test.mjs",
+    "verify": "npm run lint && npm run test:run && npm run test:load-contract && npm run build && npm run perf:budget",
     "load:test": "node scripts/load-test.mjs"
   },
   "dependencies": {
