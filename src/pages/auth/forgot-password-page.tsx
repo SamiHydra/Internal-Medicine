@@ -68,7 +68,7 @@ export function ForgotPasswordPage() {
               <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[8px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
                 <img
                   src={stPaulosLogo}
-                  alt="St Paul logo"
+                  alt="St Paul's logo"
                   className="h-full w-full object-cover"
                 />
               </div>
@@ -132,7 +132,7 @@ export function ForgotPasswordPage() {
                 <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_12px_24px_rgba(0,33,71,0.14)] ring-1 ring-[#d7dbe0]">
                   <img
                     src={stPaulosLogo}
-                    alt="St Paul logo"
+                    alt="St Paul's logo"
                     className="h-full w-full object-cover"
                   />
                 </div>

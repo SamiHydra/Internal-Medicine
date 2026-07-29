@@ -13,7 +13,7 @@
 # app:launch-readiness verifies this unit is active.
 
 [Unit]
-Description=St Paul IM reporting queue worker
+Description=St Paul's IM reporting queue worker
 After=network.target mariadb.service
 
 [Service]

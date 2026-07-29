@@ -1,6 +1,6 @@
-# St Paul Weekly Hospital Reporting Dashboard
+# St Paul's Weekly Hospital Reporting Dashboard
 
-A Vite + React frontend for St Paul Internal Medicine weekly reporting, backed by a Laravel API for authentication, authorization, report persistence, notifications, audit logging, and settings.
+A Vite + React frontend for St Paul's Internal Medicine weekly reporting, backed by a Laravel API for authentication, authorization, report persistence, notifications, audit logging, and settings.
 
 ## Stack
 

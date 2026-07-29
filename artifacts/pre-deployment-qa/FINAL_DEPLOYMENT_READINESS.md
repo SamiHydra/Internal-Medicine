@@ -1,6 +1,6 @@
 # Final Deployment Readiness — Pre-Deployment QA (post-remediation)
 
-**Project:** St Paul Internal Medicine — Clinical Operations & Academic Review
+**Project:** St Paul's Internal Medicine — Clinical Operations & Academic Review
 **Date:** 2026-06-13 · **Environment tested:** local dev (not deployed)
 **Status:** initial audit + **blocker remediation pass** complete.
 

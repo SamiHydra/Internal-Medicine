@@ -61,11 +61,11 @@ export function AppStateScreen({
         <div className="space-y-7 p-7 sm:p-8">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-[0.4rem] bg-white outline outline-1 outline-[#e1e6ec]">
-              <img src={stPaulosLogo} alt="St Paul logo" className="h-full w-full object-cover" />
+              <img src={stPaulosLogo} alt="St Paul's logo" className="h-full w-full object-cover" />
             </div>
             <div>
               <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
-                St Paul Hospital
+                St Paul's Hospital
               </p>
               <p className="font-display text-[1.05rem] font-bold tracking-[-0.02em] text-[#000a1e]">
                 Internal Medicine

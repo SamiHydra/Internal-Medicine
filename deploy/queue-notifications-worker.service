@@ -7,7 +7,7 @@
 #   sudo systemctl enable --now imreport-queue-notifications.service
 
 [Unit]
-Description=St Paul IM reporting notification queue worker
+Description=St Paul's IM reporting notification queue worker
 After=network.target mariadb.service
 
 [Service]

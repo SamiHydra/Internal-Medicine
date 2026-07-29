@@ -1,7 +1,7 @@
 {
-  "name": "St Paul Hospital Internal Medicine",
-  "short_name": "St Paul",
-  "description": "Secure weekly operational reporting for St Paul Hospital Internal Medicine.",
+  "name": "St Paul's Hospital Internal Medicine",
+  "short_name": "St Paul's",
+  "description": "Secure weekly operational reporting for St Paul's Hospital Internal Medicine.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -22,7 +22,7 @@ export const ACCOUNTS: Record<AccountKey, Account> = {
     role: 'superadmin',
     identifier: 'admin@stpaulos.local',
     username: 'admin1',
-    fullName: 'St Paul Admin',
+    fullName: "St Paul's Admin",
     landing: '/admin',
   },
   nurse: {

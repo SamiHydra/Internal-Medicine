@@ -1,6 +1,6 @@
 # PERFORMANCE AND SCALABILITY AUDIT
 
-**System:** St Paul IM hospital reporting + academic platform (Laravel + Sanctum backend, React SPA)
+**System:** St Paul's IM hospital reporting + academic platform (Laravel + Sanctum backend, React SPA)
 **Audit date:** 2026-07-21
 **Report compiled:** 2026-07-22
 **Branch / commit-ish:** `feat/excel-import`, discovery baseline taken at `d82edb3`; remediation committed at `43bbccc`
@@ -290,4 +290,4 @@ The brief requires this to be stated explicitly. It was not performed for four c
 
 ---
 
-*Prepared as part of the St Paul IM platform full-system audit, 2026-07. VERIFIED facts are executed and cited; PREDICTED figures are models and are labelled at every use. No empirical load test at 1k/10k/100k users or under sustained concurrency was performed; section 8 states why. This report states its boundaries deliberately, because it is destined for a hospital LAN and an audit that implies coverage it does not have would be worse than one that does not.*
+*Prepared as part of the St Paul's IM platform full-system audit, 2026-07. VERIFIED facts are executed and cited; PREDICTED figures are models and are labelled at every use. No empirical load test at 1k/10k/100k users or under sustained concurrency was performed; section 8 states why. This report states its boundaries deliberately, because it is destined for a hospital LAN and an audit that implies coverage it does not have would be worse than one that does not.*

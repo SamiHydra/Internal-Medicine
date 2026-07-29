@@ -28,7 +28,7 @@ function BrandLockup({
     <div className={cn('flex items-center', collapsed ? 'justify-center' : compact ? 'gap-3' : 'gap-3.5')}>
       <img
         src={stPaulosLogo}
-        alt="St. Paul Hospital logo"
+        alt="St Paul's Hospital logo"
         className={cn(
           'shrink-0 rounded-[0.4rem] object-cover',
           compact ? 'h-10 w-10' : collapsed ? 'h-11 w-11' : 'h-12 w-12',
@@ -44,7 +44,7 @@ function BrandLockup({
               compact ? 'text-[0.62rem]' : 'text-[0.78rem]',
             )}
           >
-            St. Paul Hospital
+            St Paul's Hospital
           </p>
           <p
             className={cn(

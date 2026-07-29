@@ -1,6 +1,6 @@
 # Claude Code brief — "Academic" evaluations module
 
-This adds a new **Academic** section to the St Paul Internal Medicine app: residents and consultants log in and submit short evaluations about each other after MDT rounds, and admins see the trends — overall, per ward, and per individual.
+This adds a new **Academic** section to the St Paul's Internal Medicine app: residents and consultants log in and submit short evaluations about each other after MDT rounds, and admins see the trends — overall, per ward, and per individual.
 
 **Before you write anything:** read `docs/ARCHITECTURE.md` end to end, then open the reference files named in each step. This feature is the "How to Add a Feature" playbook (the Incident-Reports recipe), just larger, plus two new roles. The access-request flow (`AccessRequestController`, `access-request-page.tsx`) and the admin analytics dashboard (`AnalyticsController`, `admin-dashboard-page.tsx`, `department-detail-page.tsx`) are the closest existing patterns — mirror them.
 

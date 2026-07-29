@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# Production-parity image set for the St Paul IM reporting app.
+# Production-parity image set for the St Paul's IM reporting app.
 #
 # Mirrors deploy/README.md + deploy/deploy.sh + deploy/nginx.conf:
 #   * the SPA is BUILT (npm run build) and served as static files by nginx,

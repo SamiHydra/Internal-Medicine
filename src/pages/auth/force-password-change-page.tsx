@@ -76,11 +76,11 @@ export function ForcePasswordChangePage() {
           <div className="space-y-8 p-6 sm:p-8">
             <div className="flex items-center gap-3">
               <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[6px] bg-white ring-1 ring-[#d7dbe0]">
-                <img src={stPaulosLogo} alt="St Paul logo" className="h-full w-full object-cover" />
+                <img src={stPaulosLogo} alt="St Paul's logo" className="h-full w-full object-cover" />
               </div>
               <div>
                 <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
-                  St Paul Hospital
+                  St Paul's Hospital
                 </p>
                 <p className="font-display text-[1.1rem] text-[#000a1e]">Internal Medicine</p>
               </div>

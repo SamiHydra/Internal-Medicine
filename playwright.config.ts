@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 /**
- * Pre-deployment QA suite for the St Paul reporting app.
+ * Pre-deployment QA suite for the St Paul's reporting app.
  *
  * The SPA (Vite, :5173) proxies /api and /sanctum to the Laravel API (:8000),
  * so the browser treats them as same-origin - required for Sanctum's SameSite

@@ -1,4 +1,4 @@
-# Migration Handoff — St Paul Hospital Reporting System
+# Migration Handoff — St Paul's Hospital Reporting System
 
 **Last updated:** 2026-05-28
 **Purpose:** Hand off the in-progress Supabase → Laravel migration to another agent/developer. Read this top-to-bottom before touching anything.
@@ -7,12 +7,12 @@
 
 ## 1. The goal (read this first)
 
-Migrate the **St Paul Hospital Internal Medicine weekly reporting system** off Supabase (unreliable on the free tier) onto a self-hostable **Laravel API + MySQL/MariaDB** backend, **without rewriting the existing React/Vite frontend UI**.
+Migrate the **St Paul's Hospital Internal Medicine weekly reporting system** off Supabase (unreliable on the free tier) onto a self-hostable **Laravel API + MySQL/MariaDB** backend, **without rewriting the existing React/Vite frontend UI**.
 
 - **Keep:** the React/Vite frontend's dashboard, pages, charts, forms, filters, layout, UX.
 - **Replace:** only the data/auth/backend layer (Supabase → Laravel).
 - **Do NOT** break the currently-deployed production app (Cloudflare Pages frontend + Supabase). All work happens in a **new sibling `backend/` folder** and (later) a new frontend API layer. Supabase stays as the rollback path until the new stack is proven stable for 2–4 weeks.
-- **Out of scope / explicitly excluded:** AICC. This is only the St Paul system.
+- **Out of scope / explicitly excluded:** AICC. This is only the St Paul's system.
 
 The full 18-phase plan is the user's original brief (see §9 of this doc for the phase list). The two reference documents already produced — **[SUPABASE_AUDIT.md](SUPABASE_AUDIT.md)** and **[DATA_MODEL.md](DATA_MODEL.md)** — are the source of truth for what the old system does and what the new schema must be. **Always cross-check against them.**
 
@@ -69,7 +69,7 @@ The full 18-phase plan is the user's original brief (see §9 of this doc for the
 - **Sanctum 4.3.2** installed; `HasApiTokens` trait on `User`; `statefulApi()` + `EnsureFrontendRequestsAreStateful` wired in `backend/bootstrap/app.php`.
 - **Reverb 1.10** installed; `config/broadcasting.php`, `config/reverb.php`, `routes/channels.php` published; `BROADCAST_CONNECTION=reverb` in `.env`.
 - **CORS** (`backend/config/cors.php`): `supports_credentials=true`, origins from `CORS_ALLOWED_ORIGINS`/`FRONTEND_URL`, paths include `api/*`, `sanctum/csrf-cookie`, `login`, `logout`, `broadcasting/auth`.
-- **`.env` and `.env.example`** configured: app name "St Paul Reporting API", `FRONTEND_URL=http://localhost:5173`, `SANCTUM_STATEFUL_DOMAINS`, `SESSION_SAME_SITE=lax`, SQLite DB, Reverb keys (auto-generated in `.env`; blank placeholders in `.env.example`).
+- **`.env` and `.env.example`** configured: app name "St Paul's Reporting API", `FRONTEND_URL=http://localhost:5173`, `SANCTUM_STATEFUL_DOMAINS`, `SESSION_SAME_SITE=lax`, SQLite DB, Reverb keys (auto-generated in `.env`; blank placeholders in `.env.example`).
 - Verified: `php artisan migrate` runs clean; `GET /up` returns 200 with the correct app title.
 
 ### Phase 4 — Migrations (COMPLETE & VERIFIED)

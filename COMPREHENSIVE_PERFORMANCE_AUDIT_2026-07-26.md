@@ -1,6 +1,6 @@
 # Comprehensive System Performance Audit
 
-**System:** St Paul Hospital Internal Medicine reporting and academic platform  
+**System:** St Paul's Hospital Internal Medicine reporting and academic platform
 **Audit date:** 2026-07-26  
 **Audited state:** Current dirty worktree, without changing application behavior  
 **Frontend:** Vite 8, React 19, TypeScript SPA  

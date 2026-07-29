@@ -616,14 +616,14 @@ export function AccessRequestPage() {
             <div className="relative z-10 flex items-center justify-between gap-4">
               <div className="flex items-center gap-4">
                 <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[8px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
-                  <img src={stPaulosLogo} alt="St Paul logo" className="h-full w-full object-cover" />
+                  <img src={stPaulosLogo} alt="St Paul's logo" className="h-full w-full object-cover" />
                 </div>
                 <div>
                   <p
                     className="text-[2.15rem] font-extrabold leading-none tracking-[-0.03em] text-white"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
-                    St Paul
+                    St Paul's
                   </p>
                   <p className="mt-1.5 text-[0.82rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
                     Internal Medicine
@@ -686,7 +686,7 @@ export function AccessRequestPage() {
                       <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_12px_24px_rgba(0,33,71,0.14)] ring-1 ring-[#d7dbe0]">
                         <img
                           src={stPaulosLogo}
-                          alt="St Paul logo"
+                          alt="St Paul's logo"
                           className="h-full w-full object-cover"
                         />
                       </div>
@@ -695,7 +695,7 @@ export function AccessRequestPage() {
                           className="text-base font-extrabold leading-none tracking-[-0.03em] text-[#000a1e]"
                           style={{ fontFamily: 'Manrope, sans-serif' }}
                         >
-                          St Paul
+                          St Paul's
                         </p>
                         <p className="mt-1 text-[0.6rem] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
                           Internal Medicine

@@ -1,6 +1,6 @@
 # DATABASE_REVIEW.md
 
-St Paul IM reporting and academic platform. Database structural review, produced in the reporting phase
+St Paul's IM reporting and academic platform. Database structural review, produced in the reporting phase
 of the 2026-07-21 full-system audit.
 
 **Evidence basis.** This document is a synthesis of already-collected evidence, not a fresh audit. Its

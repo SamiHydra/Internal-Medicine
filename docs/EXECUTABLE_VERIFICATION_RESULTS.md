@@ -215,7 +215,7 @@ Academic analytics calls observed by the smoke test included trend at about 1,11
 | Check | Result |
 |---|---|
 | Manifest response | `200`, `application/manifest+json` |
-| Manifest identity | `St Paul Hospital Internal Medicine`; short name `St Paul` |
+| Manifest identity | `St Paul's Hospital Internal Medicine`; short name `St Paul's` |
 | Scope and start URL | `/` and `/` |
 | Display and orientation | `standalone`; `portrait-primary` |
 | Icon | `/favicon.svg`, `200`, `image/svg+xml`, `any`, `any maskable` |

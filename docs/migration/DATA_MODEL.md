@@ -1,4 +1,4 @@
-# Data Model — St Paul Hospital Reporting System
+# Data Model — St Paul's Hospital Reporting System
 
 **Phase 2 deliverable.** Schema inferred from `supabase/migrations/*.sql`, `supabase/seed.sql`, and `src/types/domain.ts`, restated in MySQL/MariaDB-compatible terms for the Laravel migration plan.
 

@@ -1,6 +1,6 @@
 # ISSUE REGISTER
 
-Consolidated master index of every issue surfaced by the full-system audit of the St Paul IM reporting and
+Consolidated master index of every issue surfaced by the full-system audit of the St Paul's IM reporting and
 academic platform. One row per finding, reconciled against `AUDIT_FINDINGS.md` (the source of truth for
 issues), `AUDIT_PROGRESS.md` (audit narrative, checkpoints 0-8), the remediation commits, and the evidence
 artifacts under `artifacts/audit-2026-07-21/`.

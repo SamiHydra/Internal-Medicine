@@ -1,6 +1,6 @@
 # FIX VERIFICATION REPORT
 
-**System:** St Paul IM hospital reporting and academic platform (Laravel + Sanctum backend, React SPA)
+**System:** St Paul's IM hospital reporting and academic platform (Laravel + Sanctum backend, React SPA)
 **Audit date:** 2026-07-21 to 2026-07-22
 **Scope of this document:** every finding the audit changed code for, what changed, the regression test that
 guards it, and how the fix was verified. Fixes proven by reproducing the original failure are separated from

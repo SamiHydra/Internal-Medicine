@@ -1,6 +1,6 @@
 # System Overview
 
-**St Paul Internal Medicine Weekly Reporting** is a hospital clinical-operations reporting platform. Nurses are assigned to (department × report-template) pairs; each ISO week a *reporting period* opens, and assigned nurses fill in per-day field values for their departments. Reports move through a status lifecycle (draft → submitted → edited-after-submission → locked); the system computes inpatient bed metrics (BOR / BTR / ALOS), aggregates analytics across three service-line "families" (inpatient / outpatient / procedure), raises overdue and critical-event alerts, and maintains two audit trails. Admins (superadmin / admin) review submissions, lock/unlock reports, manage users, departments, templates, and settings, and view aggregated analytics dashboards.
+**St Paul's Internal Medicine Weekly Reporting** is a hospital clinical-operations reporting platform. Nurses are assigned to (department × report-template) pairs; each ISO week a *reporting period* opens, and assigned nurses fill in per-day field values for their departments. Reports move through a status lifecycle (draft → submitted → edited-after-submission → locked); the system computes inpatient bed metrics (BOR / BTR / ALOS), aggregates analytics across three service-line "families" (inpatient / outpatient / procedure), raises overdue and critical-event alerts, and maintains two audit trails. Admins (superadmin / admin) review submissions, lock/unlock reports, manage users, departments, templates, and settings, and view aggregated analytics dashboards.
 
 **Tech stack.** A **React 19 + TypeScript + Vite 8** single-page app talks to a **Laravel API** in `backend/`. Authentication uses **Laravel Sanctum SPA cookie sessions**. TanStack Query owns remote server state while `AppDataContext` retains the existing cross-domain workspace model. UI is Tailwind CSS v4 over Radix primitives. The data store is SQLite locally and MariaDB in production. V2 production runs the SPA and API from one Nginx HTTPS origin on the hospital LAN.
 
@@ -76,7 +76,7 @@ In production there is no Vite proxy. Nginx serves the SPA and Laravel from the 
 │   ├── assets/                      # logo image(s)
 │   ├── index.css                    # Tailwind v4 @theme tokens, fonts, aurora bg, keyframes
 │   └── test/setup.ts                # Vitest jsdom setup
-├── public/manifest.webmanifest      # PWA manifest (theme #002147, "St Paul")
+├── public/manifest.webmanifest      # PWA manifest (theme #002147, "St Paul's")
 ├── index.html                       # PWA shell
 ├── vite.config.ts                   # proxy, alias @ -> src, manualChunks, vitest config
 ├── wrangler.toml                    # Optional Cloudflare preview build config only
@@ -704,7 +704,7 @@ A hand-rolled typed client shaped like the old Supabase client to minimize migra
 
 ## Tooling
 
-Tailwind CSS v4 via `@tailwindcss/vite` (no `tailwind.config.js`; tokens in `src/index.css` via the v4 `@theme` directive). `clsx` + `tailwind-merge` combined into `cn()` (`src/lib/utils.ts`). Component base: shadcn/ui-style primitives wrapping Radix UI in `src/components/ui/*` (`components.json`: `style: default`, `baseColor: slate`, `cssVariables: false`), **heavily re-skinned** to a navy/blue/gold hospital theme using hard-coded hex values. Variants via `class-variance-authority`. Icons: `lucide-react`. Animation: `framer-motion` (section entrance reveals, count-up `AnimatedMetric`) + CSS keyframes. Toasts: `sonner`. Charts: `recharts`. Forms: `react-hook-form` + `zod`. Path alias `@/` → `src/`. PWA: `index.html` + `public/manifest.webmanifest` (theme `#002147`, "St Paul").
+Tailwind CSS v4 via `@tailwindcss/vite` (no `tailwind.config.js`; tokens in `src/index.css` via the v4 `@theme` directive). `clsx` + `tailwind-merge` combined into `cn()` (`src/lib/utils.ts`). Component base: shadcn/ui-style primitives wrapping Radix UI in `src/components/ui/*` (`components.json`: `style: default`, `baseColor: slate`, `cssVariables: false`), **heavily re-skinned** to a navy/blue/gold hospital theme using hard-coded hex values. Variants via `class-variance-authority`. Icons: `lucide-react`. Animation: `framer-motion` (section entrance reveals, count-up `AnimatedMetric`) + CSS keyframes. Toasts: `sonner`. Charts: `recharts`. Forms: `react-hook-form` + `zod`. Path alias `@/` → `src/`. PWA: `index.html` + `public/manifest.webmanifest` (theme `#002147`, "St Paul's").
 
 ## Design tokens
 
@@ -757,7 +757,7 @@ All accept `className` merged via `cn()`. Radix-based ones forward props through
 ## Layout shell (`src/components/layout/`)
 
 **`app-shell.tsx`** - the authenticated chrome (renders only when `currentUser` exists; otherwise passes children through, so auth pages render full-bleed).
-- **Sidebar (`<aside>`):** fixed left, `hidden sm:block`, navy gradient `linear-gradient(150deg,#000a1e,#07162f,#002147)`. Width animates `w-[292px]` ↔ `w-[84px]`; collapse state persists in `localStorage` key `stpaul:sidebar-collapsed`. Contains the **BrandLockup** (St Paulos logo + "St. Paul Hospital" / "Internal Medicine"), **SidebarNav** (maps `navigationByRole[role]`; active = left gold border `#f0b429`, white text, gold icon, `bg-white/[0.04]`), and a reporting-week footer.
+- **Sidebar (`<aside>`):** fixed left, `hidden sm:block`, navy gradient `linear-gradient(150deg,#000a1e,#07162f,#002147)`. Width animates `w-[292px]` ↔ `w-[84px]`; collapse state persists in `localStorage` key `stpaul:sidebar-collapsed`. Contains the **BrandLockup** (St Paul's logo + "St Paul's Hospital" / "Internal Medicine"), **SidebarNav** (maps `navigationByRole[role]`; active = left gold border `#f0b429`, white text, gold icon, `bg-white/[0.04]`), and a reporting-week footer.
 - **Header (`<header>`):** sticky, `bg-[#f8f9fa]/96 backdrop-blur-sm`. Left: mobile hamburger (opens left `Sheet`), desktop collapse toggle, a "Live reporting period" chip. Right: **Sync indicator** (chip + animated ping dot when `isSyncing`, via `useAppSync()`), **Notifications bell** (unread `bg-[#ba1a1a]` `pulse-ring` badge), **User chip** (avatar initials + name + uppercase title + `LogOut`).
 - **Main:** `<main className="min-w-0 flex-1">`; content wrapper left padding animates with the sidebar.
 - **Dev only:** `ViewportDebugReadout` (gated by `import.meta.env.DEV`).

@@ -74,7 +74,7 @@ class DevUserSeeder extends Seeder
             [
                 'email' => 'admin@stpaulos.local',
                 'username' => 'admin1',
-                'full_name' => 'St Paul Admin',
+                'full_name' => 'St Paul\'s Admin',
                 'title' => 'Maintenance',
                 'role_key' => 'superadmin',
             ],

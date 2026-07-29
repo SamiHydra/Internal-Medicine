@@ -6,7 +6,7 @@
 </head>
 <body style="font-family: Arial, Helvetica, sans-serif; color: #1d3047; margin: 0; padding: 24px; background: #f4f6f9;">
     <div style="max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 8px; padding: 28px;">
-        <p style="font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: #005db6; margin: 0 0 6px;">St Paul Internal Medicine</p>
+        <p style="font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: #005db6; margin: 0 0 6px;">St Paul's Internal Medicine</p>
         <h1 style="font-size: 20px; margin: 0 0 4px;">Weekly leadership digest</h1>
         <p style="color: #5b6169; margin: 0 0 20px;">Reporting period: {{ $digest['periodLabel'] }}</p>
 
@@ -76,7 +76,7 @@
         @endif
 
         <p style="color: #8c929b; font-size: 12px; margin: 24px 0 0;">
-            Generated automatically from the St Paul reporting platform.
+            Generated automatically from the St Paul's reporting platform.
         </p>
     </div>
 </body>

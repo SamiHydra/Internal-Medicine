@@ -1,6 +1,6 @@
 # FUNCTIONAL TEST MATRIX
 
-Role x workflow coverage for the St Paul IM reporting and academic platform.
+Role x workflow coverage for the St Paul's IM reporting and academic platform.
 
 - **Date:** 2026-07-22
 - **Branch / commit-ish:** `feat/excel-import`. Discovery baseline taken at `d82edb3`; remediation landed at

@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 const EYEBROW = 'Academic operations'
 const TITLE = 'Audit Log'
 const PERIOD = 'Jul 20 - Jul 26, 2026'
-const USER = { initials: 'SP', name: 'St Paul Admin', role: 'Maintenance' }
+const USER = { initials: 'SP', name: "St Paul's Admin", role: 'Maintenance' }
 const UNREAD = 3
 
 /** Shared unread pip so the three options stay comparable. */
