@@ -13,7 +13,6 @@ import {
   Loader2,
   Save,
   Settings2,
-  TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -41,14 +40,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { useAppData } from '@/context/app-data-context'
 import {
   fetchAdminTemplates,
+  fetchClinicalAlertRules,
   setTemplateFieldActive,
   updateTemplateContent,
 } from '@/lib/api'
 import { getApiBrowserClient } from '@/lib/api/client'
-import type { ApiTemplateConfig, ApiTemplateField } from '@/lib/api/types'
+import type { ApiTemplateConfig, ApiTemplateField, ClinicalAlertRule } from '@/lib/api/types'
 import { cn } from '@/lib/utils'
 import type {
-  ChangeWatchRule,
   SummaryCardConfig,
   TemplateSection,
 } from '@/types/domain'
@@ -98,9 +97,24 @@ function prettyFieldType(kind: string) {
   return fieldTypeLabels[kind] ?? kind.replace(/_/g, ' ')
 }
 
+function operatorLabelForTemplate(operator: ClinicalAlertRule['operator']) {
+  return operator === 'gte' ? 'at least' : operator === 'eq' ? 'exactly' : 'greater than'
+}
+
 type PresentationSection = TemplateSection
 type PresentationCard = SummaryCardConfig
-type PresentationRule = ChangeWatchRule
+
+/**
+ * Display names for the calculated metrics a dashboard tile can bind to. A tile
+ * editor only renames the caption - the bound source is fixed in config - so the
+ * source is shown read-only beneath the input to stop a tile being relabelled
+ * into something it does not actually measure.
+ */
+const metricSourceLabels: Record<string, string> = {
+  borPercent: 'Bed occupancy rate (BOR %)',
+  btr: 'Bed turnover rate (BTR)',
+  alos: 'Average length of stay (ALOS)',
+}
 
 /** Small uppercase caption that sits above a single control. */
 function Caption({ children }: { children: ReactNode }) {
@@ -145,6 +159,7 @@ export function TemplateManagementPage() {
   const { refreshData } = useAppData()
   const client = getApiBrowserClient()
   const [templates, setTemplates] = useState<ApiTemplateConfig[] | null>(null)
+  const [clinicalRules, setClinicalRules] = useState<ClinicalAlertRule[]>([])
   const [loadError, setLoadError] = useState(false)
   const [dirty, setDirty] = useState<Record<string, boolean>>({})
   const [savingSlug, setSavingSlug] = useState<string | null>(null)
@@ -168,6 +183,9 @@ export function TemplateManagementPage() {
           setTemplates(data)
         }
       })
+    fetchClinicalAlertRules(client)
+      .then((result) => { if (active) setClinicalRules(result.rules) })
+      .catch(() => { /* Template editing remains available if governance rules cannot load. */ })
       .catch(() => {
         if (active) {
           setLoadError(true)
@@ -367,9 +385,13 @@ export function TemplateManagementPage() {
               const presentation = getPresentation(template)
               const sections = (presentation.sections as PresentationSection[] | undefined) ?? []
               const cards = (presentation.summaryCards as PresentationCard[] | undefined) ?? []
-              const rules = (presentation.changeRules as PresentationRule[] | undefined) ?? []
-              const sectionTitleByKey = new Map(sections.map((section) => [section.id, section.title]))
               const fieldLabelByKey = new Map(template.fields.map((field) => [field.fieldKey, field.label]))
+              const sectionTitleByKey = new Map(sections.map((section) => [section.id, section.title]))
+              const clinicalRuleByField = new Map(
+                clinicalRules
+                  .filter((rule) => rule.templateId === template.id && rule.active)
+                  .map((rule) => [rule.fieldKey, rule]),
+              )
               const isDirty = Boolean(dirty[template.slug])
               const isSaving = savingSlug === template.slug
               const isOpen = openSlug === template.slug
@@ -532,6 +554,7 @@ export function TemplateManagementPage() {
                               const isDecimal = field.fieldKind === 'decimal'
                               const fieldStateKey = `${template.slug}:${field.fieldKey}`
                               const settingsOpen = openFieldKey === fieldStateKey
+                              const clinicalRule = clinicalRuleByField.get(field.fieldKey)
 
                               return (
                                 <div
@@ -588,6 +611,12 @@ export function TemplateManagementPage() {
                                       {prettyFieldType(field.fieldKind)}
                                     </span>
 
+                                    {clinicalRule ? (
+                                      <span className="hidden shrink-0 rounded-full border border-[#f4cfcf] bg-[#fdecec] px-2.5 py-0.5 text-xs font-semibold text-[#ba1a1a] lg:inline">
+                                        Clinical alert · {operatorLabelForTemplate(clinicalRule.operator)} {clinicalRule.threshold}
+                                      </span>
+                                    ) : null}
+
                                     <button
                                       type="button"
                                       onClick={() =>
@@ -618,6 +647,11 @@ export function TemplateManagementPage() {
                                   {/* Advanced per-field settings, revealed on demand. */}
                                   {settingsOpen ? (
                                     <div className="border-t border-[#e6ecf3] px-3 py-4">
+                                      <div className={cn('mb-4 rounded-[0.3rem] border px-3 py-2.5 text-sm', clinicalRule ? 'border-[#f4cfcf] bg-[#fff7f7] text-[#8f1515]' : 'border-[#dbe3ec] bg-white text-[#657180]')}>
+                                        {clinicalRule
+                                          ? `Governed clinical alert: ${operatorLabelForTemplate(clinicalRule.operator)} ${clinicalRule.threshold}; ${clinicalRule.severity} severity; due in ${clinicalRule.deadlineHours} hours. Change this under Action items → Alert rules.`
+                                          : 'Normal reporting field. It does not create a clinical action item. Add a rule under Action items → Alert rules if governance requires follow-up.'}
+                                      </div>
                                       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                                         {sections.length ? (
                                           <label className="space-y-1.5">
@@ -717,8 +751,8 @@ export function TemplateManagementPage() {
                         </FieldGroup>
                       </div>
 
-                      {/* Advanced presentation: groups, dashboard tiles, change alerts. */}
-                      {sections.length || cards.length || rules.length ? (
+                      {/* Advanced presentation: question groups and dashboard tiles. */}
+                      {sections.length || cards.length ? (
                         <div className="mt-7 space-y-7 border-t border-[#eef2f6] pt-6">
                           {sections.length ? (
                             <FieldGroup
@@ -755,72 +789,30 @@ export function TemplateManagementPage() {
                               title="Dashboard tiles"
                             >
                               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                                {cards.map((card, cardIndex) => (
-                                  <label key={card.id} className="space-y-1.5">
-                                    <Caption>Tile {cardIndex + 1}</Caption>
-                                    <Input
-                                      value={card.label}
-                                      onChange={(event) =>
-                                        mutateTemplate(template.slug, (entry) => {
-                                          const nextCards = [...cards]
-                                          nextCards[cardIndex] = { ...card, label: event.target.value }
-                                          return setPresentation(entry, { summaryCards: nextCards })
-                                        })
-                                      }
-                                      className="h-10 text-sm"
-                                    />
-                                  </label>
-                                ))}
-                              </div>
-                            </FieldGroup>
-                          ) : null}
+                                {cards.map((card, cardIndex) => {
+                                  const sourceLabel =
+                                    card.sourceType === 'metric'
+                                      ? metricSourceLabels[card.sourceId] ?? card.sourceId
+                                      : fieldLabelByKey.get(card.sourceId) ?? card.sourceId
 
-                          {rules.length ? (
-                            <FieldGroup
-                              icon={<TriangleAlert className="h-4 w-4" />}
-                              title="Change alerts"
-                            >
-                              <div className="divide-y divide-[#eef2f6] overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
-                                {rules.map((rule, ruleIndex) => {
-                                  const ruleName =
-                                    (rule.fieldId ? fieldLabelByKey.get(rule.fieldId) : undefined) ??
-                                    rule.fieldId ??
-                                    rule.metricId ??
-                                    'Signal'
                                   return (
-                                    <div
-                                      key={`${rule.fieldId ?? rule.metricId ?? 'rule'}-${ruleIndex}`}
-                                      className="flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
-                                    >
-                                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-[#000a1e]">
-                                        {ruleName}
+                                    <label key={card.id} className="space-y-1.5">
+                                      <Caption>Tile {cardIndex + 1}</Caption>
+                                      <Input
+                                        value={card.label}
+                                        onChange={(event) =>
+                                          mutateTemplate(template.slug, (entry) => {
+                                            const nextCards = [...cards]
+                                            nextCards[cardIndex] = { ...card, label: event.target.value }
+                                            return setPresentation(entry, { summaryCards: nextCards })
+                                          })
+                                        }
+                                        className="h-10 text-sm"
+                                      />
+                                      <span className="block text-[12px] leading-4 text-[#74777f]">
+                                        Showing: {sourceLabel}
                                       </span>
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-[13px] font-medium text-[#5f6670]">
-                                          Flag a change over
-                                        </span>
-                                        <div className="relative">
-                                          <Input
-                                            type="number"
-                                            value={rule.percentThreshold}
-                                            onChange={(event) =>
-                                              mutateTemplate(template.slug, (entry) => {
-                                                const nextRules = [...rules]
-                                                nextRules[ruleIndex] = {
-                                                  ...rule,
-                                                  percentThreshold: Number(event.target.value),
-                                                }
-                                                return setPresentation(entry, { changeRules: nextRules })
-                                              })
-                                            }
-                                            className="h-9 w-24 pr-7 text-sm"
-                                          />
-                                          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm font-semibold text-[#9aa7b8]">
-                                            %
-                                          </span>
-                                        </div>
-                                      </div>
-                                    </div>
+                                    </label>
                                   )
                                 })}
                               </div>

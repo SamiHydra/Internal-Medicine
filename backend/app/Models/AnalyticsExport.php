@@ -22,6 +22,7 @@ class AnalyticsExport extends Model
         'user_id',
         'status',
         'format',
+        'filters',
         'file_path',
         'file_name',
         'row_count',
@@ -34,6 +35,7 @@ class AnalyticsExport extends Model
     protected function casts(): array
     {
         return [
+            'filters' => 'array',
             'row_count' => 'integer',
             'byte_size' => 'integer',
             'completed_at' => 'datetime',

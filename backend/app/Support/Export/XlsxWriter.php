@@ -2,6 +2,7 @@
 
 namespace App\Support\Export;
 
+use RuntimeException;
 use ZipArchive;
 
 /**
@@ -12,6 +13,28 @@ use ZipArchive;
  */
 class XlsxWriter
 {
+    /**
+     * Column letters are needed once per cell, which runs into the millions on a
+     * full-history workbook. Computing them costs more than remembering them.
+     *
+     * @var array<int, string>
+     */
+    private array $columnLetters = [];
+
+    /**
+     * A sheet larger than this is streamed to a temp file instead of being held
+     * in memory. Form sheets sit far below it; the index and history sheets do
+     * not.
+     */
+    private const SHEET_SPILL_BYTES = 1048576;
+
+    /**
+     * ZipArchive holds added entries in memory until the archive is closed, so a
+     * workbook with thousands of sheets grows without bound. Closing and
+     * reopening every so often flushes them to disk and caps the footprint.
+     */
+    private const ZIP_FLUSH_SHEETS = 400;
+
     /**
      * Write a worksheet to a temp .xlsx file and return its path. The caller is
      * responsible for deleting it (e.g. response()->download(...)->deleteFileAfterSend()).
@@ -56,32 +79,60 @@ class XlsxWriter
             throw new \InvalidArgumentException('At least one worksheet is required.');
         }
 
-        $sheetFiles = [];
-        $sheetNames = [];
-
-        foreach ($sheets as $index => $definition) {
-            $sheetPath = $this->tempPath('sheet');
-            $sheetFiles[] = $sheetPath;
-            $sheetNames[] = $this->worksheetName($definition['name'], $sheetNames, $index + 1);
-            $this->writeSheet($sheetPath, $definition);
-        }
-
         $xlsxPath = $this->tempPath('xlsx');
         $zip = new ZipArchive;
-        $zip->open($xlsxPath, ZipArchive::OVERWRITE);
-        $zip->addFromString('[Content_Types].xml', $this->contentTypes(count($sheetFiles)));
-        $zip->addFromString('_rels/.rels', $this->rootRels());
-        $zip->addFromString('xl/workbook.xml', $this->workbook($sheetNames));
-        $zip->addFromString('xl/_rels/workbook.xml.rels', $this->workbookRels(count($sheetFiles)));
-        $zip->addFromString('xl/styles.xml', $this->styles());
 
-        foreach ($sheetFiles as $index => $sheetPath) {
-            $zip->addFile($sheetPath, 'xl/worksheets/sheet'.($index + 1).'.xml');
+        if ($zip->open($xlsxPath, ZipArchive::OVERWRITE) !== true) {
+            throw new RuntimeException('Unable to open the xlsx archive for writing.');
         }
 
-        $zip->close();
+        $sheetNames = [];
+        $spilled = [];
+        $count = 0;
+        $sinceFlush = 0;
 
-        foreach ($sheetFiles as $sheetPath) {
+        // Each sheet goes into the archive as soon as it is built, so only one
+        // sheet is ever held at a time.
+        foreach ($sheets as $index => $definition) {
+            $sheetNames[] = $this->worksheetName($definition['name'], $sheetNames, $index + 1);
+            $entry = 'xl/worksheets/sheet'.(++$count).'.xml';
+            $output = $this->writeSheet($definition);
+
+            if ($output['xml'] !== null) {
+                $zip->addFromString($entry, $output['xml']);
+            } else {
+                $spilled[] = $output['path'];
+                $zip->addFile($output['path'], $entry);
+            }
+
+            if (++$sinceFlush >= self::ZIP_FLUSH_SHEETS) {
+                // A failure here would otherwise leave every later sheet
+                // written to a closed archive and silently dropped.
+                if (! $zip->close()) {
+                    throw new RuntimeException('Unable to flush the xlsx archive.');
+                }
+
+                $zip = new ZipArchive;
+
+                if ($zip->open($xlsxPath) !== true) {
+                    throw new RuntimeException('Unable to reopen the xlsx archive.');
+                }
+
+                $sinceFlush = 0;
+            }
+        }
+
+        $zip->addFromString('[Content_Types].xml', $this->contentTypes($count));
+        $zip->addFromString('_rels/.rels', $this->rootRels());
+        $zip->addFromString('xl/workbook.xml', $this->workbook($sheetNames));
+        $zip->addFromString('xl/_rels/workbook.xml.rels', $this->workbookRels($count));
+        $zip->addFromString('xl/styles.xml', $this->styles());
+
+        if (! $zip->close()) {
+            throw new RuntimeException('Unable to finalise the xlsx archive.');
+        }
+
+        foreach ($spilled as $sheetPath) {
             @unlink($sheetPath);
         }
 
@@ -104,23 +155,24 @@ class XlsxWriter
      *     showGridlines?: bool,
      *     autoFilter?: bool
      * }  $definition
+     * @return array{xml: string|null, path: string|null}
      */
-    private function writeSheet(string $sheetPath, array $definition): void
+    private function writeSheet(array $definition): array
     {
-        $sheet = fopen($sheetPath, 'w');
-        fwrite($sheet, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>');
-        fwrite($sheet, '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">');
-        fwrite($sheet, $this->sheetViews(
+        $sheet = new SheetSink(self::SHEET_SPILL_BYTES, fn (): string => $this->tempPath('sheet'));
+        $sheet->write('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>');
+        $sheet->write('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">');
+        $sheet->write($this->sheetViews(
             (int) ($definition['freezeRows'] ?? 0),
             (bool) ($definition['showGridlines'] ?? true),
         ));
-        fwrite($sheet, '<sheetFormatPr defaultRowHeight="18"/>');
+        $sheet->write('<sheetFormatPr defaultRowHeight="18"/>');
 
         if (($definition['columns'] ?? []) !== []) {
-            fwrite($sheet, $this->columns($definition['columns']));
+            $sheet->write($this->columns($definition['columns']));
         }
 
-        fwrite($sheet, '<sheetData>');
+        $sheet->write('<sheetData>');
 
         $rowIndex = 1;
         $merges = [];
@@ -141,28 +193,28 @@ class XlsxWriter
             $this->writeRow($sheet, $rowIndex++, $descriptor, $merges);
         }
 
-        fwrite($sheet, '</sheetData>');
+        $sheet->write('</sheetData>');
 
         if (($definition['autoFilter'] ?? false) && $header !== []) {
             $lastColumn = $this->columnLetter(max(count($header) - 1, 0));
-            fwrite($sheet, '<autoFilter ref="A1:'.$lastColumn.max($rowIndex - 1, 1).'"/>');
+            $sheet->write('<autoFilter ref="A1:'.$lastColumn.max($rowIndex - 1, 1).'"/>');
         }
 
         if ($merges !== []) {
-            fwrite($sheet, '<mergeCells count="'.count($merges).'">');
+            $sheet->write('<mergeCells count="'.count($merges).'">');
             foreach ($merges as $merge) {
-                fwrite($sheet, '<mergeCell ref="'.$merge.'"/>');
+                $sheet->write('<mergeCell ref="'.$merge.'"/>');
             }
-            fwrite($sheet, '</mergeCells>');
+            $sheet->write('</mergeCells>');
         }
 
-        fwrite($sheet, '<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>');
-        fwrite($sheet, '</worksheet>');
-        fclose($sheet);
+        $sheet->write('<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>');
+        $sheet->write('</worksheet>');
+
+        return $sheet->finish();
     }
 
     /**
-     * @param  resource  $handle
      * @param  array{
      *     cells: list<string|int|float|null>,
      *     style?: string,
@@ -173,10 +225,13 @@ class XlsxWriter
      * }  $row
      * @param  list<string>  $merges
      */
-    private function writeRow($handle, int $rowIndex, array $row, array &$merges): void
+    private function writeRow(SheetSink $handle, int $rowIndex, array $row, array &$merges): void
     {
         $height = isset($row['height']) ? ' ht="'.(float) $row['height'].'" customHeight="1"' : '';
-        fwrite($handle, '<row r="'.$rowIndex.'"'.$height.'>');
+
+        // Built as one string and written once. A full-history workbook holds
+        // roughly a million cells, and an fwrite per cell dominated the export.
+        $buffer = '<row r="'.$rowIndex.'"'.$height.'>';
 
         $column = 0;
         foreach ($row['cells'] as $cell) {
@@ -188,16 +243,16 @@ class XlsxWriter
             // Numbers without leading zeros become numeric cells; everything else
             // is an inline string. Formula-like text is neutralized below.
             if ($value !== '' && is_numeric($value) && ! $this->hasLeadingZero($value)) {
-                fwrite($handle, '<c r="'.$ref.'"'.$style.'><v>'.$value.'</v></c>');
+                $buffer .= '<c r="'.$ref.'"'.$style.'><v>'.$value.'</v></c>';
 
                 continue;
             }
 
             $rendered = SpreadsheetSafe::sanitize($value);
-            fwrite($handle, '<c r="'.$ref.'"'.$style.' t="inlineStr"><is><t xml:space="preserve">'.$this->escape($rendered).'</t></is></c>');
+            $buffer .= '<c r="'.$ref.'"'.$style.' t="inlineStr"><is><t xml:space="preserve">'.$this->escape($rendered).'</t></is></c>';
         }
 
-        fwrite($handle, '</row>');
+        $handle->write($buffer.'</row>');
 
         if (($row['mergeAcross'] ?? 0) > 1) {
             $merges[] = 'A'.$rowIndex.':'.$this->columnLetter($row['mergeAcross'] - 1).$rowIndex;
@@ -222,16 +277,20 @@ class XlsxWriter
 
     private function columnLetter(int $index): string
     {
-        $letter = '';
-        $index++;
-
-        while ($index > 0) {
-            $remainder = ($index - 1) % 26;
-            $letter = chr(65 + $remainder).$letter;
-            $index = intdiv($index - 1, 26);
+        if (isset($this->columnLetters[$index])) {
+            return $this->columnLetters[$index];
         }
 
-        return $letter;
+        $letter = '';
+        $position = $index + 1;
+
+        while ($position > 0) {
+            $remainder = ($position - 1) % 26;
+            $letter = chr(65 + $remainder).$letter;
+            $position = intdiv($position - 1, 26);
+        }
+
+        return $this->columnLetters[$index] = $letter;
     }
 
     private function tempPath(string $prefix): string
@@ -239,7 +298,7 @@ class XlsxWriter
         $path = tempnam(sys_get_temp_dir(), $prefix);
 
         if ($path === false) {
-            throw new \RuntimeException('Unable to allocate a temp file for the xlsx export.');
+            throw new RuntimeException('Unable to allocate a temp file for the xlsx export.');
         }
 
         return $path;

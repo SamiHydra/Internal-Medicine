@@ -111,6 +111,11 @@ const DataImportPage = lazy(() =>
     default: module.DataImportPage,
   })),
 )
+const AnalyticsExportPage = lazy(() =>
+  import('@/pages/admin/analytics-export-page').then((module) => ({
+    default: module.AnalyticsExportPage,
+  })),
+)
 const SettingsPage = lazy(() =>
   import('@/pages/admin/settings-page').then((module) => ({
     default: module.SettingsPage,
@@ -415,6 +420,10 @@ function App() {
               <Route
                 path="/admin/import"
                 element={renderLazyRoute(<DataImportPage />, 'inline')}
+              />
+              <Route
+                path="/admin/export"
+                element={renderLazyRoute(<AnalyticsExportPage />, 'inline')}
               />
               <Route
                 path="/admin/audit"

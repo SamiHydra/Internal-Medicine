@@ -2,7 +2,12 @@ import { ApiError, type LaravelApiClient } from '@/lib/api/client'
 import { resolveAssignmentReference } from '@/lib/api/helpers'
 import type {
   ActionItem,
+  ActionItemComment,
+  ActionItemEvidence,
+  ActionItemSummary,
   ActionItemStatus,
+  ClinicalAlertRule,
+  ClinicalAlertRuleTemplateOption,
   AdminAccessRequest,
   AdminAuditEntry,
   AdminAuditQuery,
@@ -153,13 +158,57 @@ export async function reviewAdminAccessRequest(
 /** Follow-up action items (auto-opened by critical alerts, or created manually). */
 export async function fetchActionItems(
   client: LaravelApiClient,
-  status: ActionItemStatus | 'all' = 'open',
-): Promise<{ items: ActionItem[]; openCount: number }> {
-  const response = await client.get<{ data: ActionItem[]; meta: { openCount?: number } }>(
-    `/api/admin/action-items?status=${status}`,
-  )
+  options: ActionItemStatus | 'outstanding' | 'all' | {
+    status?: ActionItemStatus | 'outstanding' | 'all'
+    severity?: 'low' | 'medium' | 'high' | 'all'
+    departmentId?: string | null
+    overdue?: boolean
+    search?: string
+    page?: number
+    perPage?: number
+  } = 'outstanding',
+): Promise<{
+  items: ActionItem[]
+  openCount: number
+  summary: ActionItemSummary
+  currentPage: number
+  lastPage: number
+  total: number
+}> {
+  const query = typeof options === 'string' ? { status: options } : options
+  const response = await client.get<{
+    data: ActionItem[]
+    meta: {
+      openCount?: number
+      summary: ActionItemSummary
+      currentPage: number
+      lastPage: number
+      total: number
+    }
+  }>('/api/admin/action-items', {
+    query: {
+      status: query.status ?? 'outstanding',
+      severity: query.severity,
+      department_id: query.departmentId,
+      overdue: query.overdue ? 1 : undefined,
+      search: query.search,
+      page: query.page,
+      perPage: query.perPage ?? 25,
+    },
+  })
 
-  return { items: response.data, openCount: response.meta?.openCount ?? 0 }
+  return {
+    items: response.data,
+    openCount: response.meta?.openCount ?? 0,
+    summary: response.meta.summary,
+    currentPage: response.meta.currentPage,
+    lastPage: response.meta.lastPage,
+    total: response.meta.total,
+  }
+}
+
+export function fetchActionItem(client: LaravelApiClient, id: string): Promise<ActionItem> {
+  return client.get<ActionItem>(`/api/admin/action-items/${id}`)
 }
 
 export async function updateActionItem(
@@ -170,6 +219,7 @@ export async function updateActionItem(
     resolution_note: string
     assigned_to: string | null
     severity: 'low' | 'medium' | 'high'
+    due_at: string | null
   }>,
 ): Promise<ActionItem> {
   return client.patch<ActionItem>(`/api/admin/action-items/${id}`, payload)
@@ -177,9 +227,72 @@ export async function updateActionItem(
 
 export async function createActionItem(
   client: LaravelApiClient,
-  payload: { title: string; description?: string; severity?: 'low' | 'medium' | 'high' },
+  payload: {
+    title: string
+    description?: string
+    severity?: 'low' | 'medium' | 'high'
+    department_id?: string | null
+    assigned_to?: string | null
+    due_at?: string
+  },
 ): Promise<ActionItem> {
   return client.post<ActionItem>('/api/admin/action-items', payload)
+}
+
+export function addActionItemComment(
+  client: LaravelApiClient,
+  id: string,
+  body: string,
+): Promise<ActionItemComment> {
+  return client.post<ActionItemComment>(`/api/admin/action-items/${id}/comments`, { body })
+}
+
+export function uploadActionItemEvidence(
+  client: LaravelApiClient,
+  id: string,
+  file: File,
+): Promise<ActionItemEvidence> {
+  const body = new FormData()
+  body.append('file', file)
+  return client.post<ActionItemEvidence>(`/api/admin/action-items/${id}/evidence`, body)
+}
+
+export async function fetchClinicalAlertRules(client: LaravelApiClient): Promise<{
+  rules: ClinicalAlertRule[]
+  templates: ClinicalAlertRuleTemplateOption[]
+}> {
+  const response = await client.get<{
+    data: ClinicalAlertRule[]
+    options: ClinicalAlertRuleTemplateOption[]
+  }>('/api/admin/clinical-alert-rules')
+  return { rules: response.data, templates: response.options }
+}
+
+export type ClinicalAlertRulePayload = {
+  template_id?: string
+  field_definition_id?: string
+  operator?: 'gt' | 'gte' | 'eq'
+  threshold?: number
+  severity?: 'low' | 'medium' | 'high'
+  deadline_hours?: number
+  responsible_role?: 'admin' | 'superadmin' | null
+  notification_roles?: ('admin' | 'superadmin')[]
+  active?: boolean
+}
+
+export function createClinicalAlertRule(
+  client: LaravelApiClient,
+  payload: Required<Pick<ClinicalAlertRulePayload, 'template_id' | 'field_definition_id' | 'operator' | 'threshold' | 'severity' | 'deadline_hours' | 'notification_roles'>> & ClinicalAlertRulePayload,
+): Promise<ClinicalAlertRule> {
+  return client.post<ClinicalAlertRule>('/api/admin/clinical-alert-rules', payload)
+}
+
+export function updateClinicalAlertRule(
+  client: LaravelApiClient,
+  id: string,
+  payload: ClinicalAlertRulePayload,
+): Promise<ClinicalAlertRule> {
+  return client.patch<ClinicalAlertRule>(`/api/admin/clinical-alert-rules/${id}`, payload)
 }
 
 export type ReportImportResult = {

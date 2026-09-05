@@ -9,8 +9,10 @@ use App\Http\Controllers\Api\Admin\AcademicEvaluationController as AdminAcademic
 use App\Http\Controllers\Api\Admin\AcademicStructureController;
 use App\Http\Controllers\Api\Admin\AccessRequestController;
 use App\Http\Controllers\Api\Admin\ActionItemController;
+use App\Http\Controllers\Api\Admin\ActionItemEvidenceController;
 use App\Http\Controllers\Api\Admin\AdminAccessRequestController;
 use App\Http\Controllers\Api\Admin\AuditLogController;
+use App\Http\Controllers\Api\Admin\ClinicalAlertRuleController;
 use App\Http\Controllers\Api\Admin\DutyRosterController;
 use App\Http\Controllers\Api\Admin\EvaluationFormController;
 use App\Http\Controllers\Api\Admin\ReferenceDataController;
@@ -141,6 +143,7 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
             Route::get('/yearly', [AnalyticsController::class, 'yearly']);
             Route::get('/departments', [AnalyticsController::class, 'departments']);
             Route::get('/wards', [AnalyticsController::class, 'wards']);
+            Route::get('/exports/scope', [AnalyticsController::class, 'exportScope']);
             Route::post('/exports', [AnalyticsController::class, 'queueExport']);
             Route::get('/exports', [AnalyticsController::class, 'exports']);
             Route::get('/exports/{analyticsExport}/download', [AnalyticsController::class, 'download']);
@@ -243,7 +246,17 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
 
         Route::get('/action-items', [ActionItemController::class, 'index'])->middleware('permission:actionItems.view');
         Route::post('/action-items', [ActionItemController::class, 'store'])->middleware('permission:actionItems.manage');
+        Route::get('/action-items/{actionItem}', [ActionItemController::class, 'show'])->middleware('permission:actionItems.view');
         Route::patch('/action-items/{actionItem}', [ActionItemController::class, 'update'])->middleware('permission:actionItems.manage');
+        Route::post('/action-items/{actionItem}/comments', [ActionItemController::class, 'storeComment'])->middleware('permission:actionItems.manage');
+        Route::post('/action-items/{actionItem}/evidence', [ActionItemEvidenceController::class, 'store'])->middleware('permission:actionItems.manage');
+        Route::get('/action-items/{actionItem}/evidence/{evidence}/download', [ActionItemEvidenceController::class, 'download'])->middleware('permission:actionItems.view');
+        Route::delete('/action-items/{actionItem}/evidence/{evidence}', [ActionItemEvidenceController::class, 'destroy'])->middleware('permission:actionItems.manage');
+
+        Route::get('/clinical-alert-rules', [ClinicalAlertRuleController::class, 'index'])->middleware('permission:actionItems.view');
+        Route::post('/clinical-alert-rules', [ClinicalAlertRuleController::class, 'store'])->middleware('permission:actionItems.manage');
+        Route::patch('/clinical-alert-rules/{clinicalAlertRule}', [ClinicalAlertRuleController::class, 'update'])->middleware('permission:actionItems.manage');
+        Route::delete('/clinical-alert-rules/{clinicalAlertRule}', [ClinicalAlertRuleController::class, 'destroy'])->middleware('permission:actionItems.manage');
 
         Route::get('/academic/evaluations', [AdminAcademicEvaluationController::class, 'index'])->middleware('permission:academic.view');
         Route::get('/academic/audit', [AdminAcademicEvaluationController::class, 'audit'])->middleware('permission:academic.view');

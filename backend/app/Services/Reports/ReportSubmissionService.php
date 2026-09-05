@@ -130,7 +130,7 @@ class ReportSubmissionService
             }
 
             if ((! $hadSubmission && $submit) || ($hadSubmission && $hasChanges)) {
-                $this->criticalEventAlertService->notify($report, $this->relatedRoute($assignment, $period), $now);
+                $this->criticalEventAlertService->notify($report, $now);
                 $quality = $this->qualityService->analyze($report, true);
                 $this->trendAlertService->notify($report, $quality['warnings'] ?? [], $this->relatedRoute($assignment, $period), $now);
             }

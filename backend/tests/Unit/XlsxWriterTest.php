@@ -8,6 +8,48 @@ use ZipArchive;
 
 class XlsxWriterTest extends TestCase
 {
+    /**
+     * Sheets under the spill threshold are handed to the archive from memory and
+     * larger ones stream to a temp file. Only the small path shows up in the
+     * other tests, so exercise both here and prove they survive side by side.
+     */
+    public function test_writes_sheets_both_under_and_over_the_spill_threshold(): void
+    {
+        $wide = array_fill(0, 12, str_repeat('clinical narrative ', 8));
+        $bigRows = [];
+        for ($i = 0; $i < 6000; $i++) {
+            $bigRows[] = $wide;
+        }
+
+        $path = (new XlsxWriter)->toMultiSheetTempFile([
+            ['name' => 'Small', 'header' => ['Department'], 'rows' => [['Cardiac'], ['Neurology']]],
+            ['name' => 'Large', 'header' => ['Note'], 'rows' => $bigRows],
+            ['name' => 'After', 'header' => ['Department'], 'rows' => [['Endoscopy']]],
+        ]);
+
+        $zip = new ZipArchive;
+        $this->assertTrue($zip->open($path) === true);
+        $small = (string) $zip->getFromName('xl/worksheets/sheet1.xml');
+        $large = (string) $zip->getFromName('xl/worksheets/sheet2.xml');
+        $after = (string) $zip->getFromName('xl/worksheets/sheet3.xml');
+        $workbook = (string) $zip->getFromName('xl/workbook.xml');
+        $zip->close();
+        @unlink($path);
+
+        // The large sheet must really have crossed the threshold, or this test
+        // silently stops covering the spill path.
+        $this->assertGreaterThan(1048576, strlen($large));
+        $this->assertSame(6001, substr_count($large, '<row '));
+        $this->assertStringEndsWith('</worksheet>', $large);
+
+        // A spilled sheet must not disturb the ones on either side of it.
+        $this->assertStringContainsString('Cardiac', $small);
+        $this->assertStringEndsWith('</worksheet>', $small);
+        $this->assertStringContainsString('Endoscopy', $after);
+        $this->assertStringEndsWith('</worksheet>', $after);
+        $this->assertSame(3, substr_count($workbook, '<sheet '));
+    }
+
     public function test_builds_a_valid_single_sheet_workbook(): void
     {
         $path = (new XlsxWriter)->toTempFile(

@@ -198,16 +198,31 @@ class AnalyticsExportTest extends TestCase
         $this->assertTrue($zip->open($file) === true);
         $workbook = (string) $zip->getFromName('xl/workbook.xml');
         $submissions = (string) $zip->getFromName('xl/worksheets/sheet1.xml');
-        $form = (string) $zip->getFromName('xl/worksheets/sheet2.xml');
-        $historicalForm = (string) $zip->getFromName('xl/worksheets/sheet3.xml');
-        $editHistory = (string) $zip->getFromName('xl/worksheets/sheet4.xml');
+        $summary = (string) $zip->getFromName('xl/worksheets/sheet2.xml');
+        $form = (string) $zip->getFromName('xl/worksheets/sheet3.xml');
+        $historicalForm = (string) $zip->getFromName('xl/worksheets/sheet4.xml');
+        $editHistory = (string) $zip->getFromName('xl/worksheets/sheet5.xml');
         $styles = (string) $zip->getFromName('xl/styles.xml');
         $zip->close();
 
-        foreach (['Submission Index', '2026-05-25 GI Neurology', '2026-05-18 GI Neurology', 'Edit History'] as $sheetName) {
+        foreach ([
+            'Submission Index',
+            'Inpatient Weekly Report',
+            '2026-05-25 GI Neurology',
+            '2026-05-18 GI Neurology',
+            'Edit History',
+        ] as $sheetName) {
             $this->assertStringContainsString($sheetName, $workbook);
         }
-        $this->assertSame(4, substr_count($workbook, '<sheet '));
+        $this->assertSame(5, substr_count($workbook, '<sheet '));
+
+        // The wide sheet: one row per ward/week, the form's own fields as
+        // columns, and weekly values identical to the form sheet's totals.
+        $this->assertStringContainsString('Department', $summary);
+        $this->assertStringContainsString('Week start', $summary);
+        $this->assertStringContainsString('Total Patient Days', $summary);
+        $this->assertStringContainsString('<v>30</v>', $summary);
+        $this->assertStringContainsString('<v>7</v>', $summary);
 
         $this->assertStringContainsString('Hana Abera', $submissions);
         $this->assertStringContainsString('Submitted cell count', $submissions);
@@ -235,6 +250,152 @@ class AnalyticsExportTest extends TestCase
         $this->assertStringContainsString('<v>25</v>', $editHistory);
 
         unlink($file);
+    }
+
+    public function test_ward_and_date_filters_narrow_the_export(): void
+    {
+        $other = Department::query()->where('slug', 'cardiac_inpatient')->firstOrFail();
+        $otherNurse = User::factory()->create(['full_name' => 'Abel Gemechu', 'username' => 'abel.gemechu']);
+        $otherAssignment = ReportAssignment::query()->create([
+            'nurse_id' => $otherNurse->id,
+            'department_id' => $other->id,
+            'template_id' => $this->assignment->template_id,
+            'active' => true,
+            'approved_at' => now(),
+        ]);
+
+        $this->actingAs($otherNurse)->postJson('/api/reports', [
+            'assignmentId' => $otherAssignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'submit' => true,
+            'values' => [
+                'new_deaths' => ['fieldId' => 'new_deaths', 'dailyValues' => ['monday' => 4]],
+            ],
+        ])->assertCreated();
+
+        $service = app(AnalyticsExportService::class);
+        $this->assertSame(2, $service->reportCount());
+
+        $narrowed = app(AnalyticsExportService::class)
+            ->withFilters(['departmentIds' => [$other->id]]);
+        $this->assertSame(1, $narrowed->reportCount());
+
+        // The narrowed workbook holds only the one ward: index, its summary
+        // sheet, its single form sheet, and edit history.
+        $file = (new XlsxWriter)->toMultiSheetTempFile($narrowed->workbookSheets());
+        $zip = new \ZipArchive;
+        $this->assertTrue($zip->open($file) === true);
+        $workbook = (string) $zip->getFromName('xl/workbook.xml');
+        $zip->close();
+        unlink($file);
+
+        $this->assertSame(4, substr_count($workbook, '<sheet '));
+        $this->assertStringContainsString('Cardiac', $workbook);
+        $this->assertStringNotContainsString('GI Neurology', $workbook);
+
+        // A range that excludes every week returns nothing at all.
+        $this->assertSame(0, app(AnalyticsExportService::class)
+            ->withFilters(['dateFrom' => '2020-01-01', 'dateTo' => '2020-12-31'])
+            ->reportCount());
+    }
+
+    public function test_the_scope_endpoint_reports_the_size_of_a_selection(): void
+    {
+        $this->actingAs($this->admin)
+            ->getJson('/api/analytics/exports/scope')
+            ->assertOk()
+            ->assertJsonPath('data.reports', 1)
+            ->assertJsonPath('data.limit', AnalyticsExportService::maxReports());
+
+        // The same criteria the queue call takes, so the number someone sees is
+        // the number the ceiling is applied to.
+        $this->actingAs($this->admin)
+            ->getJson('/api/analytics/exports/scope?departments[]=cardiac_inpatient')
+            ->assertOk()
+            ->assertJsonPath('data.reports', 0);
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/analytics/exports/scope?dateFrom=2020-01-01&dateTo=2020-12-31')
+            ->assertOk()
+            ->assertJsonPath('data.reports', 0);
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/analytics/exports/scope?departments[]=not_a_ward')
+            ->assertJsonValidationErrors('departments.0');
+    }
+
+    public function test_queueing_an_export_stores_the_requested_scope(): void
+    {
+        Queue::fake();
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/analytics/exports', [
+                'format' => 'csv',
+                'departments' => ['gi_neuro_inpatient'],
+                'dateFrom' => '2026-05-01',
+                'dateTo' => '2026-05-31',
+            ])
+            ->assertAccepted();
+
+        $export = AnalyticsExport::query()->latest()->firstOrFail();
+        $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
+
+        // Slugs in, ids stored: a later rename cannot change what this covered.
+        $this->assertSame([$department->id], $export->filters['departmentIds']);
+        $this->assertSame('2026-05-01', $export->filters['dateFrom']);
+        $this->assertSame('2026-05-31', $export->filters['dateTo']);
+    }
+
+    public function test_a_request_over_the_ceiling_is_refused_before_anything_is_queued(): void
+    {
+        Queue::fake();
+
+        // Two reports on record, ceiling of one: the request is over by one.
+        $second = ReportingPeriod::query()->create([
+            'week_start' => '2026-05-18',
+            'week_end' => '2026-05-24',
+            'deadline_at' => '2026-05-25 10:00:00',
+            'month_label' => 'May 2026',
+            'quarter_label' => 'Q2 2026',
+            'year_num' => 2026,
+        ]);
+        $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $second->id,
+            'submit' => true,
+            'values' => [
+                'new_deaths' => ['fieldId' => 'new_deaths', 'dailyValues' => ['monday' => 1]],
+            ],
+        ])->assertCreated();
+
+        config(['reports.export.max_reports' => 1]);
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/analytics/exports', ['format' => 'xlsx'])
+            ->assertJsonValidationErrors('dateFrom');
+
+        Queue::assertNothingPushed();
+        $this->assertSame(0, AnalyticsExport::query()->count());
+
+        // Back under the ceiling the same request goes through untouched.
+        config(['reports.export.max_reports' => 5000]);
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/analytics/exports', ['format' => 'xlsx'])
+            ->assertAccepted();
+
+        Queue::assertPushed(BuildAnalyticsExport::class);
+    }
+
+    public function test_an_unknown_ward_is_rejected(): void
+    {
+        Queue::fake();
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/analytics/exports', ['departments' => ['not_a_ward']])
+            ->assertJsonValidationErrors('departments.0');
+
+        Queue::assertNothingPushed();
     }
 
     public function test_admin_can_queue_and_list_a_full_history_export(): void

@@ -38,6 +38,8 @@ final class AuditRegistry
         'report_template' => [self::WORKSPACE_CLINICAL, 'Report template'],
         'department' => [self::WORKSPACE_CLINICAL, 'Department'],
         'report_assignment' => [self::WORKSPACE_CLINICAL, 'Report assignment'],
+        'action_item' => [self::WORKSPACE_CLINICAL, 'Clinical action item'],
+        'clinical_alert_rule' => [self::WORKSPACE_CLINICAL, 'Clinical alert rule'],
 
         // -- Academic: structure -------------------------------------------
         'ward' => [self::WORKSPACE_ACADEMIC, 'Ward'],
@@ -103,6 +105,12 @@ final class AuditRegistry
         'approve' => 'Approved',
         'reject' => 'Rejected',
         'review' => 'Reviewed',
+        'assign' => 'Assigned',
+        'resolve' => 'Resolved',
+        'verify' => 'Verified and closed',
+        'reopen' => 'Reopened',
+        'comment' => 'Comment added',
+        'upload_evidence' => 'Evidence uploaded',
         'apply' => 'Applied',
         'approve_admin_request' => 'Account request approved',
         'reject_admin_request' => 'Account request rejected',

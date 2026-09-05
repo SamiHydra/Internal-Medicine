@@ -110,7 +110,7 @@ class WorkspaceRevisionLedgerTest extends TestCase
 
     public function test_service_reads_only_the_single_ledger_value(): void
     {
-        $user = new User();
+        $user = new User;
         $service = app(WorkspaceRevisionService::class);
         $before = $service->for($user);
 

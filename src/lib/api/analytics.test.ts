@@ -6,7 +6,7 @@ import {
   fetchAndCacheDashboardAnalytics,
   fetchDashboardAnalytics,
   fetchQuarterlyAnalytics,
-  queueFullHistoryAnalyticsExport,
+  queueAnalyticsExport,
   readCachedDashboardAnalytics,
 } from '@/lib/api/analytics'
 import { LaravelApiClient } from '@/lib/api/client'
@@ -161,9 +161,22 @@ describe('fetchDashboardAnalytics', () => {
     const post = vi.spyOn(client, 'post').mockResolvedValue({ data: exportRecord })
     const get = vi.spyOn(client, 'get').mockResolvedValue({ data: [exportRecord] })
 
-    await expect(queueFullHistoryAnalyticsExport(client)).resolves.toEqual(exportRecord)
+    await expect(queueAnalyticsExport(client)).resolves.toEqual(exportRecord)
     await expect(fetchAnalyticsExports(client)).resolves.toEqual([exportRecord])
     expect(post).toHaveBeenCalledWith('/api/analytics/exports', { format: 'xlsx' })
     expect(get).toHaveBeenCalledWith('/api/analytics/exports')
+
+    await queueAnalyticsExport(client, {
+      format: 'csv',
+      departments: ['cardiac_inpatient'],
+      dateFrom: '2026-01-01',
+      dateTo: '2026-03-31',
+    })
+    expect(post).toHaveBeenLastCalledWith('/api/analytics/exports', {
+      format: 'csv',
+      departments: ['cardiac_inpatient'],
+      dateFrom: '2026-01-01',
+      dateTo: '2026-03-31',
+    })
   })
 })

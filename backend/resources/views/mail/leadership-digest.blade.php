@@ -38,8 +38,12 @@
                 <td style="padding: 10px 0; border-bottom: 1px solid #eef2f6; text-align: right; font-weight: bold; color: #8a5a00;">{{ $digest['hai'] }}</td>
             </tr>
             <tr>
-                <td style="padding: 10px 0;">Open follow-up action items</td>
+                <td style="padding: 10px 0;">Outstanding follow-up action items</td>
                 <td style="padding: 10px 0; text-align: right; font-weight: bold;">{{ $digest['openActionItems'] }}</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px 0;">Overdue / high-severity follow-up</td>
+                <td style="padding: 10px 0; text-align: right; font-weight: bold; color: #ba1a1a;">{{ $digest['overdueActionItems'] ?? 0 }} overdue · {{ $digest['highSeverityActionItems'] ?? 0 }} high</td>
             </tr>
         </table>
 

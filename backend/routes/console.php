@@ -15,6 +15,7 @@ $businessTimezone = (string) config('app.business_timezone', 'Africa/Nairobi');
 // deploy SIGKILL) self-heals on the next tick instead of stranding the schedule
 // mutex for the default 24h - which would silently halt delivery/digests.
 Schedule::command('reports:sync-overdue')->hourly()->timezone($businessTimezone)->withoutOverlapping(10);
+Schedule::command('action-items:escalate-overdue')->hourly()->timezone($businessTimezone)->withoutOverlapping(10);
 Schedule::command('academic:apply-section-transfers')->dailyAt('00:15')->timezone($businessTimezone)->withoutOverlapping(10);
 Schedule::command('academic:generate-teaching-sessions')->dailyAt('00:10')->timezone($businessTimezone)->withoutOverlapping(10);
 Schedule::command('academic:open-morning-session')->dailyAt('00:05')->timezone($businessTimezone)->withoutOverlapping(10);

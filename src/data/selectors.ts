@@ -1664,37 +1664,24 @@ export function getWhatChangedThisWeek(
     }
 
     const department = departmentMap[assignment.departmentId]
-    const template = templateStore.map[assignment.templateId]
     const currentReport = getReportForAssignmentPeriod(state, assignment.id, currentPeriod.id)
     const previousReport = getReportForAssignmentPeriod(state, assignment.id, previousPeriod.id)
 
-    template.changeRules.forEach((rule) => {
-      if (!rule.fieldId || !currentReport || !previousReport) {
-        return
-      }
+    // New critical events are surfaced straight from the configured critical
+    // fields. This check previously lived inside the week-on-week change rules,
+    // so it only ran for fields that happened to also carry a percentage rule.
+    if (currentReport && previousReport) {
+      state.settings.criticalNonZeroFields.forEach((fieldId) => {
+        const currentValue = sumField(currentReport, fieldId)
+        const previousValue = sumField(previousReport, fieldId)
 
-      const currentValue = sumField(currentReport, rule.fieldId)
-      const previousValue = sumField(previousReport, rule.fieldId)
-      const delta = formatDelta(currentValue, previousValue)
-
-      if (delta !== null && Math.abs(delta) >= rule.percentThreshold) {
-        insights.push(
-          rule.messageTemplate
-            .replace('{department}', department.name)
-            .replace('{deltaPercent}', Math.round(delta).toString())
-            .replace('{currentValue}', String(currentValue))
-            .replace('{previousValue}', String(previousValue)),
-        )
-      }
-
-      if (
-        state.settings.criticalNonZeroFields.includes(rule.fieldId) &&
-        currentValue > 0 &&
-        previousValue === 0
-      ) {
-        insights.push(`${department.name} reported a new non-zero critical event for ${rule.fieldId.replaceAll('_', ' ')}.`)
-      }
-    })
+        if (currentValue > 0 && previousValue === 0) {
+          insights.push(
+            `${department.name} reported a new non-zero critical event for ${fieldId.replaceAll('_', ' ')}.`,
+          )
+        }
+      })
+    }
 
     const currentStatus = deriveReportStatus(state, currentPeriod.id, currentReport)
     if (currentStatus === 'edited_after_submission') {

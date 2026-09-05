@@ -23,7 +23,7 @@ import { useAppData } from '@/context/app-data-context'
 import { getCurrentPeriod } from '@/data/selectors'
 import { getDeadlineForPeriod } from '@/lib/dates'
 import { performanceTargetDefinitions } from '@/lib/performance-targets'
-import { cn, formatCompactNumber } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import type { Weekday } from '@/types/domain'
 
 const countChipClass =
@@ -94,7 +94,6 @@ export function SettingsPage() {
     ? getDeadlineForPeriod(currentPeriod, deadlineDay, deadlineTime)
     : null
   const previewLockAt = previewDeadline ? addHours(previewDeadline, autoLockHours) : null
-  const criticalFieldCount = state.settings.criticalNonZeroFields.length
 
   const onSubmit = form.handleSubmit(async (values) => {
     await updateSettings(values)
@@ -358,10 +357,8 @@ export function SettingsPage() {
 
           <div className="mt-6 space-y-4">
             <div className="flex items-center justify-between border-t border-[#eef2f6] pt-4">
-              <p className="text-sm text-[#74777f]">Coverage</p>
-              <p className="text-sm font-semibold tabular-nums text-[#000a1e]">
-                {formatCompactNumber(criticalFieldCount)} critical fields
-              </p>
+              <p className="text-sm text-[#74777f]">Clinical alert rules</p>
+              <p className="text-sm font-semibold text-[#000a1e]">Managed under Action items</p>
             </div>
 
             <div className="flex items-center gap-3 border-t border-[#eef2f6] pt-4">

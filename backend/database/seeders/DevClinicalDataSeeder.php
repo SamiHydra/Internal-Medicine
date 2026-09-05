@@ -2,7 +2,9 @@
 
 namespace Database\Seeders;
 
+use App\Models\ActionItem;
 use App\Models\Department;
+use App\Models\Notification;
 use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportFieldDefinition;
@@ -39,6 +41,19 @@ class DevClinicalDataSeeder extends Seeder
 
     /** Trailing weeks whose critical values raise a real alert + action item. */
     private const ALERT_WINDOW_WEEKS = 4;
+
+    /**
+     * `notifications.related_entity` values that hang off a report, and so have
+     * to be cleared whenever the reports are rebuilt.
+     *
+     * @var list<string>
+     */
+    private const REPORT_SCOPED_ENTITIES = [
+        'critical_alert',
+        'trend_alert',
+        'report_submission',
+        'report_lock',
+    ];
 
     /**
      * How each unit behaves over the window, so the compliance and safety
@@ -118,6 +133,24 @@ class DevClinicalDataSeeder extends Seeder
 
         // Clean slate so re-runs do not leave stale reports/assignments that inflate
         // the "expected" denominator (overdue/not-started). Dev only.
+        //
+        // Everything a report FANS OUT TO has to go with it. notifications and
+        // action_items carry no cascading key back to reports (related_id is
+        // polymorphic; action_items.report_id is ON DELETE SET NULL), so a
+        // rebuild used to leave every previous run's alert behind pointing at a
+        // report id that no longer exists - an inbox full of links that dead-end
+        // on the not-found page, growing by one generation per reseed. Keyed on
+        // the report route, the report id and the report-scoped entities rather
+        // than on a list of notification types, so a new report notification
+        // type is covered the day it is added - and so is a generation left
+        // behind by an older seeder that wrote a different route shape.
+        Notification::query()
+            ->where(fn ($query) => $query
+                ->where('related_route', 'like', '%/reports/%')
+                ->orWhereIn('related_entity', self::REPORT_SCOPED_ENTITIES)
+                ->orWhereIn('related_id', Report::query()->select('id')))
+            ->delete();
+        ActionItem::query()->where('source', 'critical_event')->delete();
         ReportFieldValue::query()->delete();
         Report::query()->delete();
         ReportAssignment::query()->delete();
@@ -306,7 +339,13 @@ class DevClinicalDataSeeder extends Seeder
             ->with(['department', 'template.fieldDefinitions', 'fieldValues'])
             ->chunkById(100, function (Collection $reports) use ($alerts, $now, &$raised): void {
                 foreach ($reports as $report) {
-                    $raised += $alerts->notify($report, '/admin/reports/'.$report->id, $now) > 0 ? 1 : 0;
+                    // The same route the live path builds
+                    // (ReportSubmissionService::relatedRoute). A seeded link of
+                    // any other shape sends every admin who clicks the alert to
+                    // the not-found page, because the SPA navigates to this
+                    // string verbatim.
+                    $route = sprintf('/reports/%s/%s', $report->assignment_id, $report->reporting_period_id);
+                    $raised += $alerts->notify($report, $route, $now) > 0 ? 1 : 0;
                 }
             });
 

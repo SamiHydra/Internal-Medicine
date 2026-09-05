@@ -34,6 +34,12 @@ class DatabaseSeeder extends Seeder
             // morning session, undergraduate) so those surfaces are explorable
             // instead of empty. Self-guards against production/testing.
             DevAcademicDataSeeder::class,
+            // The academic seeder builds its year of history once and then
+            // guards it, so a fixture seeded months ago stops dead at that
+            // date. This carries the operational rows forward to today for
+            // every section. Gap-driven, so it is a no-op when nothing is
+            // missing. Self-guards against production/testing.
+            DevAcademicGapSeeder::class,
             // Audit trails and the approval queues, which depend on the users,
             // reports and sections all three seeders above create.
             // Self-guards against production/testing.

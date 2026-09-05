@@ -36,6 +36,8 @@ class BuildAnalyticsExport implements ShouldQueue
             'error' => null,
         ])->save();
 
+        $service->withFilters($export->filters);
+
         $format = $export->format === 'xlsx' ? 'xlsx' : 'csv';
         $relativePath = "analytics-exports/{$export->user_id}/{$export->id}.{$format}";
         $disk = Storage::disk('local');
@@ -80,7 +82,9 @@ class BuildAnalyticsExport implements ShouldQueue
             }
         }
 
-        $fileName = 'clinical-submissions-full-history-'.now()->format('Y-m-d-His').".{$format}";
+        // "full-history" is only honest when nothing was narrowed.
+        $scope = $export->filters ? 'filtered' : 'full-history';
+        $fileName = "clinical-submissions-{$scope}-".now()->format('Y-m-d-His').".{$format}";
         $export->forceFill([
             'status' => AnalyticsExport::STATUS_READY,
             'file_path' => $relativePath,
@@ -96,8 +100,15 @@ class BuildAnalyticsExport implements ShouldQueue
             'recipient_id' => $export->user_id,
             'type' => 'analytics_export_ready',
             'title' => 'Clinical export ready',
-            'message' => "Your full-history clinical {$format} export is ready to download.",
-            'related_route' => '/admin/dashboard',
+            'message' => sprintf(
+                'Your %s clinical %s export is ready to download.',
+                $export->filters ? 'filtered' : 'full-history',
+                $format,
+            ),
+            // The admin dashboard, which hosts AnalyticsExportPanel and so is
+            // where the finished file is actually downloaded. There is no
+            // /admin/dashboard route; the SPA would render not-found.
+            'related_route' => '/admin',
             'related_entity' => 'analytics_export',
             'related_id' => $export->id,
             'created_at' => now(),

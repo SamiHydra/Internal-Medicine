@@ -29,6 +29,41 @@ class AnalyticsExportService
     /** @var array<string, list<object>> */
     private array $formFieldsCache = [];
 
+    /**
+     * Form sheets are written one report at a time, but fetching each report's
+     * cells on its own turned into one query per report. Cells are pulled a
+     * batch at a time instead, in the order the sheets are written, so memory
+     * stays bounded at one batch while the query count drops by ~200x.
+     *
+     * @var list<string>
+     */
+    private array $cellBatchOrder = [];
+
+    /** @var array<string, int> */
+    private array $cellBatchPositions = [];
+
+    /** @var array<string, array<string, array<string, string>>> */
+    private array $cellBatch = [];
+
+    private const CELL_BATCH_SIZE = 200;
+
+    /**
+     * Ward/date criteria narrowing every query below. Empty means full history,
+     * which preserves the behaviour of callers that never set one.
+     *
+     * @var array{departmentIds?: list<string>, dateFrom?: string, dateTo?: string}
+     */
+    private array $filters = [];
+
+    /**
+     * The largest number of reports one export may cover. See the "export"
+     * block in config/reports.php.
+     */
+    public static function maxReports(): int
+    {
+        return max(1, (int) config('reports.export.max_reports', 5000));
+    }
+
     private const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
     private const DAY_LABELS = [
@@ -105,6 +140,19 @@ class AnalyticsExportService
         'Value',
     ];
 
+    /**
+     * Leading columns on every wide summary sheet, ahead of that form's own
+     * fields. The fields follow in the order the submission screen shows them.
+     */
+    private const WIDE_LEAD_HEADER = [
+        'Department',
+        'Family',
+        'Week start',
+        'Week end',
+        'Assigned nurse',
+        'Status',
+    ];
+
     private const SUMMARY_HEADER = [
         'Report ID',
         'Week start',
@@ -179,8 +227,27 @@ class AnalyticsExportService
     public function workbookSheets(): array
     {
         $reports = $this->submittedReportsForWorkbook();
+        $this->primeCellBatches($reports->pluck('report_id')->all());
         $usedSheetNames = ['Submission Index', 'Edit History'];
         $sheetNamesByReport = [];
+
+        // Reserved before the per-report names so a ward/week sheet can never
+        // take a summary sheet's title.
+        $summaries = [];
+
+        foreach ($this->templatesInScope() as $template) {
+            $fields = $this->summaryFields((string) $template->template_id);
+
+            if ($fields === []) {
+                continue;
+            }
+
+            $summaries[] = [
+                'name' => $this->uniqueSheetName((string) $template->template_name, $usedSheetNames),
+                'templateId' => (string) $template->template_id,
+                'fields' => $fields,
+            ];
+        }
 
         foreach ($reports as $report) {
             $sheetNamesByReport[(string) $report->report_id] = $this->reportSheetName(
@@ -199,6 +266,20 @@ class AnalyticsExportService
                 'autoFilter' => true,
             ],
         ];
+
+        foreach ($summaries as $summary) {
+            $sheets[] = [
+                'name' => $summary['name'],
+                'header' => [
+                    ...self::WIDE_LEAD_HEADER,
+                    ...array_map(static fn (object $field): string => (string) $field->label, $summary['fields']),
+                ],
+                'rows' => $this->wideSummaryRows($summary['templateId'], $summary['fields']),
+                'columns' => [30, 14, 13, 13, 26, 13, ...array_fill(0, count($summary['fields']), 18)],
+                'freezeRows' => 1,
+                'autoFilter' => true,
+            ];
+        }
 
         foreach ($reports as $report) {
             $sheets[] = [
@@ -295,13 +376,15 @@ class AnalyticsExportService
      */
     private function submittedReportsForWorkbook(): Collection
     {
-        return DB::table('reports')
-            ->join('reporting_periods as periods', 'periods.id', '=', 'reports.reporting_period_id')
-            ->join('departments', 'departments.id', '=', 'reports.department_id')
-            ->join('report_templates as templates', 'templates.id', '=', 'reports.template_id')
-            ->join('report_assignments as assignments', 'assignments.id', '=', 'reports.assignment_id')
-            ->join('users as nurses', 'nurses.id', '=', 'assignments.nurse_id')
-            ->whereNotNull('reports.submitted_at')
+        return $this->applyFilters(
+            DB::table('reports')
+                ->join('reporting_periods as periods', 'periods.id', '=', 'reports.reporting_period_id')
+                ->join('departments', 'departments.id', '=', 'reports.department_id')
+                ->join('report_templates as templates', 'templates.id', '=', 'reports.template_id')
+                ->join('report_assignments as assignments', 'assignments.id', '=', 'reports.assignment_id')
+                ->join('users as nurses', 'nurses.id', '=', 'assignments.nurse_id')
+                ->whereNotNull('reports.submitted_at')
+        )
             ->select([
                 'reports.id as report_id',
                 'reports.status',
@@ -366,11 +449,54 @@ class AnalyticsExportService
     {
         $fields = $this->formFields((string) $report->template_id);
         $sections = $this->formSections($report, $fields);
-        $cells = [];
+
+        yield from $this->renderFormBlock(
+            $report,
+            $fields,
+            $sections,
+            $this->formDays($report),
+            $this->cellsForReport((string) $report->report_id),
+        );
+    }
+
+    /**
+     * @param  list<mixed>  $reportIds  Report ids in the order their sheets are written.
+     */
+    private function primeCellBatches(array $reportIds): void
+    {
+        $this->cellBatchOrder = array_map(strval(...), $reportIds);
+        $this->cellBatchPositions = array_flip($this->cellBatchOrder);
+        $this->cellBatch = [];
+    }
+
+    /**
+     * @return array<string, array<string, string>>
+     */
+    private function cellsForReport(string $reportId): array
+    {
+        if (! array_key_exists($reportId, $this->cellBatch)) {
+            $this->loadCellBatch($reportId);
+        }
+
+        return $this->cellBatch[$reportId] ?? [];
+    }
+
+    /** Loads the batch starting at this report, replacing the previous one. */
+    private function loadCellBatch(string $reportId): void
+    {
+        $start = $this->cellBatchPositions[$reportId] ?? null;
+        $batch = $start === null
+            ? [$reportId]
+            : array_slice($this->cellBatchOrder, $start, self::CELL_BATCH_SIZE);
+
+        // Seeded empty so a report holding no values is still "loaded" and does
+        // not trigger a fresh query on every lookup.
+        $this->cellBatch = array_fill_keys($batch, []);
 
         $query = DB::table('report_field_values')
-            ->where('report_id', $report->report_id)
+            ->whereIn('report_id', $batch)
             ->select([
+                'report_id',
                 'field_definition_id',
                 'day_name',
                 'value_number',
@@ -379,21 +505,15 @@ class AnalyticsExportService
                 'value_json',
             ])
             ->selectRaw($this->dayOrderSql('report_field_values').' as day_order')
+            ->orderBy('report_id')
             ->orderBy('field_definition_id')
             ->orderBy('day_order')
             ->orderBy('id');
 
         foreach ($query->cursor() as $row) {
-            $cells[(string) $row->field_definition_id][(string) $row->day_name] = $this->storedDatabaseValue($row);
+            $this->cellBatch[(string) $row->report_id][(string) $row->field_definition_id][(string) $row->day_name]
+                = $this->storedDatabaseValue($row);
         }
-
-        yield from $this->renderFormBlock(
-            $report,
-            $fields,
-            $sections,
-            $this->formDays($report),
-            $cells,
-        );
     }
 
     /**
@@ -736,8 +856,19 @@ class AnalyticsExportService
      */
     private function reportSheetName(object $report, array &$usedNames): string
     {
-        $base = mb_substr($this->reportSheetBaseName($report), 0, 31);
-        $name = $base !== '' ? $base : 'Clinical submission';
+        return $this->uniqueSheetName($this->reportSheetBaseName($report), $usedNames, 'Clinical submission');
+    }
+
+    /**
+     * Excel caps sheet names at 31 characters and rejects duplicates, so trim
+     * first and then disambiguate with a numeric tail.
+     *
+     * @param  list<string>  $usedNames
+     */
+    private function uniqueSheetName(string $base, array &$usedNames, string $fallback = 'Sheet'): string
+    {
+        $base = mb_substr($base, 0, 31);
+        $name = $base !== '' ? $base : $fallback;
         $suffix = 2;
         $normalized = array_map('mb_strtolower', $usedNames);
 
@@ -749,6 +880,132 @@ class AnalyticsExportService
         $usedNames[] = $name;
 
         return $name;
+    }
+
+    /**
+     * Distinct forms represented in the filtered set, so the workbook only
+     * carries a summary sheet for forms that actually have data in range.
+     *
+     * @return list<object>
+     */
+    private function templatesInScope(): array
+    {
+        return $this->submittedReportsBaseQuery()
+            ->reorder('templates.name')
+            ->distinct()
+            ->get(['templates.id as template_id', 'templates.name as template_name'])
+            ->all();
+    }
+
+    /**
+     * The columns of a summary sheet: that form's active fields, in the order
+     * the submission screen lays them out.
+     *
+     * @return list<object>
+     */
+    private function summaryFields(string $templateId): array
+    {
+        return array_values(array_filter(
+            $this->formFields($templateId),
+            static fn (object $field): bool => (bool) $field->active,
+        ));
+    }
+
+    /**
+     * One dense row per ward/week, one column per field.
+     *
+     * Streams a single ordered pass and emits a row each time the report id
+     * changes, so memory stays flat no matter how many weeks are in range. The
+     * left join keeps a submitted report that holds no values at all.
+     *
+     * @param  list<object>  $fields
+     * @return \Generator<int, list<string>>
+     */
+    private function wideSummaryRows(string $templateId, array $fields): \Generator
+    {
+        $query = $this->applyFilters(
+            DB::table('reports')
+                ->join('reporting_periods as periods', 'periods.id', '=', 'reports.reporting_period_id')
+                ->join('departments', 'departments.id', '=', 'reports.department_id')
+                ->join('report_assignments as assignments', 'assignments.id', '=', 'reports.assignment_id')
+                ->join('users as nurses', 'nurses.id', '=', 'assignments.nurse_id')
+                ->leftJoin('report_field_values as field_values', 'field_values.report_id', '=', 'reports.id')
+                ->where('reports.template_id', $templateId)
+                ->whereNotNull('reports.submitted_at')
+        )
+            ->select([
+                'reports.id as report_id',
+                'reports.status',
+                'periods.week_start',
+                'periods.week_end',
+                'departments.name as department_name',
+                'departments.family',
+                'nurses.full_name as nurse_name',
+                'field_values.field_definition_id',
+                'field_values.day_name',
+                'field_values.value_number',
+                'field_values.value_text',
+                'field_values.value_time',
+                'field_values.value_json',
+            ])
+            ->orderByDesc('periods.week_start')
+            ->orderBy('departments.name')
+            ->orderBy('reports.id');
+
+        $current = null;
+        $cells = [];
+
+        foreach ($query->cursor() as $row) {
+            if ($current !== null && (string) $row->report_id !== (string) $current->report_id) {
+                yield $this->wideSummaryRow($current, $fields, $cells);
+                $cells = [];
+            }
+
+            $current = $row;
+
+            if ($row->field_definition_id !== null) {
+                $cells[(string) $row->field_definition_id][(string) $row->day_name] = $this->storedDatabaseValue($row);
+            }
+        }
+
+        if ($current !== null) {
+            yield $this->wideSummaryRow($current, $fields, $cells);
+        }
+    }
+
+    /**
+     * Cells come from formWeeklyValue(), the same routine behind the form
+     * sheet's "Weekly total" column, so the flat view and the form view of one
+     * week can never disagree.
+     *
+     * @param  list<object>  $fields
+     * @param  array<string, array<string, string>>  $cells
+     * @return list<string>
+     */
+    private function wideSummaryRow(object $report, array $fields, array $cells): array
+    {
+        $valuesByKey = [];
+
+        foreach ($fields as $field) {
+            $valuesByKey[(string) $field->field_key] = $cells[(string) $field->id] ?? [];
+        }
+
+        return [
+            (string) $report->department_name,
+            (string) $report->family,
+            $this->dateValue($report->week_start),
+            $this->dateValue($report->week_end),
+            (string) $report->nurse_name,
+            (string) $report->status,
+            ...array_map(
+                fn (object $field): string => $this->formWeeklyValue(
+                    $field,
+                    $cells[(string) $field->id] ?? [],
+                    $valuesByKey,
+                ),
+                $fields,
+            ),
+        ];
     }
 
     /**
@@ -799,13 +1056,15 @@ class AnalyticsExportService
      */
     public function editHistoryRows(): \Generator
     {
-        $query = DB::table('audit_logs as audit')
-            ->join('reports', 'reports.id', '=', 'audit.report_id')
-            ->join('reporting_periods as periods', 'periods.id', '=', 'reports.reporting_period_id')
-            ->join('departments', 'departments.id', '=', 'audit.department_id')
-            ->join('report_templates as templates', 'templates.id', '=', 'audit.template_id')
-            ->leftJoin('report_field_definitions as definitions', 'definitions.id', '=', 'audit.field_definition_id')
-            ->whereNotNull('reports.submitted_at')
+        $query = $this->applyFilters(
+            DB::table('audit_logs as audit')
+                ->join('reports', 'reports.id', '=', 'audit.report_id')
+                ->join('reporting_periods as periods', 'periods.id', '=', 'reports.reporting_period_id')
+                ->join('departments', 'departments.id', '=', 'audit.department_id')
+                ->join('report_templates as templates', 'templates.id', '=', 'audit.template_id')
+                ->leftJoin('report_field_definitions as definitions', 'definitions.id', '=', 'audit.field_definition_id')
+                ->whereNotNull('reports.submitted_at')
+        )
             ->select([
                 'audit.report_id',
                 'periods.week_start',
@@ -843,15 +1102,62 @@ class AnalyticsExportService
         }
     }
 
+    /**
+     * @param  array{departmentIds?: list<string>|null, dateFrom?: string|null, dateTo?: string|null}|null  $filters
+     */
+    public function withFilters(?array $filters): static
+    {
+        $this->filters = array_filter([
+            'departmentIds' => array_values(array_filter((array) ($filters['departmentIds'] ?? []))),
+            'dateFrom' => $filters['dateFrom'] ?? null,
+            'dateTo' => $filters['dateTo'] ?? null,
+        ], static fn ($value): bool => $value !== null && $value !== []);
+
+        return $this;
+    }
+
+    /** How many reports the current filters cover. */
+    public function reportCount(): int
+    {
+        return $this->applyFilters(
+            DB::table('reports')
+                ->join('reporting_periods as periods', 'periods.id', '=', 'reports.reporting_period_id')
+                ->whereNotNull('reports.submitted_at')
+        )->count();
+    }
+
+    /**
+     * The single place ward/date criteria are enforced, so no query path can
+     * quietly return the full history once a filter has been set.
+     */
+    private function applyFilters(Builder $query): Builder
+    {
+        if ($departmentIds = $this->filters['departmentIds'] ?? []) {
+            $query->whereIn('reports.department_id', $departmentIds);
+        }
+
+        if ($dateFrom = $this->filters['dateFrom'] ?? null) {
+            $query->where('periods.week_start', '>=', $dateFrom);
+        }
+
+        if ($dateTo = $this->filters['dateTo'] ?? null) {
+            $query->where('periods.week_end', '<=', $dateTo);
+        }
+
+        return $query;
+    }
+
     private function submittedReportsBaseQuery(): Builder
     {
-        return DB::table('reports')
-            ->join('reporting_periods as periods', 'periods.id', '=', 'reports.reporting_period_id')
-            ->join('departments', 'departments.id', '=', 'reports.department_id')
-            ->join('report_templates as templates', 'templates.id', '=', 'reports.template_id')
-            ->join('report_assignments as assignments', 'assignments.id', '=', 'reports.assignment_id')
-            ->join('users as nurses', 'nurses.id', '=', 'assignments.nurse_id')
-            ->whereNotNull('reports.submitted_at')
+        return $this->applyFilters(
+            DB::table('reports')
+                ->join('reporting_periods as periods', 'periods.id', '=', 'reports.reporting_period_id')
+                ->join('departments', 'departments.id', '=', 'reports.department_id')
+                ->join('report_templates as templates', 'templates.id', '=', 'reports.template_id')
+                ->join('report_assignments as assignments', 'assignments.id', '=', 'reports.assignment_id')
+                ->join('users as nurses', 'nurses.id', '=', 'assignments.nurse_id')
+                ->whereNotNull('reports.submitted_at')
+        )
             ->orderByDesc('periods.week_start')
             ->orderBy('departments.name')
             ->orderBy('reports.id');
@@ -859,15 +1165,17 @@ class AnalyticsExportService
 
     private function submittedCellQuery(): Builder
     {
-        return DB::table('report_field_values as field_values')
-            ->join('reports', 'reports.id', '=', 'field_values.report_id')
-            ->join('reporting_periods as periods', 'periods.id', '=', 'reports.reporting_period_id')
-            ->join('departments', 'departments.id', '=', 'reports.department_id')
-            ->join('report_templates as templates', 'templates.id', '=', 'reports.template_id')
-            ->join('report_assignments as assignments', 'assignments.id', '=', 'reports.assignment_id')
-            ->join('users as nurses', 'nurses.id', '=', 'assignments.nurse_id')
-            ->join('report_field_definitions as definitions', 'definitions.id', '=', 'field_values.field_definition_id')
-            ->whereNotNull('reports.submitted_at')
+        return $this->applyFilters(
+            DB::table('report_field_values as field_values')
+                ->join('reports', 'reports.id', '=', 'field_values.report_id')
+                ->join('reporting_periods as periods', 'periods.id', '=', 'reports.reporting_period_id')
+                ->join('departments', 'departments.id', '=', 'reports.department_id')
+                ->join('report_templates as templates', 'templates.id', '=', 'reports.template_id')
+                ->join('report_assignments as assignments', 'assignments.id', '=', 'reports.assignment_id')
+                ->join('users as nurses', 'nurses.id', '=', 'assignments.nurse_id')
+                ->join('report_field_definitions as definitions', 'definitions.id', '=', 'field_values.field_definition_id')
+                ->whereNotNull('reports.submitted_at')
+        )
             ->select([
                 'reports.id as report_id',
                 'reports.status',

@@ -11,7 +11,7 @@ import {
 
 export function InsightPanel({
   title = 'What changed this week',
-  description = 'Deterministic week-on-week highlights generated from reported operational data.',
+  description = 'New critical events and post-submission edits from this reporting week.',
   items,
 }: {
   title?: string
@@ -48,7 +48,7 @@ export function InsightPanel({
           ))
         ) : (
           <p className="text-sm text-[#c6d3e4]">
-            No material shifts crossed the configured thresholds this week.
+            No new critical events or post-submission edits this week.
           </p>
         )}
       </CardContent>

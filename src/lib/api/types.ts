@@ -112,7 +112,6 @@ export type ApiTemplateConfig = {
       sections?: ReportTemplateConfig['sections']
       summaryCards?: ReportTemplateConfig['summaryCards']
       chartMappings?: ReportTemplateConfig['chartMappings']
-      changeRules?: ReportTemplateConfig['changeRules']
     }
   } | null
   fields: ApiTemplateField[]
@@ -502,28 +501,120 @@ export type AdminAuditQuery = {
   limit?: number
 }
 
-export type ActionItemStatus = 'open' | 'in_progress' | 'resolved'
+export type ActionItemStatus = 'open' | 'assigned' | 'in_progress' | 'resolved' | 'closed'
+
+export type ActionItemHistoryEntry = {
+  id: string
+  event: string
+  fromStatus: ActionItemStatus | null
+  toStatus: ActionItemStatus | null
+  note: string | null
+  changedBy: string | null
+  changedByName: string
+  createdAt: string | null
+}
+
+export type ActionItemComment = {
+  id: string
+  body: string
+  authorId: string | null
+  authorName: string
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export type ActionItemEvidence = {
+  id: string
+  originalName: string
+  mimeType: string
+  sizeBytes: number
+  uploadedByName: string
+  createdAt: string | null
+  downloadUrl: string
+}
+
+export type ActionItemSummary = {
+  open: number
+  assigned: number
+  inProgress: number
+  outstanding: number
+  highSeverity: number
+  overdue: number
+  oldestOpenedAt: string | null
+  averageResolutionHours: number | null
+  byDepartment: {
+    departmentId: string | null
+    departmentSlug: string | null
+    departmentName: string
+    total: number
+  }[]
+}
 
 export type ActionItem = {
   id: string
   reportId: string | null
+  reportAssignmentId: string | null
+  reportingPeriodId: string | null
   departmentId: string | null
   departmentName: string | null
+  clinicalAlertRuleId: string | null
+  ruleVersion: number | null
   source: string
+  fieldKey: string | null
+  observedValue: number | null
+  triggerThreshold: number | null
+  triggerOperator: 'gt' | 'gte' | 'eq' | null
   title: string
   description: string | null
   severity: 'low' | 'medium' | 'high'
   status: ActionItemStatus
+  conditionState: 'triggered' | 'corrected_pending_review' | 'manual'
   assignedTo: string | null
   assignedToName: string | null
+  responsibleRole: string | null
+  dueAt: string | null
+  isOverdue: boolean
   createdBy: string | null
   createdByName: string | null
   resolvedBy: string | null
   resolvedByName: string | null
+  verifiedBy: string | null
+  verifiedByName: string | null
   resolutionNote: string | null
   resolvedAt: string | null
+  verifiedAt: string | null
   createdAt: string | null
   updatedAt: string | null
+  history?: ActionItemHistoryEntry[]
+  comments?: ActionItemComment[]
+  evidence?: ActionItemEvidence[]
+}
+
+export type ClinicalAlertRule = {
+  id: string
+  templateId: string
+  templateName: string | null
+  fieldDefinitionId: string
+  fieldKey: string
+  fieldLabel: string
+  operator: 'gt' | 'gte' | 'eq'
+  threshold: number
+  severity: 'low' | 'medium' | 'high'
+  deadlineHours: number
+  responsibleRole: 'admin' | 'superadmin' | null
+  notificationRoles: ('admin' | 'superadmin')[]
+  active: boolean
+  version: number
+  effectiveFrom: string | null
+  effectiveUntil: string | null
+  updatedAt: string | null
+}
+
+export type ClinicalAlertRuleTemplateOption = {
+  id: string
+  slug: string
+  name: string
+  fields: { id: string; fieldKey: string; label: string }[]
 }
 
 export type ReportComment = {

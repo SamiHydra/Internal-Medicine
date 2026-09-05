@@ -140,10 +140,12 @@ class ActionItemTest extends TestCase
         $this->assertNotNull($item->resolved_at);
         $this->assertSame($this->admin->id, $item->resolved_by);
 
-        // A later re-fire must not reopen a resolved item.
+        // A later critical edit is a new occurrence. The previous resolution
+        // remains immutable instead of being silently reopened or overwritten.
         $this->submitCriticalReport(4);
         $this->assertSame('resolved', $item->refresh()->status);
-        $this->assertSame(1, ActionItem::query()->count());
+        $this->assertSame(2, ActionItem::query()->count());
+        $this->assertSame(1, ActionItem::query()->where('status', 'open')->count());
     }
 
     public function test_admin_can_create_a_manual_action_item(): void
@@ -156,7 +158,7 @@ class ActionItemTest extends TestCase
             ])
             ->assertCreated()
             ->assertJsonPath('source', 'manual')
-            ->assertJsonPath('status', 'open')
+            ->assertJsonPath('status', 'assigned')
             ->assertJsonPath('createdByName', 'Admin One');
 
         $this->assertSame(1, ActionItem::query()->where('source', 'manual')->count());

@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { format } from 'date-fns'
 import { animate, motion, useReducedMotion } from 'framer-motion'
-import { Activity, BedDouble, ChevronDown, Filter, Gauge, RefreshCw, Sparkles, Stethoscope } from 'lucide-react'
+import { Activity, BedDouble, ChevronDown, Download, Filter, Gauge, RefreshCw, Sparkles, Stethoscope } from 'lucide-react'
 import {
   Area,
   AreaChart,
@@ -26,8 +26,9 @@ import {
   YAxis,
 } from 'recharts'
 
+import { Link } from 'react-router-dom'
+
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
-import { AnalyticsExportPanel } from '@/components/admin/analytics-export-panel'
 import { Delta, DeltaIcon, DeltaValue } from '@/components/delta'
 import { Button } from '@/components/ui/button'
 import {
@@ -1850,7 +1851,14 @@ export function AdminDashboardPage() {
                 {selectedRangeTitle}
               </h1>
             </div>
-            <AnalyticsExportPanel />
+            {/* Building an export is its own task with its own filters, so the
+                dashboard only points at it. */}
+            <Button asChild variant="secondary" className="h-10 shrink-0">
+              <Link to="/admin/export">
+                <Download className="h-4 w-4" />
+                Export reports
+              </Link>
+            </Button>
           </div>
           <div className="rounded-b-xl border-y border-[#e3e8ef] bg-[#f8fafc]/75">
             <button

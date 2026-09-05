@@ -4,6 +4,7 @@ import {
   CalendarRange,
   ClipboardCheck,
   ClipboardList,
+  Download,
   FilePenLine,
   GraduationCap,
   LayoutDashboard,
@@ -48,6 +49,7 @@ export const adminWorkspaceNav: Record<Workspace, NavigationItem[]> = {
     { label: 'Action items', shortLabel: 'Actions', href: '/admin/action-items', icon: ListChecks },
     { label: 'Templates', href: '/admin/templates', icon: FilePenLine },
     { label: 'Import', href: '/admin/import', icon: Upload },
+    { label: 'Export', href: '/admin/export', icon: Download },
     ...adminSystemNav,
   ],
   academic: [
@@ -129,6 +131,7 @@ export function workspaceForPath(pathname: string): Workspace | null {
     pathname.startsWith('/admin/submissions') ||
     pathname.startsWith('/admin/action-items') ||
     pathname.startsWith('/admin/import') ||
+    pathname.startsWith('/admin/export') ||
     pathname.startsWith('/admin/templates') ||
     pathname.startsWith('/admin/departments') ||
     // Clinical weekly reports (the admin opens these from the clinical Submission

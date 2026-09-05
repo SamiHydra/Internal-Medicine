@@ -35,8 +35,8 @@ class QueueRoutingTest extends TestCase
 
     public function test_each_job_class_targets_its_named_queue(): void
     {
-        $this->assertSame('analytics', (new WarmDashboardAnalytics())->queue);
-        $this->assertSame('analytics', (new WarmAcademicAnalytics())->queue);
+        $this->assertSame('analytics', (new WarmDashboardAnalytics)->queue);
+        $this->assertSame('analytics', (new WarmAcademicAnalytics)->queue);
         $this->assertSame('analytics', (new BuildAnalyticsExport('export-id'))->queue);
 
         $notification = new SendNotificationDelivery(

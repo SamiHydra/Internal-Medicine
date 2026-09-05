@@ -262,10 +262,50 @@ export function fetchYearlyAnalytics(
   return fetchAnalytics<AnalyticsRollupPayload>(client, 'yearly', query)
 }
 
-export async function queueFullHistoryAnalyticsExport(client: LaravelApiClient) {
+export type AnalyticsExportRequest = {
+  format?: 'xlsx' | 'csv'
+  /** Ward slugs; empty means every ward. */
+  departments?: string[]
+  dateFrom?: string | null
+  dateTo?: string | null
+}
+
+export type AnalyticsExportScope = {
+  /** Reports the current selection covers. */
+  reports: number
+  /** Server ceiling; a request above it is refused before anything is queued. */
+  limit: number
+}
+
+export async function fetchAnalyticsExportScope(
+  client: LaravelApiClient,
+  request: Pick<AnalyticsExportRequest, 'departments' | 'dateFrom' | 'dateTo'> = {},
+): Promise<AnalyticsExportScope> {
+  const params = new URLSearchParams()
+  request.departments?.forEach((slug) => params.append('departments[]', slug))
+  if (request.dateFrom) params.set('dateFrom', request.dateFrom)
+  if (request.dateTo) params.set('dateTo', request.dateTo)
+
+  const query = params.toString()
+  const payload = await client.get<{ data: AnalyticsExportScope }>(
+    `/api/analytics/exports/scope${query ? `?${query}` : ''}`,
+  )
+
+  return payload.data
+}
+
+export async function queueAnalyticsExport(
+  client: LaravelApiClient,
+  request: AnalyticsExportRequest = {},
+) {
   const payload = await client.post<{ data: AnalyticsExportRecord }>(
     '/api/analytics/exports',
-    { format: 'xlsx' },
+    {
+      format: request.format ?? 'xlsx',
+      ...(request.departments?.length ? { departments: request.departments } : {}),
+      ...(request.dateFrom ? { dateFrom: request.dateFrom } : {}),
+      ...(request.dateTo ? { dateTo: request.dateTo } : {}),
+    },
   )
 
   return payload.data

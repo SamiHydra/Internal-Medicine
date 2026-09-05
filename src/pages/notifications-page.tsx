@@ -196,6 +196,24 @@ const notificationMeta: Record<
     iconTone: 'bg-[#fceeee] text-[#ba1a1a]',
     chipTone: 'border-[#f3cccc] bg-[#fceeee] text-[#ba1a1a]',
   },
+  critical_value_corrected: {
+    label: 'Correction',
+    icon: ShieldAlert,
+    iconTone: 'bg-[#fbf4e6] text-[#8a5a00]',
+    chipTone: 'border-[#f0d9aa] bg-[#fbf4e6] text-[#8a5a00]',
+  },
+  action_item_assigned: {
+    label: 'Assigned',
+    icon: UserRoundPlus,
+    iconTone: 'bg-[#edf4fb] text-[#005db6]',
+    chipTone: 'border-[#cfe0f4] bg-[#edf4fb] text-[#005db6]',
+  },
+  action_item_overdue: {
+    label: 'Action overdue',
+    icon: Siren,
+    iconTone: 'bg-[#fceeee] text-[#ba1a1a]',
+    chipTone: 'border-[#f3cccc] bg-[#fceeee] text-[#ba1a1a]',
+  },
   trend_alert: {
     label: 'Trend',
     icon: TriangleAlert,

@@ -71,6 +71,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Analytics export ceiling
+    |--------------------------------------------------------------------------
+    |
+    | The largest number of reports one export request may cover. Checked before
+    | anything is queued, so an over-wide request is refused for free instead of
+    | being abandoned part-built after it has already consumed the memory. This
+    | is a backstop against a stale client or a bug, not a limit the ward/date
+    | pickers should let anyone reach - raise it on a machine with headroom.
+    |
+    */
+    'export' => [
+        'max_reports' => (int) env('ANALYTICS_EXPORT_MAX_REPORTS', 5000),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Local fixture size
     |--------------------------------------------------------------------------
     |

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Jobs\BuildAnalyticsExport;
 use App\Models\AnalyticsExport;
+use App\Services\Analytics\AnalyticsExportService;
 use App\Services\Analytics\AnalyticsFilters;
 use App\Services\Analytics\AnalyticsService;
 use App\Services\Analytics\DashboardAnalyticsService;
@@ -13,8 +14,10 @@ use App\Services\Analytics\OutpatientAnalyticsService;
 use App\Services\Analytics\ProcedureAnalyticsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
 
 class AnalyticsController extends Controller
@@ -112,16 +115,77 @@ class AnalyticsController extends Controller
         ]);
     }
 
+    /**
+     * How many reports a given ward/date selection covers, so the export screen
+     * can show the size before anyone commits to building it.
+     */
+    public function exportScope(Request $request): JsonResponse
+    {
+        $filters = $this->exportFilters($request);
+
+        return response()->json([
+            'data' => [
+                'reports' => app(AnalyticsExportService::class)->withFilters($filters)->reportCount(),
+                'limit' => AnalyticsExportService::maxReports(),
+            ],
+        ]);
+    }
+
+    /**
+     * Shared by the preview and the queue call so the count someone sees is the
+     * count the ceiling is applied to.
+     *
+     * @return array{departmentIds?: list<string>, dateFrom?: string, dateTo?: string}
+     */
+    private function exportFilters(Request $request): array
+    {
+        $validated = $request->validate([
+            'departments' => ['sometimes', 'array'],
+            'departments.*' => ['string', 'exists:departments,slug'],
+            'dateFrom' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+            'dateTo' => ['sometimes', 'nullable', 'date_format:Y-m-d', 'after_or_equal:dateFrom'],
+        ]);
+
+        // Clients address wards by slug; the stored filter keeps ids so a later
+        // rename cannot change what an already-built export covered.
+        $departmentIds = $validated['departments'] ?? []
+            ? DB::table('departments')->whereIn('slug', $validated['departments'])->pluck('id')->all()
+            : [];
+
+        return array_filter([
+            'departmentIds' => $departmentIds,
+            'dateFrom' => $validated['dateFrom'] ?? null,
+            'dateTo' => $validated['dateTo'] ?? null,
+        ], static fn ($value): bool => $value !== null && $value !== []);
+    }
+
     public function queueExport(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'format' => ['sometimes', 'in:csv,xlsx'],
         ]);
 
+        $filters = $this->exportFilters($request);
+
+        // Checked before anything is queued: refusing a request costs nothing,
+        // whereas abandoning a half-built workbook has already cost the memory.
+        $reportCount = app(AnalyticsExportService::class)->withFilters($filters)->reportCount();
+
+        if ($reportCount > AnalyticsExportService::maxReports()) {
+            throw ValidationException::withMessages([
+                'dateFrom' => sprintf(
+                    'That range covers %s reports, over the %s limit. Narrow the wards or dates.',
+                    number_format($reportCount),
+                    number_format(AnalyticsExportService::maxReports()),
+                ),
+            ]);
+        }
+
         $export = AnalyticsExport::query()->create([
             'user_id' => $request->user()->id,
             'status' => AnalyticsExport::STATUS_PENDING,
             'format' => $validated['format'] ?? 'xlsx',
+            'filters' => $filters ?: null,
         ]);
 
         BuildAnalyticsExport::dispatch($export->id)->afterCommit();
