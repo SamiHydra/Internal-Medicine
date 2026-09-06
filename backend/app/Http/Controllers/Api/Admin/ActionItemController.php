@@ -306,7 +306,7 @@ class ActionItemController extends Controller
             'type' => 'action_item_assigned',
             'title' => 'Clinical action assigned to you',
             'message' => $item->title,
-            'related_route' => '/admin/action-items',
+            'related_route' => $item->notificationRoute(),
             'related_entity' => 'action_item',
             'related_id' => $item->id,
             'created_at' => now(),

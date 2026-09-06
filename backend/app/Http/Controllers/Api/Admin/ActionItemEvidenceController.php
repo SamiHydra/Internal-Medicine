@@ -7,12 +7,14 @@ use App\Models\ActionItem;
 use App\Models\ActionItemEvidence;
 use App\Services\Admin\AdminAuditService;
 use App\Services\Reports\ActionItemService;
+use App\Support\Uploads;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ActionItemEvidenceController extends Controller
@@ -25,8 +27,18 @@ class ActionItemEvidenceController extends Controller
     public function store(Request $request, ActionItem $actionItem): JsonResponse
     {
         Gate::authorize('update', $actionItem);
+
+        // A file PHP already refused (server upload limit below the 10 MB the
+        // application allows) must produce an actionable message, not the
+        // generic "failed to upload" the validator would emit.
+        if ($failure = Uploads::failureMessage($request->file('file'))) {
+            throw ValidationException::withMessages(['file' => [$failure]]);
+        }
+
         $validated = $request->validate([
-            'file' => ['required', 'file', 'max:10240', 'mimes:pdf,jpg,jpeg,png,doc,docx,xls,xlsx,csv,txt'],
+            'file' => ['required', 'file', 'max:'.Uploads::MAX_FILE_KILOBYTES, 'mimes:pdf,jpg,jpeg,png,doc,docx,xls,xlsx,csv,txt'],
+        ], [
+            'file.max' => 'Files up to '.Uploads::maxFileLabel().' are allowed.',
         ]);
         $file = $validated['file'];
         $extension = strtolower($file->extension() ?: 'bin');

@@ -12,6 +12,7 @@ use App\Services\Reports\ReportQualityService;
 use App\Services\Reports\ReportSubmissionService;
 use App\Support\Authorization\Permissions;
 use App\Support\Reports\ReportPeriodWindow;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -20,6 +21,9 @@ use Illuminate\Validation\ValidationException;
 
 class ReportWorkflowController extends Controller
 {
+    /** Largest report-summary page a client may request (index only). */
+    public const MAX_SUMMARY_PAGE_SIZE = 300;
+
     public function __construct(
         private readonly ReportSubmissionService $submissionService,
         private readonly ReportLockingService $lockingService,
@@ -38,8 +42,12 @@ class ReportWorkflowController extends Controller
             'period_ids' => ['sometimes', 'string'],
             'periodIds' => ['sometimes', 'string'],
             'page' => ['sometimes', 'integer', 'min:1'],
-            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
-            'perPage' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            // Summaries carry no field values, so a page of 300 is still small
+            // (about 200 KB raw, 30 KB compressed). The workspace fetches the
+            // whole reporting window in one round trip instead of three pages
+            // that serialised behind the dashboard's other requests.
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:'.self::MAX_SUMMARY_PAGE_SIZE],
+            'perPage' => ['sometimes', 'integer', 'min:1', 'max:'.self::MAX_SUMMARY_PAGE_SIZE],
         ]);
         $user = $request->user();
         $assignmentId = $validated['assignment_id'] ?? $validated['assignmentId'] ?? null;
@@ -60,9 +68,11 @@ class ReportWorkflowController extends Controller
             ->latest('updated_at');
 
         if (! Permissions::isAdminRole($user->role_key)) {
-            $query->whereHas('assignment', fn ($assignmentQuery) => $assignmentQuery
-                ->where('nurse_id', $user->id)
-                ->where('active', true));
+            // Assignment rows never stand in for the permission: an account
+            // without reports.viewAssigned (student rep, academic roles) gets
+            // the documented self-scoped empty page (E2E contract T-08), never
+            // the rows it may still hold from a former role.
+            $this->scopeToReportingPermission($query, $user);
         }
 
         if ($assignmentId !== null) {
@@ -140,10 +150,17 @@ class ReportWorkflowController extends Controller
         $user = $request->user();
         $query = ReportStatusHistory::query()
             ->with(['changedBy', 'report.department', 'report.template'])
-            ->when(! Permissions::isAdminRole($user->role_key), fn ($historyQuery) => $historyQuery
-                ->whereHas('report.assignment', fn ($assignmentQuery) => $assignmentQuery
+            ->when(! Permissions::isAdminRole($user->role_key), function ($historyQuery) use ($user): void {
+                if (! Permissions::userCan($user, Permissions::REPORTS_VIEW_ASSIGNED)) {
+                    $historyQuery->whereRaw('1 = 0');
+
+                    return;
+                }
+
+                $historyQuery->whereHas('report.assignment', fn ($assignmentQuery) => $assignmentQuery
                     ->where('nurse_id', $user->id)
-                    ->where('active', true)))
+                    ->where('active', true));
+            })
             ->latest('changed_at');
         $history = $query->paginate((int) ($validated['per_page'] ?? $validated['perPage'] ?? 100));
         $reports = $history->getCollection()
@@ -319,6 +336,26 @@ class ReportWorkflowController extends Controller
         $unlockedReport = $this->lockingService->setLockState($request->user(), $report, false);
 
         return response()->json($this->serializeReport($this->loadReport($unlockedReport), withTrends: true));
+    }
+
+    /**
+     * Non-admin listings are scoped to the caller's ACTIVE assignments, and only
+     * while the caller still holds the reporting permission. Without it the
+     * scope is empty: assignment rows that outlived a role change grant nothing.
+     *
+     * @param  Builder<Report>  $query
+     */
+    private function scopeToReportingPermission($query, $user): void
+    {
+        if (! Permissions::userCan($user, Permissions::REPORTS_VIEW_ASSIGNED)) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        $query->whereHas('assignment', fn ($assignmentQuery) => $assignmentQuery
+            ->where('nurse_id', $user->id)
+            ->where('active', true));
     }
 
     private function loadReport(Report $report): Report

@@ -45,11 +45,12 @@ class WorkspaceController extends Controller
 
     public function revision(Request $request): JsonResponse
     {
-        $userId = (string) $request->attributes->get('workspaceRevisionUserId');
+        /** @var array{uid: string, sid: string} $claims */
+        $claims = $request->attributes->get('workspaceRevisionClaims');
 
         return response()->json([
             'revision' => $this->workspaceRevision->current(),
-            'revisionToken' => $this->workspaceRevisionToken->issue($userId),
+            'revisionToken' => $this->workspaceRevisionToken->renew($claims),
         ]);
     }
 
@@ -165,7 +166,10 @@ class WorkspaceController extends Controller
         // paginated route endpoints and are loaded only by pages that use them.
         $profiles = collect([$user]);
 
-        $assignments = $isAdmin
+        // Only accounts that currently hold the reporting permission receive
+        // their assignments; a row left behind by a former nurse must not
+        // surface clinical scope in the bootstrap of a student representative.
+        $assignments = $isAdmin || ! Permissions::userCan($user, Permissions::REPORTS_VIEW_ASSIGNED)
             ? collect()
             : ReportAssignment::query()
                 ->with(['department', 'template'])
@@ -253,7 +257,10 @@ class WorkspaceController extends Controller
 
         return response()->json([
             'revision' => $this->workspaceRevision->for($user),
-            'revisionToken' => $this->workspaceRevisionToken->issue($user),
+            'revisionToken' => $this->workspaceRevisionToken->issue(
+                $user,
+                $request->hasSession() ? $request->session()->getId() : null,
+            ),
             'currentUser' => $this->profile($user),
             'academic' => $this->academicPayload($user, $isAdmin),
             'references' => [

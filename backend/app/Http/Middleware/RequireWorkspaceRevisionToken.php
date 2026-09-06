@@ -16,17 +16,18 @@ class RequireWorkspaceRevisionToken
 
     public function handle(Request $request, Closure $next): Response
     {
-        $userId = $this->tokens->userId(
+        $claims = $this->tokens->verify(
             (string) $request->header('X-Workspace-Revision-Token', ''),
         );
 
-        if ($userId === null) {
+        if ($claims === null) {
             return new JsonResponse([
-                'message' => 'The workspace revision credential is missing or expired.',
+                'message' => 'The workspace revision credential is missing, expired or no longer signed in.',
             ], Response::HTTP_PRECONDITION_REQUIRED);
         }
 
-        $request->attributes->set('workspaceRevisionUserId', $userId);
+        $request->attributes->set('workspaceRevisionUserId', $claims['uid']);
+        $request->attributes->set('workspaceRevisionClaims', $claims);
 
         return $next($request);
     }

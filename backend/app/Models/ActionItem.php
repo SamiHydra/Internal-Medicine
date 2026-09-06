@@ -38,6 +38,16 @@ class ActionItem extends Model
         ];
     }
 
+    /**
+     * Where a notification about this item should land. Always the deep link:
+     * the bare queue drops the reader on a list of every open action with no
+     * hint which one they were told about.
+     */
+    public function notificationRoute(): string
+    {
+        return sprintf('/admin/action-items?item=%s', $this->id);
+    }
+
     public function report(): BelongsTo
     {
         return $this->belongsTo(Report::class);

@@ -14,6 +14,7 @@ use App\Services\Academic\TeachingService;
 use App\Services\Admin\AdminAuditService;
 use App\Support\HospitalClock;
 use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -371,19 +372,39 @@ class UndergraduateAdminController extends Controller
         $weekEnd = $weekStart->copy()->endOfWeek();
 
         // Weekly movement is manual and one ward per subgroup-week: saving a
-        // week again re-points it.
-        $placement = SubgroupPlacement::query()->updateOrCreate(
-            [
-                'batch_id' => $validated['batchId'],
-                'subgroup' => $validated['subgroup'],
-                'week_starts_on' => $weekStart->toDateString(),
-            ],
-            [
-                'ward_id' => $validated['wardId'],
-                'week_ends_on' => $weekEnd->toDateString(),
-                'created_by' => $request->user()->id,
-            ],
-        );
+        // week again re-points it. Match the week with whereDate rather than
+        // updateOrCreate's equality: the date column round-trips with a time
+        // component on SQLite, so the equality missed the existing row and the
+        // insert hit the unique index as an HTTP 500 (QA-010). The unique index
+        // stays as the last line of defence.
+        $placement = SubgroupPlacement::query()
+            ->where('batch_id', $validated['batchId'])
+            ->where('subgroup', $validated['subgroup'])
+            ->whereDate('week_starts_on', $weekStart->toDateString())
+            ->first();
+
+        $attributes = [
+            'ward_id' => $validated['wardId'],
+            'week_ends_on' => $weekEnd->toDateString(),
+            'created_by' => $request->user()->id,
+        ];
+
+        try {
+            if ($placement) {
+                $placement->fill($attributes)->save();
+            } else {
+                $placement = SubgroupPlacement::query()->create([
+                    'batch_id' => $validated['batchId'],
+                    'subgroup' => $validated['subgroup'],
+                    'week_starts_on' => $weekStart->toDateString(),
+                    ...$attributes,
+                ]);
+            }
+        } catch (UniqueConstraintViolationException) {
+            throw ValidationException::withMessages([
+                'weekStartsOn' => ['This subgroup already has a placement for that week. Reload and save the week again to re-point it.'],
+            ]);
+        }
 
         // Re-snapshot the week's pending sessions to the (possibly new) ward.
         $this->teachingService->generateRange($weekStart, $weekEnd);

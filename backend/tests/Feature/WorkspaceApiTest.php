@@ -24,6 +24,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class WorkspaceApiTest extends TestCase
@@ -236,7 +237,10 @@ class WorkspaceApiTest extends TestCase
         $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
         $period = ReportingPeriod::query()->orderByDesc('week_start')->firstOrFail();
         $report = $this->report($this->assignment($this->nurse, $department), $period);
+        // The credential is bound to a browser session (QA-016): a stateful
+        // request (Referer on Sanctum's stateful list) carries one.
         $workspace = $this->actingAs($this->nurse)
+            ->withHeader('Referer', 'http://localhost')
             ->getJson('/api/workspace')
             ->assertOk()
             ->assertJsonStructure(['revision', 'revisionToken'])
@@ -279,9 +283,11 @@ class WorkspaceApiTest extends TestCase
     public function test_workspace_revision_rejects_missing_tampered_and_expired_credentials(): void
     {
         $token = $this->actingAs($this->nurse)
+            ->withHeader('Referer', 'http://localhost')
             ->getJson('/api/workspace')
             ->assertOk()
             ->json('revisionToken');
+        $this->assertIsString($token);
 
         $this->getJson('/api/workspace/revision')->assertStatus(428);
         $this->getJson('/api/workspace/revision', [
@@ -492,5 +498,66 @@ class WorkspaceApiTest extends TestCase
             'quarter_label' => sprintf('Q%d %d', $start->quarter, $start->year),
             'year_num' => $start->year,
         ]);
+    }
+
+    public function test_workspace_revision_credential_dies_with_the_session_that_issued_it(): void
+    {
+        // A browser request (Sanctum stateful: Referer on the stateful list)
+        // carries a session; the credential is bound to that session (QA-016).
+        $token = $this->actingAs($this->nurse)
+            ->withHeader('Referer', 'http://localhost')
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->json('revisionToken');
+        $this->assertIsString($token);
+        $sessionId = session()->getId();
+
+        $renewed = $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $token,
+        ])->assertOk()->json('revisionToken');
+        $this->assertIsString($renewed);
+
+        // Signing that session out revokes the original and every renewal.
+        // (JSON test requests only carry cookies with withCredentials().)
+        $this->actingAs($this->nurse)
+            ->withHeader('Referer', 'http://localhost')
+            ->withCredentials()
+            ->withCookie(config('session.cookie'), $sessionId)
+            ->postJson('/api/auth/logout')
+            ->assertNoContent();
+
+        foreach ([$token, $renewed] as $credential) {
+            $this->getJson('/api/workspace/revision', [
+                'X-Workspace-Revision-Token' => $credential,
+            ])->assertStatus(428);
+        }
+
+        // A fresh sign-in (a browser receives a new session id after logout;
+        // the test client would otherwise keep replaying the old cookie) issues
+        // a working credential again, and the revoked one stays dead.
+        $fresh = $this->actingAs($this->nurse)
+            ->withHeader('Referer', 'http://localhost')
+            ->withCookie(config('session.cookie'), Str::random(40))
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->json('revisionToken');
+        $this->assertIsString($fresh);
+        $this->assertNotSame($token, $fresh);
+        $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $fresh,
+        ])->assertOk();
+        $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $token,
+        ])->assertStatus(428);
+    }
+
+    public function test_workspace_revision_credential_is_only_issued_to_sessions(): void
+    {
+        // Without a session there is nothing to bind to, so no credential is
+        // issued and the poll stays off for that client.
+        $this->actingAs($this->nurse)
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->assertJsonPath('revisionToken', null);
     }
 }

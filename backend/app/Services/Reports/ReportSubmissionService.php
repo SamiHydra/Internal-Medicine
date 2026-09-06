@@ -13,6 +13,7 @@ use App\Models\ReportStatusHistory;
 use App\Models\User;
 use App\Services\Analytics\DashboardAnalyticsService;
 use App\Support\Authorization\Permissions;
+use App\Support\HospitalClock;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -42,6 +43,8 @@ class ReportSubmissionService
      */
     public function save(User $actor, ReportAssignment $assignment, ReportingPeriod $period, array $values, bool $submit = false, bool $invalidateAnalytics = true): Report
     {
+        $this->assertPeriodHasStarted($period);
+
         $report = DB::transaction(function () use ($actor, $assignment, $period, $values, $submit): Report {
             $assignment->loadMissing(['department', 'template.fieldDefinitions']);
 
@@ -441,6 +444,27 @@ class ReportSubmissionService
         return $submit ? 'submitted' : 'draft';
     }
 
+    /**
+     * Reporting periods are generated six months ahead so upcoming weeks are
+     * ready when they arrive, but a report can only describe a week that has
+     * started. A future-week report was accepted and then invisible in every
+     * listing, which only shows weeks up to the current one (QA-009). The rule
+     * uses the hospital calendar (Africa/Nairobi), like every other date-only
+     * decision, so a Monday just after midnight in Nairobi is already open.
+     *
+     * @throws ValidationException
+     */
+    private function assertPeriodHasStarted(ReportingPeriod $period): void
+    {
+        $weekStart = $period->week_start?->toDateString();
+
+        if ($weekStart !== null && $weekStart > HospitalClock::today()->toDateString()) {
+            throw ValidationException::withMessages([
+                'reportingPeriodId' => ['This reporting week has not started yet; reports can only be filed for the current or an earlier week.'],
+            ]);
+        }
+    }
+
     private function authorizeAssignmentEdit(User $actor, ReportAssignment $assignment): void
     {
         if (! $actor->active) {
@@ -449,6 +473,12 @@ class ReportSubmissionService
 
         if (Permissions::isAdminRole($actor->role_key)) {
             return;
+        }
+
+        // The assignment row alone is not enough: the account must still hold
+        // the reporting permission (an account moved off the nurse role does not).
+        if (! Permissions::userCan($actor, Permissions::REPORTS_SUBMIT)) {
+            throw new AuthorizationException('You are not allowed to edit this assignment.');
         }
 
         if ($assignment->nurse_id !== $actor->id || ! $assignment->active) {

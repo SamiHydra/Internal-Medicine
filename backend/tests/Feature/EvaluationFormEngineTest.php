@@ -712,7 +712,11 @@ class EvaluationFormEngineTest extends TestCase
         DB::flushQueryLog();
         DB::enableQueryLog();
         $snapshot = app(AcademicAnalyticsService::class)->snapshot($filters);
-        $coldQueries = collect(DB::getQueryLog())->pluck('query')->map('strtolower');
+        // MariaDB quotes identifiers with backticks, SQLite with double quotes;
+        // normalise so the "hydrated once" assertions hold on both lanes (QA-008).
+        $coldQueries = collect(DB::getQueryLog())
+            ->pluck('query')
+            ->map(fn (string $sql): string => str_replace('`', '"', strtolower($sql)));
         DB::disableQueryLog();
 
         $this->assertSame(2, $snapshot['summary']['evaluationCount']);

@@ -61,9 +61,15 @@ class WorkspaceRevisionLedgerTest extends TestCase
 
     public function test_every_workspace_mutating_table_has_insert_update_and_delete_triggers(): void
     {
-        $actual = collect(DB::select(
-            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'workspace_revision_%'",
-        ))->pluck('name')->sort()->values()->all();
+        // Trigger metadata lives in a different catalogue per engine (QA-008):
+        // sqlite_master on the dev lane, information_schema on MariaDB/MySQL.
+        $actual = collect(match (DB::connection()->getDriverName()) {
+            'sqlite' => DB::select("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'workspace_revision_%'"),
+            default => DB::select(
+                'SELECT trigger_name AS name FROM information_schema.triggers WHERE trigger_schema = ? AND trigger_name LIKE ?',
+                [DB::connection()->getDatabaseName(), 'workspace_revision_%'],
+            ),
+        })->pluck('name')->sort()->values()->all();
 
         $expected = collect(self::TABLES)
             ->flatMap(fn (string $table): array => [
@@ -80,7 +86,10 @@ class WorkspaceRevisionLedgerTest extends TestCase
 
     public function test_ledger_tracks_all_write_shapes_and_rolls_back_with_the_domain_write(): void
     {
-        $this->assertSame(0, $this->version());
+        // Relative to whatever the ledger already reads: on the MariaDB lane the
+        // concurrency regression test commits real rows outside a transaction,
+        // so the counter is not 0 when this test starts (QA-008).
+        $base = $this->version();
 
         DB::table('roles')->insert([
             'role_key' => 'ledger_test',
@@ -89,10 +98,10 @@ class WorkspaceRevisionLedgerTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
-        $this->assertSame(1, $this->version());
+        $this->assertSame($base + 1, $this->version());
 
         DB::table('roles')->where('role_key', 'ledger_test')->update(['label' => 'Updated']);
-        $this->assertSame(2, $this->version());
+        $this->assertSame($base + 2, $this->version());
 
         try {
             DB::transaction(function (): void {
@@ -102,10 +111,10 @@ class WorkspaceRevisionLedgerTest extends TestCase
         } catch (RuntimeException) {
             // Expected: the ledger update must roll back with the domain row.
         }
-        $this->assertSame(2, $this->version());
+        $this->assertSame($base + 2, $this->version());
 
         DB::table('roles')->where('role_key', 'ledger_test')->delete();
-        $this->assertSame(3, $this->version());
+        $this->assertSame($base + 3, $this->version());
     }
 
     public function test_service_reads_only_the_single_ledger_value(): void

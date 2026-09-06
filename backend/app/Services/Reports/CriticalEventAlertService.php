@@ -96,7 +96,7 @@ class CriticalEventAlertService
                 // Point at the durable action item, not the source report: the
                 // report view carries no acknowledge/assign/resolve control, while
                 // the action sheet already links back to the report it came from.
-                'related_route' => sprintf('/admin/action-items?item=%s', $item->id),
+                'related_route' => $item->notificationRoute(),
                 'related_entity' => 'action_item',
                 'related_id' => $item->id,
                 'created_at' => $now,

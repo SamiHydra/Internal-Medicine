@@ -178,9 +178,22 @@ class MorningSessionController extends Controller
             $result = $this->morningSessions->cancel($morningSession, $validated['reason'], $request->user());
 
             if ($result['transitioned']) {
-                $this->auditService->record($request->user(), 'cancel', 'morning_session', $result['session']->id, null, [
-                    'reason' => trim($validated['reason']),
-                ], $request);
+                $this->auditService->record(
+                    $request->user(),
+                    'cancel',
+                    'morning_session',
+                    $result['session']->id,
+                    [
+                        'status' => $result['previousStatus'],
+                        'attendanceRows' => $result['removedAttendance'],
+                    ],
+                    [
+                        'status' => 'cancelled',
+                        'reason' => trim($validated['reason']),
+                        'attendanceRows' => 0,
+                    ],
+                    $request,
+                );
             }
 
             return $result['session'];

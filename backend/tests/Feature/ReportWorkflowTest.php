@@ -12,6 +12,7 @@ use App\Models\ReportingPeriod;
 use App\Models\ReportStatusHistory;
 use App\Models\ReportTemplate;
 use App\Models\User;
+use App\Services\Reports\ReportSubmissionService;
 use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportFieldDefinitionSeeder;
 use Database\Seeders\ReportTemplateSeeder;
@@ -19,6 +20,7 @@ use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class ReportWorkflowTest extends TestCase
@@ -264,13 +266,41 @@ class ReportWorkflowTest extends TestCase
     {
         $report = $this->submitReport();
         $this->actingAs($this->admin)->postJson("/api/reports/{$report->id}/lock")->assertOk();
+        $values = $this->inpatientValues(totalPatientDays: 99, dischargedHome: 2, dischargedAma: 1);
+
+        // QA-027: locked means read-only for everyone. The policy refuses the
+        // administrator too (403, not the service's 422); unlocking is the
+        // only way back into edit mode.
+        $this->actingAs($this->admin)
+            ->putJson("/api/reports/{$report->id}", ['values' => $values])
+            ->assertForbidden();
+        $this->actingAs($this->admin)
+            ->postJson("/api/reports/{$report->id}/submit", ['values' => $values])
+            ->assertForbidden();
+        $this->actingAs($this->nurse)
+            ->putJson("/api/reports/{$report->id}", ['values' => $values])
+            ->assertForbidden();
+
+        // Defense in depth: the submission service keeps its own guard for any
+        // caller that reaches it without the policy (imports, console paths).
+        try {
+            app(ReportSubmissionService::class)->save(
+                $this->admin,
+                $this->assignment,
+                $this->period,
+                $values,
+            );
+            $this->fail('the service must refuse to write a locked report');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('report', $exception->errors());
+        }
+
+        $this->actingAs($this->admin)->postJson("/api/reports/{$report->id}/unlock")->assertOk();
 
         $this->actingAs($this->admin)
-            ->putJson("/api/reports/{$report->id}", [
-                'values' => $this->inpatientValues(totalPatientDays: 99, dischargedHome: 2, dischargedAma: 1),
-            ])
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('report');
+            ->putJson("/api/reports/{$report->id}", ['values' => $values])
+            ->assertOk()
+            ->assertJsonPath('values.total_patient_days.dailyValues.monday', 99);
     }
 
     public function test_other_nurses_cannot_save_for_unassigned_reports(): void
@@ -527,8 +557,14 @@ class ReportWorkflowTest extends TestCase
                 ->assertJsonPath('meta.perPage', 5)
                 ->assertJsonPath('meta.lastPage', 3);
 
+            // Summaries page up to 300 (one reporting window per round trip); beyond
+            // that the request is refused rather than silently capped.
             $this->actingAs($this->admin)
-                ->getJson('/api/reports?perPage=101')
+                ->getJson('/api/reports?perPage=300')
+                ->assertOk()
+                ->assertJsonPath('meta.perPage', 300);
+            $this->actingAs($this->admin)
+                ->getJson('/api/reports?perPage=301')
                 ->assertUnprocessable()
                 ->assertJsonValidationErrors('perPage');
         } finally {
@@ -598,5 +634,47 @@ class ReportWorkflowTest extends TestCase
                 'dailyValues' => ['monday' => '08:30'],
             ],
         ];
+    }
+
+    public function test_reports_cannot_be_filed_for_a_week_that_has_not_started(): void
+    {
+        // Wednesday 2026-09-09 in Africa/Nairobi: the current week began on 2026-09-07 (QA-009).
+        Carbon::setTestNow(Carbon::parse('2026-09-09 10:00:00', 'Africa/Nairobi'));
+
+        try {
+            $cases = [
+                ['2026-08-31', true],
+                ['2026-09-07', true],
+                ['2026-09-14', false],
+                ['2026-11-02', false],
+            ];
+
+            foreach ($cases as [$weekStart, $allowed]) {
+                $period = $this->createReportingPeriod($weekStart);
+                $response = $this->actingAs($this->nurse)->postJson('/api/reports', [
+                    'assignmentId' => $this->assignment->id,
+                    'reportingPeriodId' => $period->id,
+                    'values' => $this->inpatientValues(),
+                ]);
+
+                if ($allowed) {
+                    $response->assertCreated();
+                    $this->assertDatabaseHas('reports', ['reporting_period_id' => $period->id]);
+                } else {
+                    $response->assertUnprocessable()->assertJsonValidationErrors('reportingPeriodId');
+                    $this->assertDatabaseMissing('reports', ['reporting_period_id' => $period->id]);
+                }
+            }
+
+            // Administrators are held to the same calendar.
+            $nextWeek = ReportingPeriod::query()->whereDate('week_start', '2026-09-14')->firstOrFail();
+            $this->actingAs($this->admin)->postJson('/api/reports', [
+                'assignmentId' => $this->assignment->id,
+                'reportingPeriodId' => $nextWeek->id,
+                'values' => $this->inpatientValues(),
+            ])->assertUnprocessable()->assertJsonValidationErrors('reportingPeriodId');
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 }

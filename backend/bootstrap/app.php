@@ -6,9 +6,11 @@ use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\EnsureRole;
 use App\Http\Middleware\RequireWorkspaceRevisionToken;
 use App\Http\Middleware\SecurityHeaders;
+use App\Support\Uploads;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Exceptions\PostTooLargeException;
 use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -65,4 +67,20 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->shouldRenderJsonWhen(
             fn ($request, $throwable): bool => $request->is('api/*') || $request->expectsJson(),
         );
+
+        // A body PHP rejected outright (post_max_size) never reaches a controller,
+        // so explain the limit here instead of the bare framework message (QA-005).
+        $exceptions->render(function (PostTooLargeException $exception, $request) {
+            if (! $request->is('api/*') && ! $request->expectsJson()) {
+                return null;
+            }
+
+            return response()->json([
+                'message' => sprintf(
+                    'The upload is larger than this server accepts in one request (post_max_size %s). Files up to %s are allowed; ask an administrator to raise the PHP-FPM pool limits.',
+                    ini_get('post_max_size') ?: 'unknown',
+                    Uploads::maxFileLabel(),
+                ),
+            ], 413);
+        });
     })->create();

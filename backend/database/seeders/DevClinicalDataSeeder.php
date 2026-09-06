@@ -339,13 +339,12 @@ class DevClinicalDataSeeder extends Seeder
             ->with(['department', 'template.fieldDefinitions', 'fieldValues'])
             ->chunkById(100, function (Collection $reports) use ($alerts, $now, &$raised): void {
                 foreach ($reports as $report) {
-                    // The same route the live path builds
-                    // (ReportSubmissionService::relatedRoute). A seeded link of
-                    // any other shape sends every admin who clicks the alert to
-                    // the not-found page, because the SPA navigates to this
-                    // string verbatim.
-                    $route = sprintf('/reports/%s/%s', $report->assignment_id, $report->reporting_period_id);
-                    $raised += $alerts->notify($report, $route, $now) > 0 ? 1 : 0;
+                    // The service builds the notification route itself from the
+                    // action item it raises (ActionItem::notificationRoute), so
+                    // the seeded link is exactly the one a live submission gets.
+                    // Pinned by DevSeederSmokeTest: a signature change here must
+                    // fail the suite, not the next `db:seed` (QA-002).
+                    $raised += $alerts->notify($report, $now) > 0 ? 1 : 0;
                 }
             });
 

@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Api\Concerns\SerializesAdminResources;
 use App\Http\Controllers\Controller;
+use App\Models\RepAssignment;
+use App\Models\ReportAssignment;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Admin\AdminAuditService;
@@ -12,13 +14,26 @@ use App\Support\Authorization\Workspaces;
 use App\Support\RoleTitles;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
+use Illuminate\Validation\ValidationException;
 
 class UserController extends Controller
 {
     use SerializesAdminResources;
+
+    /**
+     * Roles an administrator may hand out directly. Everyone else (resident,
+     * consultant) arrives through public signup plus approval, and superadmin
+     * exists only via the console command. `update` accepts the same list as
+     * `store` so a role picked by mistake can be corrected in place instead of
+     * forcing the account to be deactivated and rebuilt under a new email.
+     *
+     * @var list<string>
+     */
+    private const ASSIGNABLE_ROLES = ['admin', 'nurse', 'student_rep'];
 
     public function __construct(
         private readonly AdminAuditService $auditService,
@@ -89,14 +104,16 @@ class UserController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $this->canonicalizeEmail($request);
+
         $validated = $request->validate([
             'full_name' => ['required_without:fullName', 'string', 'max:255'],
             'fullName' => ['required_without:full_name', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'username' => ['nullable', 'string', 'min:3', 'max:64', 'regex:/^[a-zA-Z0-9._-]+$/', 'unique:users,username'],
             'password' => ['required', 'string', Password::defaults()],
-            'role_key' => ['required_without:role', Rule::in(['admin', 'nurse', 'student_rep'])],
-            'role' => ['required_without:role_key', Rule::in(['admin', 'nurse', 'student_rep'])],
+            'role_key' => ['required_without:role', Rule::in(self::ASSIGNABLE_ROLES)],
+            'role' => ['required_without:role_key', Rule::in(self::ASSIGNABLE_ROLES)],
             'title' => ['nullable', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:32'],
             'active' => ['sometimes', 'boolean'],
@@ -138,14 +155,15 @@ class UserController extends Controller
     public function update(Request $request, User $user): JsonResponse
     {
         Gate::authorize('update', $user);
+        $this->canonicalizeEmail($request);
 
         $validated = $request->validate([
             'full_name' => ['sometimes', 'string', 'max:255'],
             'fullName' => ['sometimes', 'string', 'max:255'],
             'email' => ['sometimes', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
             'username' => ['sometimes', 'nullable', 'string', 'min:3', 'max:64', 'regex:/^[a-zA-Z0-9._-]+$/', Rule::unique('users', 'username')->ignore($user->id)],
-            'role_key' => ['sometimes', Rule::in(['admin', 'nurse'])],
-            'role' => ['sometimes', Rule::in(['admin', 'nurse'])],
+            'role_key' => ['sometimes', Rule::in(self::ASSIGNABLE_ROLES)],
+            'role' => ['sometimes', Rule::in(self::ASSIGNABLE_ROLES)],
             'title' => ['sometimes', 'nullable', 'string', 'max:255'],
             'phone' => ['sometimes', 'nullable', 'string', 'max:32'],
             // Academic placement attributes (V2): residents carry a training
@@ -179,6 +197,15 @@ class UserController extends Controller
         if ($nextRole !== null) {
             $updates['role_key'] = $nextRole;
             $updates['title'] ??= $this->defaultTitle($nextRole);
+
+            // Reps carry no academic placement (no training year, rotation
+            // group, or section), so a role correction must not leave the old
+            // role's placement behind on the row.
+            if ($nextRole === 'student_rep') {
+                $updates['training_year'] = null;
+                $updates['rotation_group'] = null;
+                $updates['section_id'] = null;
+            }
         }
 
         foreach ([
@@ -195,8 +222,20 @@ class UserController extends Controller
             $updates['email'] = strtolower(trim($updates['email']));
         }
 
-        $user->forceFill($updates)->save();
-        $user->refresh();
+        // The role guard and the write share one transaction on a locked row so
+        // a concurrent assignment grant cannot slip between the check and the
+        // save: a role never changes while stale clinical scope remains active.
+        $user = DB::transaction(function () use ($user, $nextRole, $updates): User {
+            $locked = User::query()->lockForUpdate()->findOrFail($user->id);
+
+            if ($nextRole !== null && $nextRole !== $locked->role_key) {
+                $this->assertRoleChangeIsSafe($locked, $nextRole);
+            }
+
+            $locked->forceFill($updates)->save();
+
+            return $locked->refresh();
+        });
 
         $this->auditService->record($request->user(), 'update', 'user', $user->id, $oldValues, $this->auditUserValues($user), $request);
 
@@ -261,6 +300,67 @@ class UserController extends Controller
         $this->auditService->record($request->user(), 'deactivate', 'user', $user->id, $oldValues, $this->auditUserValues($user), $request);
 
         return response()->json($this->serializeUser($user));
+    }
+
+    /**
+     * A role change must never leave scope behind that only made sense for the
+     * old role. Both directions are guarded:
+     *
+     * - A representative's batch assignment is only valid while the account
+     *   still holds the rep role (UndergraduateAdminController::assertEligibleRep),
+     *   so moving them off it would silently leave a batch with a rep who can no
+     *   longer record anything.
+     * - A nurse's active report assignments are clinical scope. Leaving them on
+     *   an account that no longer holds the reporting permission is exactly the
+     *   state the report policies now refuse; refusing the transition keeps the
+     *   data model honest and makes the administrator retire the assignments
+     *   deliberately (Users & Access, assignment studio) first.
+     */
+    private function assertRoleChangeIsSafe(User $user, string $nextRole): void
+    {
+        if ($nextRole === $user->role_key) {
+            return;
+        }
+
+        if ($user->role_key === 'student_rep') {
+            $hasActiveAssignment = RepAssignment::query()
+                ->where('user_id', $user->id)
+                ->where('active', true)
+                ->exists();
+
+            if ($hasActiveAssignment) {
+                throw ValidationException::withMessages([
+                    'role' => ['End this representative\'s active batch assignment before changing their role.'],
+                ]);
+            }
+        }
+
+        if ($user->role_key === 'nurse') {
+            $hasActiveReportAssignment = ReportAssignment::query()
+                ->where('nurse_id', $user->id)
+                ->where('active', true)
+                ->exists();
+
+            if ($hasActiveReportAssignment) {
+                throw ValidationException::withMessages([
+                    'role' => ['Retire this nurse\'s active reporting assignments before changing their role.'],
+                ]);
+            }
+        }
+    }
+
+    /**
+     * Emails are one identity regardless of letter case. The model lowercases on
+     * write, but the `unique` rule compared the raw input, so a case-variant
+     * duplicate passed validation and then hit the database's unique index as
+     * an HTTP 500 on SQLite (MariaDB's collation happened to mask it). Canonicalise
+     * before validating so every engine answers 422 (QA-017).
+     */
+    private function canonicalizeEmail(Request $request): void
+    {
+        if ($request->has('email') && is_string($request->input('email'))) {
+            $request->merge(['email' => strtolower(trim($request->input('email')))]);
+        }
     }
 
     /**

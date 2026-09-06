@@ -9,6 +9,7 @@ use App\Services\Reports\ReportImportTemplateService;
 use App\Support\Export\SpreadsheetSafe;
 use App\Support\Export\XlsxWriter;
 use App\Support\Import\XlsxReader;
+use App\Support\Uploads;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -61,9 +62,15 @@ class ReportImportController extends Controller
 
     public function import(Request $request): JsonResponse
     {
+        if ($failure = Uploads::failureMessage($request->file('file'))) {
+            throw ValidationException::withMessages(['file' => [$failure]]);
+        }
+
         $validated = $request->validate([
-            'file' => ['required', 'file', 'max:10240'],
+            'file' => ['required', 'file', 'max:'.Uploads::MAX_FILE_KILOBYTES],
             'submit' => ['sometimes', 'boolean'],
+        ], [
+            'file.max' => 'Files up to '.Uploads::maxFileLabel().' are allowed.',
         ]);
 
         $file = $request->file('file');

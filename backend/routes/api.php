@@ -38,10 +38,14 @@ use App\Http\Controllers\Api\WorkspaceController;
 use Illuminate\Support\Facades\Route;
 use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
+// Each public auth action keeps its own limiter bucket (the third throttle
+// argument is the key prefix). With the shared default key, five failed logins
+// from one address also locked forgot-password and registration for a minute
+// (QA-024). The three registration tracks share one "registration" bucket.
 Route::prefix('auth')->group(function (): void {
-    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
-    Route::post('/forgot-password', [PasswordResetController::class, 'forgot'])->middleware('throttle:5,1');
-    Route::post('/reset-password', [PasswordResetController::class, 'reset'])->middleware('throttle:5,1');
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1,login');
+    Route::post('/forgot-password', [PasswordResetController::class, 'forgot'])->middleware('throttle:5,1,forgot-password');
+    Route::post('/reset-password', [PasswordResetController::class, 'reset'])->middleware('throttle:5,1,reset-password');
 
     Route::middleware('auth:sanctum')->group(function (): void {
         // Same per-user ceiling the rest of the API uses, and deliberately the
@@ -65,9 +69,9 @@ Route::prefix('auth')->group(function (): void {
     });
 });
 
-Route::post('/access-requests', [AccessRequestSubmissionController::class, 'store'])->middleware('throttle:10,1');
-Route::post('/academic-access-requests', [AcademicRegistrationController::class, 'store'])->middleware('throttle:10,1');
-Route::post('/admin-access-requests', [AdminRegistrationController::class, 'store'])->middleware('throttle:10,1');
+Route::post('/access-requests', [AccessRequestSubmissionController::class, 'store'])->middleware('throttle:10,1,registration');
+Route::post('/academic-access-requests', [AcademicRegistrationController::class, 'store'])->middleware('throttle:10,1,registration');
+Route::post('/admin-access-requests', [AdminRegistrationController::class, 'store'])->middleware('throttle:10,1,registration');
 
 // The workspace bootstrap issues a short-lived signed credential for this
 // read-only global ledger. Removing Sanctum's stateful wrapper here avoids a
