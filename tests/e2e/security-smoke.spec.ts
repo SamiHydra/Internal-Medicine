@@ -10,8 +10,12 @@ test.describe('Security headers', () => {
     const ctx = await anonContext()
     const res = await ctx.get('/api/workspace', { headers: ajaxHeaders() }) // 401, but headers still set
     const h = res.headers()
-    expect(h['x-content-type-options']).toBe('nosniff')
-    expect(h['x-frame-options']).toBe('DENY')
+    // Behind nginx the server-level add_header and Laravel's SecurityHeaders
+    // middleware both emit these; identical duplicates are inert for browsers,
+    // so assert the distinct value rather than a single occurrence.
+    const distinct = (value: string | undefined) => [...new Set((value ?? '').split(',').map((v) => v.trim()))]
+    expect(distinct(h['x-content-type-options'])).toEqual(['nosniff'])
+    expect(distinct(h['x-frame-options'])).toEqual(['DENY'])
     expect(h['referrer-policy']).toContain('strict-origin')
     expect(h['content-security-policy'] ?? '').toContain("default-src 'self'")
     expect(h['permissions-policy'] ?? '').toMatch(/camera|geolocation/)

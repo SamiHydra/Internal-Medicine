@@ -2138,7 +2138,9 @@ export function AdminDashboardPage() {
           </div>
 
           <div className={cn('space-y-5', chartPanelClass)}>
-            <div className="flex items-end justify-between gap-4">
+            {/* flex-wrap: on a 320px phone with wider fallback fonts the badge group
+                otherwise pokes past the card (found by the Linux sweep). */}
+            <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#74777f]">
                   {trendScale === 'monthly' ? 'Monthly trend' : 'Weekly trend'}

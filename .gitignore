@@ -63,6 +63,7 @@ artifacts/pre-deployment-qa/evidence/
 artifacts/pre-deployment-qa/PLAYWRIGHT_TESTS/.auth/
 tests/e2e/.auth/
 test-results/
+test-results-external/
 playwright-report/
 .lighthouseci/
 dist-*/

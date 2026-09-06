@@ -119,4 +119,12 @@ fi
 # by the www-data FPM workers. Hand it back before serving.
 chown -R www-data:www-data storage bootstrap/cache 2>/dev/null || true
 
+if [ "${ROLE}" = "worker" ]; then
+    # deploy/queue-worker.service runs the workers as www-data, the same user
+    # as PHP-FPM. Running them as root here left every export directory the
+    # worker created 0700 root-owned, so FPM answered 404 for a file that
+    # existed (found during the 2026-09 release validation).
+    exec runuser -u www-data -- "$@"
+fi
+
 exec "$@"

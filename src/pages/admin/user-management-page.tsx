@@ -784,7 +784,9 @@ export function UserManagementPage() {
         className={sectionClass}
       >
         <div className="space-y-5">
-          <div className="flex flex-col gap-4 border-b border-[#eef2f6] pb-5 sm:flex-row sm:items-center sm:justify-between">
+          {/* Search and count sit beside the title only from lg: beside the sidebar a
+              tablet column is too narrow for both (found by the Linux sweep at 768px). */}
+          <div className="flex flex-col gap-4 border-b border-[#eef2f6] pb-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <SectionEyebrow label="Directory" />
               <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
@@ -811,7 +813,7 @@ export function UserManagementPage() {
                 </p>
               ) : null}
             </div>
-            <div className="flex w-full items-center gap-3 sm:w-auto">
+            <div className="flex w-full items-center gap-3 lg:w-auto">
               <div className="relative w-full sm:w-64">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9aa7b8]" />
                 <Input

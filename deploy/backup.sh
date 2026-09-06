@@ -75,7 +75,10 @@ if [ ! -d "${STORAGE_DIR}/app" ]; then
   echo "$(date -Is) ERROR: storage directory ${STORAGE_DIR}/app not found (set STORAGE_DIR)" >&2
   exit 1
 fi
-tar --exclude='app/analytics-exports' -czf "${STORAGE_ARCHIVE}" -C "${STORAGE_DIR}" app
+# The local disk root is storage/app/private on this Laravel version; the
+# older storage/app layout is excluded too so a moved root never silently
+# re-includes the regenerable export files.
+tar --exclude='app/private/analytics-exports' --exclude='app/analytics-exports'   -czf "${STORAGE_ARCHIVE}" -C "${STORAGE_DIR}" app
 echo "$(date -Is) wrote ${STORAGE_ARCHIVE} ($(du -h "${STORAGE_ARCHIVE}" | cut -f1))"
 
 # 30-day rotation on the primary directory.

@@ -40,7 +40,10 @@ function BrandLockup({
         <div className="min-w-0">
           <p
             className={cn(
-              'whitespace-nowrap font-bold uppercase tracking-[0.08em]',
+              // truncate, not nowrap: on hosts without the design fonts (Ubuntu
+              // fallbacks are wider) the lockup must clip inside its column
+              // instead of widening the page (found by the CI sweep at 320px).
+              'truncate font-bold uppercase tracking-[0.08em]',
               inverted ? 'text-[#f0b429]' : 'text-[#005db6]',
               compact ? 'text-[0.62rem]' : 'text-[0.78rem]',
             )}
@@ -49,7 +52,7 @@ function BrandLockup({
           </p>
           <p
             className={cn(
-              'whitespace-nowrap font-display leading-tight',
+              'truncate font-display leading-tight',
               inverted ? 'text-white' : 'text-[#000a1e]',
               compact ? 'text-base' : 'text-[1.15rem]',
             )}
@@ -356,7 +359,7 @@ export function AppShell({ children }: PropsWithChildren) {
             <div className="flex items-center justify-between gap-4 px-4 py-3 md:px-6 lg:px-8">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+                  <p className="truncate text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
                     {sectionEyebrow}
                   </p>
                   <h1 className="mt-1 truncate pb-0.5 font-display text-[1.3rem] font-bold leading-tight tracking-[-0.03em] text-[#000a1e] md:text-[1.5rem]">
@@ -365,7 +368,7 @@ export function AppShell({ children }: PropsWithChildren) {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2.5 md:gap-3">
+              <div className="flex shrink-0 items-center gap-2.5 md:gap-3">
                 {/* Ambient status reads as text, not as a control: no border, no
                     display face. The dot still carries the syncing state. */}
                 <div className="hidden items-center gap-2 pr-1 text-[13px] text-[#5b6169] lg:flex">
