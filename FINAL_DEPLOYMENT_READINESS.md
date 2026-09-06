@@ -228,7 +228,18 @@ The workflow triggers on pull requests and pushes to `main`, so the release comm
 | Deployment shell scripts (bash -n, ShellCheck) | success |
 | Isolated Playwright gate | failure on the first run, on one spec only: the new overflow sweep found two admin routes 6 to 8 px too wide with Ubuntu's fallback fonts (the dashboard "Weekly trend" header at 320 px and the Users page header beside the sidebar at 768 px); every other spec in the job passed (the run reached the last spec). Both were fixed in `87d0aef` (the chart header wraps, the Users header stacks until `lg`, the shell brand and eyebrow clip) and reproduced in a Linux Playwright container (`mcr.microsoft.com/playwright:v1.60.0-jammy`, fallback font WenQuanYi Zen Hei), where the 320 px case passed after the fix. |
 
-A second run on the fixed tree (`87d0aef` plus this documentation commit) was started by the push that carries this file; its per-job results are recorded in the closing commit of this pass.
+Second run on the fixed tree (run 34052298633, commit `4fce246`):
+
+| Job | Result |
+|---|---|
+| Frontend | success (60 s) |
+| Backend SQLite (composer audit, Pint, tests) | success (49 s) |
+| Backend MariaDB | success (100 s) |
+| Mobile Lighthouse budgets (with the production-bundle interaction budgets) | success (236 s) |
+| Deployment shell scripts (bash -n, ShellCheck) | success (15 s) |
+| Isolated Playwright gate | success (918 s) |
+
+All six jobs green on the exact release-candidate tree, including the overflow sweep at every width with Ubuntu's fonts and the production-bundle interaction budgets. A docs-only commit recording these numbers follows; it changes no code.
 
 ## Branch protection (REMOTE VERIFIED)
 
@@ -296,7 +307,7 @@ No Ubuntu server or staging host was reachable from this session: `deploy.sh --d
 
 ## Final verdict (second pass)
 
-**Deployable: YES.** Confidence is recorded in the closing commit once the second remote CI run has been observed.
+**Deployable: YES.** Remote CI is green on the release candidate, every local and parity gate passed, and the only open items are host-side operator steps and the SMTP/SMS transports, which cannot be exercised from this workstation. Confidence: **HIGH for the release candidate; MEDIUM for go-live until the host checklist has been executed on the Ubuntu server and one real password-reset email has been delivered through the production SMTP transport**.
 
 What is proven: local gates green on the final tree (frontend verify, backend 396, isolated Playwright 197/0/2); MariaDB 396 green; dependency audits clean; fresh install and fresh seed green; production configuration reviewed and consistent; on the Linux parity stack the strict readiness checks that can pass in a container pass, `/up` is a true liveness probe through nginx, PHP upload limits hold at 3, 9 and 11 MB, both queue workers process exports and mail, the scheduler heartbeat ticks, the nightly backup captures the database and the uploaded files and a restore brings a deleted evidence file back through the application, the security regression is 26 of 26, the production-like smoke test is 48 of 48, and branch protection on `main` is active.
 
