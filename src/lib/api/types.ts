@@ -59,9 +59,15 @@ export type CreateAdminAccountPayload = {
   username: string
   email: string
   password: string
-  role: Extract<UserRole, 'admin' | 'student_rep'>
+  role: AssignableRole
   title?: string
 }
+
+// The roles an administrator hands out directly, and therefore the only roles a
+// mis-picked account can be corrected to. Residents and consultants are excluded
+// on purpose: they arrive through signup plus approval, which carries the
+// academic placement a bare role switch has no way to supply.
+export type AssignableRole = Extract<UserRole, 'admin' | 'nurse' | 'student_rep'>
 
 export type ApiReferenceState = {
   departmentDbIdBySlug: Record<string, string>

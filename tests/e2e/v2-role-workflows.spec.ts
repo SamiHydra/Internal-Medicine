@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { apiContextFromState, ajaxHeaders } from './helpers/api'
+import { apiContextFromState, ajaxHeaders, xsrfToken } from './helpers/api'
 import { authFile } from './helpers/auth'
 
 test.describe('Morning recorder policy', () => {
@@ -36,36 +36,71 @@ test.describe('Morning recorder policy', () => {
     // already cancelled (the cancel form correctly hidden) and fails. Pin the
     // mutation to the CI project so it stays deterministic across engines.
     test.skip(browserName !== 'chromium', 'Mutates the shared seed-once DB; runs once on the CI (chromium) project.')
+
+    // Deterministic precondition (QA-011): sessions only exist on configured
+    // weekdays (Mon/Wed/Fri by default), so on any other day the recorder page
+    // showed "No morning session today" and this spec failed. Make TODAY a
+    // session day through the real settings API; the recorder's visit then
+    // lazily opens today's pending session exactly as it does in production.
+    // The original configuration is restored afterwards.
+    const adminApi = await apiContextFromState('superadmin')
+    const residentApi = await apiContextFromState('resident')
     const context = await browser.newContext({ storageState: authFile('resident') })
     const page = await context.newPage()
     const reason = 'E2E recorder cancellation verification'
 
-    await page.goto('/academic/morning', { waitUntil: 'domcontentloaded' })
-    await page.getByLabel('Cancellation reason').fill(reason)
-    await page.getByRole('button', { name: 'Cancel session' }).click()
+    const settingsBefore = await (await adminApi.get('/api/admin/settings', { headers: ajaxHeaders() })).json()
+    const originalDays: number[] = settingsBefore.settings.academic.morningSessionDays
+    const serverToday: string = (await (await residentApi.get('/api/academic/form-options', { headers: ajaxHeaders() })).json()).date
+    const isoWeekday = ((new Date(`${serverToday}T00:00:00Z`).getUTCDay() + 6) % 7) + 1
+    const madeSessionDay = !originalDays.includes(isoWeekday)
 
-    await expect(page.getByText(/today's session is cancelled/i)).toBeVisible()
-    await expect(page.getByText(reason)).toBeVisible()
+    try {
+      if (madeSessionDay) {
+        const patched = await adminApi.patch('/api/admin/settings', {
+          headers: ajaxHeaders(await xsrfToken(adminApi)),
+          data: { morningSessionDays: [...originalDays, isoWeekday].sort() },
+        })
+        expect(patched.status(), 'the precondition PATCH must succeed').toBe(200)
+      }
 
-    const residentApi = await apiContextFromState('resident')
-    const today = await residentApi.get('/api/academic/morning-sessions/today', { headers: ajaxHeaders() })
-    expect(today.status()).toBe(200)
-    const todayBody = await today.json()
-    expect(todayBody.session.status).toBe('cancelled')
-    expect(todayBody.session.reason).toBe(reason)
-    await residentApi.dispose()
+      const todayBefore = await (await residentApi.get('/api/academic/morning-sessions/today', { headers: ajaxHeaders() })).json()
+      expect(todayBefore.isSessionDay, 'today must now be a configured session day').toBe(true)
+      expect(todayBefore.canRecord, 'the seeded resident must be the designated recorder').toBe(true)
+      expect(todayBefore.session.status, 'the seed leaves today pending; nothing else records it').toBe('pending')
 
-    const adminApi = await apiContextFromState('superadmin')
-    const audits = await adminApi.get(
-      `/api/admin/admin-audit-logs?entity_type=morning_session&entity_id=${todayBody.session.id}&action=cancel`,
-      { headers: ajaxHeaders() },
-    )
-    expect(audits.status()).toBe(200)
-    const auditBody = await audits.json()
-    expect(auditBody.data).toHaveLength(1)
-    expect(auditBody.data[0].newValues.reason).toBe(reason)
-    await adminApi.dispose()
-    await context.close()
+      await page.goto('/academic/morning', { waitUntil: 'domcontentloaded' })
+      await page.getByLabel('Cancellation reason').fill(reason)
+      await page.getByRole('button', { name: 'Cancel session' }).click()
+
+      await expect(page.getByText(/today's session is cancelled/i)).toBeVisible()
+      await expect(page.getByText(reason)).toBeVisible()
+
+      const today = await residentApi.get('/api/academic/morning-sessions/today', { headers: ajaxHeaders() })
+      expect(today.status()).toBe(200)
+      const todayBody = await today.json()
+      expect(todayBody.session.status).toBe('cancelled')
+      expect(todayBody.session.reason).toBe(reason)
+
+      const audits = await adminApi.get(
+        `/api/admin/admin-audit-logs?entity_type=morning_session&entity_id=${todayBody.session.id}&action=cancel`,
+        { headers: ajaxHeaders() },
+      )
+      expect(audits.status()).toBe(200)
+      const auditBody = await audits.json()
+      expect(auditBody.data).toHaveLength(1)
+      expect(auditBody.data[0].newValues.reason).toBe(reason)
+    } finally {
+      if (madeSessionDay) {
+        await adminApi.patch('/api/admin/settings', {
+          headers: ajaxHeaders(await xsrfToken(adminApi)),
+          data: { morningSessionDays: originalDays },
+        })
+      }
+      await context.close()
+      await residentApi.dispose()
+      await adminApi.dispose()
+    }
   })
 })
 

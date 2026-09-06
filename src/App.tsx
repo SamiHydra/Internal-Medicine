@@ -315,10 +315,15 @@ function App() {
               path="/admin/notifications"
               element={renderLazyRoute(<NotificationsPage />, 'inline')}
             />
-            <Route
-              path="/reports/:assignmentId/:periodId"
-              element={renderLazyRoute(<ReportFormPage />, 'inline')}
-            />
+            {/* Clinical weekly reports belong to nurses and administrators only.
+                The API refuses every other role; gating the route keeps a
+                converted or academic account off the clinical shell entirely. */}
+            <Route element={<ProtectedRoute roles={['nurse', 'admin', 'superadmin']} />}>
+              <Route
+                path="/reports/:assignmentId/:periodId"
+                element={renderLazyRoute(<ReportFormPage />, 'inline')}
+              />
+            </Route>
 
             <Route element={<ProtectedRoute roles={['resident', 'consultant']} />}>
               <Route path="/academic" element={renderLazyRoute(<AcademicHomePage />, 'inline')} />

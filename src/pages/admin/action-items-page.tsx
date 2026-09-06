@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { departments as configuredDepartments } from '@/config/templates'
 import { useAppData } from '@/context/app-data-context'
+import { stripFollowUpBoilerplate } from '@/lib/action-item-description'
 import { fetchActionItem, fetchActionItems } from '@/lib/api/admin'
 import { getApiBrowserClient } from '@/lib/api/client'
 import type { ActionItem, ActionItemStatus, ActionItemSummary } from '@/lib/api/types'
@@ -77,13 +78,12 @@ function conciseContext(item: ActionItem) {
   if (item.source === 'critical_event' && item.observedValue !== null) {
     const operator = item.triggerOperator === 'gte' ? '>=' : item.triggerOperator === 'eq' ? '=' : '>'
     return item.triggerThreshold === null
-      ? `Observed value: ${item.observedValue}`
-      : `Observed ${item.observedValue} / alert ${operator} ${item.triggerThreshold}`
+      ? `${item.observedValue}`
+      : `${item.observedValue} vs ${operator} ${item.triggerThreshold}`
   }
 
   const description = item.description?.replace(/\s+/g, ' ').trim()
-  if (!description) return 'No investigation context'
-  return description.length > 112 ? `${description.slice(0, 109)}...` : description
+  return description ? stripFollowUpBoilerplate(description) : ''
 }
 
 function SummaryMetric({
@@ -264,12 +264,12 @@ export function ActionItemsPage() {
             aria-label="Action summary"
           >
             <SummaryMetric
-              label="Outstanding"
+              label="Open"
               value={summary.outstanding}
               assistiveText={`${summary.open} open, ${summary.assigned} assigned, ${summary.inProgress} in progress`}
             />
             <SummaryMetric label="Overdue" value={summary.overdue} urgent={summary.overdue > 0} />
-            <SummaryMetric label="High risk" value={summary.highSeverity} urgent={summary.highSeverity > 0} assistiveText="Outstanding high-priority actions" />
+            <SummaryMetric label="High" value={summary.highSeverity} urgent={summary.highSeverity > 0} assistiveText="Outstanding high-priority actions" />
             <SummaryMetric label="Oldest" value={shortAge(summary.oldestOpenedAt)} assistiveText="Age of the oldest outstanding action" />
             <SummaryMetric label="Avg. close" value={summary.averageResolutionHours === null ? '-' : `${summary.averageResolutionHours}h`} assistiveText="Average resolution time" />
           </section>
@@ -323,7 +323,7 @@ export function ActionItemsPage() {
 
           <div className="hidden grid-cols-[minmax(0,1fr)_180px_150px_36px] gap-4 border-b border-[#e5ebf2] bg-white px-5 py-2.5 text-[11px] font-bold uppercase tracking-[0.13em] text-[#657180] lg:grid">
             <span>Action</span>
-            <span>Owner / department</span>
+            <span>Owner</span>
             <span>Due</span>
             <span />
           </div>
@@ -334,12 +334,15 @@ export function ActionItemsPage() {
             <div className="px-5 py-6"><ListSkeleton rows={5} /></div>
           ) : items.length === 0 ? (
             <div className="p-5">
-              <SectionEmptyState icon={<ShieldCheck className="h-7 w-7" />} title="No matching actions" description="Change the filters to view other action items." />
+              <SectionEmptyState icon={<ShieldCheck className="h-7 w-7" />} title="No matching actions" description="Try different filters." />
             </div>
           ) : (
             <div className="divide-y divide-[#e5ebf2]">
               <AnimatePresence initial={false}>
-                {items.map((item) => (
+                {items.map((item) => {
+                  const context = conciseContext(item)
+
+                  return (
                   <motion.article
                     key={item.id}
                     layout
@@ -354,11 +357,11 @@ export function ActionItemsPage() {
                           <span className={cn('h-1.5 w-1.5 rounded-full', statusDot[item.status])} />
                           {statusLabel[item.status]}
                         </span>
-                        <span className={item.severity === 'high' ? 'text-[#ba1a1a]' : 'text-[#657180]'}>{item.severity} priority</span>
-                        {item.conditionState === 'corrected_pending_review' ? <span className="text-[#6b3fa0]">Review correction</span> : null}
+                        <span className={item.severity === 'high' ? 'text-[#ba1a1a]' : 'text-[#657180]'}>{item.severity}</span>
+                        {item.conditionState === 'corrected_pending_review' ? <span className="text-[#6b3fa0]">Corrected</span> : null}
                       </div>
                       <h2 className="mt-1.5 truncate font-display text-[15px] font-bold text-[#000a1e] transition-colors group-hover:text-[#005db6]">{item.title}</h2>
-                      <p className="mt-1 truncate text-[13px] text-[#657180]">{conciseContext(item)}</p>
+                      {context ? <p className="mt-1 truncate text-[13px] text-[#657180]">{context}</p> : null}
                     </button>
                     <div className="min-w-0 text-sm">
                       <p className="truncate font-semibold text-[#1d3047]">{item.assignedToName ?? item.responsibleRole ?? 'Unassigned'}</p>
@@ -374,7 +377,8 @@ export function ActionItemsPage() {
                       <ArrowRight className="h-4 w-4" />
                     </Button>
                   </motion.article>
-                ))}
+                  )
+                })}
               </AnimatePresence>
             </div>
           )}

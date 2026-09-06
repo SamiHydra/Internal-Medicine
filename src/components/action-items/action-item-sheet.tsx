@@ -32,6 +32,10 @@ import {
 import type { LaravelApiClient } from '@/lib/api/client'
 import type { ActionItem, ActionItemStatus } from '@/lib/api/types'
 import type { Department, UserProfile } from '@/types/domain'
+import {
+  parseReportedMetrics,
+  stripFollowUpBoilerplate,
+} from '@/lib/action-item-description'
 import { cn } from '@/lib/utils'
 
 type Props = {
@@ -51,22 +55,135 @@ function localDateTime(value: string | null) {
   return Number.isNaN(date.getTime()) ? '' : format(date, "yyyy-MM-dd'T'HH:mm")
 }
 
+const PILL =
+  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em]'
+
+const STATUS_TONE: Record<ActionItemStatus, { label: string; pill: string }> = {
+  open: { label: 'Open', pill: 'bg-white text-[#9f1717] ring-1 ring-[#f3cccc]' },
+  assigned: { label: 'Assigned', pill: 'bg-white text-[#00468c] ring-1 ring-[#cfe0f4]' },
+  in_progress: { label: 'In progress', pill: 'bg-white text-[#815600] ring-1 ring-[#f0d9aa]' },
+  resolved: { label: 'Resolved', pill: 'bg-white text-[#1f6b3b] ring-1 ring-[#bfe0cb]' },
+  closed: { label: 'Verified', pill: 'bg-white text-[#44474e] ring-1 ring-[#d4dde8]' },
+}
+
+/**
+ * Severity sets the temperature of the whole panel: the header wash, the
+ * severity pill, and the count badges beside each measure. One table so a
+ * high-severity action never reads half-urgent.
+ */
+const SEVERITY_TONE = {
+  high: {
+    label: 'High',
+    pill: 'bg-[#ba1a1a] text-white',
+    wash: 'bg-[linear-gradient(135deg,#fff1f1_0%,#fff8f8_42%,#ffffff_100%)]',
+    count: 'bg-[#fdecec] text-[#9f1717]',
+  },
+  medium: {
+    label: 'Medium',
+    pill: 'bg-[#8a5a00] text-white',
+    wash: 'bg-[linear-gradient(135deg,#fdf6e9_0%,#fefbf4_42%,#ffffff_100%)]',
+    count: 'bg-[#fbf4e6] text-[#815600]',
+  },
+  low: {
+    label: 'Low',
+    pill: 'bg-[#00468c] text-white',
+    wash: 'bg-[linear-gradient(135deg,#eef5fc_0%,#f7fafd_42%,#ffffff_100%)]',
+    count: 'bg-[#edf4fb] text-[#00468c]',
+  },
+} as const
+
+/** The brand rule from the sign-in hero, tying the panel to the rest of the app. */
+const BRAND_RULE =
+  'h-px w-20 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_68%,#f0b429_100%)]'
+
+/** "in 3 days" / "2 days ago" - urgency belongs next to the deadline, not in a column. */
+function deadlineHint(dueAt: string | null, overdue: boolean): string | null {
+  if (!dueAt) return null
+
+  const due = parseISO(dueAt)
+  if (Number.isNaN(due.getTime())) return null
+
+  const hours = Math.round(Math.abs(Date.now() - due.getTime()) / 3_600_000)
+  const span = hours < 48 ? `${hours}h` : `${Math.round(hours / 24)} days`
+
+  return overdue ? `${span} overdue` : `${span} left`
+}
+
 function readableEvent(event: string) {
   const labels: Record<string, string> = {
-    opened: 'Action opened', assigned: 'Owner assigned', status_changed: 'Status changed',
-    investigation_started: 'Investigation started',
-    resolved: 'Investigation resolved', verified: 'Closure verified', reopened: 'Action reopened',
-    data_corrected: 'Reported value corrected', condition_recurred: 'Critical condition recurred',
-    commented: 'Investigation update added', evidence_uploaded: 'Evidence uploaded', overdue: 'Deadline escalated',
+    opened: 'Opened', assigned: 'Owner assigned', status_changed: 'Status changed',
+    investigation_started: 'Started',
+    resolved: 'Resolved', verified: 'Verified', reopened: 'Reopened',
+    data_corrected: 'Value corrected', condition_recurred: 'Condition recurred',
+    commented: 'Note added', evidence_uploaded: 'Evidence uploaded', overdue: 'Overdue',
   }
   return labels[event] ?? event.replaceAll('_', ' ')
 }
 
+/**
+ * The generated description is a metric list wearing a paragraph's clothes.
+ * Show it as the list it is; keep the original sentence for screen readers so
+ * the record still reads as one statement.
+ */
+function ReportedSummary({
+  description,
+  tone,
+}: {
+  description: string
+  tone: (typeof SEVERITY_TONE)[keyof typeof SEVERITY_TONE]
+}) {
+  const parsed = parseReportedMetrics(description)
+
+  if (!parsed) {
+    return (
+      <SheetDescription className="leading-6 text-[#657180]">
+        {stripFollowUpBoilerplate(description)}
+      </SheetDescription>
+    )
+  }
+
+  return (
+    <>
+      <SheetDescription className="sr-only">{description}</SheetDescription>
+      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#526171]">
+        {parsed.lead} reported
+        <span className="text-[#9aa6b5]"> · </span>
+        {parsed.metrics.length} measure{parsed.metrics.length === 1 ? '' : 's'}
+      </p>
+      <ul className="mt-2 space-y-1">
+        {parsed.metrics.map((metric) => (
+          <li
+            key={metric.label}
+            className="flex items-center justify-between gap-4 rounded-[0.35rem] bg-white/70 px-3 py-2 ring-1 ring-inset ring-[#e9eef4]"
+          >
+            <span className="min-w-0 text-[13px] leading-5 text-[#1d3047]">
+              {metric.label}
+            </span>
+            <span
+              className={cn(
+                'shrink-0 rounded-[0.3rem] px-2 py-0.5 font-display text-sm font-bold tabular-nums',
+                tone.count,
+              )}
+            >
+              {metric.count}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </>
+  )
+}
+
 function DetailSection({ title, icon: Icon, children }: { title: string; icon: typeof History; children: ReactNode }) {
   return (
-    <section className="border-t border-[#dbe3ec] pt-5">
-      <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-[#526171]"><Icon className="h-4 w-4 text-[#005db6]" />{title}</h3>
-      <div className="mt-4">{children}</div>
+    <section className="border-t border-[#eaeff5] pt-5">
+      <h3 className="flex items-center gap-2.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#1d3047]">
+        <span className="flex h-7 w-7 items-center justify-center rounded-[0.4rem] bg-[#edf4fb] text-[#005db6]">
+          <Icon className="h-3.5 w-3.5" />
+        </span>
+        {title}
+      </h3>
+      <div className="mt-3.5">{children}</div>
     </section>
   )
 }
@@ -111,7 +228,7 @@ export function ActionItemSheet(props: Props) {
   const create = async () => {
     if (!client) return
     if (!createValues.title.trim() || !createValues.description.trim() || !createValues.departmentId || !createValues.assignedTo || !createValues.dueAt) {
-      toast.error('Add a title, investigation context, department, owner, and deadline.')
+      toast.error('Fill in every field first.')
       return
     }
     setPending(true)
@@ -137,7 +254,7 @@ export function ActionItemSheet(props: Props) {
     try {
       await addActionItemComment(client, item.id, comment.trim())
       setComment('')
-      toast.success('Investigation update added.')
+      toast.success('Note added.')
       await onChanged()
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : 'Unable to add the investigation update.')
@@ -150,7 +267,7 @@ export function ActionItemSheet(props: Props) {
     setPending(true)
     try {
       await uploadActionItemEvidence(client, item.id, file)
-      toast.success('Evidence uploaded securely.')
+      toast.success('Evidence uploaded.')
       await onChanged()
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : 'Unable to upload evidence.')
@@ -160,37 +277,70 @@ export function ActionItemSheet(props: Props) {
     }
   }
 
+  const severityTone = SEVERITY_TONE[(item?.severity ?? 'medium') as keyof typeof SEVERITY_TONE]
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full max-w-2xl overflow-y-auto bg-none bg-white px-5 py-6 text-[#000a1e] [&>button]:text-[#657180] sm:px-7">
         {creating ? (
           <div className="space-y-6">
-            <div className="pr-10"><SheetTitle className="font-display text-xl text-[#000a1e]">Create manual clinical action</SheetTitle><SheetDescription className="mt-2 text-[#657180]">Give the follow-up a clear owner and deadline from the beginning.</SheetDescription></div>
+            <div className="pr-10"><SheetTitle className="font-display text-xl text-[#000a1e]">New action</SheetTitle><SheetDescription className="sr-only">Create a clinical action with an owner and a deadline.</SheetDescription></div>
             <div className="space-y-4">
-              <label className="block space-y-2"><Label>Action title</Label><Input value={createValues.title} onChange={(event) => setCreateValues((value) => ({ ...value, title: event.target.value }))} placeholder="What must be investigated?" /></label>
-              <label className="block space-y-2"><Label>Investigation context</Label><Textarea value={createValues.description} onChange={(event) => setCreateValues((value) => ({ ...value, description: event.target.value }))} placeholder="Explain the signal, expected follow-up, and evidence needed." /></label>
+              <label className="block space-y-2"><Label>Title</Label><Input value={createValues.title} onChange={(event) => setCreateValues((value) => ({ ...value, title: event.target.value }))} placeholder="What needs to be looked at" /></label>
+              <label className="block space-y-2"><Label>Details</Label><Textarea value={createValues.description} onChange={(event) => setCreateValues((value) => ({ ...value, description: event.target.value }))} placeholder="What happened, and what should be checked" /></label>
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="space-y-2"><Label>Department</Label><Select value={createValues.departmentId} onValueChange={(departmentId) => setCreateValues((value) => ({ ...value, departmentId }))}><SelectTrigger aria-label="Manual action department"><SelectValue placeholder="Choose department" /></SelectTrigger><SelectContent>{departments.map((department) => <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>)}</SelectContent></Select></label>
-                <label className="space-y-2"><Label>Responsible owner</Label><Select value={createValues.assignedTo} onValueChange={(assignedTo) => setCreateValues((value) => ({ ...value, assignedTo }))}><SelectTrigger aria-label="Manual action owner"><SelectValue placeholder="Choose owner" /></SelectTrigger><SelectContent>{managers.map((manager) => <SelectItem key={manager.id} value={manager.id}>{manager.fullName}</SelectItem>)}</SelectContent></Select></label>
+                <label className="space-y-2"><Label>Owner</Label><Select value={createValues.assignedTo} onValueChange={(assignedTo) => setCreateValues((value) => ({ ...value, assignedTo }))}><SelectTrigger aria-label="Manual action owner"><SelectValue placeholder="Choose owner" /></SelectTrigger><SelectContent>{managers.map((manager) => <SelectItem key={manager.id} value={manager.id}>{manager.fullName}</SelectItem>)}</SelectContent></Select></label>
                 <label className="space-y-2"><Label>Deadline</Label><Input type="datetime-local" value={createValues.dueAt} onChange={(event) => setCreateValues((value) => ({ ...value, dueAt: event.target.value }))} /></label>
                 <label className="space-y-2"><Label>Severity</Label><Select value={createValues.severity} onValueChange={(value) => setCreateValues((state) => ({ ...state, severity: value as typeof state.severity }))}><SelectTrigger aria-label="Manual action severity"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="high">High</SelectItem><SelectItem value="medium">Medium</SelectItem><SelectItem value="low">Low</SelectItem></SelectContent></Select></label>
               </div>
             </div>
-            <Button type="button" disabled={pending} onClick={() => void create()}>{pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Create and assign</Button>
+            <Button type="button" disabled={pending} onClick={() => void create()}>{pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Create action</Button>
           </div>
         ) : item ? (
-          <div className="space-y-6">
-            <div className="pr-10">
-              <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em]"><span className={cn('rounded-full px-2.5 py-1', item.isOverdue ? 'bg-[#fdecec] text-[#ba1a1a]' : 'bg-[#edf4fb] text-[#005db6]')}>{item.isOverdue ? 'Overdue' : item.status.replace('_', ' ')}</span><span className="text-[#657180]">{item.severity} severity</span></div>
-              <SheetTitle className="mt-3 font-display text-xl leading-tight text-[#000a1e]">{item.title}</SheetTitle>
-              <SheetDescription className="mt-2 leading-6 text-[#657180]">{item.description ?? 'No investigation context has been added.'}</SheetDescription>
-            </div>
+          <div className="space-y-5">
+            {/* A panel that opens on a critical event should not open quietly.
+                The header runs full-bleed and takes its temperature from the
+                severity, so the seriousness registers before any reading. */}
+            <header
+              className={cn(
+                '-mx-5 -mt-6 px-5 pb-5 pt-6 sm:-mx-7 sm:px-7',
+                severityTone.wash,
+              )}
+            >
+              <div className="flex flex-wrap items-center gap-2 pr-10">
+                <span className={cn(PILL, STATUS_TONE[item.status].pill)}>
+                  {STATUS_TONE[item.status].label}
+                </span>
+                <span className={cn(PILL, severityTone.pill)}>{severityTone.label}</span>
+                {item.isOverdue ? (
+                  <span className={cn(PILL, 'bg-[#ba1a1a] text-white')}>Overdue</span>
+                ) : null}
+              </div>
+              <SheetTitle className="mt-3 pr-10 font-display text-[1.4rem] font-extrabold leading-tight tracking-[-0.03em] text-[#000a1e]">
+                {item.title}
+              </SheetTitle>
+              <div className={cn('mt-3 mb-4', BRAND_RULE)} />
+              {item.description ? (
+                <ReportedSummary description={item.description} tone={severityTone} />
+              ) : (
+                <SheetDescription className="sr-only">No details added.</SheetDescription>
+              )}
+              {item.reportAssignmentId && item.reportingPeriodId ? (
+                <Link
+                  to={`/reports/${item.reportAssignmentId}/${item.reportingPeriodId}`}
+                  className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#005db6] underline-offset-4 hover:underline"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  Open the source report
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
+              ) : null}
+            </header>
 
-            {item.conditionState === 'corrected_pending_review' ? <div className="rounded-[0.35rem] border border-[#d9c3ee] bg-[#f7f0ff] px-4 py-3 text-sm leading-6 text-[#6b3fa0]"><strong>Data correction needs verification.</strong> The reported value is now below the rule threshold, but the follow-up remains open until a person confirms the correction.</div> : null}
+            {item.conditionState === 'corrected_pending_review' ? <div className="rounded-[0.35rem] border border-[#d9c3ee] bg-[#f7f0ff] px-4 py-3 text-sm leading-6 text-[#6b3fa0]"><strong>Corrected value is back within range.</strong> This stays open until someone confirms it.</div> : null}
 
-            {item.reportAssignmentId && item.reportingPeriodId ? <Button asChild variant="secondary"><Link to={`/reports/${item.reportAssignmentId}/${item.reportingPeriodId}`}><FileText className="h-4 w-4" />Open source report<ExternalLink className="h-3.5 w-3.5" /></Link></Button> : null}
-
-            {item.source === 'critical_event' && (item.observedValue !== null || item.triggerThreshold !== null || item.fieldKey) ? <DetailSection title="Why this became critical" icon={AlertTriangle}>
+            {item.source === 'critical_event' && (item.observedValue !== null || item.triggerThreshold !== null || item.fieldKey) ? <DetailSection title="What triggered this" icon={AlertTriangle}>
               <div className="flex flex-wrap gap-3">
                 {item.observedValue !== null ? <div className="min-w-40 flex-1 rounded-[0.3rem] bg-[#edf4fb] px-3 py-3"><p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#526171]">Observed value</p><p className="mt-1 font-display text-lg font-bold text-[#000a1e]">{item.observedValue}</p></div> : null}
                 {item.triggerThreshold !== null ? <div className="min-w-40 flex-1 rounded-[0.3rem] bg-[#fff3f3] px-3 py-3"><p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#8f1515]">Trigger rule</p><p className="mt-1 font-semibold text-[#8f1515]">{item.triggerOperator === 'gte' ? 'At least' : item.triggerOperator === 'eq' ? 'Exactly' : 'Greater than'} {item.triggerThreshold}</p></div> : null}
@@ -198,28 +348,28 @@ export function ActionItemSheet(props: Props) {
               </div>
             </DetailSection> : null}
 
-            <DetailSection title="Ownership and deadline" icon={ShieldCheck}>
+            <DetailSection title="Assignment" icon={ShieldCheck}>
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className="space-y-2"><Label>Responsible owner</Label><Select value={assignee} onValueChange={setAssignee}><SelectTrigger aria-label="Action owner"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="unassigned">Unassigned</SelectItem>{managers.map((manager) => <SelectItem key={manager.id} value={manager.id}>{manager.fullName}</SelectItem>)}</SelectContent></Select></label>
-                <label className="space-y-2"><Label>Deadline</Label><Input type="datetime-local" value={dueAt} onChange={(event) => setDueAt(event.target.value)} /></label>
+                <label className="space-y-2"><Label>Owner</Label><Select value={assignee} onValueChange={setAssignee}><SelectTrigger aria-label="Action owner"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="unassigned">Unassigned</SelectItem>{managers.map((manager) => <SelectItem key={manager.id} value={manager.id}>{manager.fullName}</SelectItem>)}</SelectContent></Select></label>
+                <label className="space-y-2"><Label>Deadline</Label><Input type="datetime-local" value={dueAt} onChange={(event) => setDueAt(event.target.value)} />{deadlineHint(item.dueAt, item.isOverdue) ? <span className={cn('block text-xs font-semibold', item.isOverdue ? 'text-[#ba1a1a]' : 'text-[#657180]')}>{deadlineHint(item.dueAt, item.isOverdue)}</span> : null}</label>
                 <label className="space-y-2"><Label>Severity</Label><Select value={severity} onValueChange={(value) => setSeverity(value as typeof severity)}><SelectTrigger aria-label="Action severity"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="high">High</SelectItem><SelectItem value="medium">Medium</SelectItem><SelectItem value="low">Low</SelectItem></SelectContent></Select></label>
-                <div className="flex items-end"><Button type="button" variant="secondary" disabled={pending} onClick={() => void mutate({ assigned_to: assignee === 'unassigned' ? null : assignee, severity, due_at: dueAt ? new Date(dueAt).toISOString() : null }, 'Ownership and deadline saved.')}><Save className="h-4 w-4" />Save details</Button></div>
+                <div className="flex items-end"><Button type="button" variant="secondary" disabled={pending} onClick={() => void mutate({ assigned_to: assignee === 'unassigned' ? null : assignee, severity, due_at: dueAt ? new Date(dueAt).toISOString() : null }, 'Assignment saved.')}><Save className="h-4 w-4" />Save</Button></div>
               </div>
             </DetailSection>
 
-            <DetailSection title="Investigation decision" icon={CheckCircle2}>
-              {item.status !== 'resolved' && item.status !== 'closed' ? <div className="space-y-3"><Label htmlFor="resolution-note">Resolution note</Label><Textarea id="resolution-note" value={resolutionNote} onChange={(event) => setResolutionNote(event.target.value)} placeholder="Document what was reviewed, the finding, corrective action, and remaining risk." /><div className="flex flex-wrap gap-2">{item.status !== 'in_progress' ? <Button type="button" variant="secondary" disabled={pending || assignee === 'unassigned'} onClick={() => void transition('in_progress')}>Start investigation</Button> : null}<Button type="button" disabled={pending || !resolutionNote.trim()} onClick={() => void transition('resolved')}><CheckCircle2 className="h-4 w-4" />Resolve with note</Button></div></div> : item.status === 'resolved' ? <div className="space-y-3"><div className="rounded-[0.35rem] bg-[#edf7f0] px-4 py-3 text-sm leading-6 text-[#1f6b3b]"><strong>Resolution:</strong> {item.resolutionNote}</div><div className="flex flex-wrap gap-2"><Button type="button" disabled={pending} onClick={() => void transition('closed')}><ShieldCheck className="h-4 w-4" />Verify and close</Button><Button type="button" variant="secondary" disabled={pending} onClick={() => void transition('open')}><RotateCcw className="h-4 w-4" />Reopen</Button></div></div> : <div className="space-y-3"><p className="text-sm text-[#1f6b3b]">Closure verified by {item.verifiedByName ?? 'an administrator'}.</p><Button type="button" variant="secondary" disabled={pending} onClick={() => void transition('open')}><RotateCcw className="h-4 w-4" />Reopen with history preserved</Button></div>}
+            <DetailSection title="Resolution" icon={CheckCircle2}>
+              {item.status !== 'resolved' && item.status !== 'closed' ? <div className="space-y-3"><Label htmlFor="resolution-note">Resolution note</Label><Textarea id="resolution-note" rows={3} className="min-h-20" value={resolutionNote} onChange={(event) => setResolutionNote(event.target.value)} placeholder="What was found, and what was done about it" /><div className="flex flex-wrap gap-2">{item.status !== 'in_progress' ? <Button type="button" variant="secondary" disabled={pending || assignee === 'unassigned'} onClick={() => void transition('in_progress')}>Start</Button> : null}<Button type="button" disabled={pending || !resolutionNote.trim()} onClick={() => void transition('resolved')}><CheckCircle2 className="h-4 w-4" />Resolve</Button></div></div> : item.status === 'resolved' ? <div className="space-y-3"><div className="rounded-[0.35rem] bg-[#edf7f0] px-4 py-3 text-sm leading-6 text-[#1f6b3b]"><strong>Resolution:</strong> {item.resolutionNote}</div><div className="flex flex-wrap gap-2"><Button type="button" disabled={pending} onClick={() => void transition('closed')}><ShieldCheck className="h-4 w-4" />Verify and close</Button><Button type="button" variant="secondary" disabled={pending} onClick={() => void transition('open')}><RotateCcw className="h-4 w-4" />Reopen</Button></div></div> : <div className="space-y-3"><p className="text-sm text-[#1f6b3b]">Verified by {item.verifiedByName ?? 'an administrator'}.</p><Button type="button" variant="secondary" disabled={pending} onClick={() => void transition('open')}><RotateCcw className="h-4 w-4" />Reopen</Button></div>}
             </DetailSection>
 
-            <DetailSection title="Investigation updates" icon={MessageSquareText}>
-              <div className="space-y-3"><Textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Add a progress note, decision, or handover..." /><Button type="button" variant="secondary" disabled={pending || !comment.trim()} onClick={() => void addComment()}>Add update</Button>{item.comments?.map((entry) => <article key={entry.id} className="border-l-2 border-[#cfe0f4] pl-3"><p className="text-sm leading-6 text-[#1d3047]">{entry.body}</p><p className="mt-1 text-xs text-[#74777f]">{entry.authorName} · {entry.createdAt ? format(parseISO(entry.createdAt), 'MMM d, HH:mm') : 'recently'}</p></article>)}</div>
+            <DetailSection title="Notes" icon={MessageSquareText}>
+              <div className="space-y-3"><Textarea rows={2} className="min-h-16" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Add a note" /><Button type="button" variant="secondary" disabled={pending || !comment.trim()} onClick={() => void addComment()}>Add note</Button>{item.comments?.map((entry) => <article key={entry.id} className="border-l-2 border-[#cfe0f4] pl-3"><p className="text-sm leading-6 text-[#1d3047]">{entry.body}</p><p className="mt-1 text-xs text-[#74777f]">{entry.authorName} · {entry.createdAt ? format(parseISO(entry.createdAt), 'MMM d, HH:mm') : 'recently'}</p></article>)}</div>
             </DetailSection>
 
             <DetailSection title="Evidence" icon={FileUp}>
-              <div className="space-y-3"><label className="inline-flex cursor-pointer items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-white px-3 py-2 text-sm font-semibold text-[#1d3047] hover:bg-[#f3f6f9]"><FileUp className="h-4 w-4" />Upload evidence<input type="file" className="sr-only" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.csv,.txt" onChange={(event) => void upload(event)} /></label><p className="text-xs text-[#74777f]">Private storage · PDF, image, Office, CSV, or text · maximum 10 MB</p>{item.evidence?.map((file) => <a key={file.id} href={file.downloadUrl} className="flex items-center justify-between gap-3 border-t border-[#e6ecf3] py-2 text-sm font-semibold text-[#005db6]"><span className="truncate">{file.originalName}</span><Download className="h-4 w-4 shrink-0" /></a>)}</div>
+              <div className="space-y-3"><label className="inline-flex cursor-pointer items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-white px-3 py-2 text-sm font-semibold text-[#1d3047] hover:bg-[#f3f6f9]"><FileUp className="h-4 w-4" />Upload<input type="file" className="sr-only" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.csv,.txt" onChange={(event) => void upload(event)} /></label><p className="text-xs text-[#74777f]">PDF, image, Office, CSV or text · max 10 MB</p>{item.evidence?.map((file) => <a key={file.id} href={file.downloadUrl} className="flex items-center justify-between gap-3 border-t border-[#e6ecf3] py-2 text-sm font-semibold text-[#005db6]"><span className="truncate">{file.originalName}</span><Download className="h-4 w-4 shrink-0" /></a>)}</div>
             </DetailSection>
 
-            <DetailSection title="Permanent history" icon={History}>
+            <DetailSection title="History" icon={History}>
               <ol className="space-y-4">{item.history?.map((entry) => <li key={entry.id} className="relative pl-5 before:absolute before:left-0 before:top-1.5 before:h-2 before:w-2 before:rounded-full before:bg-[#005db6]"><p className="text-sm font-semibold text-[#1d3047]">{readableEvent(entry.event)}</p>{entry.note ? <p className="mt-1 text-sm leading-6 text-[#657180]">{entry.note}</p> : null}<p className="mt-1 text-xs text-[#74777f]">{entry.changedByName} · {entry.createdAt ? format(parseISO(entry.createdAt), 'MMM d, yyyy HH:mm') : 'recently'}</p></li>)}</ol>
             </DetailSection>
           </div>

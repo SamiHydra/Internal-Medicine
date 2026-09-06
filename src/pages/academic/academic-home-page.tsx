@@ -170,12 +170,15 @@ export function AcademicHomePage() {
           {error}
         </div>
       ) : (
-        <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+        /* minmax(0,…) tracks + min-w-0 items: without them the single mobile column is
+            sized from the panels' min-content (truncated names never wrap), so the
+            row grew past the viewport on phones and forced horizontal scrolling (QA-012). */
+        <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
           <motion.section
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, ease: 'easeOut', delay: 0.04 }}
-            className={panelClass}
+            className={`${panelClass} min-w-0`}
           >
             <SectionHeader
               eyebrow="How you've been rated"
@@ -220,7 +223,7 @@ export function AcademicHomePage() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, ease: 'easeOut', delay: 0.08 }}
-            className={panelClass}
+            className={`${panelClass} min-w-0`}
           >
             <SectionHeader
               eyebrow="Recent activity"

@@ -226,7 +226,10 @@ export function AcademicEvaluationFormPage() {
           Only residents and consultants can submit academic evaluations.
         </div>
       ) : (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
+        /* The mobile column must be minmax(0,1fr) and the aside min-w-0: otherwise the
+          track takes the aside's min-content width and the form overflows the phone
+          viewport (QA-012). */
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
           <div className="min-w-0">
             {options.subjects.length === 0 ? (
               <motion.section
@@ -260,7 +263,7 @@ export function AcademicEvaluationFormPage() {
             )}
           </div>
 
-          <aside className="order-first space-y-6 xl:order-last xl:sticky xl:top-24">
+          <aside className="order-first min-w-0 space-y-6 xl:order-last xl:sticky xl:top-24">
             <motion.section
               initial={reduceMotion ? false : { opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}

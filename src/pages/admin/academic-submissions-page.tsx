@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { AcademicEvaluationDetailSheet } from '@/components/admin/academic-evaluation-detail-sheet'
@@ -327,7 +327,22 @@ export function AcademicSubmissionsPage() {
               No evaluations match the current filters.
             </div>
           ) : (
-            <>
+            <div className="relative">
+              {isLoading ? (
+                <div className="pointer-events-none absolute inset-x-0 -top-5 z-10 flex justify-center">
+                  <span className="inline-flex items-center gap-2 rounded-full bg-white px-3.5 py-1.5 text-xs font-semibold text-[#005db6] shadow-[0_12px_30px_-14px_rgba(0,33,71,0.45)] ring-1 ring-[#dbe7f5]">
+                    <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                    Updating results
+                  </span>
+                </div>
+              ) : null}
+              <div
+                aria-busy={isLoading}
+                className={cn(
+                  'transition-opacity duration-150',
+                  isLoading && 'pointer-events-none opacity-45',
+                )}
+              >
               <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
                 <div className="hidden grid-cols-[124px_minmax(0,2fr)_minmax(0,1.1fr)_minmax(0,1.4fr)_104px] items-center gap-4 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-3 text-xs font-bold uppercase tracking-[0.1em] text-[#526171] sm:grid">
                   <span>Date</span>
@@ -412,7 +427,8 @@ export function AcademicSubmissionsPage() {
                   </div>
                 </div>
               ) : null}
-            </>
+              </div>
+            </div>
           )}
         </motion.section>
       )}

@@ -14,6 +14,7 @@ import type {
   AdminAuditResponse,
   ApiReferenceState,
   ApiTemplateConfig,
+  AssignableRole,
   CreateAdminAccountPayload,
   DepartmentReferencePayload,
   SubmitAdminAccessRequestPayload,
@@ -41,6 +42,19 @@ export async function createAdminAccount(
     title: payload.title,
     passwordChangeRequired: true,
   })
+}
+
+/**
+ * Corrects the role on an existing account. Mirrors the server whitelist in
+ * UserController: only the admin-assignable roles, so this can fix a wrong pick
+ * without becoming a back door into resident/consultant or maintenance.
+ */
+export async function updateUserRole(
+  client: LaravelApiClient,
+  userId: string,
+  role: AssignableRole,
+) {
+  await client.patch(`/api/admin/users/${userId}`, { role })
 }
 
 export async function updateUserActiveState(
@@ -102,11 +116,25 @@ export async function fetchReportAssignments(
 export async function fetchCellAuditLogs(
   client: LaravelApiClient,
 ): Promise<AuditLogEntry[]> {
-  return (
-    await client.get<{ data: AuditLogEntry[] }>('/api/admin/audit-logs', {
-      query: { page: 1, perPage: 100 },
-    })
-  ).data
+  const response = await client.get<{
+    data: (AuditLogEntry & {
+      departmentSlug?: string | null
+      templateSlug?: string | null
+    })[]
+  }>('/api/admin/audit-logs', {
+    query: { page: 1, perPage: 100 },
+  })
+
+  // Same slug-for-id swap the assignment fetches do. The frontend department
+  // and template configs are keyed by slug, so passing the server's UUID
+  // through left every lookup unresolved: the audit rows printed a raw UUID
+  // where the department name belongs, and the department filter matched
+  // nothing at all.
+  return response.data.map((entry) => ({
+    ...entry,
+    departmentId: entry.departmentSlug ?? entry.departmentId,
+    templateId: entry.templateSlug ?? entry.templateId,
+  }))
 }
 
 export async function reviewAccessRequest(

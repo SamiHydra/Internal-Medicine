@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowRightLeft, Check, Loader2, X } from 'lucide-react'
+import { ArrowRight, ArrowRightLeft, Check, Loader2, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import {
+  HeaderChip,
   SectionEmptyState,
   SectionHeader,
   panelClass,
@@ -95,18 +96,33 @@ export function TransferReviewPanel({ allowImmediate = false }: { allowImmediate
       <SectionHeader
         eyebrow="Section transfers"
         title="Pending transfer requests"
-        description="Approval sits with the head of the destination section. Approved transfers apply at the next month boundary unless overridden."
         actions={
-          allowImmediate ? (
-            <div className="flex items-center gap-2">
-              <Switch
-                checked={immediate}
-                aria-label="Apply approvals immediately"
-                onCheckedChange={setImmediate}
-              />
-              <span className="text-[13px] font-medium text-[#44474e]">Apply immediately</span>
-            </div>
-          ) : undefined
+          <>
+            {requests.length ? (
+              <HeaderChip>
+                {requests.length} waiting
+              </HeaderChip>
+            ) : null}
+            {/* A switch that silently changes what the button beside it does
+                needs to say so: the consequence sits under the label. */}
+            {allowImmediate ? (
+              <label className="flex cursor-pointer items-center gap-2.5 rounded-[0.3rem] border border-[#e6ecf3] bg-[#f8fafc] px-3 py-2">
+                <Switch
+                  checked={immediate}
+                  aria-label="Apply approvals immediately"
+                  onCheckedChange={setImmediate}
+                />
+                <span className="leading-tight">
+                  <span className="block text-[13px] font-semibold text-[#1d3047]">
+                    Apply immediately
+                  </span>
+                  <span className="block text-[11px] text-[#8b9199]">
+                    Skip the month boundary
+                  </span>
+                </span>
+              </label>
+            ) : null}
+          </>
         }
       />
 
@@ -119,50 +135,66 @@ export function TransferReviewPanel({ allowImmediate = false }: { allowImmediate
           />
         </div>
       ) : (
-        <div className="mt-4">
-          {requests.map((request) => (
-            <div
-              key={request.id}
-              className="flex flex-col gap-3 border-b border-[#eef2f6] py-3.5 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-[#000a1e]">
-                  {request.userName ?? 'Consultant'}
-                  <span className="font-normal text-[#74777f]">
-                    {' '}
-                    · {request.fromSectionName ?? '-'} → {request.toSectionName ?? '-'}
+        <div className="mt-5 space-y-3">
+          {requests.map((request) => {
+            const busy = busyId === request.id
+
+            return (
+              <article
+                key={request.id}
+                className="rounded-[0.4rem] border border-[#e6ecf3] bg-white p-4 transition-colors duration-200 hover:border-[#cfe0f4]"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-display text-[15px] font-bold text-[#000a1e]">
+                      {request.userName ?? 'Consultant'}
+                    </p>
+                    <p className="mt-0.5 text-xs text-[#8b9199]">
+                      Requested {dateLabel(request.requestedAt) ?? '-'}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => void decide(request, 'reject')}
+                    >
+                      <X className="mr-1 h-4 w-4" />
+                      Decline
+                    </Button>
+                    <Button size="sm" disabled={busy} onClick={() => void decide(request, 'approve')}>
+                      {busy ? (
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Check className="mr-1 h-4 w-4" />
+                      )}
+                      Approve
+                    </Button>
+                  </div>
+                </div>
+
+                {/* The move itself is the decision, so it gets the weight the
+                    consultant's name used to hold. The destination carries the
+                    colour: that is the section being asked to take someone on. */}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="rounded-[0.3rem] bg-[#f2f5f9] px-2.5 py-1 text-[13px] font-medium text-[#52606d]">
+                    {request.fromSectionName ?? 'Unassigned'}
                   </span>
-                </p>
-                <p className="mt-0.5 text-[13px] text-[#74777f]">
-                  Requested {dateLabel(request.requestedAt) ?? '-'}
-                  {request.reason ? ` · "${request.reason}"` : ''}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <Button
-                  size="sm"
-                  disabled={busyId === request.id}
-                  onClick={() => void decide(request, 'approve')}
-                >
-                  {busyId === request.id ? (
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Check className="mr-1 h-4 w-4" />
-                  )}
-                  Approve
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={busyId === request.id}
-                  onClick={() => void decide(request, 'reject')}
-                >
-                  <X className="mr-1 h-4 w-4" />
-                  Decline
-                </Button>
-              </div>
-            </div>
-          ))}
+                  <ArrowRight aria-hidden className="h-4 w-4 shrink-0 text-[#9aa6b5]" />
+                  <span className="rounded-[0.3rem] bg-[#edf4fb] px-2.5 py-1 text-[13px] font-semibold text-[#00468c] ring-1 ring-inset ring-[#cfe0f4]">
+                    {request.toSectionName ?? 'Unassigned'}
+                  </span>
+                </div>
+
+                {request.reason ? (
+                  <p className="mt-3 border-l-2 border-[#e6ecf3] pl-3 text-[13px] leading-5 text-[#5f6670]">
+                    {request.reason}
+                  </p>
+                ) : null}
+              </article>
+            )
+          })}
         </div>
       )}
     </section>

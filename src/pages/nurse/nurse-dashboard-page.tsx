@@ -93,7 +93,7 @@ export function NurseDashboardPage() {
           actions={<HeaderChip>{formatCompactNumber(cards.length)} forms</HeaderChip>}
         />
         {cards.length ? (
-          <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {cards.map((card, index) => (
               <motion.div
                 key={card.assignment.id}
@@ -124,12 +124,14 @@ export function NurseDashboardPage() {
         )}
       </motion.section>
 
-      <section className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
+      {/* minmax(0,…) tracks and min-w-0 panels: the single phone column must not
+          take the panels' min-content width (QA-012). */}
+      <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: 'easeOut', delay: 0.08 }}
-          className={panelClass}
+          className={`${panelClass} min-w-0`}
         >
           <SectionHeader
             eyebrow="Updates"
@@ -189,7 +191,7 @@ export function NurseDashboardPage() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: 'easeOut', delay: 0.12 }}
-          className={panelClass}
+          className={`${panelClass} min-w-0`}
         >
           <SectionEyebrow label="Access" />
           <h2 className="mt-1.5 font-display text-[1.4rem] font-bold leading-tight tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">

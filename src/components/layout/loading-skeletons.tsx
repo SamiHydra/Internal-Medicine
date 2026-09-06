@@ -178,7 +178,7 @@ export function ChartSkeleton({
 
 export function DashboardContentSkeleton() {
   return (
-    <LoadingRegion label="Loading dashboard content" className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+    <LoadingRegion label="Loading dashboard content" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
       <PanelSkeleton>
         <HeaderSkeleton compact />
         <div className="mt-5 space-y-4">

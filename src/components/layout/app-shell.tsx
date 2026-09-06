@@ -8,6 +8,7 @@ import { getNavigationItems, isSharedAdminPath, isWorkspaceRole, type Workspace 
 import { getUnreadNotificationCount } from '@/data/selectors'
 import { useAppData, useAppSync, useCurrentReportingPeriod } from '@/context/app-data-context'
 import { useWorkspace } from '@/context/workspace-context'
+import { resolvePageTitle } from '@/lib/page-title'
 import { formatWeekLabel } from '@/lib/dates'
 import { prefetchRoute } from '@/routes/route-prefetch'
 import { cn } from '@/lib/utils'
@@ -273,20 +274,10 @@ export function AppShell({ children }: PropsWithChildren) {
   const navItems = getNavigationItems(currentUser.role, workspace, {
     isMorningRecorder: academic?.isMorningRecorder,
   })
-  const activeNavItem = [...navItems]
-    .sort((left, right) => right.href.length - left.href.length)
-    .find(
-      (item) =>
-        location.pathname === item.href || location.pathname.startsWith(`${item.href}/`),
-    )
-  // The Dashboard nav item (href '/admin') matches any /admin/* route via startsWith,
-  // so routes without their own nav entry (e.g. notifications) would mis-title as
-  // "Dashboard". Resolve those known auxiliary routes explicitly.
-  const pageTitle = location.pathname.endsWith('/notifications')
-    ? 'Notifications'
-    : location.pathname.startsWith('/reports/') || location.pathname === '/reports'
-      ? 'Weekly report'
-      : activeNavItem?.label ?? 'Workspace'
+  // Routes without their own nav entry (notifications, the report editor, the
+  // manual admin setup page, department and people details) get explicit
+  // titles; otherwise the Dashboard entry would match them by prefix (QA-026).
+  const pageTitle = resolvePageTitle(location.pathname, navItems)
   const sectionEyebrow =
     currentUser.role === 'nurse'
       ? 'Weekly reporting'

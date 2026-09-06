@@ -2041,8 +2041,8 @@ export function AdminDashboardPage() {
           }
         />
 
-        <div className="relative mt-6 grid gap-5 xl:grid-cols-[220px_minmax(0,0.85fr)_minmax(0,1.25fr)]">
-          <div className={cn('flex flex-col', chartPanelClass)}>
+        <div className="relative mt-6 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[220px_minmax(0,0.85fr)_minmax(0,1.25fr)]">
+          <div className={cn('flex min-w-0 flex-col', chartPanelClass)}>
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#74777f]">
               Distribution
             </p>

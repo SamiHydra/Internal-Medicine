@@ -136,6 +136,14 @@ export async function listReports(
   })
 }
 
+/**
+ * Matches the API's per-page ceiling for summaries. One page covers a whole
+ * reporting window (about 30 assignments over 9 weeks), so the dashboard and
+ * the submissions board load their summaries in a single round trip instead of
+ * three pages queued behind the dashboard's analytics and assignment requests.
+ */
+export const REPORT_SUMMARY_PAGE_SIZE = 300
+
 export async function listAllReportSummaries(
   client: LaravelApiClient,
   options?: Parameters<typeof listReports>[1],
@@ -148,7 +156,7 @@ export async function listAllReportSummaries(
     const response = await listReports(client, {
       ...options,
       page,
-      perPage: 100,
+      perPage: REPORT_SUMMARY_PAGE_SIZE,
     })
     reports.push(...response.data)
     lastPage = response.meta?.lastPage ?? 1

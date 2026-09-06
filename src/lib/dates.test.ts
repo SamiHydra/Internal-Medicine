@@ -56,6 +56,22 @@ describe('formatAuditFieldValue', () => {
     expect(formatAuditFieldValue('10:00')).toBe('10:00')
   })
 
+  it('reads snake_case tokens back as words', () => {
+    expect(formatAuditFieldValue('critical_event')).toBe('Critical event')
+    expect(formatAuditFieldValue('not_started')).toBe('Not started')
+  })
+
+  it('records human-entered values verbatim', () => {
+    expect(formatAuditFieldValue('Dr. Almaz Sahle')).toBe('Dr. Almaz Sahle')
+    expect(formatAuditFieldValue('admin@stpaulos.local')).toBe(
+      'admin@stpaulos.local',
+    )
+    expect(formatAuditFieldValue('hana.abera')).toBe('hana.abera')
+    expect(formatAuditFieldValue('Cardiac reported 4 new deaths')).toBe(
+      'Cardiac reported 4 new deaths',
+    )
+  })
+
   it('spells out booleans and empty values', () => {
     expect(formatAuditFieldValue(true)).toBe('Yes')
     expect(formatAuditFieldValue(false)).toBe('No')
@@ -76,6 +92,12 @@ describe('formatAuditFieldValue', () => {
     )
     expect(formatAuditFieldValue([1, 3, 5])).toBe('1, 3, 5')
     expect(formatAuditFieldValue([])).toBe('None')
+  })
+
+  it('renders a token the same way in a list as on its own', () => {
+    expect(formatAuditFieldValue(['critical_event'])).toBe(
+      formatAuditFieldValue('critical_event'),
+    )
   })
 })
 

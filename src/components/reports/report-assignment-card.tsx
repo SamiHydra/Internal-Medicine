@@ -27,7 +27,7 @@ export function ReportAssignmentCard({
   // shadow, and slid its arrow at the same time, which reads as noise across a
   // grid of fourteen.
   return (
-    <article className="flex h-full flex-col rounded-[0.4rem] border border-[#e3e9f1] bg-white p-4 shadow-[0_12px_30px_-26px_rgba(0,33,71,0.4)] transition-colors duration-150 hover:border-[#bcd0ea]">
+    <article className="flex h-full min-w-0 flex-col rounded-[0.4rem] border border-[#e3e9f1] bg-white p-4 shadow-[0_12px_30px_-26px_rgba(0,33,71,0.4)] transition-colors duration-150 hover:border-[#bcd0ea]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3

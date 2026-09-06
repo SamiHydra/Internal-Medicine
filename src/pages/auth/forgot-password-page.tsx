@@ -161,10 +161,6 @@ export function ForgotPasswordPage() {
                     >
                       Forgot your password?
                     </h2>
-                    <p className="text-sm font-medium leading-6 text-[#5b6169]">
-                      Give us the email on your account and we will send a link to
-                      set a new password.
-                    </p>
                     <div className="mt-4 h-px w-24 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_68%,#f0b429_100%)]" />
                   </header>
 

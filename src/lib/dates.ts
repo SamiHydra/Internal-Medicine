@@ -138,6 +138,14 @@ export function humanizeAuditKey(key: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase()
 }
 
+/**
+ * A snake_case token is machine vocabulary the database chose - "critical_event",
+ * "not_started", "metric_targets" - never something a person typed, so it is
+ * safe to read it back as words. Anything else is left exactly as stored:
+ * free text, names, usernames and emails belong in an audit trail verbatim.
+ */
+const ENUM_TOKEN = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/
+
 export function formatAuditFieldValue(value: unknown): string {
   if (value === null || value === undefined || value === '') return '-'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
@@ -151,21 +159,15 @@ export function formatAuditFieldValue(value: unknown): string {
       return format(parseISO(value), 'MMM d, yyyy HH:mm')
     }
 
-    return value
+    return ENUM_TOKEN.test(value) ? humanizeAuditKey(value) : value
   }
 
-  // Lists read as prose rather than as a JSON array. Identifier-looking
-  // strings ("new_pressure_ulcer") are humanized; anything else is left alone.
+  // Lists read as prose rather than as a JSON array, by the same rule as a
+  // scalar, so one value does not render two ways depending on its container.
   if (Array.isArray(value)) {
     if (value.length === 0) return 'None'
 
-    return value
-      .map((item) =>
-        typeof item === 'string' && /^[a-z][a-z0-9_]*$/.test(item)
-          ? humanizeAuditKey(item)
-          : formatAuditFieldValue(item),
-      )
-      .join(', ')
+    return value.map((item) => formatAuditFieldValue(item)).join(', ')
   }
 
   if (typeof value === 'object') {

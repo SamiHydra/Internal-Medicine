@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { toast } from 'sonner'
 
+import { forgetSessionHint, hasSessionHint, rememberSessionHint } from '@/lib/session-hint'
 import { createEmptyAppState } from '@/lib/app-state'
 import { clearAuthenticatedQueryCache } from '@/lib/query-client'
 import { departmentMap, templateMap } from '@/config/templates'
@@ -26,6 +27,7 @@ import type {
   ReportSummaryResponse,
   SaveReportPayload,
   SubmitAdminAccessRequestPayload,
+  AssignableRole,
 } from '@/lib/api'
 import {
   assignUserToDepartment as assignUserToDepartmentMutation,
@@ -59,6 +61,7 @@ import {
   submitAccessRequest as submitAccessRequestMutation,
   updateAppSettings as updateAppSettingsMutation,
   updateAssignmentActiveState,
+  updateUserRole as updateUserRoleMutation,
   clearNotifications as clearNotificationsMutation,
   updateNotificationReadState,
   updateUserActiveState,
@@ -138,6 +141,7 @@ type AppDataContextValue = {
   getReportDetailLoadState: (reportId: string) => ReportDetailLoadState
   updateSettings: (settings: Partial<AppSettings>) => Promise<void>
   toggleUserActive: (userId: string) => Promise<void>
+  changeUserRole: (userId: string, role: AssignableRole) => Promise<boolean>
   toggleAssignmentActive: (assignmentId: string) => Promise<void>
   assignUserToDepartment: (
     userId: string,
@@ -620,6 +624,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     setAcademic(null)
     resetDeferredDataState()
     clearWorkspaceCache()
+    forgetSessionHint()
     clearAuthenticatedQueryCache()
     setError(null)
     setIsBootstrapping(false)
@@ -794,6 +799,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           return result
         }
 
+        // The workspace answered: this device holds a live session.
+        rememberSessionHint()
         referencesRef.current = result.references
         workspaceRevisionRef.current = result.revision
         workspaceRevisionTokenRef.current = result.revisionToken
@@ -1128,8 +1135,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         // Public auth screens only need the small session probe to decide
         // whether an existing session should be redirected. An anonymous login
-        // visit must not issue a knowingly unauthorized workspace request.
+        // visit must not issue a knowingly unauthorized workspace request, and
+        // a device that never signed in (or signed out) skips even the probe:
+        // it would only answer 401 and log a console error on every cold
+        // visit (QA-025).
         if (isPublicAuthPath(window.location.pathname)) {
+          if (!hasSessionHint()) {
+            clearSignedOutState()
+            return
+          }
+
           const {
             data: { session },
             error: sessionError,
@@ -1358,10 +1373,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               reportPeriodWindow: reportPeriodWindowRef.current,
             })
           })
-          .catch(() => {
-            // A failed freshness check should not disrupt the current screen.
-            // The next focus/poll retries it and explicit refreshes still fetch
-            // the workspace directly.
+          .catch((error: unknown) => {
+            if (error instanceof ApiError && error.status === 428) {
+              // The credential is bound to the sign-in that issued it: it stops
+              // working after a sign-out elsewhere, a session expiry or its own
+              // age limit. A full workspace load either issues a fresh one or,
+              // if the session really is gone, ends with the usual sign-out.
+              workspaceRevisionTokenRef.current = null
+              return refreshDataWithOptions({
+                includeProfiles: false,
+                includeAccessRequests: false,
+                includeHistory: false,
+                reportPeriodWindow: reportPeriodWindowRef.current,
+              }).catch(() => {})
+            }
+            // Any other failed freshness check should not disrupt the current
+            // screen. The next focus/poll retries it and explicit refreshes
+            // still fetch the workspace directly.
           })
           .finally(() => {
             adminLiveRefreshInFlightRef.current = false
@@ -2133,6 +2161,33 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [client, state, refreshDataWithOptions],
   )
 
+  /**
+   * Corrects the role on an account that was created under the wrong one. The
+   * server rejects a change that would strand an active rep batch assignment,
+   * so surface that message rather than swallowing it.
+   */
+  const changeUserRole = useCallback(
+    async (userId: string, role: AssignableRole): Promise<boolean> => {
+      if (!client) {
+        toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
+        return false
+      }
+
+      try {
+        await updateUserRoleMutation(client, userId, role)
+        await refreshDataWithOptions({
+          includeProfiles: profileDirectoryLoadedRef.current,
+          includeAccessRequests: accessRequestDataLoadedRef.current,
+        })
+        return true
+      } catch (roleError) {
+        toast.error(getMessage(roleError, 'Unable to change the role.'))
+        return false
+      }
+    },
+    [client, refreshDataWithOptions],
+  )
+
   const toggleAssignmentActive = useCallback(
     async (assignmentId: string): Promise<void> => {
       if (!client) {
@@ -2440,6 +2495,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       getReportDetailLoadState,
       updateSettings,
       toggleUserActive,
+      changeUserRole,
       toggleAssignmentActive,
       assignUserToDepartment,
       ensureProfileDirectoryData,
@@ -2483,6 +2539,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       getReportDetailLoadState,
       updateSettings,
       toggleUserActive,
+      changeUserRole,
       toggleAssignmentActive,
       assignUserToDepartment,
       ensureProfileDirectoryData,

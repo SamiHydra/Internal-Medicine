@@ -125,13 +125,14 @@ export function ReportSelectionPage() {
           actions={<HeaderChip>{formatCompactNumber(periodCards.length)} items</HeaderChip>}
         />
         {periodCards.length ? (
-          <div className="mt-5 grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2 xl:grid-cols-3">
             {periodCards.map((card, index) => (
               <motion.div
                 key={`${card.assignment.id}:${card.period.id}`}
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.22, ease: 'easeOut', delay: index * 0.02 }}
+                className="min-w-0"
               >
                 <ReportAssignmentCard
                   departmentName={card.department.name}

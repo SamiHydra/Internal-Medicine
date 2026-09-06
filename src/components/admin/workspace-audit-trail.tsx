@@ -1,9 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
+import { format, isToday, isYesterday, parseISO } from 'date-fns'
 import { ChevronDown, History, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { ListSkeleton } from '@/components/layout/loading-skeletons'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -17,48 +17,54 @@ import { getApiBrowserClient } from '@/lib/api/client'
 import { apiEnvSetupHint } from '@/lib/api/env'
 import type { AdminAuditEntry } from '@/lib/api/types'
 import {
-  formatAuditFieldValue,
-  formatRelativeTimestamp,
-  formatTimestamp,
-  humanizeAuditKey,
-} from '@/lib/dates'
+  auditFieldLabel,
+  auditFieldValueCase,
+  describeAuditEntry,
+  isIdentifier,
+  type Tone,
+} from '@/lib/audit-narrative'
+import { formatAuditFieldValue, formatTimestamp } from '@/lib/dates'
 import { cn } from '@/lib/utils'
 
 const ALL = 'all'
 
-/**
- * Keys that carry an identifier rather than a fact. Case-insensitive and
- * snake_case aware, so `id`, `userId` and `batch_id` are all caught; the older
- * pattern only matched camelCase and let a bare `id` through, which is how raw
- * UUIDs ended up on screen.
- */
-const ID_KEY = /(^|[a-z0-9_])(id|uuid)$/i
+/** A dot in the margin, coloured by what kind of change this was. */
+const TONE_DOT: Record<Tone, string> = {
+  create: 'bg-[#1f9254]',
+  update: 'bg-[#005db6]',
+  remove: 'bg-[#ba1a1a]',
+  approve: 'bg-[#1f9254]',
+  reject: 'bg-[#ba1a1a]',
+  neutral: 'bg-[#9aa6b5]',
+}
 
-/** A UUID is never meaningful to a reader, whatever key it arrives under. */
-const UUID_VALUE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** "Today" beats a date a reader has to work out for themselves. */
+function dayHeading(iso: string | null): string {
+  if (!iso) return 'Undated'
 
-const isIdentifier = (key: string, value: unknown) =>
-  ID_KEY.test(key) || (typeof value === 'string' && UUID_VALUE.test(value))
+  const date = parseISO(iso)
+  if (Number.isNaN(date.getTime())) return 'Undated'
+  if (isToday(date)) return 'Today'
+  if (isYesterday(date)) return 'Yesterday'
 
-function summarize(entry: AdminAuditEntry): string | null {
-  const values = entry.newValues ?? entry.oldValues
-  if (!values) return null
+  return format(date, 'EEEE, d MMMM yyyy')
+}
 
-  const parts = Object.entries(values)
-    .filter(
-      ([key, value]) =>
-        !isIdentifier(key, value) && value !== null && value !== '',
-    )
-    .slice(0, 3)
-    .map(([key, value]) => {
-      const label = humanizeAuditKey(key)
+/** Search reads the sentence, so what is typed matches what is on screen. */
+function searchableText(entry: AdminAuditEntry): string {
+  const narrative = describeAuditEntry(entry)
 
-      if (isPlainObject(value)) return label
-      return `${label}: ${formatAuditFieldValue(value)}`
-    })
-
-  return parts.length > 0 ? parts.join(' · ') : null
+  return [
+    narrative.actor,
+    narrative.verb,
+    narrative.object,
+    narrative.name,
+    entry.entityLabel,
+    entry.actionLabel,
+    ...narrative.facts.map((fact) => `${fact.label ?? ''} ${fact.value}`),
+  ]
+    .filter(Boolean)
+    .join(' ')
 }
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -81,7 +87,7 @@ function AuditValue({ value }: { value: unknown }) {
       <ul className="mt-1 space-y-1 border-l border-[#dbe3ec] pl-3">
         {entries.map(([key, nested]) => (
           <li key={key} className="text-[13px] leading-5 text-[#1d3047]">
-            <span className="text-[#74777f]">{humanizeAuditKey(key)}: </span>
+            <span className="text-[#74777f]">{auditFieldLabel(key)}: </span>
             {isPlainObject(nested) ? (
               <AuditValue value={nested} />
             ) : (
@@ -93,7 +99,26 @@ function AuditValue({ value }: { value: unknown }) {
     )
   }
 
-  return <>{formatAuditFieldValue(value)}</>
+  // A yes/no column is a state, so it reads as one rather than as the word
+  // "Yes" sitting under a label that already asked the question.
+  if (typeof value === 'boolean') {
+    return (
+      <span
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold',
+          value ? 'bg-[#edf7f0] text-[#1f6b3b]' : 'bg-[#fceeee] text-[#9f1717]',
+        )}
+      >
+        <span
+          aria-hidden
+          className={cn('h-1.5 w-1.5 rounded-full', value ? 'bg-[#1f9254]' : 'bg-[#ba1a1a]')}
+        />
+        {value ? 'Yes' : 'No'}
+      </span>
+    )
+  }
+
+  return <>{auditFieldValueCase(formatAuditFieldValue(value))}</>
 }
 
 function DetailRow({
@@ -107,21 +132,24 @@ function DetailRow({
   after: unknown
   changed: boolean
 }) {
+  // Label and value on one line, in two aligned columns: a record card, not a
+  // grid of loose blocks. Stacking them doubled the height of every field and
+  // left the eye no column to run down.
   return (
-    <div className="flex flex-col gap-0.5">
-      <dt className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#526171]">
-        {label}
-      </dt>
-      <dd className="break-words text-[13px] leading-5 text-[#1d3047]">
+    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 py-1.5">
+      <dt className="w-32 shrink-0 text-[12.5px] text-[#8b9199]">{label}</dt>
+      <dd className="min-w-0 flex-1 break-words text-[13px] leading-5 text-[#1d3047]">
         {changed ? (
           <span className="flex flex-wrap items-baseline gap-1.5">
-            <span className="text-[#74777f] line-through decoration-[#c4c6cf]">
-              {formatAuditFieldValue(before)}
+            <span className="text-[#a9b2bd] line-through decoration-[#d4dde8]">
+              {auditFieldValueCase(formatAuditFieldValue(before))}
             </span>
             <span aria-hidden className="text-[#9aa6b5]">
               →
             </span>
-            <span className="font-medium">{formatAuditFieldValue(after)}</span>
+            <span className="font-semibold text-[#000a1e]">
+              {auditFieldValueCase(formatAuditFieldValue(after))}
+            </span>
           </span>
         ) : (
           <AuditValue value={after ?? before} />
@@ -131,37 +159,9 @@ function DetailRow({
   )
 }
 
-function initialsOf(name: string) {
-  return name
-    .split(' ')
-    .map((part) => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
-}
-
-/** Actor as a person - an initial chip plus the name, not another grey clause. */
-function Actor({ name }: { name: string | null }) {
-  const label = name ?? 'Unknown user'
-
-  return (
-    <span className="flex min-w-0 items-center gap-2">
-      <span
-        aria-hidden
-        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[0.3rem] bg-[#edf1f5] text-[10px] font-bold text-[#00468c]"
-      >
-        {name ? initialsOf(name) : '?'}
-      </span>
-      <span className="truncate text-[13px] font-medium text-[#44474e]">
-        {label}
-      </span>
-    </span>
-  )
-}
-
 function AuditRow({ entry }: { entry: AdminAuditEntry }) {
   const [open, setOpen] = useState(false)
-  const summary = summarize(entry)
+  const narrative = describeAuditEntry(entry)
 
   // Identifier columns are dropped here too: the record's own id is already
   // printed once in the footer below, so repeating UUIDs as labelled rows adds
@@ -180,64 +180,68 @@ function AuditRow({ entry }: { entry: AdminAuditEntry }) {
   const hasDetail = changedKeys.length > 0
 
   return (
-    <article className="border-b border-[#eef2f6] last:border-b-0">
+    <article className="border-b border-[#f2f5f8] last:border-b-0">
+      {/* One event, one sentence. The dot in the margin carries the kind of
+          change, so the eye can find every removal without reading a word. */}
       <button
         type="button"
         onClick={() => hasDetail && setOpen((value) => !value)}
         aria-expanded={hasDetail ? open : undefined}
         disabled={!hasDetail}
         className={cn(
-          'flex w-full items-start gap-3 px-1 py-3.5 text-left transition-colors',
+          'flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors',
           hasDetail && 'hover:bg-[#f7f9fc]',
         )}
       >
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-[#000a1e]">
-              {entry.actionLabel}
+        <time
+          dateTime={entry.createdAt ?? undefined}
+          title={formatTimestamp(entry.createdAt)}
+          className="w-11 shrink-0 pt-0.5 text-xs tabular-nums text-[#8b9199]"
+        >
+          {entry.createdAt ? format(parseISO(entry.createdAt), 'HH:mm') : '--:--'}
+        </time>
+        <span
+          aria-hidden
+          className={cn('mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full', TONE_DOT[narrative.tone])}
+        />
+        {/* Sentence and chips share one flowing line, so a wide screen keeps
+            an event to a single row and a narrow one wraps the chips under. */}
+        <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="text-[13.5px] leading-5 text-[#52606d]">
+            <span className="font-semibold text-[#1d3047]">{narrative.actor}</span>{' '}
+            {narrative.verb}
+            {narrative.object ? ` ${narrative.object}` : ''}
+            {narrative.name ? (
+              <>
+                {' '}
+                <span className="font-semibold text-[#000a1e]">{narrative.name}</span>
+              </>
+            ) : null}
+          </span>
+          {narrative.facts.map((fact) => (
+            <span
+              key={`${fact.label ?? ''}-${fact.value}`}
+              className="whitespace-nowrap rounded-full bg-[#f2f5f9] px-2 py-0.5 text-[11px] font-medium text-[#5f6670]"
+            >
+              {fact.label ? `${fact.label}: ` : ''}
+              {fact.value}
             </span>
-            <Badge variant={entry.workspace === 'system' ? 'neutral' : 'info'}>
-              {entry.entityLabel}
-            </Badge>
-          </div>
-          {summary ? (
-            <p className="mt-1.5 truncate text-[13px] leading-5 text-[#52606d]">
-              {summary}
-            </p>
-          ) : null}
-          <div className="mt-2">
-            <Actor name={entry.userName} />
-          </div>
-        </div>
-
-        {/* "When" gets its own right-hand column so the eye can scan times
-            without reading through each actor's name. Relative for recency;
-            the exact stamp stays one hover away. */}
-        <div className="flex shrink-0 items-center gap-2 pl-3">
-          <time
-            dateTime={entry.createdAt ?? undefined}
-            title={formatTimestamp(entry.createdAt)}
-            className="whitespace-nowrap text-xs font-medium tabular-nums text-[#74777f]"
-          >
-            {formatRelativeTimestamp(entry.createdAt)}
-          </time>
-          {hasDetail ? (
-            <ChevronDown
-              aria-hidden
-              className={cn(
-                'h-4 w-4 text-[#9aa6b5] transition-transform',
-                open && 'rotate-180',
-              )}
-            />
-          ) : (
-            <span aria-hidden className="h-4 w-4" />
-          )}
-        </div>
+          ))}
+        </span>
+        {hasDetail ? (
+          <ChevronDown
+            aria-hidden
+            className={cn(
+              'mt-0.5 h-4 w-4 shrink-0 text-[#c0c8d2] transition-transform',
+              open && 'rotate-180',
+            )}
+          />
+        ) : null}
       </button>
 
       {open ? (
-        <div className="mb-3 rounded-[0.4rem] bg-[#f7f9fc] px-4 py-3">
-          <dl className="grid gap-3 sm:grid-cols-2">
+        <div className="ml-[4.5rem] mr-3 mb-2.5 rounded-[0.35rem] border border-[#e9eef4] bg-white px-4 py-2.5">
+          <dl className="divide-y divide-[#f2f5f8]">
             {changedKeys.map((key) => {
               const before = entry.oldValues?.[key]
               const after = entry.newValues?.[key]
@@ -248,7 +252,7 @@ function AuditRow({ entry }: { entry: AdminAuditEntry }) {
               return (
                 <DetailRow
                   key={key}
-                  label={humanizeAuditKey(key)}
+                  label={auditFieldLabel(key)}
                   before={before}
                   after={after}
                   changed={changed}
@@ -256,9 +260,11 @@ function AuditRow({ entry }: { entry: AdminAuditEntry }) {
               )
             })}
           </dl>
-          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 border-t border-[#e6ecf3] pt-3 text-xs text-[#74777f]">
-            {entry.entityId ? <span>Record: {entry.entityId}</span> : null}
-            {entry.ipAddress ? <span>IP: {entry.ipAddress}</span> : null}
+          {/* Forensic detail: needed if a change is ever disputed, but nothing
+              a reader scans for, so it sits quietly at the bottom. */}
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 border-t border-[#f2f5f8] pt-2 font-mono text-[11px] text-[#a9b2bd]">
+            {entry.entityId ? <span>ref {entry.entityId}</span> : null}
+            {entry.ipAddress ? <span>from {entry.ipAddress}</span> : null}
           </div>
         </div>
       ) : null}
@@ -306,12 +312,26 @@ export function WorkspaceAuditTrail({
     const rows = data?.data ?? []
     if (!term) return rows
 
-    return rows.filter((entry) =>
-      [entry.actionLabel, entry.entityLabel, entry.userName, summarize(entry)]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(term)),
-    )
+    return rows.filter((entry) => searchableText(entry).toLowerCase().includes(term))
   }, [data?.data, term])
+
+  // Grouping by day turns a wall of timestamps into "what happened on Tuesday".
+  const days = useMemo(() => {
+    const grouped: { heading: string; entries: AdminAuditEntry[] }[] = []
+
+    for (const entry of entries) {
+      const heading = dayHeading(entry.createdAt)
+      const current = grouped.at(-1)
+
+      if (current?.heading === heading) {
+        current.entries.push(entry)
+      } else {
+        grouped.push({ heading, entries: [entry] })
+      }
+    }
+
+    return grouped
+  }, [entries])
 
   if (!client) {
     return (
@@ -323,9 +343,9 @@ export function WorkspaceAuditTrail({
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <Select value={entityType} onValueChange={setEntityType}>
-          <SelectTrigger className="w-[200px]" aria-label="Filter by record type">
+          <SelectTrigger className="h-9 w-[11.5rem] text-sm" aria-label="Filter by record type">
             <SelectValue placeholder="All record types" />
           </SelectTrigger>
           <SelectContent>
@@ -339,7 +359,7 @@ export function WorkspaceAuditTrail({
         </Select>
 
         <Select value={userId} onValueChange={setUserId}>
-          <SelectTrigger className="w-[190px]" aria-label="Filter by person">
+          <SelectTrigger className="h-9 w-[10.5rem] text-sm" aria-label="Filter by person">
             <SelectValue placeholder="Anyone" />
           </SelectTrigger>
           <SelectContent>
@@ -352,22 +372,22 @@ export function WorkspaceAuditTrail({
           </SelectContent>
         </Select>
 
-        <div className="relative min-w-[220px] flex-1">
+        <div className="relative min-w-[13rem] flex-1">
           <Search
             aria-hidden
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]"
+            className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9aa7b8]"
           />
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search this trail"
             aria-label={`Search the ${noun} audit trail`}
-            className="pl-9"
+            className="h-9 pl-9 text-sm"
           />
         </div>
       </div>
 
-      <div className="mt-5">
+      <div className="mt-4">
         {isPending ? (
           <ListSkeleton rows={6} />
         ) : isError ? (
@@ -377,23 +397,33 @@ export function WorkspaceAuditTrail({
               : `Failed to load the ${noun} audit trail.`}
           </p>
         ) : entries.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-12 text-center">
+          <div className="flex flex-col items-center gap-2 py-10 text-center">
             <History aria-hidden className="h-6 w-6 text-[#9aa6b5]" />
-            <p className="text-sm font-medium text-[#44474e]">
-              No {noun} activity matches these filters.
+            <p className="text-sm text-[#5f6670]">
+              Nothing matches these filters.
             </p>
           </div>
         ) : (
-          <>
-            <div className="max-h-[60vh] overflow-y-auto overscroll-contain">
-              {entries.map((entry) => (
-                <AuditRow key={entry.id} entry={entry} />
+          <div className="overflow-hidden rounded-[0.35rem] border border-[#e6ecf3]">
+            <div className="max-h-[62vh] overflow-y-auto overscroll-contain">
+              {days.map((day) => (
+                <section key={day.heading}>
+                  <h4 className="sticky top-0 z-10 border-b border-[#eef2f6] bg-[#f8fafc]/95 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#8b9199] backdrop-blur">
+                    {day.heading}
+                    <span className="ml-2 font-medium normal-case tracking-normal text-[#a9b2bd]">
+                      {day.entries.length}
+                    </span>
+                  </h4>
+                  {day.entries.map((entry) => (
+                    <AuditRow key={entry.id} entry={entry} />
+                  ))}
+                </section>
               ))}
             </div>
-            <p className="mt-3 text-xs text-[#74777f]">
-              Showing {entries.length} of the 500 most recent {noun} actions.
+            <p className="border-t border-[#eef2f6] bg-[#f8fafc] px-3 py-2 text-xs text-[#8b9199]">
+              {entries.length} of the last 500 actions
             </p>
-          </>
+          </div>
         )}
       </div>
     </div>

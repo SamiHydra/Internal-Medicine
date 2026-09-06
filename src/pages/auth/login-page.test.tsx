@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   emitAuthStateChange: vi.fn(),
@@ -29,7 +29,16 @@ vi.mock('@/lib/api/env', () => ({
 import { LoginPage } from './login-page'
 
 describe('LoginPage public entry', () => {
+  afterEach(() => {
+    window.localStorage.clear()
+    api.get.mockReset()
+    api.primeCsrfCookie.mockClear()
+  })
+
   it('restores an existing session without requiring AppDataProvider', async () => {
+    // The device signed in before (the hint is written on every successful
+    // workspace load), so the page probes the session and redirects.
+    window.localStorage.setItem('imreport.session-hint', '1')
     const user = {
       id: 'admin-1',
       fullName: 'Audit Admin',
@@ -48,6 +57,28 @@ describe('LoginPage public entry', () => {
     await waitFor(() => {
       expect(onAuthenticated).toHaveBeenCalledWith(user)
     })
+    expect(api.get).toHaveBeenCalledWith('/api/auth/me')
+  })
+
+  it('skips the session probe on a device that never signed in (QA-025)', async () => {
+    // No hint: the probe could only answer 401 and log a console error, so the
+    // form renders straight away, CSRF is still primed for the sign-in, and no
+    // session request is made.
+    api.get.mockResolvedValue({ user: null })
+    const onAuthenticated = vi.fn()
+
+    const { container } = render(
+      <MemoryRouter initialEntries={['/login']}>
+        <LoginPage onAuthenticated={onAuthenticated} />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(container.querySelector('#identifier')).not.toBeNull()
+    })
+    expect(api.get).not.toHaveBeenCalled()
+    expect(api.primeCsrfCookie).toHaveBeenCalled()
+    expect(onAuthenticated).not.toHaveBeenCalled()
   })
 
   it('keeps decorative dividers out of the hero flex layout', () => {

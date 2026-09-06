@@ -1,6 +1,7 @@
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { toast } from 'sonner'
 import {
   CheckCheck,
   ChevronDown,
@@ -43,6 +44,18 @@ const roleLabels = {
   student_rep: 'Student rep',
 } as const
 
+// Roles an admin can correct an existing account to. Deliberately narrower than
+// the server whitelist: `admin` is omitted so this never becomes a one-click
+// promotion path around the approval queue. Nurse and student rep are the two
+// admin-created roles, so they are the two a wrong pick lands on.
+const CORRECTABLE_ROLES = ['nurse', 'student_rep'] as const
+
+type CorrectableRole = (typeof CORRECTABLE_ROLES)[number]
+
+function isCorrectableRole(role: UserRole): role is CorrectableRole {
+  return (CORRECTABLE_ROLES as readonly UserRole[]).includes(role)
+}
+
 const sectionClass =
   'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
 const countChipClass =
@@ -84,6 +97,7 @@ export function UserManagementPage() {
     approveAccessRequest,
     rejectAccessRequest,
     toggleUserActive,
+    changeUserRole,
     toggleAssignmentActive,
     assignUserToDepartment,
     currentUser,
@@ -99,6 +113,7 @@ export function UserManagementPage() {
   const [rosterSearch, setRosterSearch] = useState('')
   const [rosterPage, setRosterPage] = useState(1)
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(() => new Set())
+  const [roleChangePending, setRoleChangePending] = useState<string | null>(null)
   const deferredDirectoryRef = useRef<HTMLDivElement>(null)
   const [showDirectorySections, setShowDirectorySections] = useState(false)
 
@@ -148,6 +163,34 @@ export function UserManagementPage() {
 
   // Only the maintenance owner and admins review the self-service account queue.
   const canApproveAdmins = currentUser?.role === 'superadmin' || currentUser?.role === 'admin'
+
+  /**
+   * Corrects an account created under the wrong role. The two roles live in
+   * different workspaces, so the row leaves the current roster on success -
+   * say where it went rather than letting it silently vanish.
+   */
+  const handleRoleChange = async (
+    profile: { id: string; fullName: string; role: UserRole },
+    nextRole: CorrectableRole,
+  ) => {
+    if (profile.role === nextRole) {
+      return
+    }
+
+    setRoleChangePending(profile.id)
+    try {
+      const changed = await changeUserRole(profile.id, nextRole)
+      if (changed) {
+        toast.success(
+          nextRole === 'student_rep'
+            ? `${profile.fullName} is now a student rep and appears on the Academic roster.`
+            : `${profile.fullName} is now a nurse and appears on the Clinical roster.`,
+        )
+      }
+    } finally {
+      setRoleChangePending(null)
+    }
+  }
 
   useEffect(() => {
     if (!currentUser) {
@@ -902,6 +945,42 @@ export function UserManagementPage() {
                             {profile.active ? 'Active' : 'Inactive'}
                           </span>
                         </div>
+                        {/* A role picked by mistake used to be uncorrectable: the
+                            account had to be deactivated and rebuilt under a new
+                            email. Only the two admin-created roles are offered. */}
+                        {isCorrectableRole(profile.role) ? (
+                          <div className="mb-3.5 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[#e6ecf3] pb-3.5">
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#74777f]">
+                              Role
+                            </span>
+                            <Select
+                              value={profile.role}
+                              disabled={roleChangePending === profile.id}
+                              onValueChange={(next) =>
+                                void handleRoleChange(profile, next as CorrectableRole)
+                              }
+                            >
+                              <SelectTrigger
+                                className="h-9 w-[11rem] bg-white text-sm"
+                                aria-label={`Role for ${profile.fullName}`}
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {CORRECTABLE_ROLES.map((roleKey) => (
+                                  <SelectItem key={roleKey} value={roleKey}>
+                                    {rolesByKey.get(roleKey)?.label ?? roleLabels[roleKey]}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-xs text-[#74777f]">
+                              {roleChangePending === profile.id
+                                ? 'Saving...'
+                                : 'Corrects an account created under the wrong role.'}
+                            </p>
+                          </div>
+                        ) : null}
                         {assignments.length ? (
                           <div className="flex flex-wrap gap-2">
                             {assignments.map((assignment) => {

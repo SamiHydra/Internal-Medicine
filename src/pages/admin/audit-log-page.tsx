@@ -25,7 +25,11 @@ const serviceLineLabels = {
 } as const
 
 const sectionClass =
-  'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
+  'rounded-[0.35rem] bg-white px-4 py-5 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-5 md:py-5'
+// Shared by the header strip and every row so the table reads as columns.
+// Matches the workspace trail above it, so the page has one rhythm, not two.
+const EDIT_GRID =
+  'grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 lg:grid-cols-[9.5rem_9rem_minmax(0,1fr)_minmax(0,13rem)_1rem]'
 const countChipClass =
   'inline-flex items-center gap-2 self-start rounded-full bg-[#f4f7fb] px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#44474e] outline outline-1 outline-[#e3e9f1]'
 
@@ -35,12 +39,6 @@ function formatAuditValue(value: string | number | null) {
   }
 
   return String(value)
-}
-
-function SectionEyebrow({ label }: { label: string }) {
-  return (
-    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">{label}</p>
-  )
 }
 
 /**
@@ -63,18 +61,10 @@ function WorkspaceAuditSection({
       transition={{ duration: 0.3, ease: 'easeOut' }}
       className={sectionClass}
     >
-      <div className="space-y-5">
-        <div className="border-b border-[#eef2f6] pb-5">
-          <SectionEyebrow label="Audit stream" />
-          <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
-            {isAcademic ? 'Academic activity' : 'Clinical activity'}
-          </h2>
-          <p className="mt-1 text-sm text-[#74777f]">
-            {isAcademic
-              ? 'Every recorded academic action - evaluations, morning sessions, teaching, roster, students and structure - newest first.'
-              : 'Every recorded clinical action - reports, assignments, templates, settings and access - newest first.'}
-          </p>
-        </div>
+      <div className="space-y-4">
+        <h2 className="font-display text-[1.15rem] font-bold tracking-[-0.02em] text-[#000a1e]">
+          {isAcademic ? 'Academic activity' : 'Clinical activity'}
+        </h2>
 
         <WorkspaceAuditTrail
           workspace={workspace}
@@ -183,24 +173,20 @@ export function AuditLogPage() {
         transition={{ duration: 0.3, ease: 'easeOut', delay: 0.04 }}
         className={sectionClass}
       >
-        <div className="space-y-5">
-          <div className="flex flex-col gap-4 border-b border-[#eef2f6] pb-5 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <SectionEyebrow label="Audit stream" />
-              <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
-                Change history
-              </h2>
-              <p className="mt-1 text-sm text-[#74777f]">Field edits across reports, newest first.</p>
-            </div>
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="mr-auto font-display text-[1.15rem] font-bold tracking-[-0.02em] text-[#000a1e]">
+              Report edits
+            </h2>
             <span className={cn(countChipClass, 'whitespace-nowrap')}>
               <History className="h-3.5 w-3.5 text-[#005db6]" />
-              {formatCompactNumber(entries.length)} rows
+              {formatCompactNumber(entries.length)}
             </span>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
-              <SelectTrigger className="h-10 w-full text-sm sm:w-[260px]" aria-label="Filter by department">
+              <SelectTrigger className="h-9 w-full text-sm sm:w-[13rem]" aria-label="Filter by department">
                 <SelectValue placeholder="All departments" />
               </SelectTrigger>
               <SelectContent>
@@ -211,24 +197,30 @@ export function AuditLogPage() {
                 ))}
               </SelectContent>
             </Select>
-            <div className="relative w-full sm:w-72">
+            <div className="relative min-w-[13rem] flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9aa7b8]" />
               <Input
                 value={auditSearch}
                 onChange={(event) => setAuditSearch(event.target.value)}
                 placeholder="Search field, value, or editor"
-                className="h-10 pl-9 text-sm"
+                className="h-9 pl-9 text-sm"
               />
             </div>
           </div>
 
           {entries.length ? (
-            <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
-              <div className="hidden items-center gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.12em] text-[#526171] lg:flex">
-                <span className="w-4 shrink-0" />
-                <span className="min-w-0 flex-1">Field</span>
-                <span className="min-w-0 flex-1">Change</span>
-                <span className="w-40 shrink-0 text-right">By · When</span>
+            <div className="overflow-hidden rounded-[0.35rem] border border-[#e6ecf3]">
+              <div
+                className={cn(
+                  EDIT_GRID,
+                  'hidden border-b border-[#eef2f6] bg-[#f8fafc] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#8b9199] lg:grid',
+                )}
+              >
+                <span>When</span>
+                <span>Who</span>
+                <span>Field</span>
+                <span>Change</span>
+                <span />
               </div>
 
               {visibleEntries.map((entry) => {
@@ -238,87 +230,70 @@ export function AuditLogPage() {
                 const expanded = expandedEntries.has(entry.id)
 
                 return (
-                  <div key={entry.id} className="border-b border-[#eef2f6] last:border-b-0">
-                    <div
+                  <div key={entry.id} className="border-b border-[#f0f3f7] last:border-b-0">
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      aria-label={`${expanded ? 'Hide' : 'Show'} change detail`}
                       onClick={() => toggleExpanded(entry.id)}
-                      className="flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors duration-200 hover:bg-[#f7f9fc]"
+                      className={cn(EDIT_GRID, 'w-full px-3 py-2 text-left transition-colors hover:bg-[#f7f9fc]')}
                     >
-                      <button
-                        type="button"
-                        aria-expanded={expanded}
-                        aria-label={`${expanded ? 'Hide' : 'Show'} change detail`}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          toggleExpanded(entry.id)
-                        }}
-                        className="shrink-0 rounded-[0.25rem] p-0.5 text-[#9aa7b8] outline-none transition-colors hover:text-[#005db6] focus-visible:text-[#005db6]"
-                      >
-                        <ChevronDown
-                          className={cn(
-                            'h-4 w-4 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
-                            expanded && 'rotate-180',
-                          )}
-                        />
-                      </button>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-semibold text-[#000a1e]">
-                          {entry.fieldLabel}
-                        </span>
-                        <span className="block truncate text-[13px] leading-5 text-[#5f6670]">
+                      <span className="order-2 shrink-0 whitespace-nowrap text-xs tabular-nums text-[#8b9199] lg:order-none">
+                        {formatTimestamp(entry.changedAt)}
+                      </span>
+                      <span className="order-3 col-span-2 truncate text-[13px] text-[#52606d] lg:order-none lg:col-span-1">
+                        {entry.changedByName}
+                      </span>
+                      <span className="order-1 min-w-0 truncate text-[13px] lg:order-none">
+                        <span className="font-semibold text-[#000a1e]">{entry.fieldLabel}</span>
+                        <span className="text-[#9aa6b5]"> · </span>
+                        <span className="text-[#74777f]">
                           {department?.name ?? entry.departmentId} · {templateName}
                         </span>
                       </span>
-                      <span className="hidden min-w-0 flex-1 items-center gap-2 text-xs lg:flex">
-                        <span className="max-w-[45%] truncate text-[#74777f]">
+                      <span className="order-4 col-span-2 flex min-w-0 items-baseline gap-1.5 text-xs lg:order-none lg:col-span-1">
+                        <span className="min-w-0 truncate text-[#8b9199] line-through decoration-[#c4c6cf]">
                           {formatAuditValue(entry.oldValue)}
                         </span>
-                        <ArrowRight className="h-3.5 w-3.5 shrink-0 text-[#9aa7b8]" />
-                        <span className="max-w-[45%] truncate font-semibold text-[#000a1e]">
+                        <ArrowRight aria-hidden className="h-3 w-3 shrink-0 self-center text-[#c0c8d2]" />
+                        <span className="min-w-0 truncate font-semibold text-[#000a1e]">
                           {formatAuditValue(entry.newValue)}
                         </span>
                       </span>
-                      <span className="hidden w-40 shrink-0 text-right lg:block">
-                        <span className="block truncate text-xs font-medium text-[#1d3047]">
-                          {entry.changedByName}
-                        </span>
-                        <span className="block text-xs text-[#657180]">
-                          {formatTimestamp(entry.changedAt)}
-                        </span>
+                      <span className="order-5 hidden justify-self-end lg:order-none lg:block">
+                        <ChevronDown
+                          aria-hidden
+                          className={cn(
+                            'h-4 w-4 text-[#c0c8d2] transition-transform duration-200',
+                            expanded && 'rotate-180',
+                          )}
+                        />
                       </span>
-                    </div>
+                    </button>
 
                     {expanded ? (
-                      <div className="space-y-3 border-t border-[#eef2f6] bg-[#f7f9fc] px-4 py-3.5">
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div className="rounded-[0.4rem] border border-[#e6ecf3] bg-white p-3.5">
-                            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#526171]">
-                              Before
-                            </p>
-                            <p className="mt-1.5 break-words text-sm font-medium leading-6 text-[#44474e]">
+                      <div className="mx-3 mb-2.5 space-y-2.5 rounded-[0.35rem] bg-[#f7f9fc] px-3.5 py-3">
+                        <dl className="grid gap-x-6 gap-y-2.5 sm:grid-cols-2">
+                          <div className="flex flex-col gap-0.5">
+                            <dt className="text-[12px] font-medium text-[#74777f]">Before</dt>
+                            <dd className="break-words text-[13px] leading-5 text-[#52606d]">
                               {formatAuditValue(entry.oldValue)}
-                            </p>
+                            </dd>
                           </div>
-                          <div className="rounded-[0.4rem] border border-[#cfe0f4] bg-white p-3.5">
-                            <div className="flex items-center gap-2">
-                              <ArrowRight className="h-4 w-4 text-[#005db6]" />
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
-                                After
-                              </p>
-                            </div>
-                            <p className="mt-1.5 break-words text-sm font-medium leading-6 text-[#000a1e]">
+                          <div className="flex flex-col gap-0.5">
+                            <dt className="text-[12px] font-medium text-[#74777f]">After</dt>
+                            <dd className="break-words text-[13px] font-medium leading-5 text-[#000a1e]">
                               {formatAuditValue(entry.newValue)}
-                            </p>
+                            </dd>
                           </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 text-[13px] leading-5 text-[#5f6670]">
+                        </dl>
+                        <div className="flex flex-wrap items-center gap-2 border-t border-[#e6ecf3] pt-2.5 text-xs text-[#8b9199]">
                           {department ? (
                             <Badge variant="info">{serviceLineLabels[department.family]}</Badge>
                           ) : null}
                           <span>{templateName}</span>
-                          <span className="text-[#9aa7b8]">·</span>
-                          <span>Edited by {entry.changedByName}</span>
-                          <span className="text-[#9aa7b8]">·</span>
-                          <span>{formatTimestamp(entry.changedAt)}</span>
+                          <span className="text-[#c0c8d2]">·</span>
+                          <span>{entry.changedByName}</span>
                         </div>
                       </div>
                     ) : null}
@@ -327,7 +302,7 @@ export function AuditLogPage() {
               })}
 
               {entries.length > visibleEntries.length ? (
-                <div className="flex items-center justify-center border-t border-[#eef2f6] bg-[#f7f9fc] px-4 py-3">
+                <div className="flex items-center justify-center border-t border-[#eef2f6] bg-[#f8fafc] px-3 py-2">
                   <button
                     type="button"
                     onClick={() => setVisibleCount((count) => count + AUDIT_LOG_PAGE_SIZE)}
@@ -339,11 +314,9 @@ export function AuditLogPage() {
               ) : null}
             </div>
           ) : (
-            <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-6 text-center">
-              <span className="flex h-11 w-11 items-center justify-center rounded-[0.4rem] bg-[#edf4fb] text-[#005db6]">
-                <History className="h-5 w-5" />
-              </span>
-              <p className="text-sm leading-6 text-[#5b6169]">
+            <div className="flex min-h-[9rem] flex-col items-center justify-center gap-2 rounded-[0.35rem] border border-dashed border-[#dbe3ec] bg-[#f8fafc] px-6 text-center">
+              <History aria-hidden className="h-6 w-6 text-[#9aa6b5]" />
+              <p className="text-sm text-[#5f6670]">
                 {auditSearch || departmentFilter !== 'all'
                   ? 'No changes match the current filters.'
                   : 'No report edits have been logged yet.'}

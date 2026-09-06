@@ -11,6 +11,7 @@ import { technicalSupport } from '@/config/support'
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
 import { ApiError, getApiBrowserClient, isApiConfigured } from '@/lib/api/client'
 import { missingApiEnvKeys } from '@/lib/api/env'
+import { hasSessionHint } from '@/lib/session-hint'
 import type { SessionPayload } from '@/lib/api/types'
 import { landingPathForRole } from '@/routes/landing'
 import type { UserRole } from '@/types/domain'
@@ -80,6 +81,22 @@ export function LoginPage({
     }
 
     let cancelled = false
+
+    // A device that never signed in (or signed out) has no session to redirect:
+    // the probe would only answer 401 and put an error in the console on every
+    // cold visit (QA-025). The hint is remembered on every successful workspace
+    // load and cleared on sign-out; when storage is unavailable it reads as
+    // "unknown" and the probe runs as before.
+    if (!hasSessionHint()) {
+      setIsBootstrapping(false)
+      void client.primeCsrfCookie().catch(() => {
+        // The submit flow retries CSRF setup and surfaces a real login error.
+      })
+
+      return () => {
+        cancelled = true
+      }
+    }
 
     void client
       .get<SessionPayload>('/api/auth/me')
@@ -254,9 +271,6 @@ export function LoginPage({
                 >
                   Reporting Sign In
                 </h2>
-                <p className="text-sm font-medium text-[#5b6169]">
-                  Access the internal medicine operations and academic platform
-                </p>
                 <div className="mt-4 h-px w-24 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_68%,#f0b429_100%)]" />
               </header>
 
