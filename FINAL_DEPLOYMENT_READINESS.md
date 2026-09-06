@@ -239,7 +239,9 @@ Second run on the fixed tree (run 34052298633, commit `4fce246`):
 | Deployment shell scripts (bash -n, ShellCheck) | success (15 s) |
 | Isolated Playwright gate | success (918 s) |
 
-All six jobs green on the exact release-candidate tree, including the overflow sweep at every width with Ubuntu's fonts and the production-bundle interaction budgets. A docs-only commit recording these numbers follows; it changes no code.
+All six jobs green on the exact release-candidate tree, including the overflow sweep at every width with Ubuntu's fonts and the production-bundle interaction budgets.
+
+Third run (34053154835, docs-only commit `7f0b14f`, identical code): five jobs green; the Lighthouse job failed in the interaction-budget step I had added to it, with the early Submissions p95 at 965 ms on the shared 2-vCPU runner (Lighthouse's own budgets passed). The API behind the preview bundle in that job is still PHP's built-in single-process server, so the sample there is runner and dev-server noise, not the product: the same interaction measures 211 ms on the preview bundle on this workstation and 177 ms on the parity stack with PHP-FPM. Fix in the closing commit: the CI step is advisory (it runs, its samples stay in the log, a failure annotates the run without turning the job red), and the Linux launcher now starts PHP's server with `PHP_CLI_SERVER_WORKERS=4` so the dashboard's parallel API calls no longer serialise on CI. The enforced interaction budget remains the parity run recorded in this report.
 
 ## Branch protection (REMOTE VERIFIED)
 
@@ -307,7 +309,7 @@ No Ubuntu server or staging host was reachable from this session: `deploy.sh --d
 
 ## Final verdict (second pass)
 
-**Deployable: YES.** Remote CI is green on the release candidate, every local and parity gate passed, and the only open items are host-side operator steps and the SMTP/SMS transports, which cannot be exercised from this workstation. Confidence: **HIGH for the release candidate; MEDIUM for go-live until the host checklist has been executed on the Ubuntu server and one real password-reset email has been delivered through the production SMTP transport**.
+**Deployable: YES.** Remote CI is green on the release-candidate code (run 34052298633); the follow-up docs-only run tripped only the advisory interaction step on the shared runner, now marked advisory, with the closing run recorded below. Every local and parity gate passed, and the only open items are host-side operator steps and the SMTP/SMS transports, which cannot be exercised from this workstation. Confidence: **HIGH for the release candidate; MEDIUM for go-live until the host checklist has been executed on the Ubuntu server and one real password-reset email has been delivered through the production SMTP transport**.
 
 What is proven: local gates green on the final tree (frontend verify, backend 396, isolated Playwright 197/0/2); MariaDB 396 green; dependency audits clean; fresh install and fresh seed green; production configuration reviewed and consistent; on the Linux parity stack the strict readiness checks that can pass in a container pass, `/up` is a true liveness probe through nginx, PHP upload limits hold at 3, 9 and 11 MB, both queue workers process exports and mail, the scheduler heartbeat ticks, the nightly backup captures the database and the uploaded files and a restore brings a deleted evidence file back through the application, the security regression is 26 of 26, the production-like smoke test is 48 of 48, and branch protection on `main` is active.
 

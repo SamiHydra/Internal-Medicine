@@ -42,6 +42,14 @@ const environment = {
   BROADCAST_CONNECTION: 'log',
   SANCTUM_STATEFUL_DOMAINS: 'localhost:5173,127.0.0.1:5173,localhost:4173,127.0.0.1:4173',
   CORS_ALLOWED_ORIGINS: 'http://localhost:5173,http://localhost:4173',
+  // PHP's built-in server handles one request at a time, so the dashboard's
+  // parallel API burst serialises and every timing the browser sees on Linux
+  // CI is inflated. PHP >= 7.4 forks workers on Linux/macOS when this is set
+  // (Windows ignores it); SQLite runs in WAL mode with a 5 s busy timeout, so
+  // a few concurrent workers are safe.
+  ...(process.platform === 'win32'
+    ? {}
+    : { PHP_CLI_SERVER_WORKERS: process.env.PHP_CLI_SERVER_WORKERS ?? '4' }),
 }
 
 // Cached Laravel configuration takes precedence over environment overrides.
