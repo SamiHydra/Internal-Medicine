@@ -1,6 +1,6 @@
-# St Paul Weekly Hospital Reporting Dashboard
+# St Paul's Weekly Hospital Reporting Dashboard
 
-A Vite + React frontend for St Paul Internal Medicine weekly reporting, backed by a Laravel API for authentication, authorization, report persistence, notifications, audit logging, and settings.
+A Vite + React frontend for St Paul's Internal Medicine weekly reporting, backed by a Laravel API for authentication, authorization, report persistence, notifications, audit logging, and settings.
 
 ## Stack
 
@@ -29,6 +29,13 @@ php artisan migrate        # SQLite by default; zero-install for local dev
 php artisan db:seed        # roles, templates, departments, field definitions, periods
 php artisan app:create-superadmin   # create the first login
 php artisan serve          # http://127.0.0.1:8000
+```
+
+In a second terminal, start the named queue worker used by Excel exports and notifications:
+
+```bash
+cd backend
+php artisan queue:work --queue=analytics,notifications,default --tries=3 --timeout=300
 ```
 
 ### 2. Frontend (Vite SPA)
@@ -86,6 +93,7 @@ Backend:
 ```bash
 cd backend
 php artisan serve
+php artisan queue:work --queue=analytics,notifications,default --tries=3 --timeout=300
 php artisan migrate
 php artisan db:seed
 php artisan test

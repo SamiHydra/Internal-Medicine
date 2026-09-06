@@ -2,16 +2,39 @@
 
 namespace App\Support\Export;
 
+use RuntimeException;
 use ZipArchive;
 
 /**
- * Minimal, dependency-free .xlsx writer (Office Open XML). Builds a single-sheet
- * workbook using inline strings (no shared-strings table) so it needs no external
- * library - just PHP's bundled ZipArchive. The sheet XML is streamed to a temp
- * file row-by-row, so peak memory stays flat regardless of row count.
+ * Dependency-free .xlsx writer (Office Open XML). It uses inline strings (no
+ * shared-strings table) and streams worksheet rows to temp files, so large
+ * clinical-history exports keep bounded memory. In addition to plain tabular
+ * sheets it supports a small, controlled style vocabulary for form-like sheets.
  */
 class XlsxWriter
 {
+    /**
+     * Column letters are needed once per cell, which runs into the millions on a
+     * full-history workbook. Computing them costs more than remembering them.
+     *
+     * @var array<int, string>
+     */
+    private array $columnLetters = [];
+
+    /**
+     * A sheet larger than this is streamed to a temp file instead of being held
+     * in memory. Form sheets sit far below it; the index and history sheets do
+     * not.
+     */
+    private const SHEET_SPILL_BYTES = 1048576;
+
+    /**
+     * ZipArchive holds added entries in memory until the archive is closed, so a
+     * workbook with thousands of sheets grows without bound. Closing and
+     * reopening every so often flushes them to disk and caps the footprint.
+     */
+    private const ZIP_FLUSH_SHEETS = 400;
+
     /**
      * Write a worksheet to a temp .xlsx file and return its path. The caller is
      * responsible for deleting it (e.g. response()->download(...)->deleteFileAfterSend()).
@@ -21,63 +44,225 @@ class XlsxWriter
      */
     public function toTempFile(array $header, iterable $rows): string
     {
-        $sheetPath = $this->tempPath('sheet');
-        $sheet = fopen($sheetPath, 'w');
+        return $this->toMultiSheetTempFile([
+            [
+                'name' => 'Report',
+                'header' => $header,
+                'rows' => $rows,
+            ],
+        ]);
+    }
 
-        fwrite($sheet, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>');
-        fwrite($sheet, '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>');
-
-        $rowIndex = 1;
-        $this->writeRow($sheet, $rowIndex++, $header, true);
-        foreach ($rows as $row) {
-            $this->writeRow($sheet, $rowIndex++, array_values($row), false);
+    /**
+     * Build a workbook with multiple independently streamed worksheets.
+     *
+     * @param  list<array{
+     *     name: string,
+     *     header?: list<string>,
+     *     rows: iterable<int, array<int, string|int|float|null>|array{
+     *         cells: list<string|int|float|null>,
+     *         style?: string,
+     *         styles?: list<string|null>,
+     *         height?: int|float,
+     *         mergeAcross?: int,
+     *         mergeRanges?: list<array{0: int, 1: int}>
+     *     }>,
+     *     columns?: list<int|float>,
+     *     freezeRows?: int,
+     *     showGridlines?: bool,
+     *     autoFilter?: bool
+     * }>  $sheets
+     */
+    public function toMultiSheetTempFile(array $sheets): string
+    {
+        if ($sheets === []) {
+            throw new \InvalidArgumentException('At least one worksheet is required.');
         }
-
-        fwrite($sheet, '</sheetData></worksheet>');
-        fclose($sheet);
 
         $xlsxPath = $this->tempPath('xlsx');
         $zip = new ZipArchive;
-        $zip->open($xlsxPath, ZipArchive::OVERWRITE);
-        $zip->addFromString('[Content_Types].xml', $this->contentTypes());
-        $zip->addFromString('_rels/.rels', $this->rootRels());
-        $zip->addFromString('xl/workbook.xml', $this->workbook());
-        $zip->addFromString('xl/_rels/workbook.xml.rels', $this->workbookRels());
-        $zip->addFile($sheetPath, 'xl/worksheets/sheet1.xml');
-        $zip->close();
 
-        @unlink($sheetPath);
+        if ($zip->open($xlsxPath, ZipArchive::OVERWRITE) !== true) {
+            throw new RuntimeException('Unable to open the xlsx archive for writing.');
+        }
+
+        $sheetNames = [];
+        $spilled = [];
+        $count = 0;
+        $sinceFlush = 0;
+
+        // Each sheet goes into the archive as soon as it is built, so only one
+        // sheet is ever held at a time.
+        foreach ($sheets as $index => $definition) {
+            $sheetNames[] = $this->worksheetName($definition['name'], $sheetNames, $index + 1);
+            $entry = 'xl/worksheets/sheet'.(++$count).'.xml';
+            $output = $this->writeSheet($definition);
+
+            if ($output['xml'] !== null) {
+                $zip->addFromString($entry, $output['xml']);
+            } else {
+                $spilled[] = $output['path'];
+                $zip->addFile($output['path'], $entry);
+            }
+
+            if (++$sinceFlush >= self::ZIP_FLUSH_SHEETS) {
+                // A failure here would otherwise leave every later sheet
+                // written to a closed archive and silently dropped.
+                if (! $zip->close()) {
+                    throw new RuntimeException('Unable to flush the xlsx archive.');
+                }
+
+                $zip = new ZipArchive;
+
+                if ($zip->open($xlsxPath) !== true) {
+                    throw new RuntimeException('Unable to reopen the xlsx archive.');
+                }
+
+                $sinceFlush = 0;
+            }
+        }
+
+        $zip->addFromString('[Content_Types].xml', $this->contentTypes($count));
+        $zip->addFromString('_rels/.rels', $this->rootRels());
+        $zip->addFromString('xl/workbook.xml', $this->workbook($sheetNames));
+        $zip->addFromString('xl/_rels/workbook.xml.rels', $this->workbookRels($count));
+        $zip->addFromString('xl/styles.xml', $this->styles());
+
+        if (! $zip->close()) {
+            throw new RuntimeException('Unable to finalise the xlsx archive.');
+        }
+
+        foreach ($spilled as $sheetPath) {
+            @unlink($sheetPath);
+        }
 
         return $xlsxPath;
     }
 
     /**
-     * @param  resource  $handle
-     * @param  array<int, string|int|float|null>  $cells
+     * @param  array{
+     *     header?: list<string>,
+     *     rows: iterable<int, array<int, string|int|float|null>|array{
+     *         cells: list<string|int|float|null>,
+     *         style?: string,
+     *         styles?: list<string|null>,
+     *         height?: int|float,
+     *         mergeAcross?: int,
+     *         mergeRanges?: list<array{0: int, 1: int}>
+     *     }>,
+     *     columns?: list<int|float>,
+     *     freezeRows?: int,
+     *     showGridlines?: bool,
+     *     autoFilter?: bool
+     * }  $definition
+     * @return array{xml: string|null, path: string|null}
      */
-    private function writeRow($handle, int $rowIndex, array $cells, bool $isHeader): void
+    private function writeSheet(array $definition): array
     {
-        fwrite($handle, '<row r="'.$rowIndex.'">');
+        $sheet = new SheetSink(self::SHEET_SPILL_BYTES, fn (): string => $this->tempPath('sheet'));
+        $sheet->write('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>');
+        $sheet->write('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">');
+        $sheet->write($this->sheetViews(
+            (int) ($definition['freezeRows'] ?? 0),
+            (bool) ($definition['showGridlines'] ?? true),
+        ));
+        $sheet->write('<sheetFormatPr defaultRowHeight="18"/>');
+
+        if (($definition['columns'] ?? []) !== []) {
+            $sheet->write($this->columns($definition['columns']));
+        }
+
+        $sheet->write('<sheetData>');
+
+        $rowIndex = 1;
+        $merges = [];
+        $header = $definition['header'] ?? [];
+
+        if ($header !== []) {
+            $this->writeRow($sheet, $rowIndex++, [
+                'cells' => $header,
+                'style' => 'header',
+                'height' => 24,
+            ], $merges);
+        }
+
+        foreach ($definition['rows'] as $row) {
+            $descriptor = array_key_exists('cells', $row)
+                ? $row
+                : ['cells' => array_values($row)];
+            $this->writeRow($sheet, $rowIndex++, $descriptor, $merges);
+        }
+
+        $sheet->write('</sheetData>');
+
+        if (($definition['autoFilter'] ?? false) && $header !== []) {
+            $lastColumn = $this->columnLetter(max(count($header) - 1, 0));
+            $sheet->write('<autoFilter ref="A1:'.$lastColumn.max($rowIndex - 1, 1).'"/>');
+        }
+
+        if ($merges !== []) {
+            $sheet->write('<mergeCells count="'.count($merges).'">');
+            foreach ($merges as $merge) {
+                $sheet->write('<mergeCell ref="'.$merge.'"/>');
+            }
+            $sheet->write('</mergeCells>');
+        }
+
+        $sheet->write('<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>');
+        $sheet->write('</worksheet>');
+
+        return $sheet->finish();
+    }
+
+    /**
+     * @param  array{
+     *     cells: list<string|int|float|null>,
+     *     style?: string,
+     *     styles?: list<string|null>,
+     *     height?: int|float,
+     *     mergeAcross?: int,
+     *     mergeRanges?: list<array{0: int, 1: int}>
+     * }  $row
+     * @param  list<string>  $merges
+     */
+    private function writeRow(SheetSink $handle, int $rowIndex, array $row, array &$merges): void
+    {
+        $height = isset($row['height']) ? ' ht="'.(float) $row['height'].'" customHeight="1"' : '';
+
+        // Built as one string and written once. A full-history workbook holds
+        // roughly a million cells, and an fwrite per cell dominated the export.
+        $buffer = '<row r="'.$rowIndex.'"'.$height.'>';
 
         $column = 0;
-        foreach ($cells as $cell) {
+        foreach ($row['cells'] as $cell) {
             $ref = $this->columnLetter($column++).$rowIndex;
             $value = (string) ($cell ?? '');
+            $styleName = $row['styles'][$column - 1] ?? $row['style'] ?? null;
+            $style = $styleName !== null ? ' s="'.$this->styleId($styleName).'"' : '';
 
-            // Numbers (not the header, not values with leading zeros) become numeric
-            // cells; everything else is an inline string.
-            if (! $isHeader && $value !== '' && is_numeric($value) && ! $this->hasLeadingZero($value)) {
-                fwrite($handle, '<c r="'.$ref.'"><v>'.$value.'</v></c>');
+            // Numbers without leading zeros become numeric cells; everything else
+            // is an inline string. Formula-like text is neutralized below.
+            if ($value !== '' && is_numeric($value) && ! $this->hasLeadingZero($value)) {
+                $buffer .= '<c r="'.$ref.'"'.$style.'><v>'.$value.'</v></c>';
 
                 continue;
             }
 
-            // Data cells are formula-injection-guarded; headers are app-controlled.
-            $rendered = $isHeader ? $value : SpreadsheetSafe::sanitize($value);
-            fwrite($handle, '<c r="'.$ref.'" t="inlineStr"><is><t xml:space="preserve">'.$this->escape($rendered).'</t></is></c>');
+            $rendered = SpreadsheetSafe::sanitize($value);
+            $buffer .= '<c r="'.$ref.'"'.$style.' t="inlineStr"><is><t xml:space="preserve">'.$this->escape($rendered).'</t></is></c>';
         }
 
-        fwrite($handle, '</row>');
+        $handle->write($buffer.'</row>');
+
+        if (($row['mergeAcross'] ?? 0) > 1) {
+            $merges[] = 'A'.$rowIndex.':'.$this->columnLetter($row['mergeAcross'] - 1).$rowIndex;
+        }
+
+        foreach ($row['mergeRanges'] ?? [] as [$from, $to]) {
+            if ($to > $from) {
+                $merges[] = $this->columnLetter($from).$rowIndex.':'.$this->columnLetter($to).$rowIndex;
+            }
+        }
     }
 
     private function hasLeadingZero(string $value): bool
@@ -92,16 +277,20 @@ class XlsxWriter
 
     private function columnLetter(int $index): string
     {
-        $letter = '';
-        $index++;
-
-        while ($index > 0) {
-            $remainder = ($index - 1) % 26;
-            $letter = chr(65 + $remainder).$letter;
-            $index = intdiv($index - 1, 26);
+        if (isset($this->columnLetters[$index])) {
+            return $this->columnLetters[$index];
         }
 
-        return $letter;
+        $letter = '';
+        $position = $index + 1;
+
+        while ($position > 0) {
+            $remainder = ($position - 1) % 26;
+            $letter = chr(65 + $remainder).$letter;
+            $position = intdiv($position - 1, 26);
+        }
+
+        return $this->columnLetters[$index] = $letter;
     }
 
     private function tempPath(string $prefix): string
@@ -109,20 +298,27 @@ class XlsxWriter
         $path = tempnam(sys_get_temp_dir(), $prefix);
 
         if ($path === false) {
-            throw new \RuntimeException('Unable to allocate a temp file for the xlsx export.');
+            throw new RuntimeException('Unable to allocate a temp file for the xlsx export.');
         }
 
         return $path;
     }
 
-    private function contentTypes(): string
+    private function contentTypes(int $sheetCount): string
     {
+        $overrides = '';
+
+        for ($index = 1; $index <= $sheetCount; $index++) {
+            $overrides .= '<Override PartName="/xl/worksheets/sheet'.$index.'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+        }
+
         return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             .'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
             .'<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
             .'<Default Extension="xml" ContentType="application/xml"/>'
             .'<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-            .'<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            .'<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+            .$overrides
             .'</Types>';
     }
 
@@ -134,20 +330,147 @@ class XlsxWriter
             .'</Relationships>';
     }
 
-    private function workbook(): string
+    /**
+     * @param  list<string>  $sheetNames
+     */
+    private function workbook(array $sheetNames): string
     {
+        $sheets = '';
+
+        foreach ($sheetNames as $index => $name) {
+            $sheetId = $index + 1;
+            $sheets .= '<sheet name="'.$this->escape($name).'" sheetId="'.$sheetId.'" r:id="rId'.$sheetId.'"/>';
+        }
+
         return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             .'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
             .'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-            .'<sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets>'
+            .'<sheets>'.$sheets.'</sheets>'
             .'</workbook>';
     }
 
-    private function workbookRels(): string
+    private function workbookRels(int $sheetCount): string
     {
+        $relationships = '';
+
+        for ($index = 1; $index <= $sheetCount; $index++) {
+            $relationships .= '<Relationship Id="rId'.$index.'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'.$index.'.xml"/>';
+        }
+
+        $relationships .= '<Relationship Id="rId'.($sheetCount + 1).'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>';
+
         return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             .'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-            .'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+            .$relationships
             .'</Relationships>';
+    }
+
+    /**
+     * @param  list<int|float>  $widths
+     */
+    private function columns(array $widths): string
+    {
+        $xml = '<cols>';
+
+        foreach ($widths as $index => $width) {
+            $column = $index + 1;
+            $xml .= '<col min="'.$column.'" max="'.$column.'" width="'.(float) $width.'" customWidth="1"/>';
+        }
+
+        return $xml.'</cols>';
+    }
+
+    private function sheetViews(int $freezeRows, bool $showGridlines): string
+    {
+        $gridlines = $showGridlines ? '1' : '0';
+        $pane = $freezeRows > 0
+            ? '<pane ySplit="'.$freezeRows.'" topLeftCell="A'.($freezeRows + 1).'" activePane="bottomLeft" state="frozen"/>'
+            : '';
+
+        return '<sheetViews><sheetView showGridLines="'.$gridlines.'" workbookViewId="0">'.$pane.'</sheetView></sheetViews>';
+    }
+
+    private function styleId(string $name): int
+    {
+        return match ($name) {
+            'header' => 1,
+            'report_title' => 2,
+            'report_subtitle' => 3,
+            'meta_label' => 4,
+            'meta_value' => 5,
+            'section_title' => 6,
+            'section_description' => 7,
+            'table_header' => 8,
+            'metric' => 9,
+            'value' => 10,
+            'weekly_total' => 11,
+            default => 0,
+        };
+    }
+
+    private function styles(): string
+    {
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            .'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            .'<fonts count="7">'
+            .'<font><sz val="11"/><name val="Calibri"/><family val="2"/></font>'
+            .'<font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font>'
+            .'<font><b/><color rgb="FFFFFFFF"/><sz val="17"/><name val="Calibri"/></font>'
+            .'<font><color rgb="FFD7E8F4"/><sz val="10"/><name val="Calibri"/></font>'
+            .'<font><b/><color rgb="FF001B36"/><sz val="11"/><name val="Calibri"/></font>'
+            .'<font><b/><color rgb="FF001B36"/><sz val="14"/><name val="Calibri"/></font>'
+            .'<font><i/><color rgb="FF5E6875"/><sz val="10"/><name val="Calibri"/></font>'
+            .'</fonts>'
+            .'<fills count="7">'
+            .'<fill><patternFill patternType="none"/></fill>'
+            .'<fill><patternFill patternType="gray125"/></fill>'
+            .'<fill><patternFill patternType="solid"><fgColor rgb="FF001B36"/><bgColor indexed="64"/></patternFill></fill>'
+            .'<fill><patternFill patternType="solid"><fgColor rgb="FF0F8EA8"/><bgColor indexed="64"/></patternFill></fill>'
+            .'<fill><patternFill patternType="solid"><fgColor rgb="FFEAF3F8"/><bgColor indexed="64"/></patternFill></fill>'
+            .'<fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill>'
+            .'<fill><patternFill patternType="solid"><fgColor rgb="FFFFF4D6"/><bgColor indexed="64"/></patternFill></fill>'
+            .'</fills>'
+            .'<borders count="2">'
+            .'<border><left/><right/><top/><bottom/><diagonal/></border>'
+            .'<border><left style="thin"><color rgb="FFD9E0E7"/></left><right style="thin"><color rgb="FFD9E0E7"/></right><top style="thin"><color rgb="FFD9E0E7"/></top><bottom style="thin"><color rgb="FFD9E0E7"/></bottom><diagonal/></border>'
+            .'</borders>'
+            .'<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+            .'<cellXfs count="12">'
+            .'<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+            .'<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'
+            .'<xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center"/></xf>'
+            .'<xf numFmtId="0" fontId="3" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center"/></xf>'
+            .'<xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
+            .'<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
+            .'<xf numFmtId="0" fontId="5" fillId="4" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center"/></xf>'
+            .'<xf numFmtId="0" fontId="6" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
+            .'<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'
+            .'<xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
+            .'<xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'
+            .'<xf numFmtId="0" fontId="4" fillId="6" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'
+            .'</cellXfs>'
+            .'<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+            .'</styleSheet>';
+    }
+
+    /**
+     * Excel limits names to 31 characters and forbids []:*?/\. Make names
+     * deterministic and unique so generated workbooks always open cleanly.
+     *
+     * @param  list<string>  $existingNames
+     */
+    private function worksheetName(string $requested, array $existingNames, int $fallbackIndex): string
+    {
+        $base = trim((string) preg_replace('/[\[\]:*?\/\\\\]/', ' ', $requested));
+        $base = mb_substr($base !== '' ? $base : 'Sheet '.$fallbackIndex, 0, 31);
+        $name = $base;
+        $suffix = 2;
+
+        while (in_array(mb_strtolower($name), array_map('mb_strtolower', $existingNames), true)) {
+            $tail = ' '.$suffix++;
+            $name = mb_substr($base, 0, 31 - mb_strlen($tail)).$tail;
+        }
+
+        return $name;
     }
 }

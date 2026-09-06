@@ -1103,4 +1103,46 @@ Birtukan Mengistu',
             ->getJson("/api/admin/student-batches/{$batch->id}")
             ->assertForbidden();
     }
+
+    public function test_saving_a_subgroup_week_again_re_points_the_placement_instead_of_failing(): void
+    {
+        $batch = $this->makeBatch();
+        $first = Ward::query()->where('slug', 'pulmonology_ward')->firstOrFail();
+        $second = Ward::query()->where('slug', 'nephrology_ward')->firstOrFail();
+
+        $payload = [
+            'batchId' => $batch->id,
+            'subgroup' => 'A',
+            'wardId' => $first->id,
+            'weekStartsOn' => '2026-09-14',
+        ];
+        $placementId = $this->actingAs($this->admin)
+            ->postJson('/api/admin/subgroup-placements', $payload)
+            ->assertCreated()
+            ->json('id');
+
+        // Same subgroup and week, another ward: the week is re-pointed. Before
+        // QA-010 the date equality missed the row on SQLite and the insert hit
+        // the unique index as an HTTP 500.
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/subgroup-placements', ['wardId' => $second->id] + $payload)
+            ->assertCreated()
+            ->assertJsonPath('id', $placementId)
+            ->assertJsonPath('wardId', $second->id);
+
+        $this->assertSame(1, SubgroupPlacement::query()
+            ->where('batch_id', $batch->id)
+            ->where('subgroup', 'A')
+            ->count());
+        $this->assertSame($second->id, SubgroupPlacement::query()->findOrFail($placementId)->ward_id);
+
+        // Another subgroup in the same week is its own row.
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/subgroup-placements', ['subgroup' => 'B'] + $payload)
+            ->assertCreated();
+        $this->assertSame(2, SubgroupPlacement::query()
+            ->where('batch_id', $batch->id)
+            ->whereDate('week_starts_on', '2026-09-14')
+            ->count());
+    }
 }

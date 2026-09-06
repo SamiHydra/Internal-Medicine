@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Services\Workspace\WorkspaceRevisionToken;
 use App\Support\Authorization\Permissions;
 use App\Support\RoleTitles;
 use Illuminate\Http\JsonResponse;
@@ -122,6 +123,10 @@ class AuthController extends Controller
         Auth::guard('web')->logout();
 
         if ($request->hasSession()) {
+            // The revision-poll credential is bound to this session; drop its
+            // registration before the id is rotated away (QA-016).
+            app(WorkspaceRevisionToken::class)->revoke($request->session()->getId());
+
             $request->session()->invalidate();
             $request->session()->regenerateToken();
         }
@@ -133,12 +138,11 @@ class AuthController extends Controller
 
     private function findUserForIdentifier(string $identifier): ?User
     {
-        return User::query()
-            ->whereRaw('lower(email) = ?', [$identifier])
-            ->orWhereRaw("lower(coalesce(username, '')) = ?", [$identifier])
-            ->orderByRaw('case when lower(email) = ? then 0 else 1 end', [$identifier])
-            ->orderBy('created_at')
-            ->first();
+        // Email has precedence when an identifier could match both fields.
+        // Both columns are normalized on write, so these are two cheap indexed
+        // point lookups instead of one lower()/coalesce()/CASE table scan.
+        return User::query()->where('email', $identifier)->first()
+            ?? User::query()->where('username', $identifier)->oldest('created_at')->first();
     }
 
     /**
@@ -146,10 +150,15 @@ class AuthController extends Controller
      */
     private function sessionPayload(User $user): array
     {
+        // Assignments are reporting scope, so they are only part of the session
+        // for accounts that currently hold the reporting permission.
+        $canReport = Permissions::userCan($user, Permissions::REPORTS_VIEW_ASSIGNED);
+
         $user->load([
             'role',
             'assignments' => fn ($query) => $query
                 ->where('active', true)
+                ->when(! $canReport, fn ($scoped) => $scoped->whereRaw('1 = 0'))
                 ->with(['department', 'template'])
                 ->orderBy('approved_at'),
         ]);

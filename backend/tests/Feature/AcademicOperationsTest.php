@@ -350,6 +350,59 @@ class AcademicOperationsTest extends TestCase
         $this->assertSame(1, $rollup['finalsRecorded']);
     }
 
+    public function test_teaching_and_student_analytics_clamp_to_one_year(): void
+    {
+        $historicBatch = StudentBatch::query()->create([
+            'cohort' => 'C1',
+            'label' => 'Historic 2024',
+            'starts_on' => '2024-01-01',
+            'ends_on' => '2024-03-31',
+        ]);
+        $currentBatch = StudentBatch::query()->create([
+            'cohort' => 'C2',
+            'label' => 'Current 2026',
+            'starts_on' => '2026-09-01',
+            'ends_on' => '2026-12-06',
+        ]);
+        Student::query()->create([
+            'batch_id' => $historicBatch->id,
+            'full_name' => 'Historic Student',
+        ]);
+        $currentStudent = Student::query()->create([
+            'batch_id' => $currentBatch->id,
+            'full_name' => 'Current Student',
+        ]);
+        TeachingSession::query()->create([
+            'batch_id' => $historicBatch->id,
+            'activity_type' => 'lecture',
+            'scheduled_date' => '2024-01-08',
+            'status' => 'held',
+        ]);
+        TeachingSession::query()->create([
+            'batch_id' => $currentBatch->id,
+            'activity_type' => 'lecture',
+            'scheduled_date' => '2026-09-07',
+            'status' => 'held',
+        ]);
+
+        $query = '?date_from=2020-01-01&date_to=2026-09-14';
+        $teaching = $this->actingAs($this->admin)
+            ->getJson('/api/academic/analytics/teaching'.$query)
+            ->assertOk()
+            ->assertJsonPath('window.fromDate', '2025-09-14')
+            ->assertJsonPath('window.toDate', '2026-09-14')
+            ->json();
+        $students = $this->actingAs($this->admin)
+            ->getJson('/api/academic/analytics/students'.$query)
+            ->assertOk()
+            ->assertJsonPath('window.fromDate', '2025-09-14')
+            ->assertJsonPath('window.toDate', '2026-09-14')
+            ->json();
+
+        $this->assertSame([$currentBatch->id], array_column($teaching['blocks'], 'batchId'));
+        $this->assertSame([$currentStudent->id], array_column($students['students'], 'id'));
+    }
+
     public function test_digest_carries_the_academic_block(): void
     {
         // The digest reads the most recent reporting period; the seeded test

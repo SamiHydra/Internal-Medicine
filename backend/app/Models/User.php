@@ -47,6 +47,14 @@ class User extends Authenticatable
         ];
     }
 
+    public function setEmailAttribute(string $value): void
+    {
+        // Authentication uses indexed exact matches. Keep the canonical form at
+        // the write boundary so case-insensitive login does not require wrapping
+        // the indexed column in lower(), which forces a scan on MariaDB.
+        $this->attributes['email'] = strtolower(trim($value));
+    }
+
     public function setUsernameAttribute(?string $value): void
     {
         $this->attributes['username'] = $value === null ? null : strtolower(trim($value));

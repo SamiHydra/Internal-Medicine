@@ -17,6 +17,7 @@ This is a Vite + React + TypeScript SPA (repo root) backed by a Laravel API in `
 
 - Location: `backend/`
 - Serve: `cd backend && php artisan serve` (http://127.0.0.1:8000)
+- Queue worker (required for Excel exports and queued notifications): `cd backend && php artisan queue:work --queue=analytics,notifications,default --tries=3 --timeout=300`
 - Migrate: `php artisan migrate` (SQLite by default in local dev)
 - Seed reference data: `php artisan db:seed`
 - Create the first superadmin: `php artisan app:create-superadmin`

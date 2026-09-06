@@ -418,6 +418,7 @@ class AcademicEvaluationController extends Controller
             $formKey,
             $subject->full_name,
         );
+        $this->analytics->scheduleWarm();
 
         return response()->json(
             $direction === 'consultant'

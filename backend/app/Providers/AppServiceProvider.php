@@ -4,11 +4,13 @@ namespace App\Providers;
 
 use App\Models\AccessRequest;
 use App\Models\AccessRequestItem;
+use App\Models\ActionItem;
 use App\Models\AdminAccessRequest;
 use App\Models\AdminAuditLog;
 use App\Models\AppSetting;
 use App\Models\AuditLog;
 use App\Models\CalculatedMetric;
+use App\Models\ClinicalAlertRule;
 use App\Models\ConsultantEvaluation;
 use App\Models\Department;
 use App\Models\Notification;
@@ -24,11 +26,13 @@ use App\Models\Role;
 use App\Models\User;
 use App\Policies\AccessRequestItemPolicy;
 use App\Policies\AccessRequestPolicy;
+use App\Policies\ActionItemPolicy;
 use App\Policies\AdminAccessRequestPolicy;
 use App\Policies\AdminAuditLogPolicy;
 use App\Policies\AppSettingPolicy;
 use App\Policies\AuditLogPolicy;
 use App\Policies\CalculatedMetricPolicy;
+use App\Policies\ClinicalAlertRulePolicy;
 use App\Policies\ConsultantEvaluationPolicy;
 use App\Policies\NotificationPolicy;
 use App\Policies\ReferenceDataPolicy;
@@ -40,8 +44,11 @@ use App\Policies\ResidentEvaluationPolicy;
 use App\Policies\RolePolicy;
 use App\Policies\UserPolicy;
 use App\Support\Authorization\Permissions;
+use Illuminate\Contracts\Validation\UncompromisedVerifier;
+use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Validation\NotPwnedVerifier;
 use Illuminate\Validation\Rules\Password;
 
 class AppServiceProvider extends ServiceProvider
@@ -67,12 +74,26 @@ class AppServiceProvider extends ServiceProvider
 
         // Baseline password policy applied wherever a password is set (register,
         // reset, change, admin create/reset). min(8)+mixedCase+numbers rejects the
-        // weak/known passwords plain min:8 allowed. Production can additionally
-        // enable ->uncompromised() (HIBP breach check) - left off here so the test
-        // suite stays offline-deterministic.
-        Password::defaults(fn () => $this->app->isProduction()
-            ? Password::min(12)->mixedCase()->numbers()->uncompromised()
-            : Password::min(8)->mixedCase()->numbers());
+        // weak/known passwords plain min:8 allowed. Production raises the length
+        // to 12 and can add the Have-I-Been-Pwned breach check with
+        // PASSWORD_BREACH_CHECK=true. The check is opt-in because it calls an
+        // internet API: on a LAN without egress every password change waited
+        // for the 30 s timeout and then passed anyway (QA-014). When enabled it
+        // uses a short timeout so a blocked egress fails fast instead of
+        // stalling the form.
+        Password::defaults(function () {
+            if (! $this->app->isProduction()) {
+                return Password::min(8)->mixedCase()->numbers();
+            }
+
+            $rule = Password::min(12)->mixedCase()->numbers();
+
+            return config('operations.password_breach_check') ? $rule->uncompromised() : $rule;
+        });
+        $this->app->singleton(UncompromisedVerifier::class, fn ($app) => new NotPwnedVerifier(
+            $app[HttpFactory::class],
+            max(1, (int) config('operations.password_breach_check_timeout_seconds', 5)),
+        ));
 
         Gate::before(fn (User $user) => $user->active ? null : false);
 
@@ -85,6 +106,8 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(AdminAccessRequest::class, AdminAccessRequestPolicy::class);
         Gate::policy(AdminAuditLog::class, AdminAuditLogPolicy::class);
         Gate::policy(AppSetting::class, AppSettingPolicy::class);
+        Gate::policy(ActionItem::class, ActionItemPolicy::class);
+        Gate::policy(ClinicalAlertRule::class, ClinicalAlertRulePolicy::class);
         Gate::policy(AuditLog::class, AuditLogPolicy::class);
         Gate::policy(CalculatedMetric::class, CalculatedMetricPolicy::class);
         Gate::policy(ConsultantEvaluation::class, ConsultantEvaluationPolicy::class);

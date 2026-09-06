@@ -4,12 +4,32 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppStateScreen } from '@/components/layout/app-state-screen'
 import { FullPageSkeleton, PageSkeleton } from '@/components/layout/loading-skeletons'
 import { ScrollToTop } from '@/components/layout/scroll-to-top'
+import { WebVitalsReporter } from '@/components/performance/web-vitals-reporter'
 import { useAppData } from '@/context/app-data-context'
 import { WorkspaceProvider } from '@/context/workspace-context'
 import { apiEnvSetupHint } from '@/lib/api/env'
 import { LoginPage } from '@/pages/auth/login-page'
 import { landingPathForRole } from '@/routes/landing'
-import { ProtectedRoute, ProtectedShell } from '@/routes/route-guards'
+
+// Keep the authenticated shell out of the public/login entry graph. The module
+// imports AppShell and its navigation dependencies, so loading it only when a
+// protected route is visited reduces login-page parsing and execution.
+const ProtectedRoute = lazy(() =>
+  import('@/routes/route-guards').then((module) => ({
+    default: module.ProtectedRoute,
+  })),
+)
+const ProtectedShell = lazy(() =>
+  import('@/routes/route-guards').then((module) => ({
+    default: module.ProtectedShell,
+  })),
+)
+
+// Keeping the import itself behind this compile-time branch prevents
+// production builds from emitting unreachable design-lab chunks.
+const DevRoutes = import.meta.env.DEV
+  ? lazy(() => import('@/routes/dev-routes'))
+  : null
 
 const DepartmentDetailPage = lazy(() =>
   import('@/pages/admin/department-detail-page').then((module) => ({
@@ -89,6 +109,11 @@ const ActionItemsPage = lazy(() =>
 const DataImportPage = lazy(() =>
   import('@/pages/admin/data-import-page').then((module) => ({
     default: module.DataImportPage,
+  })),
+)
+const AnalyticsExportPage = lazy(() =>
+  import('@/pages/admin/analytics-export-page').then((module) => ({
+    default: module.AnalyticsExportPage,
   })),
 )
 const SettingsPage = lazy(() =>
@@ -186,6 +211,16 @@ function InlineRouteFallback() {
   return <PageSkeleton />
 }
 
+function ConnectedLoginPage() {
+  const { currentUser, isBootstrapping, login } = useAppData()
+
+  if (currentUser && !isBootstrapping) {
+    return <Navigate to={landingPathForRole(currentUser.role)} replace />
+  }
+
+  return <LoginPage authenticate={login} />
+}
+
 function renderLazyRoute(node: ReactNode, fallback: 'page' | 'inline' = 'page') {
   return (
     <Suspense
@@ -255,10 +290,13 @@ function App() {
   return (
     <BrowserRouter>
       <WorkspaceProvider>
+        <WebVitalsReporter />
         <ScrollToTop />
-        <Routes>
+        <Suspense fallback={<FullPageSkeleton label="Loading page" />}>
+          <Routes>
         <Route path="/" element={<HomeRedirect />} />
-        <Route path="/login" element={<LoginPage />} />
+        {DevRoutes ? <Route path="/design-lab/*" element={<DevRoutes />} /> : null}
+        <Route path="/login" element={<ConnectedLoginPage />} />
         <Route path="/forgot-password" element={renderLazyRoute(<ForgotPasswordPage />)} />
         <Route path="/reset-password" element={renderLazyRoute(<ResetPasswordPage />)} />
         <Route path="/register" element={renderLazyRoute(<AccessRequestPage />)} />
@@ -277,10 +315,15 @@ function App() {
               path="/admin/notifications"
               element={renderLazyRoute(<NotificationsPage />, 'inline')}
             />
-            <Route
-              path="/reports/:assignmentId/:periodId"
-              element={renderLazyRoute(<ReportFormPage />, 'inline')}
-            />
+            {/* Clinical weekly reports belong to nurses and administrators only.
+                The API refuses every other role; gating the route keeps a
+                converted or academic account off the clinical shell entirely. */}
+            <Route element={<ProtectedRoute roles={['nurse', 'admin', 'superadmin']} />}>
+              <Route
+                path="/reports/:assignmentId/:periodId"
+                element={renderLazyRoute(<ReportFormPage />, 'inline')}
+              />
+            </Route>
 
             <Route element={<ProtectedRoute roles={['resident', 'consultant']} />}>
               <Route path="/academic" element={renderLazyRoute(<AcademicHomePage />, 'inline')} />
@@ -384,6 +427,10 @@ function App() {
                 element={renderLazyRoute(<DataImportPage />, 'inline')}
               />
               <Route
+                path="/admin/export"
+                element={renderLazyRoute(<AnalyticsExportPage />, 'inline')}
+              />
+              <Route
                 path="/admin/audit"
                 element={renderLazyRoute(<AuditLogPage />, 'inline')}
               />
@@ -396,7 +443,8 @@ function App() {
         </Route>
 
           <Route path="*" element={renderLazyRoute(<NotFoundPage />)} />
-        </Routes>
+          </Routes>
+        </Suspense>
       </WorkspaceProvider>
     </BrowserRouter>
   )

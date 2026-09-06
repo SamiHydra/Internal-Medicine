@@ -1,4 +1,4 @@
-Use this link to reset your St Paul reporting password:
+Use this link to reset your St Paul's reporting password:
 
 {{ $resetUrl }}
 

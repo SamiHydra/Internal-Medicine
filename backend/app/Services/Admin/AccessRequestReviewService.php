@@ -7,6 +7,7 @@ use App\Models\Notification;
 use App\Models\ReportAssignment;
 use App\Models\User;
 use App\Services\Analytics\DashboardAnalyticsService;
+use App\Support\RoleTitles;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -45,8 +46,23 @@ class AccessRequestReviewService
                 // created inactive (AccessRequestSubmissionController), so this is the
                 // step that first lets them authenticate. Existing active nurses
                 // requesting more access are unaffected (already active).
-                if ($lockedRequest->user && ! $lockedRequest->user->active) {
-                    $lockedRequest->user->forceFill(['active' => true])->save();
+                if ($lockedRequest->user) {
+                    $userUpdates = [];
+
+                    if (! $lockedRequest->user->active) {
+                        $userUpdates['active'] = true;
+                    }
+
+                    // "Applicant Nurse" is an internal marker for an unvetted
+                    // self-registration. It must not remain the person's visible
+                    // job title after approval.
+                    if ($lockedRequest->user->title === 'Applicant Nurse') {
+                        $userUpdates['title'] = RoleTitles::default('nurse');
+                    }
+
+                    if ($userUpdates !== []) {
+                        $lockedRequest->user->forceFill($userUpdates)->save();
+                    }
                 }
 
                 foreach ($lockedRequest->items as $item) {

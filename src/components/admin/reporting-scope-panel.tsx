@@ -72,7 +72,7 @@ export function ReportingScopePanel({
           type="button"
           onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
-          className="flex w-full items-center justify-between gap-3 text-left transition-transform duration-200 motion-safe:active:scale-[0.99] sm:hidden"
+          className="flex w-full items-center justify-between gap-3 text-left transition-transform duration-200 motion-safe:active:scale-[0.99] sm:hidden pointer-coarse:min-h-11"
         >
           <span className="flex items-center gap-2 text-[13px] font-semibold text-[#1d3047]">
             <SlidersHorizontal className="h-4 w-4 text-[#005db6]" />

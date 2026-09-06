@@ -118,8 +118,10 @@ class SchemaConstraintTest extends TestCase
 
         // The pre-migration core set is restored, and only that set: the four
         // accountability fields are cleared so the result is a state an up()
-        // actually produces rather than the union of both.
-        $expected = EvaluationScoring::CONSULTANT_SCORE_ITEMS;
+        // actually produces rather than the union of both. overall_rating is
+        // pinned core by a LATER migration (make it mandatory), which this
+        // rollback does not touch, so it legitimately remains.
+        $expected = [...EvaluationScoring::CONSULTANT_SCORE_ITEMS, 'overall_rating'];
         sort($expected);
         $this->assertSame($expected, $this->coreKeys($consultantForm->id));
 

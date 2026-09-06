@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
 import { ArrowUpRight } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -16,6 +16,7 @@ import {
 } from 'recharts'
 
 import { AcademicSetupBanner } from '@/components/admin/academic-setup-banner'
+import { AcademicLeaderboard } from '@/components/admin/academic-leaderboard'
 import {
   MorningAnalyticsTab,
   StudentsAnalyticsTab,
@@ -27,13 +28,16 @@ import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { ChartCard } from '@/components/dashboard/chart-card'
 import { AnalyticsContentSkeleton } from '@/components/layout/loading-skeletons'
 import {
-  fetchAcademicPeople,
-  fetchAcademicSummary,
-  fetchAcademicTrend,
+  fetchAcademicSnapshot,
   fetchAcademicWardOptions,
   type AcademicWardOption,
 } from '@/lib/api/academic'
 import { getApiBrowserClient } from '@/lib/api/client'
+import {
+  DASHBOARD_CHART_ANIMATION_DURATION_MS,
+  shouldAnimateDashboardChart,
+} from '@/lib/chart-motion'
+import { readBoundedCache, writeBoundedCache } from '@/lib/bounded-cache'
 import { apiEnvSetupHint } from '@/lib/api/env'
 import {
   academicChartPalette,
@@ -47,11 +51,9 @@ import {
   tooltipLineCursor,
 } from '@/lib/chart-theme'
 import type {
+  AcademicAnalyticsSnapshot,
   AcademicDirection,
   AcademicGranularity,
-  AcademicPeople,
-  AcademicSummary,
-  AcademicTrend,
 } from '@/lib/api/types'
 import { cn } from '@/lib/utils'
 
@@ -89,8 +91,8 @@ function rangeToDates(range: string): { dateFrom?: string; dateTo?: string } {
 // result is cached per filter signature: a re-toggle paints from cache instantly and
 // revalidates in the background, instead of blocking on the serialized dev API.
 let wardsCache: AcademicWardOption[] | null = null
-const analyticsCache = new Map<string, { summary: AcademicSummary; trend: AcademicTrend }>()
-const peopleCache = new Map<string, AcademicPeople>()
+const analyticsCache = new Map<string, AcademicAnalyticsSnapshot>()
+const ACADEMIC_CACHE_MAX_ENTRIES = 12
 
 function analyticsKey(
   direction: string,
@@ -103,24 +105,12 @@ function analyticsKey(
   return [direction, wardId ?? '', subjectId ?? '', dateFrom ?? '', dateTo ?? '', granularity].join('|')
 }
 
-function peopleKey(
-  direction: string,
-  wardId: string | undefined,
-  dateFrom: string | undefined,
-  dateTo: string | undefined,
-): string {
-  return [direction, wardId ?? '', dateFrom ?? '', dateTo ?? ''].join('|')
-}
-
 const sectionClass =
   'rounded-[0.35rem] bg-white px-5 py-6 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] md:px-6 md:py-7'
 
 function SectionEyebrow({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#005db6]">{label}</p>
-    </div>
+    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#005db6]">{label}</p>
   )
 }
 
@@ -199,14 +189,14 @@ function CategoryTick({
 
 export function AcademicDashboardPage() {
   const client = getApiBrowserClient()
+  const reduceMotion = useReducedMotion()
 
   // Default filters on mount; seed from the module cache so a Clinical→Academic
   // re-toggle paints instantly while fresh data revalidates in the background.
-  const cachedAnalytics = analyticsCache.get(
+  const cachedAnalytics = readBoundedCache(
+    analyticsCache,
     analyticsKey('consultant', undefined, undefined, undefined, undefined, 'weekly'),
   )
-  const cachedPeople = peopleCache.get(peopleKey('consultant', undefined, undefined, undefined)) ?? null
-
   // The Phase 7 dashboard tabs: peer evaluations (the original dashboard),
   // morning punctuality, teaching occurrence, and student progress.
   const [opsTab, setOpsTab] = useState<'evaluations' | 'morning' | 'teaching' | 'students'>('evaluations')
@@ -218,9 +208,9 @@ export function AcademicDashboardPage() {
   const [granularity, setGranularity] = useState<AcademicGranularity>('weekly')
 
   const [wards, setWards] = useState<AcademicWardOption[]>(wardsCache ?? [])
-  const [summary, setSummary] = useState<AcademicSummary | null>(cachedAnalytics?.summary ?? null)
-  const [trend, setTrend] = useState<AcademicTrend | null>(cachedAnalytics?.trend ?? null)
-  const [people, setPeople] = useState<AcademicPeople | null>(cachedPeople)
+  const [snapshot, setSnapshot] = useState<AcademicAnalyticsSnapshot | null>(
+    cachedAnalytics ?? null,
+  )
   const [error, setError] = useState<string | null>(() =>
     client ? null : `The Laravel API is not configured. ${apiEnvSetupHint}`,
   )
@@ -249,7 +239,8 @@ export function AcademicDashboardPage() {
     }
   }, [client])
 
-  // Summary + trend react to the full filter set (including the selected person).
+  // One aggregate snapshot supplies summary, trend, and the uncollapsed
+  // leaderboard for the complete filter set.
   useEffect(() => {
     if (!client) {
       return
@@ -270,17 +261,18 @@ export function AcademicDashboardPage() {
       query.dateTo,
       granularity,
     )
-    Promise.all([
-      fetchAcademicSummary(client, query),
-      fetchAcademicTrend(client, { ...query, granularity }),
-    ])
-      .then(([fetchedSummary, fetchedTrend]) => {
-        analyticsCache.set(cacheKey, { summary: fetchedSummary, trend: fetchedTrend })
+    fetchAcademicSnapshot(client, { ...query, granularity })
+      .then((fetched) => {
+        writeBoundedCache(
+          analyticsCache,
+          cacheKey,
+          fetched,
+          ACADEMIC_CACHE_MAX_ENTRIES,
+        )
         if (!active) {
           return
         }
-        setSummary(fetchedSummary)
-        setTrend(fetchedTrend)
+        setSnapshot(fetched)
         setError(null)
       })
       .catch((fetchError) => {
@@ -300,39 +292,9 @@ export function AcademicDashboardPage() {
     }
   }, [client, direction, wardId, person, dateRange, granularity])
 
-  // The leaderboard is independent of the selected person so it never collapses.
-  useEffect(() => {
-    if (!client) {
-      return
-    }
-    let active = true
-    const peopleCacheKey = peopleKey(
-      direction,
-      wardId === ALL ? undefined : wardId,
-      dateRange.dateFrom,
-      dateRange.dateTo,
-    )
-    fetchAcademicPeople(client, {
-      direction,
-      wardId: wardId === ALL ? undefined : wardId,
-      dateFrom: dateRange.dateFrom,
-      dateTo: dateRange.dateTo,
-    })
-      .then((fetched) => {
-        peopleCache.set(peopleCacheKey, fetched)
-        if (active) {
-          setPeople(fetched)
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setPeople({ direction, people: [] })
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [client, direction, wardId, dateRange])
+  const summary = snapshot?.summary ?? null
+  const trend = snapshot?.trend ?? null
+  const people = snapshot?.people ?? null
 
   const personOptions = useMemo(
     () => [
@@ -481,12 +443,9 @@ export function AcademicDashboardPage() {
       >
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#f0b429]">
-                Academic review
-              </p>
-            </div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#f0b429]">
+              Academic review
+            </p>
             <h1 className="mt-2 font-display text-[1.6rem] font-bold leading-tight tracking-[-0.02em] text-white md:text-[1.95rem]">
               {isResident ? 'Resident performance trends' : 'Consultant round quality'}
             </h1>
@@ -574,6 +533,11 @@ export function AcademicDashboardPage() {
                     activeDot={{ ...lineActiveDot, fill: academicChartPalette.ink }}
                     strokeLinecap="round"
                     strokeLinejoin="round"
+                    isAnimationActive={shouldAnimateDashboardChart(trendData.length, {
+                      reduceMotion,
+                    })}
+                    animationDuration={DASHBOARD_CHART_ANIMATION_DURATION_MS}
+                    animationEasing="ease-out"
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -617,6 +581,7 @@ export function AcademicDashboardPage() {
                       fill={academicChartPalette.ink}
                       radius={[0, 6, 6, 0]}
                       maxBarSize={22}
+                      isAnimationActive={false}
                     >
                       <LabelList
                         dataKey="pct"
@@ -668,6 +633,7 @@ export function AcademicDashboardPage() {
                       fill={academicChartPalette.mist}
                       radius={[0, 6, 6, 0]}
                       maxBarSize={22}
+                      isAnimationActive={false}
                     >
                       <LabelList
                         dataKey="count"
@@ -695,51 +661,21 @@ export function AcademicDashboardPage() {
             <div className="border-b border-[#eef2f6] pb-5">
               <SectionEyebrow label="Leaderboard" />
               <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
-                {isResident ? 'Residents' : 'Consultants'} by average score
+                {isResident ? 'Residents' : 'Consultants'} by combined rank
               </h2>
               <p className="mt-1 text-sm text-[#74777f]">
-                Select a person to open their evaluation history.
+                Ranked by a blend of the 1–5 rating and the indicator score
+                {' '}({Math.round((people?.ratingWeight ?? 0.5) * 100)}% rating +{' '}
+                {100 - Math.round((people?.ratingWeight ?? 0.5) * 100)}% score). Select a person to open their history.
               </p>
             </div>
 
             {leaderboard.length ? (
-              <div className="mt-5 overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
-                <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)_90px_90px_44px] gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-[#74777f] sm:grid">
-                  <span>Name</span>
-                  <span>Home ward</span>
-                  <span className="text-right">Evals</span>
-                  <span className="text-right">Score</span>
-                  <span />
-                </div>
-                {leaderboard.map((entry) => (
-                  <Link
-                    key={entry.subjectId}
-                    to={`/admin/academic/people/${entry.subjectId}?direction=${direction}`}
-                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#eef2f6] px-4 py-2.5 text-sm transition-colors duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] last:border-b-0 hover:bg-[#f7f9fc] sm:grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)_90px_90px_44px]"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate font-semibold text-[#000a1e]">
-                        {entry.subjectName ?? 'Unknown'}
-                      </span>
-                      <span className="block truncate text-[13px] text-[#74777f] sm:hidden">
-                        {entry.homeWardName ?? '-'} · {entry.evaluationCount} evals · {Math.round(entry.averageScore)}%
-                      </span>
-                    </span>
-                    <span className="hidden min-w-0 truncate text-[#5b6169] sm:block">
-                      {entry.homeWardName ?? '-'}
-                    </span>
-                    <span className="hidden text-right font-semibold tabular-nums text-[#1d3047] sm:block">
-                      {entry.evaluationCount}
-                    </span>
-                    <span className="hidden text-right font-semibold tabular-nums text-[#005db6] sm:block">
-                      {Math.round(entry.averageScore)}%
-                    </span>
-                    <span className="flex justify-end text-[#9aa7b8]">
-                      <ArrowUpRight className="h-4 w-4" />
-                    </span>
-                  </Link>
-                ))}
-              </div>
+              <AcademicLeaderboard
+                entries={leaderboard}
+                direction={direction}
+                minEvaluationsForRank={people?.minEvaluationsForRank ?? 3}
+              />
             ) : (
               <div className="mt-5 rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-5 py-10 text-center text-sm text-[#74777f]">
                 No evaluations match the current filters.

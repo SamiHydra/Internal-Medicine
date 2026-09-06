@@ -1,6 +1,6 @@
 # Playwright Pre-Deployment QA Suite
 
-End-to-end QA for the St Paul reporting app. Config: `../../playwright.config.ts` (repo root). The gate refuses to reuse existing servers and recreates a dedicated, gitignored `backend/database/e2e.sqlite` before every run.
+End-to-end QA for the St Paul's reporting app. Config: `../../playwright.config.ts` (repo root). The gate refuses to reuse existing servers and recreates a dedicated, gitignored `backend/database/e2e.sqlite` before every run.
 
 ## Run
 

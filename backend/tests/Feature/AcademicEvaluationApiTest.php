@@ -83,6 +83,7 @@ class AcademicEvaluationApiTest extends TestCase
             'criticalLabsReviewed' => true,
             'pctPatientsSeen' => 80,
             'roundDelayed' => false,
+            'overallRating' => 4,
             'mdtParticipants' => ['consultant', 'residents', 'nurse'],
             'systemIssues' => ['lab_delay'],
             'comment' => null,
@@ -120,6 +121,7 @@ class AcademicEvaluationApiTest extends TestCase
             'criticalLabsReviewed' => true,
             'pctPatientsSeen' => 80,
             'roundDelayed' => false,
+            'overallRating' => 4,
         ];
 
         $this->actingAs($this->resident)
@@ -294,7 +296,13 @@ class AcademicEvaluationApiTest extends TestCase
             ->assertJsonPath('direction', 'consultant')
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('meta.total', 1)
+            ->assertJsonPath('meta.perPage', 25)
             ->assertJsonPath('data.0.subjectId', $this->consultant->id);
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/academic/evaluations?perPage=101')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('perPage');
 
         $this->actingAs($this->resident)
             ->getJson('/api/admin/academic/evaluations?direction=consultant')
@@ -354,14 +362,67 @@ class AcademicEvaluationApiTest extends TestCase
         $this->actingAs($this->admin)
             ->getJson('/api/academic/analytics/people?direction=consultant')
             ->assertOk()
+            ->assertJsonPath('ratingWeight', 0.5)
             ->assertJsonPath('people.0.subjectId', $this->consultant->id)
-            ->assertJsonPath('people.0.evaluationCount', 1);
+            ->assertJsonPath('people.0.evaluationCount', 1)
+            // This row is a legacy-style, unrated evaluation (2 of 6 items
+            // true): the combined rank degrades to the score, not a phantom 0,
+            // and the single evaluation is flagged provisional.
+            ->assertJsonPath('people.0.averageScore', 33.3)
+            ->assertJsonPath('people.0.ratingAverage', null)
+            ->assertJsonPath('people.0.ratedCount', 0)
+            ->assertJsonPath('people.0.combinedScore', 33.3)
+            ->assertJsonPath('people.0.provisional', true);
 
         $this->actingAs($this->admin)
             ->getJson('/api/academic/analytics/trend?direction=consultant&granularity=weekly')
             ->assertOk()
             ->assertJsonPath('granularity', 'weekly')
             ->assertJsonCount(1, 'points');
+    }
+
+    public function test_snapshot_endpoint_returns_all_dashboard_views_and_preserves_authorization(): void
+    {
+        $this->createConsultantEvaluation([
+            'all_patients_reviewed' => true,
+            'vte_assessed' => true,
+        ]);
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/academic/analytics/snapshot?direction=consultant&granularity=weekly')
+            ->assertOk()
+            ->assertJsonPath('summary.evaluationCount', 1)
+            ->assertJsonPath('trend.granularity', 'weekly')
+            ->assertJsonCount(1, 'trend.points')
+            ->assertJsonPath('people.people.0.subjectId', $this->consultant->id);
+
+        $this->actingAs($this->resident)
+            ->getJson('/api/academic/analytics/snapshot?direction=consultant')
+            ->assertForbidden();
+    }
+
+    public function test_people_endpoint_blends_rating_and_score_into_combined_rank(): void
+    {
+        // All six indicators true -> score 100%. A 1-to-5 rating of 3
+        // normalises to 60% (3 / 5 * 100). Equal weight -> combined 80%.
+        $this->createConsultantEvaluation([
+            'all_patients_reviewed' => true,
+            'mgmt_plan_documented' => true,
+            'vte_assessed' => true,
+            'discharge_discussed' => true,
+            'med_review_done' => true,
+            'critical_labs_reviewed' => true,
+            'overall_rating' => 3,
+        ]);
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/academic/analytics/people?direction=consultant')
+            ->assertOk()
+            ->assertJsonPath('people.0.averageScore', 100)
+            ->assertJsonPath('people.0.ratingAverage', 3)
+            ->assertJsonPath('people.0.ratingScore', 60)
+            ->assertJsonPath('people.0.ratedCount', 1)
+            ->assertJsonPath('people.0.combinedScore', 80);
     }
 
     public function test_my_performance_returns_only_the_authenticated_users_received_scores(): void

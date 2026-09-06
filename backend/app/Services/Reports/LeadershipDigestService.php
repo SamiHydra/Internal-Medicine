@@ -41,6 +41,12 @@ class LeadershipDigestService
             ->whereIn('status', ['submitted', 'edited_after_submission', 'locked'])
             ->count();
         $expected = ReportAssignment::query()->where('active', true)->count();
+        $actionItemCounts = ActionItem::query()->selectRaw(
+            "SUM(CASE WHEN status IN ('open','assigned','in_progress') THEN 1 ELSE 0 END) AS outstanding_count, ".
+            "SUM(CASE WHEN status IN ('open','assigned','in_progress') AND due_at IS NOT NULL AND due_at < ? THEN 1 ELSE 0 END) AS overdue_count, ".
+            "SUM(CASE WHEN status IN ('open','assigned','in_progress') AND severity = 'high' THEN 1 ELSE 0 END) AS high_count",
+            [now()],
+        )->first();
 
         return [
             'hasData' => true,
@@ -58,7 +64,11 @@ class LeadershipDigestService
             'deaths' => $this->sumFields($reports, ['new_deaths']),
             'hai' => $this->sumFields($reports, ['total_hai']),
             'outpatientSeen' => $this->sumFields($reports, ['total_patients_seen']),
-            'openActionItems' => ActionItem::query()->where('status', 'open')->count(),
+            // Keep the old key for mail/template compatibility, but count every
+            // item that still requires work rather than hiding in-progress work.
+            'openActionItems' => (int) ($actionItemCounts?->outstanding_count ?? 0),
+            'overdueActionItems' => (int) ($actionItemCounts?->overdue_count ?? 0),
+            'highSeverityActionItems' => (int) ($actionItemCounts?->high_count ?? 0),
             'academic' => $this->academicBlock($period),
         ];
     }

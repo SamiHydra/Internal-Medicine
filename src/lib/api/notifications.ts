@@ -10,7 +10,10 @@ export async function updateNotificationReadState(
     return
   }
 
-  await client.patch('/api/notifications/read', { ids: notificationIds })
+  return client.patch<{ updated: number; data: NotificationItem[] }>(
+    '/api/notifications/read',
+    { ids: notificationIds },
+  )
 }
 
 export async function clearNotifications(
@@ -22,7 +25,7 @@ export async function clearNotifications(
     return
   }
 
-  await client.delete('/api/notifications', { ids: notificationIds })
+  return client.delete<{ deleted: number }>('/api/notifications', { ids: notificationIds })
 }
 
 export async function restoreNotifications(
@@ -33,5 +36,8 @@ export async function restoreNotifications(
     return
   }
 
-  await client.post('/api/notifications/restore', { notifications })
+  return client.post<{ restored: number; data: NotificationItem[] }>(
+    '/api/notifications/restore',
+    { notifications },
+  )
 }

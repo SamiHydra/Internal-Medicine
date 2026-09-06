@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  differenceInCalendarWeeks,
+  endOfWeek,
+  format,
+  isAfter,
+  isBefore,
+  isValid,
+  parseISO,
+  startOfDay,
+  startOfWeek,
+} from 'date-fns';
 import { GraduationCap, Loader2, Plus, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { CreateStudentRepForm } from '@/components/admin/create-student-rep-form';
+import { TeachingSchedulePanel } from '@/components/admin/teaching-schedule-panel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -50,8 +63,10 @@ import {
 } from '@/lib/api/academic-structure';
 import { getApiBrowserClient } from '@/lib/api/client';
 import { getErrorMessage } from '@/lib/api/helpers';
+import { cn } from '@/lib/utils';
 
 const NONE = 'none';
+const ANY_BATCH = 'any';
 
 const sessionStatusVariant: Record<
   OversightSessionRecord['status'],
@@ -62,6 +77,68 @@ const sessionStatusVariant: Record<
   not_held: 'danger',
   cancelled: 'neutral',
 };
+
+/**
+ * The week a picked date actually lands on. The API snaps whatever day is sent
+ * to that week's Monday (Carbon's startOfWeek), so the form shows the resolved
+ * Monday-to-Sunday span rather than leaving the admin to infer it.
+ */
+function resolveWeekLabel(picked: string): string | null {
+  if (!picked) {
+    return null;
+  }
+
+  const date = parseISO(picked);
+
+  if (!isValid(date)) {
+    return null;
+  }
+
+  const start = startOfWeek(date, { weekStartsOn: 1 });
+  const end = endOfWeek(date, { weekStartsOn: 1 });
+
+  return `${format(start, 'EEE d MMM')} to ${format(end, 'EEE d MMM yyyy')}`;
+}
+
+const fieldCaptionClass =
+  'text-[11px] font-bold uppercase tracking-[0.1em] text-[#8794a5]';
+
+/**
+ * Where a batch sits against today: the block's own dates decide, independently
+ * of the active flag (a finished block can still be active, and pausing a
+ * running one does not rewind it).
+ */
+function describeBatch(startsOn: string, endsOn: string) {
+  const start = parseISO(startsOn);
+  const end = parseISO(endsOn);
+
+  if (!isValid(start) || !isValid(end)) {
+    return null;
+  }
+
+  const today = startOfDay(new Date());
+  const weekOptions = { weekStartsOn: 1 } as const;
+  const totalWeeks = Math.max(
+    1,
+    differenceInCalendarWeeks(end, start, weekOptions) + 1,
+  );
+  const currentWeek = Math.min(
+    totalWeeks,
+    Math.max(1, differenceInCalendarWeeks(today, start, weekOptions) + 1),
+  );
+
+  return {
+    phase: isBefore(today, start)
+      ? ('upcoming' as const)
+      : isAfter(today, end)
+        ? ('finished' as const)
+        : ('running' as const),
+    totalWeeks,
+    currentWeek,
+    range: `${format(start, 'd MMM')} to ${format(end, 'd MMM yyyy')}`,
+    startLabel: format(start, 'd MMM yyyy'),
+  };
+}
 
 /**
  * Admin management of the undergraduate module (V2 Phase 5): batches,
@@ -92,6 +169,8 @@ export function StudentsPage() {
     subgroup: NONE,
   });
   const [importDraft, setImportDraft] = useState({ batchId: '', csv: '' });
+  const [studentQuery, setStudentQuery] = useState('');
+  const [studentBatchFilter, setStudentBatchFilter] = useState(ANY_BATCH);
   const [placementDraft, setPlacementDraft] = useState({
     batchId: '',
     subgroup: 'A' as 'A' | 'B',
@@ -105,6 +184,27 @@ export function StudentsPage() {
   });
   const [cancelDraft, setCancelDraft] = useState({ sessionId: '', reason: '' });
 
+  // Per-collection loaders. Mutations refresh only what the server could have
+  // changed; most update state straight from the mutation response and fetch
+  // nothing. Reloading all six after every edit was the main source of the
+  // multi-second toggle latency (see INTERACTION_LATENCY_AUDIT.md).
+  const loadBatches = useCallback(async () => {
+    if (client) setBatches(await fetchStudentBatches(client));
+  }, [client]);
+
+  const loadStudents = useCallback(async () => {
+    if (client) setStudents(await fetchStudents(client));
+  }, [client]);
+
+  const loadReps = useCallback(async () => {
+    if (client) setReps(await fetchRepAssignments(client));
+  }, [client]);
+
+  const loadSessions = useCallback(async () => {
+    if (client) setSessions(await fetchOversightSessions(client));
+  }, [client]);
+
+  /** Full fetch: first mount only. */
   const load = useCallback(async () => {
     if (!client) {
       setBatches([]);
@@ -172,6 +272,22 @@ export function StudentsPage() {
   };
 
   const activeBatches = (batches ?? []).filter((batch) => batch.active);
+  const placementWeekLabel = resolveWeekLabel(placementDraft.weekStartsOn);
+
+  const query = studentQuery.trim().toLowerCase();
+  const visibleStudents = students.filter(
+    (student) =>
+      (studentBatchFilter === ANY_BATCH ||
+        student.batchId === studentBatchFilter) &&
+      (query === '' ||
+        student.fullName.toLowerCase().includes(query) ||
+        (student.externalId ?? '').toLowerCase().includes(query)),
+  );
+  // Students with no subgroup never appear on bedside or teaching-round
+  // rosters, so the count is surfaced rather than left to be discovered.
+  const unassignedCount = students.filter(
+    (student) => student.subgroup === null,
+  ).length;
 
   if (batches === null) {
     return (
@@ -221,8 +337,14 @@ export function StudentsPage() {
             </TabsTrigger>
             <TabsTrigger value="placements">Placements</TabsTrigger>
             <TabsTrigger value="reps">Reps ({reps.length})</TabsTrigger>
+            <TabsTrigger value="schedule">Schedule</TabsTrigger>
             <TabsTrigger value="sessions">Sessions</TabsTrigger>
           </TabsList>
+
+          {/* ---- Weekly teaching schedule ---- */}
+          <TabsContent value="schedule" className="mt-5">
+            <TeachingSchedulePanel />
+          </TabsContent>
 
           {/* ---- Batches ---- */}
           <TabsContent value="batches" className="mt-5 space-y-5">
@@ -241,64 +363,78 @@ export function StudentsPage() {
                       endsOn: '',
                     });
                     toast.success('Batch created.');
-                    await load();
+                    // Server orders by start date, so re-read the one list.
+                    await loadBatches();
                   },
                   'Unable to create the batch.',
                 );
               }}
             >
-              <Select
-                value={batchDraft.cohort}
-                onValueChange={(cohort) =>
-                  setBatchDraft((prev) => ({
-                    ...prev,
-                    cohort: cohort as 'C1' | 'C2',
-                  }))
-                }
-              >
-                <SelectTrigger aria-label="Cohort">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="C1">C1 (Year 3, 12 weeks)</SelectItem>
-                  <SelectItem value="C2">C2 (Year 4, 8 weeks)</SelectItem>
-                </SelectContent>
-              </Select>
-              <Input
-                value={batchDraft.label}
-                placeholder="Label (e.g. C1 2026-A)"
-                aria-label="Batch label"
-                onChange={(event) =>
-                  setBatchDraft((prev) => ({
-                    ...prev,
-                    label: event.target.value,
-                  }))
-                }
-              />
-              <Input
-                type="date"
-                value={batchDraft.startsOn}
-                aria-label="Batch start"
-                onChange={(event) =>
-                  setBatchDraft((prev) => ({
-                    ...prev,
-                    startsOn: event.target.value,
-                  }))
-                }
-              />
-              <Input
-                type="date"
-                value={batchDraft.endsOn}
-                aria-label="Batch end"
-                onChange={(event) =>
-                  setBatchDraft((prev) => ({
-                    ...prev,
-                    endsOn: event.target.value,
-                  }))
-                }
-              />
+              <label className="flex flex-col gap-1.5">
+                <span className={fieldCaptionClass}>Cohort</span>
+                <Select
+                  value={batchDraft.cohort}
+                  onValueChange={(cohort) =>
+                    setBatchDraft((prev) => ({
+                      ...prev,
+                      cohort: cohort as 'C1' | 'C2',
+                    }))
+                  }
+                >
+                  <SelectTrigger aria-label="Cohort">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="C1">C1 (Year 3, 12 weeks)</SelectItem>
+                    <SelectItem value="C2">C2 (Year 4, 8 weeks)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className={fieldCaptionClass}>Label</span>
+                <Input
+                  value={batchDraft.label}
+                  placeholder="e.g. C1 2026-A"
+                  aria-label="Batch label"
+                  onChange={(event) =>
+                    setBatchDraft((prev) => ({
+                      ...prev,
+                      label: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className={fieldCaptionClass}>Starts</span>
+                <Input
+                  type="date"
+                  value={batchDraft.startsOn}
+                  aria-label="Batch start"
+                  onChange={(event) =>
+                    setBatchDraft((prev) => ({
+                      ...prev,
+                      startsOn: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className={fieldCaptionClass}>Ends</span>
+                <Input
+                  type="date"
+                  value={batchDraft.endsOn}
+                  aria-label="Batch end"
+                  onChange={(event) =>
+                    setBatchDraft((prev) => ({
+                      ...prev,
+                      endsOn: event.target.value,
+                    }))
+                  }
+                />
+              </label>
               <Button
                 type="submit"
+                className="self-end"
                 disabled={
                   busy === 'batch-create' ||
                   !batchDraft.label.trim() ||
@@ -310,28 +446,83 @@ export function StudentsPage() {
               </Button>
             </form>
 
-            <div>
-              {batches.map((batch) => (
+            <div className="overflow-hidden rounded-[0.4rem] border border-[#e1e7ee] bg-white">
+              {batches.map((batch) => {
+                const meta = describeBatch(batch.startsOn, batch.endsOn);
+
+                return (
                 <div
                   key={batch.id}
-                  className="flex flex-col gap-3 border-b border-[#eef2f6] py-3.5 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
+                  className="grid gap-3 border-t border-[#eef2f6] px-4 py-3.5 first:border-t-0 sm:grid-cols-[auto_minmax(0,1fr)_180px_76px_auto] sm:items-center sm:gap-4"
                 >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'flex h-10 w-10 shrink-0 items-center justify-center rounded-[0.35rem] text-[12px] font-bold tracking-[0.02em]',
+                      batch.cohort === 'C2'
+                        ? 'bg-[#fdf3dd] text-[#8a6100]'
+                        : 'bg-[#e8f0fb] text-[#005db6]',
+                    )}
+                  >
+                    {batch.cohort}
+                  </span>
+
                   <div className="min-w-0">
-                    <p className="text-[15px] font-semibold text-[#000a1e]">
-                      {batch.label}{' '}
-                      <span className="font-normal text-[#74777f]">
-                        · {batch.cohort}
-                      </span>
+                    <p className="truncate text-[15px] font-semibold tracking-[-0.01em] text-[#000a1e]">
+                      {batch.label}
                     </p>
-                    <p className="text-sm leading-5 text-[#5f6670]">
-                      {batch.startsOn} to {batch.endsOn} · {batch.studentCount}{' '}
-                      students
+                    <p className="mt-0.5 text-[13px] leading-5 text-[#74777f]">
+                      {meta
+                        ? `${meta.range} · ${meta.totalWeeks} weeks`
+                        : `${batch.startsOn} to ${batch.endsOn}`}
                     </p>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2.5">
-                    {batch.active ? null : (
-                      <Badge variant="neutral">Inactive</Badge>
+
+                  <div className="min-w-0">
+                    {meta?.phase === 'running' ? (
+                      <>
+                        <p className="text-[12px] font-bold uppercase tracking-[0.1em] text-[#000a1e]">
+                          Week {meta.currentWeek} of {meta.totalWeeks}
+                        </p>
+                        <span
+                          aria-hidden
+                          className="mt-1.5 block h-[3px] w-full overflow-hidden rounded-full bg-[#eef2f6]"
+                        >
+                          <span
+                            className="block h-full rounded-full bg-[#04162f]"
+                            style={{
+                              width: `${(meta.currentWeek / meta.totalWeeks) * 100}%`,
+                            }}
+                          />
+                        </span>
+                      </>
+                    ) : (
+                      <p className="text-[12px] font-bold uppercase tracking-[0.1em] text-[#97a2b0]">
+                        {meta?.phase === 'upcoming'
+                          ? `Starts ${meta.startLabel}`
+                          : 'Finished'}
+                      </p>
                     )}
+                  </div>
+
+                  <div className="sm:text-right">
+                    <p className="text-[15px] font-bold tabular-nums text-[#000a1e]">
+                      {batch.studentCount}
+                    </p>
+                    <p className="text-[10.5px] font-bold uppercase tracking-[0.11em] text-[#97a2b0]">
+                      Students
+                    </p>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2.5">
+                    <span
+                      className={cn(
+                        'text-[12px] font-bold uppercase tracking-[0.1em]',
+                        batch.active ? 'text-[#000a1e]' : 'text-[#97a2b0]',
+                      )}
+                    >
+                      {batch.active ? 'Active' : 'Paused'}
+                    </span>
                     <Switch
                       checked={batch.active}
                       disabled={busy === `batch-${batch.id}`}
@@ -340,10 +531,21 @@ export function StudentsPage() {
                         void run(
                           `batch-${batch.id}`,
                           async () => {
-                            await updateStudentBatch(client!, batch.id, {
-                              active,
-                            });
-                            await load();
+                            const updated = await updateStudentBatch(
+                              client!,
+                              batch.id,
+                              { active },
+                            );
+                            setBatches((prev) =>
+                              (prev ?? []).map((item) =>
+                                item.id === updated.id ? updated : item,
+                              ),
+                            );
+                            // Deactivating a batch also deactivates its rep
+                            // assignments server-side, so that list is stale.
+                            if (!active) {
+                              await loadReps();
+                            }
                           },
                           'Unable to update the batch.',
                         )
@@ -351,7 +553,8 @@ export function StudentsPage() {
                     />
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </TabsContent>
 
@@ -375,58 +578,68 @@ export function StudentsPage() {
                       });
                       setStudentDraft((prev) => ({ ...prev, fullName: '' }));
                       toast.success('Student added.');
-                      await load();
+                      // Adding a student changes that batch's studentCount too.
+                      await Promise.all([loadStudents(), loadBatches()]);
                     },
                     'Unable to add the student.',
                   );
                 }}
               >
-                <p className="text-xs font-bold uppercase tracking-[0.1em] text-[#526171]">
+                <p className="text-[15px] font-semibold tracking-[-0.01em] text-[#000a1e]">
                   Add one student
                 </p>
-                <Select
-                  value={studentDraft.batchId}
-                  onValueChange={(batchId) =>
-                    setStudentDraft((prev) => ({ ...prev, batchId }))
-                  }
-                >
-                  <SelectTrigger aria-label="Batch">
-                    <SelectValue placeholder="Batch" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {activeBatches.map((batch) => (
-                      <SelectItem key={batch.id} value={batch.id}>
-                        {batch.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  value={studentDraft.fullName}
-                  placeholder="Full name"
-                  aria-label="Student full name"
-                  onChange={(event) =>
-                    setStudentDraft((prev) => ({
-                      ...prev,
-                      fullName: event.target.value,
-                    }))
-                  }
-                />
-                <Select
-                  value={studentDraft.subgroup}
-                  onValueChange={(subgroup) =>
-                    setStudentDraft((prev) => ({ ...prev, subgroup }))
-                  }
-                >
-                  <SelectTrigger aria-label="Subgroup">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE}>No subgroup yet</SelectItem>
-                    <SelectItem value="A">Subgroup A</SelectItem>
-                    <SelectItem value="B">Subgroup B</SelectItem>
-                  </SelectContent>
-                </Select>
+                <label className="flex flex-col gap-1.5">
+                  <span className={fieldCaptionClass}>Batch</span>
+                  <Select
+                    value={studentDraft.batchId}
+                    onValueChange={(batchId) =>
+                      setStudentDraft((prev) => ({ ...prev, batchId }))
+                    }
+                  >
+                    <SelectTrigger aria-label="Batch">
+                      <SelectValue placeholder="Choose a batch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {activeBatches.map((batch) => (
+                        <SelectItem key={batch.id} value={batch.id}>
+                          {batch.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className={fieldCaptionClass}>Full name</span>
+                  <Input
+                    value={studentDraft.fullName}
+                    placeholder="e.g. Abel Bekele"
+                    aria-label="Student full name"
+                    onChange={(event) =>
+                      setStudentDraft((prev) => ({
+                        ...prev,
+                        fullName: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className={fieldCaptionClass}>Subgroup</span>
+                  <Select
+                    value={studentDraft.subgroup}
+                    onValueChange={(subgroup) =>
+                      setStudentDraft((prev) => ({ ...prev, subgroup }))
+                    }
+                  >
+                    <SelectTrigger aria-label="Subgroup">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NONE}>No subgroup yet</SelectItem>
+                      <SelectItem value="A">Subgroup A</SelectItem>
+                      <SelectItem value="B">Subgroup B</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </label>
                 <Button
                   type="submit"
                   disabled={
@@ -451,46 +664,58 @@ export function StudentsPage() {
                       toast.success(
                         `Imported ${result.created} students (${result.skipped} skipped).`,
                       );
-                      await load();
+                      await Promise.all([loadStudents(), loadBatches()]);
                     },
                     'Unable to import the list.',
                   );
                 }}
               >
-                <p className="text-xs font-bold uppercase tracking-[0.1em] text-[#526171]">
-                  Paste a list · one per line: Name[, ID][, A or B]
-                </p>
-                <Select
-                  value={importDraft.batchId}
-                  onValueChange={(batchId) =>
-                    setImportDraft((prev) => ({ ...prev, batchId }))
-                  }
-                >
-                  <SelectTrigger aria-label="Import batch">
-                    <SelectValue placeholder="Batch" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {activeBatches.map((batch) => (
-                      <SelectItem key={batch.id} value={batch.id}>
-                        {batch.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Textarea
-                  value={importDraft.csv}
-                  placeholder={
-                    'Alem Kebede, ETS0101, A\nBirtukan Mengistu, ETS0102, B'
-                  }
-                  aria-label="Student list"
-                  className="min-h-24 font-mono text-[13px]"
-                  onChange={(event) =>
-                    setImportDraft((prev) => ({
-                      ...prev,
-                      csv: event.target.value,
-                    }))
-                  }
-                />
+                <div>
+                  <p className="text-[15px] font-semibold tracking-[-0.01em] text-[#000a1e]">
+                    Paste a list
+                  </p>
+                  <p className="mt-1 text-[13px] leading-5 text-[#74777f]">
+                    One student per line: name first, then an optional ID and an
+                    optional subgroup, separated by commas.
+                  </p>
+                </div>
+                <label className="flex flex-col gap-1.5">
+                  <span className={fieldCaptionClass}>Batch</span>
+                  <Select
+                    value={importDraft.batchId}
+                    onValueChange={(batchId) =>
+                      setImportDraft((prev) => ({ ...prev, batchId }))
+                    }
+                  >
+                    <SelectTrigger aria-label="Import batch">
+                      <SelectValue placeholder="Choose a batch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {activeBatches.map((batch) => (
+                        <SelectItem key={batch.id} value={batch.id}>
+                          {batch.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className={fieldCaptionClass}>Students</span>
+                  <Textarea
+                    value={importDraft.csv}
+                    placeholder={
+                      'Alem Kebede, ETS0101, A\nBirtukan Mengistu, ETS0102, B'
+                    }
+                    aria-label="Student list"
+                    className="min-h-24 font-mono text-[13px]"
+                    onChange={(event) =>
+                      setImportDraft((prev) => ({
+                        ...prev,
+                        csv: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
                 <Button
                   type="submit"
                   disabled={
@@ -504,73 +729,228 @@ export function StudentsPage() {
               </form>
             </div>
 
-            <div>
-              {students.map((student) => (
-                <div
-                  key={student.id}
-                  className="flex items-center justify-between gap-3 border-b border-[#eef2f6] py-2.5 last:border-b-0"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-[15px] font-medium text-[#000a1e]">
-                      {student.fullName}
-                    </p>
-                    <p className="text-sm leading-5 text-[#5f6670]">
-                      {student.batchLabel}
-                      {student.externalId ? ` · ${student.externalId}` : ''}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Select
-                      value={student.subgroup ?? NONE}
-                      disabled={busy === `student-${student.id}`}
-                      onValueChange={(subgroup) =>
-                        void run(
-                          `student-${student.id}`,
-                          async () => {
-                            await updateStudent(client!, student.id, {
-                              subgroup:
-                                subgroup === NONE
-                                  ? null
-                                  : (subgroup as 'A' | 'B'),
-                            });
-                            await load();
-                          },
-                          'Unable to move the student.',
-                        )
-                      }
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className={fieldCaptionClass}>Find</span>
+                  <Input
+                    value={studentQuery}
+                    placeholder="Name or ID"
+                    aria-label="Search students"
+                    className="w-[220px]"
+                    onChange={(event) => setStudentQuery(event.target.value)}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className={fieldCaptionClass}>Batch</span>
+                  <Select
+                    value={studentBatchFilter}
+                    onValueChange={setStudentBatchFilter}
+                  >
+                    <SelectTrigger
+                      className="w-[190px]"
+                      aria-label="Filter by batch"
                     >
-                      <SelectTrigger
-                        className="w-[90px]"
-                        aria-label={`Subgroup for ${student.fullName}`}
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ANY_BATCH}>All batches</SelectItem>
+                      {(batches ?? []).map((batch) => (
+                        <SelectItem key={batch.id} value={batch.id}>
+                          {batch.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+              </div>
+
+              <p className="pb-2.5 text-[13px] text-[#5b6169]">
+                <span className="font-semibold tabular-nums text-[#000a1e]">
+                  {visibleStudents.length}
+                </span>{' '}
+                shown
+                {unassignedCount > 0 ? (
+                  <>
+                    {' · '}
+                    <span className="font-semibold tabular-nums text-[#8a6100]">
+                      {unassignedCount}
+                    </span>{' '}
+                    without a subgroup
+                  </>
+                ) : null}
+              </p>
+            </div>
+
+            <div className="overflow-x-auto rounded-[0.4rem] border border-[#e1e7ee] bg-white">
+              <table className="w-full min-w-[560px] border-collapse">
+                <caption className="sr-only">
+                  Student roster: batch, ID, subgroup, and whether the record is
+                  active.
+                </caption>
+                <thead>
+                  <tr className="border-b border-[#eef2f6]">
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5]"
+                    >
+                      Student
+                    </th>
+                    <th
+                      scope="col"
+                      className="hidden px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5] md:table-cell"
+                    >
+                      Batch
+                    </th>
+                    <th
+                      scope="col"
+                      className="hidden px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5] lg:table-cell"
+                    >
+                      ID
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5]"
+                    >
+                      Subgroup
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5]"
+                    >
+                      Active
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleStudents.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="px-4 py-10 text-center text-[13.5px] text-[#74777f]"
                       >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={NONE}>-</SelectItem>
-                        <SelectItem value="A">A</SelectItem>
-                        <SelectItem value="B">B</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Switch
-                      checked={student.active}
-                      disabled={busy === `student-${student.id}`}
-                      aria-label={`Toggle ${student.fullName} active`}
-                      onCheckedChange={(active) =>
-                        void run(
-                          `student-${student.id}`,
-                          async () => {
-                            await updateStudent(client!, student.id, {
-                              active,
-                            });
-                            await load();
-                          },
-                          'Unable to update the student.',
-                        )
-                      }
-                    />
-                  </div>
-                </div>
-              ))}
+                        No students match this search.
+                      </td>
+                    </tr>
+                  ) : null}
+                  {visibleStudents.map((student) => (
+                    <tr
+                      key={student.id}
+                      className="border-t border-[#eef2f6] first:border-t-0"
+                    >
+                      <th
+                        scope="row"
+                        className="max-w-0 px-4 py-2.5 text-left align-middle"
+                      >
+                        <span className="block truncate text-[15px] font-semibold tracking-[-0.01em] text-[#000a1e]">
+                          {student.fullName}
+                        </span>
+                        {/* The columns these repeat are hidden on narrow
+                            screens, so they fall back under the name. */}
+                        <span className="mt-0.5 block truncate text-[13px] leading-5 text-[#74777f] md:hidden">
+                          {student.batchLabel}
+                          {student.externalId ? ` · ${student.externalId}` : ''}
+                        </span>
+                      </th>
+
+                      <td className="hidden whitespace-nowrap px-4 py-2.5 text-[13.5px] text-[#5b6169] md:table-cell">
+                        {student.batchLabel ?? '-'}
+                      </td>
+
+                      <td className="hidden whitespace-nowrap px-4 py-2.5 text-[13.5px] tabular-nums text-[#74777f] lg:table-cell">
+                        {student.externalId ?? '-'}
+                      </td>
+
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2.5">
+                          <Select
+                            value={student.subgroup ?? NONE}
+                            disabled={busy === `student-${student.id}`}
+                            onValueChange={(subgroup) =>
+                              void run(
+                                `student-${student.id}`,
+                                async () => {
+                                  const updated = await updateStudent(
+                                    client!,
+                                    student.id,
+                                    {
+                                      subgroup:
+                                        subgroup === NONE
+                                          ? null
+                                          : (subgroup as 'A' | 'B'),
+                                    },
+                                  );
+                                  setStudents((prev) =>
+                                    prev.map((item) =>
+                                      item.id === updated.id ? updated : item,
+                                    ),
+                                  );
+                                },
+                                'Unable to move the student.',
+                              )
+                            }
+                          >
+                            <SelectTrigger
+                              className="w-[84px]"
+                              aria-label={`Subgroup for ${student.fullName}`}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={NONE}>-</SelectItem>
+                              <SelectItem value="A">A</SelectItem>
+                              <SelectItem value="B">B</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {student.subgroup === null ? (
+                            <span className="hidden whitespace-nowrap rounded-[0.25rem] bg-[#fdf3dd] px-2 py-1 text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#8a6100] sm:inline">
+                              Not placed
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center justify-end gap-2.5">
+                          <span
+                            className={cn(
+                              'hidden text-[12px] font-bold uppercase tracking-[0.1em] sm:inline',
+                              student.active
+                                ? 'text-[#000a1e]'
+                                : 'text-[#97a2b0]',
+                            )}
+                          >
+                            {student.active ? 'Active' : 'Paused'}
+                          </span>
+                          <Switch
+                            checked={student.active}
+                            disabled={busy === `student-${student.id}`}
+                            aria-label={`Toggle ${student.fullName} active`}
+                            onCheckedChange={(active) =>
+                              void run(
+                                `student-${student.id}`,
+                                async () => {
+                                  const updated = await updateStudent(
+                                    client!,
+                                    student.id,
+                                    { active },
+                                  );
+                                  setStudents((prev) =>
+                                    prev.map((item) =>
+                                      item.id === updated.id ? updated : item,
+                                    ),
+                                  );
+                                },
+                                'Unable to update the student.',
+                              )
+                            }
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </TabsContent>
 
@@ -583,7 +963,10 @@ export function StudentsPage() {
                 void run(
                   'placement-create',
                   async () => {
-                    await saveSubgroupPlacement(client!, placementDraft);
+                    const saved = await saveSubgroupPlacement(
+                      client!,
+                      placementDraft,
+                    );
                     setPlacementDraft((prev) => ({
                       ...prev,
                       weekStartsOn: '',
@@ -591,7 +974,17 @@ export function StudentsPage() {
                     toast.success(
                       "Placement saved; the week's sessions were refreshed.",
                     );
-                    await load();
+                    // Saving a week re-points an existing placement when one
+                    // already covers it, so replace by id or prepend.
+                    setPlacements((prev) =>
+                      prev.some((item) => item.id === saved.id)
+                        ? prev.map((item) =>
+                            item.id === saved.id ? saved : item,
+                          )
+                        : [saved, ...prev],
+                    );
+                    // The server regenerates that week's pending sessions.
+                    await loadSessions();
                   },
                   'Unable to save the placement.',
                 );
@@ -670,6 +1063,23 @@ export function StudentsPage() {
               >
                 <Plus className="mr-1.5 h-4 w-4" /> Place week
               </Button>
+
+              <p
+                aria-live="polite"
+                className="text-[13px] leading-5 text-[#5b6169] sm:col-span-2 lg:col-span-5"
+              >
+                {placementWeekLabel ? (
+                  <>
+                    Places the week of{' '}
+                    <span className="font-semibold text-[#000a1e]">
+                      {placementWeekLabel}
+                    </span>
+                    . Any day you pick saves that whole Monday to Sunday week.
+                  </>
+                ) : (
+                  'Pick any day in the week you want. It saves the whole Monday to Sunday week that day falls in.'
+                )}
+              </p>
             </form>
 
             {placements.length === 0 ? (
@@ -711,7 +1121,9 @@ export function StudentsPage() {
                   async () => {
                     await createRepAssignment(client!, repDraft);
                     toast.success('Rep assignment saved.');
-                    await load();
+                    // Saving can re-point an existing assignment for the same
+                    // person and batch, so re-read rather than prepending.
+                    await loadReps();
                   },
                   'Unable to assign the rep.',
                 );
@@ -781,13 +1193,18 @@ export function StudentsPage() {
               </Button>
               {repAccounts.length === 0 ? (
                 <p className="text-sm leading-5 text-[#5f6670] sm:col-span-2 lg:col-span-4">
-                  No rep accounts yet: create users with the Student
-                  representative role in Users &amp; Access first. Reps can
-                  record held / not held only; they can never reach evaluations
-                  or scores.
+                  No rep accounts yet. Create one below, then assign it to a batch
+                  and scope.
                 </p>
               ) : null}
             </form>
+
+            <div className="mt-4 rounded-[0.35rem] bg-[#f8fafc] p-4 outline outline-1 outline-[#d9e0e7]/75">
+              <p className="mb-3 text-[13px] font-semibold text-[#1d3047]">
+                New rep account
+              </p>
+              <CreateStudentRepForm />
+            </div>
 
             <div>
               {reps.map((rep) => (
@@ -811,8 +1228,16 @@ export function StudentsPage() {
                       void run(
                         `rep-${rep.id}`,
                         async () => {
-                          await setRepAssignmentActive(client!, rep.id, active);
-                          await load();
+                          const updated = await setRepAssignmentActive(
+                            client!,
+                            rep.id,
+                            active,
+                          );
+                          setReps((prev) =>
+                            prev.map((item) =>
+                              item.id === updated.id ? updated : item,
+                            ),
+                          );
                         },
                         'Unable to update the rep assignment.',
                       )
@@ -907,14 +1332,27 @@ export function StudentsPage() {
                             void run(
                               `cancel-${session.id}`,
                               async () => {
-                                await cancelTeachingSession(
+                                const reason = cancelDraft.reason.trim();
+                                const cancelled = await cancelTeachingSession(
                                   client!,
                                   session.id,
-                                  cancelDraft.reason.trim(),
+                                  reason,
                                 );
                                 setCancelDraft({ sessionId: '', reason: '' });
                                 toast.success('Session cancelled.');
-                                await load();
+                                // Response carries { id, status } only; the
+                                // reason is what we just sent.
+                                setSessions((prev) =>
+                                  prev.map((item) =>
+                                    item.id === cancelled.id
+                                      ? {
+                                          ...item,
+                                          status: cancelled.status as OversightSessionRecord['status'],
+                                          reason,
+                                        }
+                                      : item,
+                                  ),
+                                );
                               },
                               'Unable to cancel the session.',
                             )

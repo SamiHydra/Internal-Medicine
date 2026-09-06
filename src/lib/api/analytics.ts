@@ -1,4 +1,5 @@
 import type { LaravelApiClient } from '@/lib/api/client'
+import { readBoundedCache, writeBoundedCache } from '@/lib/bounded-cache'
 import type { ReportFamily, ReportStatus } from '@/types/domain'
 
 export type AnalyticsQuery = Record<string, string | number | boolean | null | undefined>
@@ -130,7 +131,24 @@ export type AnalyticsRollupPayload = {
   data: AnalyticsRollupRow[]
 }
 
+export type AnalyticsExportStatus = 'pending' | 'processing' | 'ready' | 'failed'
+
+export type AnalyticsExportRecord = {
+  id: string
+  status: AnalyticsExportStatus
+  format: 'csv' | 'xlsx'
+  fileName: string | null
+  rowCount: number
+  byteSize: number | null
+  error: string | null
+  createdAt: string
+  completedAt: string | null
+  expiresAt: string | null
+  downloadUrl: string | null
+}
+
 const DASHBOARD_ANALYTICS_CACHE_TTL_MS = 5 * 60 * 1000
+const DASHBOARD_ANALYTICS_CACHE_MAX_ENTRIES = 12
 
 type DashboardAnalyticsCacheEntry = {
   payload: DashboardAnalyticsPayload
@@ -152,7 +170,7 @@ export function getDashboardAnalyticsCacheKey(query?: AnalyticsQuery) {
 
 export function readCachedDashboardAnalytics(query?: AnalyticsQuery) {
   const cacheKey = getDashboardAnalyticsCacheKey(query)
-  const cachedEntry = dashboardAnalyticsCache.get(cacheKey)
+  const cachedEntry = readBoundedCache(dashboardAnalyticsCache, cacheKey)
 
   if (!cachedEntry) {
     return null
@@ -167,10 +185,12 @@ export function readCachedDashboardAnalytics(query?: AnalyticsQuery) {
 }
 
 function writeDashboardAnalyticsCache(query: AnalyticsQuery | undefined, payload: DashboardAnalyticsPayload) {
-  dashboardAnalyticsCache.set(getDashboardAnalyticsCacheKey(query), {
-    payload,
-    cachedAt: Date.now(),
-  })
+  writeBoundedCache(
+    dashboardAnalyticsCache,
+    getDashboardAnalyticsCacheKey(query),
+    { payload, cachedAt: Date.now() },
+    DASHBOARD_ANALYTICS_CACHE_MAX_ENTRIES,
+  )
 }
 
 export function clearDashboardAnalyticsCache() {
@@ -240,4 +260,61 @@ export function fetchYearlyAnalytics(
   query?: AnalyticsQuery,
 ) {
   return fetchAnalytics<AnalyticsRollupPayload>(client, 'yearly', query)
+}
+
+export type AnalyticsExportRequest = {
+  format?: 'xlsx' | 'csv'
+  /** Ward slugs; empty means every ward. */
+  departments?: string[]
+  dateFrom?: string | null
+  dateTo?: string | null
+}
+
+export type AnalyticsExportScope = {
+  /** Reports the current selection covers. */
+  reports: number
+  /** Server ceiling; a request above it is refused before anything is queued. */
+  limit: number
+}
+
+export async function fetchAnalyticsExportScope(
+  client: LaravelApiClient,
+  request: Pick<AnalyticsExportRequest, 'departments' | 'dateFrom' | 'dateTo'> = {},
+): Promise<AnalyticsExportScope> {
+  const params = new URLSearchParams()
+  request.departments?.forEach((slug) => params.append('departments[]', slug))
+  if (request.dateFrom) params.set('dateFrom', request.dateFrom)
+  if (request.dateTo) params.set('dateTo', request.dateTo)
+
+  const query = params.toString()
+  const payload = await client.get<{ data: AnalyticsExportScope }>(
+    `/api/analytics/exports/scope${query ? `?${query}` : ''}`,
+  )
+
+  return payload.data
+}
+
+export async function queueAnalyticsExport(
+  client: LaravelApiClient,
+  request: AnalyticsExportRequest = {},
+) {
+  const payload = await client.post<{ data: AnalyticsExportRecord }>(
+    '/api/analytics/exports',
+    {
+      format: request.format ?? 'xlsx',
+      ...(request.departments?.length ? { departments: request.departments } : {}),
+      ...(request.dateFrom ? { dateFrom: request.dateFrom } : {}),
+      ...(request.dateTo ? { dateTo: request.dateTo } : {}),
+    },
+  )
+
+  return payload.data
+}
+
+export async function fetchAnalyticsExports(client: LaravelApiClient) {
+  const payload = await client.get<{ data: AnalyticsExportRecord[] }>(
+    '/api/analytics/exports',
+  )
+
+  return payload.data
 }

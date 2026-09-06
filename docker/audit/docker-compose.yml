@@ -1,0 +1,138 @@
+name: imreport-audit
+
+x-app: &app
+  build:
+    context: ../..
+    dockerfile: docker/audit/Dockerfile
+    target: app
+    args:
+      PHP_VERSION: "8.3"
+      VITE_API_BASE_URL: "https://localhost:18443"
+  image: imreport-audit/app:3c9a412
+  environment: &app-env
+    APP_NAME: "St Paul's Internal Medicine Audit"
+    APP_ENV: production
+    APP_KEY: "base64:QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
+    APP_DEBUG: "false"
+    APP_URL: "https://localhost:18443"
+    LOG_CHANNEL: stderr
+    LOG_LEVEL: warning
+    DB_CONNECTION: mariadb
+    DB_HOST: db
+    DB_PORT: "3306"
+    DB_DATABASE: imreport_audit
+    DB_USERNAME: imreport
+    DB_PASSWORD: audit-local-only
+    CACHE_STORE: "${AUDIT_CACHE_STORE:-database}"
+    SESSION_DRIVER: "${AUDIT_SESSION_DRIVER:-database}"
+    SESSION_CONNECTION: "${AUDIT_SESSION_CONNECTION:-}"
+    QUEUE_CONNECTION: "${AUDIT_QUEUE_CONNECTION:-database}"
+    REDIS_CLIENT: phpredis
+    REDIS_HOST: redis
+    REDIS_PORT: "6379"
+    REDIS_PASSWORD: "null"
+    REDIS_DB: "0"
+    REDIS_CACHE_DB: "1"
+    REDIS_PERSISTENT: "${AUDIT_REDIS_PERSISTENT:-false}"
+    SESSION_SECURE_COOKIE: "true"
+    SESSION_SAME_SITE: lax
+    SANCTUM_STATEFUL_DOMAINS: "localhost:18443,127.0.0.1:18443"
+    CORS_ALLOWED_ORIGINS: "https://localhost:18443"
+    TRUSTED_PROXIES: "*"
+    STACK_ROLE: app
+    STACK_SEED_DEV_DATA: "true"
+    SEED_HISTORY_WEEKS: "104"
+  volumes:
+    - app-storage:/opt/imreport/current/backend/storage
+    - ./scripts:/audit:ro
+    - ./evidence:/audit-output
+  networks: [audit]
+
+services:
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: imreport_audit
+      MARIADB_USER: imreport
+      MARIADB_PASSWORD: audit-local-only
+      MARIADB_ROOT_PASSWORD: audit-root-local-only
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./mariadb.cnf:/etc/mysql/conf.d/zz-audit.cnf:ro
+    ports:
+      - "127.0.0.1:43306:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 30s
+    networks: [audit]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [audit]
+
+  app:
+    <<: *app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1', 9000) ? 0 : 1);"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 300s
+
+  queue:
+    <<: *app
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      STACK_ROLE: worker
+    depends_on:
+      app:
+        condition: service_healthy
+    command: ["php", "artisan", "queue:work", "--tries=3", "--backoff=10", "--max-time=3600"]
+
+  web:
+    build:
+      context: ../..
+      dockerfile: docker/audit/Dockerfile
+      target: web
+      args:
+        VITE_API_BASE_URL: "https://localhost:18443"
+    image: imreport-audit/web:3c9a412
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18080:80"
+      - "127.0.0.1:18443:443"
+    healthcheck:
+      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "https://127.0.0.1/up"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [audit]
+
+volumes:
+  mariadb-data:
+  app-storage:
+
+networks:
+  audit:
+    driver: bridge

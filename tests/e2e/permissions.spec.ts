@@ -148,7 +148,7 @@ test.describe('Privilege escalation guards', () => {
   test('a superadmin account cannot be deactivated (Maintenance lockout protection)', async () => {
     const sa = await apiContextFromState('superadmin')
     // Find the superadmin user id from the user list.
-    const list = await sa.get('/api/admin/users', { headers: ajaxHeaders() })
+    const list = await sa.get('/api/admin/users?role=superadmin', { headers: ajaxHeaders() })
     expect(list.ok()).toBeTruthy()
     const body = await list.json()
     const users: Array<{ id: string; role?: string; roleKey?: string; role_key?: string }> = body.data ?? body

@@ -19,9 +19,17 @@ trait HandlesDomainAuthorization
         return $user->active && Permissions::isSuperadmin($user->role_key);
     }
 
+    /**
+     * An assignment row on its own never grants clinical access: the account
+     * must ALSO currently hold the reporting permission. Otherwise an account
+     * moved off the nurse role (student representative, academic role) keeps
+     * reading and writing ward reports through the rows it left behind.
+     */
     protected function ownsAssignment(User $user, ReportAssignment $assignment): bool
     {
         return $user->active
+            && Permissions::userCan($user, Permissions::REPORTS_SUBMIT)
+            && Permissions::userCan($user, Permissions::REPORTS_VIEW_ASSIGNED)
             && $assignment->active
             && $assignment->nurse_id === $user->id;
     }
@@ -36,18 +44,32 @@ trait HandlesDomainAuthorization
             return true;
         }
 
+        if (! Permissions::userCan($user, Permissions::REPORTS_VIEW_ASSIGNED)) {
+            return false;
+        }
+
         return $report->assignment()
             ->where('nurse_id', $user->id)
             ->where('active', true)
             ->exists();
     }
 
+    /**
+     * Locked reports are read-only for everyone, administrators included: an
+     * administrator unlocks first, then edits. The policy and the submission
+     * service now state the same rule instead of contradicting each other.
+     */
     protected function canMutateAssignedUnlockedReport(User $user, Report $report): bool
     {
         if (! $this->canViewAssignedReport($user, $report)) {
             return false;
         }
 
-        return $this->isAdminLike($user) || ! $report->isLocked();
+        if ($report->isLocked()) {
+            return false;
+        }
+
+        return $this->isAdminLike($user)
+            || Permissions::userCan($user, Permissions::REPORTS_SUBMIT);
     }
 }

@@ -20,6 +20,7 @@ use App\Services\Academic\MorningSessionService;
 use App\Services\Academic\RosterService;
 use App\Services\Academic\RotationCalendarService;
 use App\Services\Academic\TeachingService;
+use Database\Seeders\Concerns\GeneratesAcademicFixtures;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -35,19 +36,37 @@ use Illuminate\Support\Str;
  * Reference structure (wards, sections, duty types, forms) comes from the
  * migrations; this fills the operational rows a walkthrough needs.
  *
+ * Sized for scalability testing, not just for a walkthrough: see the TARGET_*
+ * constants for the academic headcount and STUDENTS_PER_BATCH for the
+ * undergraduate intake. Clinical headcount lives in DevUserSeeder.
+ *
  * SAFETY: never runs in production or testing. Baseline history is created
  * once, while current calendars, duties, representatives, placements, and
  * sessions are refreshed safely on later local runs.
  */
 class DevAcademicDataSeeder extends Seeder
 {
+    use GeneratesAcademicFixtures;
+
     private const DEV_PASSWORD = 'StPaul2026!';
 
     private const RANDOM_SEED = 20260722;
 
-    private const CONSULTANTS_PER_SECTION = 2;
+    /**
+     * Academic headcount targets, spread as evenly as the section list allows.
+     * These INCLUDE the named walkthrough identities (one consultant and one
+     * resident on each of the first two sections), which are folded into the
+     * section quotas rather than added on top.
+     */
+    private const TARGET_CONSULTANTS = 70;
 
-    private const RESIDENTS_PER_SECTION = 3;
+    private const TARGET_RESIDENTS = 70;
+
+    /**
+     * Students per undergraduate attachment. Four blocks run in the trailing
+     * year, so this is also a quarter of the module's annual intake.
+     */
+    private const STUDENTS_PER_BATCH = 50;
 
     private const MORNING_DAYS = [1, 3, 5]; // Mon / Wed / Fri
 
@@ -60,11 +79,20 @@ class DevAcademicDataSeeder extends Seeder
         'Bezawit', 'Dagmawi', 'Eyob', 'Fikir', 'Hiwot', 'Kena', 'Liya', 'Naol',
     ];
 
-    /** @var list<string> */
+    /**
+     * Deliberately coprime with FIRST_NAMES (41 vs 40) so the cursor walks
+     * hundreds of distinct pairings before any full name repeats - at this
+     * headcount a shorter list would hand two people the same name.
+     *
+     * @var list<string>
+     */
     private const LAST_NAMES = [
         'Tesfaye', 'Bekele', 'Alemu', 'Girma', 'Solomon', 'Assefa', 'Haile', 'Fikru',
         'Getachew', 'Wolde', 'Kebede', 'Tesfa', 'Mengistu', 'Desta', 'Abera', 'Gemechu',
         'Tadesse', 'Nigussie', 'Yohannes', 'Belay', 'Regassa', 'Hailu', 'Mekonnen', 'Bulti',
+        'Terefe', 'Zewde', 'Aklilu', 'Bogale', 'Shiferaw', 'Woldu', 'Sahle', 'Fantahun',
+        'Demissie', 'Tsegaye', 'Lemma', 'Habte', 'Ayele', 'Worku', 'Tamiru', 'Birhanu',
+        'Kassa',
     ];
 
     private int $nameCursor = 0;
@@ -163,17 +191,32 @@ class DevAcademicDataSeeder extends Seeder
     }
 
     /**
-     * Two consultants and three residents per section.
+     * Spread TARGET_CONSULTANTS and TARGET_RESIDENTS across the sections. The
+     * walkthrough consultant/resident that includeWalkthroughAcademicUsers()
+     * later attaches to each of the first two sections is reserved out of those
+     * sections' quotas, so the final totals land exactly on target.
      *
      * @return array<string, array{consultants: list<User>, residents: list<User>}>
      */
     private function seedStaff($sections): array
     {
+        $sectionCount = $sections->count();
+
+        if ($sectionCount === 0) {
+            return [];
+        }
+
+        // One walkthrough consultant and one walkthrough resident are joined to
+        // section 0 and section 1 respectively after this method returns.
+        $reserved = [0 => 1, 1 => 1];
+        $consultantQuota = $this->quota(self::TARGET_CONSULTANTS, $sectionCount, $reserved);
+        $residentQuota = $this->quota(self::TARGET_RESIDENTS, $sectionCount, $reserved);
+
         $staff = [];
 
-        foreach ($sections as $section) {
+        foreach ($sections->values() as $sectionIndex => $section) {
             $consultants = [];
-            for ($i = 0; $i < self::CONSULTANTS_PER_SECTION; $i++) {
+            for ($i = 0; $i < $consultantQuota[$sectionIndex]; $i++) {
                 $consultants[] = $this->makeUser('consultant', $section->slug, $i, [
                     'title' => 'Consultant',
                     'section_id' => $section->id,
@@ -181,7 +224,8 @@ class DevAcademicDataSeeder extends Seeder
             }
 
             $residents = [];
-            for ($i = 0; $i < self::RESIDENTS_PER_SECTION; $i++) {
+            for ($i = 0; $i < $residentQuota[$sectionIndex]; $i++) {
+                // No section_id: residents rotate, only consultants are section-owned.
                 $residents[] = $this->makeUser('resident', $section->slug, $i, [
                     'title' => 'Resident',
                     'training_year' => ($i % 3) + 1,
@@ -191,12 +235,32 @@ class DevAcademicDataSeeder extends Seeder
 
             $staff[$section->slug] = ['consultants' => $consultants, 'residents' => $residents];
 
-            if ($section->head_user_id !== $consultants[0]->id) {
+            if ($consultants !== [] && $section->head_user_id !== $consultants[0]->id) {
                 $section->forceFill(['head_user_id' => $consultants[0]->id])->save();
             }
         }
 
         return $staff;
+    }
+
+    /**
+     * Even split of $total over $buckets (remainder to the leading buckets),
+     * minus any headcount already reserved for a bucket.
+     *
+     * @param  array<int, int>  $reserved
+     * @return list<int>
+     */
+    private function quota(int $total, int $buckets, array $reserved = []): array
+    {
+        $base = intdiv($total, $buckets);
+        $remainder = $total % $buckets;
+        $quota = [];
+
+        for ($i = 0; $i < $buckets; $i++) {
+            $quota[] = max(0, $base + ($i < $remainder ? 1 : 0) - ($reserved[$i] ?? 0));
+        }
+
+        return $quota;
     }
 
     /** @param array<string, mixed> $extra */
@@ -326,12 +390,22 @@ class DevAcademicDataSeeder extends Seeder
                     continue;
                 }
 
-                $leadConsultant = $group['consultants'][0];
+                $consultants = $group['consultants'];
 
-                foreach ($group['residents'] as $resident) {
+                if ($consultants === []) {
+                    continue;
+                }
+
+                foreach ($group['residents'] as $residentIndex => $resident) {
+                    // Pair each resident with a different consultant each month.
+                    // Pinning every evaluation on the section lead would leave
+                    // the other consultants with no accountability history at
+                    // all, so the leaderboard would rank a handful of people.
+                    $consultant = $consultants[($m + $residentIndex) % count($consultants)];
+
                     // Consultant grades the resident.
-                    $forms->store($acgmeForm, $this->acgmePayload(), [
-                        'author_id' => $leadConsultant->id,
+                    $forms->store($acgmeForm, $this->acgmePayload($this->standingAt($resident->id, $m, 14)), [
+                        'author_id' => $consultant->id,
                         'subject_user_id' => $resident->id,
                         'evaluation_date' => $evalDate->toDateString(),
                         'ward_id' => $wardId,
@@ -339,9 +413,9 @@ class DevAcademicDataSeeder extends Seeder
                     ]);
 
                     // Resident grades the consultant's MDT round.
-                    $forms->store($mdtForm, $this->mdtPayload(), [
+                    $forms->store($mdtForm, $this->mdtPayload($this->standingAt($consultant->id, $m, 14)), [
                         'author_id' => $resident->id,
-                        'subject_user_id' => $leadConsultant->id,
+                        'subject_user_id' => $consultant->id,
                         'evaluation_date' => $evalDate->toDateString(),
                         'ward_id' => $wardId,
                         'placement_type' => 'ward',
@@ -451,11 +525,12 @@ class DevAcademicDataSeeder extends Seeder
         $wardA = $wards->firstWhere('slug', 'pulmonology_ward');
         $wardB = $wards->firstWhere('slug', 'nephrology_ward');
 
+        // Four attachments of STUDENTS_PER_BATCH make up the module's year.
         $blocks = [
-            ['cohort' => 'C2', 'label' => 'C2 Block 1', 'start' => $today->copy()->subWeeks(36), 'weeks' => 9, 'final' => true],
-            ['cohort' => 'C1', 'label' => 'C1 Block 1', 'start' => $today->copy()->subWeeks(26), 'weeks' => 9, 'final' => true],
-            ['cohort' => 'C2', 'label' => 'C2 Block 2', 'start' => $today->copy()->subWeeks(16), 'weeks' => 9, 'final' => true],
-            ['cohort' => 'C1', 'label' => 'C1 Block 2', 'start' => $today->copy()->subWeeks(4), 'weeks' => 12, 'final' => false],
+            ['cohort' => 'C2', 'code' => 'C2A', 'label' => 'C2 Block 1', 'start' => $today->copy()->subWeeks(36), 'weeks' => 9, 'final' => true],
+            ['cohort' => 'C1', 'code' => 'C1A', 'label' => 'C1 Block 1', 'start' => $today->copy()->subWeeks(26), 'weeks' => 9, 'final' => true],
+            ['cohort' => 'C2', 'code' => 'C2B', 'label' => 'C2 Block 2', 'start' => $today->copy()->subWeeks(16), 'weeks' => 9, 'final' => true],
+            ['cohort' => 'C1', 'code' => 'C1B', 'label' => 'C1 Block 2', 'start' => $today->copy()->subWeeks(4), 'weeks' => 12, 'final' => false],
         ];
 
         foreach ($blocks as $block) {
@@ -481,6 +556,7 @@ class DevAcademicDataSeeder extends Seeder
         if ($activeBatches->isEmpty()) {
             $this->seedBatch($admin, [
                 'cohort' => 'C1',
+                'code' => 'C1X'.$today->format('ym'),
                 'label' => 'C1 Demo '.$today->format('Y-m'),
                 'start' => $today->copy()->startOfWeek(),
                 'weeks' => 12,
@@ -535,7 +611,7 @@ class DevAcademicDataSeeder extends Seeder
     }
 
     /**
-     * @param  array{cohort: string, label: string, start: Carbon, weeks: int, final: bool}  $block
+     * @param  array{cohort: string, code?: string, label: string, start: Carbon, weeks: int, final: bool}  $block
      */
     private function seedBatch(User $admin, array $block, ?Ward $wardA, ?Ward $wardB, Carbon $today): void
     {
@@ -557,7 +633,7 @@ class DevAcademicDataSeeder extends Seeder
         ]);
 
         $students = [];
-        for ($i = 0; $i < 18; $i++) {
+        for ($i = 0; $i < self::STUDENTS_PER_BATCH; $i++) {
             $first = self::FIRST_NAMES[$this->nameCursor % count(self::FIRST_NAMES)];
             $last = self::LAST_NAMES[($this->nameCursor + 7) % count(self::LAST_NAMES)];
             $this->nameCursor++;
@@ -565,7 +641,8 @@ class DevAcademicDataSeeder extends Seeder
             $students[] = Student::query()->create([
                 'batch_id' => $batch->id,
                 'full_name' => $first.' '.$last,
-                'external_id' => sprintf('ETS-%s-%02d', strtoupper($block['cohort']), $i + 1),
+                // Block-scoped so the two C1 attachments never share a roll number.
+                'external_id' => sprintf('ETS-%s-%03d', $block['code'] ?? strtoupper($block['cohort']), $i + 1),
                 'subgroup' => $i % 2 === 0 ? 'A' : 'B',
                 'active' => true,
             ]);
@@ -657,14 +734,26 @@ class DevAcademicDataSeeder extends Seeder
         $weeklyForm = $forms->published('student_weekly');
         $finalForm = $forms->published('student_final');
         $evalDate = ($end->lessThan($today) ? $end : $today)->copy();
-        $consultant = User::query()->where('role_key', 'consultant')->where('email', 'like', 'demo.%')->first();
 
-        if ($consultant !== null) {
-            foreach ($students as $student) {
+        // Rotate the assessor across the consultant body rather than crediting
+        // one person with every student evaluation in the module.
+        $consultants = User::query()
+            ->where('role_key', 'consultant')
+            ->where('active', true)
+            ->orderBy('full_name')
+            ->get()
+            ->values();
+
+        if ($consultants->isNotEmpty()) {
+            foreach ($students as $index => $student) {
+                $consultant = $consultants[$index % $consultants->count()];
+
                 $evaluationWeek = $start->copy();
+                $week = 0;
                 while ($evaluationWeek->lessThanOrEqualTo($evalDate)) {
                     $weeklyDate = $evaluationWeek->copy()->endOfWeek()->min($evalDate);
-                    $forms->store($weeklyForm, $this->studentWeeklyPayload(), [
+                    $standing = $this->standingAt($student->id, $week++, $block['weeks']);
+                    $forms->store($weeklyForm, $this->studentWeeklyPayload($standing), [
                         'author_id' => $consultant->id,
                         'subject_student_id' => $student->id,
                         'evaluation_date' => $weeklyDate->toDateString(),
@@ -676,7 +765,7 @@ class DevAcademicDataSeeder extends Seeder
                 }
 
                 if ($block['final']) {
-                    $forms->store($finalForm, $this->studentFinalPayload(), [
+                    $forms->store($finalForm, $this->studentFinalPayload($this->standingAt($student->id, $block['weeks'], $block['weeks'])), [
                         'author_id' => $consultant->id,
                         'subject_student_id' => $student->id,
                         'evaluation_date' => $evalDate->toDateString(),
@@ -818,116 +907,5 @@ class DevAcademicDataSeeder extends Seeder
 
             return $stable->refresh()->load('user');
         });
-    }
-
-    // ---- Plausible answer payloads ----
-
-    private function bool(int $failOneIn = 6): bool
-    {
-        return rand(1, $failOneIn) !== 1;
-    }
-
-    /** @return array<string, mixed> */
-    private function mdtPayload(): array
-    {
-        return [
-            'senior_present' => true,
-            'senior_joined_at' => sprintf('08:%02d', rand(0, 20)),
-            'presence_minutes' => rand(30, 60),
-            'pct_patients_seen' => rand(60, 100),
-            'round_delayed' => rand(1, 5) === 1,
-            'all_patients_reviewed' => $this->bool(),
-            'mgmt_plan_documented' => $this->bool(),
-            'vte_assessed' => $this->bool(5),
-            'discharge_discussed' => $this->bool(5),
-            'med_review_done' => $this->bool(),
-            'critical_labs_reviewed' => $this->bool(),
-            'mdt_participants' => ['consultant', 'residents', 'nurse'],
-            'system_issues' => rand(1, 3) === 1 ? ['lab_delay'] : [],
-        ];
-    }
-
-    /** @return array<string, mixed> */
-    private function acgmePayload(): array
-    {
-        return [
-            'on_time' => $this->bool(),
-            'professional' => $this->bool(8),
-            'prepared' => $this->bool(),
-            'management_plan' => $this->bool(5),
-            'clinical_reasoning' => $this->bool(5),
-            'presentation_clear' => $this->bool(),
-            'communication' => $this->bool(),
-            'documentation_timely' => $this->bool(4),
-            'follow_through' => $this->bool(),
-            'responsive_feedback' => $this->bool(8),
-            'overall_rating' => rand(3, 5),
-            'concerns' => rand(1, 3) === 1 ? ['punctuality'] : [],
-        ];
-    }
-
-    /** @return array<string, mixed> */
-    private function studentWeeklyPayload(): array
-    {
-        return [
-            'attendance_reliable' => $this->bool(),
-            'participation_active' => $this->bool(5),
-            'clinical_knowledge' => $this->bool(4),
-            'skills_progress' => $this->bool(4),
-            'professional_conduct' => $this->bool(8),
-            'overall_rating' => rand(3, 5),
-        ];
-    }
-
-    /** @return array<string, mixed> */
-    private function studentFinalPayload(): array
-    {
-        return [
-            'knowledge_competent' => $this->bool(4),
-            'skills_competent' => $this->bool(4),
-            'professional_conduct' => $this->bool(8),
-            'overall_rating' => rand(3, 5),
-            'strengths' => 'Consistent, engaged, and reliable on the ward.',
-            'areas_to_improve' => 'Broaden differential reasoning under time pressure.',
-        ];
-    }
-
-    /**
-     * Stable operational variation: most teaching happens, while a meaningful
-     * minority is not held or cancelled so exception dashboards are useful.
-     *
-     * @return array{status: 'held'|'not_held'|'cancelled', reason: string|null}
-     */
-    private function teachingOutcome(StudentBatch $batch, TeachingSession $session): array
-    {
-        $signature = implode('|', [
-            $batch->label,
-            $session->scheduled_date->toDateString(),
-            $session->activity_type,
-            $session->subgroup ?? 'cohort',
-        ]);
-        $roll = crc32($signature) % 100;
-
-        if ($roll < 78) {
-            return ['status' => 'held', 'reason' => null];
-        }
-
-        if ($roll < 92) {
-            $reasons = [
-                'Consultant diverted to emergency clinical coverage',
-                'Competing ward round exceeded the scheduled session time',
-                'Students were attending a scheduled assessment',
-            ];
-
-            return ['status' => 'not_held', 'reason' => $reasons[$roll % count($reasons)]];
-        }
-
-        $reasons = [
-            'Hospital-wide clinical meeting',
-            'Public holiday teaching schedule',
-            'Teaching ward temporarily unavailable',
-        ];
-
-        return ['status' => 'cancelled', 'reason' => $reasons[$roll % count($reasons)]];
     }
 }

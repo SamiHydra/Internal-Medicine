@@ -65,7 +65,6 @@ function mergeOne(config: ReportTemplateConfig, db: ApiTemplateConfig): ReportTe
     sections: presentation.sections ?? config.sections,
     summaryCards: presentation.summaryCards ?? config.summaryCards,
     chartMappings: presentation.chartMappings ?? config.chartMappings,
-    changeRules: presentation.changeRules ?? config.changeRules,
     fields,
   }
 }

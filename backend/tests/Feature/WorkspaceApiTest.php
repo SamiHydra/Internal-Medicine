@@ -10,6 +10,8 @@ use App\Models\ReportAssignment;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportingPeriod;
 use App\Models\ReportStatusHistory;
+use App\Models\Student;
+use App\Models\StudentBatch;
 use App\Models\User;
 use Database\Seeders\AppSettingSeeder;
 use Database\Seeders\DepartmentSeeder;
@@ -19,8 +21,10 @@ use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class WorkspaceApiTest extends TestCase
@@ -51,6 +55,69 @@ class WorkspaceApiTest extends TestCase
         $this->otherNurse = User::factory()->create([
             'full_name' => 'Other Nurse',
         ]);
+    }
+
+    public function test_default_workspace_payload_stays_under_200_kilobytes(): void
+    {
+        $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
+        $period = ReportingPeriod::query()->orderByDesc('week_start')->firstOrFail();
+        $nurses = User::factory()->count(105)->create();
+
+        $nurses->each(function (User $nurse) use ($department, $period): void {
+            $this->report($this->assignment($nurse, $department), $period);
+        });
+
+        $batch = StudentBatch::query()->create([
+            'cohort' => 'C1',
+            'label' => 'PERF-03 growth fixture',
+            'starts_on' => now()->subMonth(),
+            'ends_on' => now()->addMonth(),
+            'active' => true,
+        ]);
+        foreach (range(1, 105) as $index) {
+            Student::query()->create([
+                'batch_id' => $batch->id,
+                'full_name' => sprintf('Growth Student %03d', $index),
+                'external_id' => sprintf('PERF03-%03d', $index),
+                'subgroup' => $index % 2 === 0 ? 'A' : 'B',
+                'active' => true,
+            ]);
+        }
+
+        $workspace = $this->actingAs($this->admin)
+            ->getJson('/api/workspace?includeProfiles=1&includeHistory=1&reportPeriodWindow=all')
+            ->assertOk()
+            ->assertJsonCount(1, 'state.profiles')
+            ->assertJsonCount(0, 'state.assignments')
+            ->assertJsonCount(0, 'state.reports')
+            ->assertJsonCount(0, 'state.statusHistory')
+            ->assertJsonCount(0, 'state.auditLogs')
+            ->assertJsonCount(26, 'state.reportingPeriods');
+
+        $this->assertLessThan(
+            200 * 1024,
+            strlen($workspace->getContent()),
+            'The identity/reference workspace bootstrap exceeded 200 KiB.',
+        );
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/workspace/profiles')
+            ->assertOk()
+            ->assertJsonCount(100, 'data')
+            ->assertJsonPath('meta.perPage', 100)
+            ->assertJsonPath('meta.lastPage', 2);
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/assignments')
+            ->assertOk()
+            ->assertJsonCount(100, 'data')
+            ->assertJsonPath('meta.perPage', 100)
+            ->assertJsonPath('meta.lastPage', 2);
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/students')
+            ->assertOk()
+            ->assertJsonCount(100, 'data')
+            ->assertJsonPath('meta.perPage', 100)
+            ->assertJsonPath('meta.lastPage', 2);
     }
 
     public function test_workspace_hydrates_frontend_state_and_scopes_nurses(): void
@@ -99,19 +166,44 @@ class WorkspaceApiTest extends TestCase
             ->assertJsonCount(1, 'state.profiles')
             ->assertJsonCount(1, 'state.assignments')
             ->assertJsonPath('state.assignments.0.departmentId', 'gi_neuro_inpatient')
-            ->assertJsonCount(1, 'state.reports')
-            ->assertJsonPath('state.reports.0.id', $report->id)
-            ->assertJsonCount(1, 'state.statusHistory')
+            ->assertJsonCount(0, 'state.reports')
+            ->assertJsonCount(0, 'state.statusHistory')
             ->assertJsonCount(0, 'state.auditLogs');
+        $this->actingAs($this->nurse)
+            ->getJson("/api/reports?periodIds={$period->id}")
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $report->id);
+        $this->actingAs($this->nurse)
+            ->getJson('/api/reports/status-history')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
 
         $this->actingAs($this->admin)
             ->getJson('/api/workspace?includeHistory=1&includeProfiles=1')
             ->assertOk()
             ->assertJsonPath('references.departmentDbIdBySlug.gi_neuro_inpatient', $department->id)
-            ->assertJsonCount(3, 'state.profiles')
-            ->assertJsonCount(2, 'state.assignments')
-            ->assertJsonFragment(['id' => $otherReport->id])
-            ->assertJsonCount(1, 'state.auditLogs');
+            ->assertJsonCount(1, 'state.profiles')
+            ->assertJsonCount(0, 'state.assignments')
+            ->assertJsonCount(0, 'state.reports')
+            ->assertJsonCount(0, 'state.auditLogs');
+        $this->actingAs($this->admin)
+            ->getJson('/api/workspace/profiles')
+            ->assertOk()
+            ->assertJsonCount(3, 'data');
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/assignments')
+            ->assertOk()
+            ->assertJsonCount(2, 'data');
+        $this->actingAs($this->admin)
+            ->getJson("/api/reports?periodIds={$period->id}")
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonFragment(['id' => $otherReport->id]);
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/audit-logs')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
     }
 
     public function test_workspace_exposes_the_role_registry_with_its_workspace_split(): void
@@ -140,6 +232,88 @@ class WorkspaceApiTest extends TestCase
             ->assertJsonCount(6, 'state.roles');
     }
 
+    public function test_workspace_revision_is_small_and_changes_when_visible_data_changes(): void
+    {
+        $department = Department::query()->where('slug', 'gi_neuro_inpatient')->firstOrFail();
+        $period = ReportingPeriod::query()->orderByDesc('week_start')->firstOrFail();
+        $report = $this->report($this->assignment($this->nurse, $department), $period);
+        // The credential is bound to a browser session (QA-016): a stateful
+        // request (Referer on Sanctum's stateful list) carries one.
+        $workspace = $this->actingAs($this->nurse)
+            ->withHeader('Referer', 'http://localhost')
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->assertJsonStructure(['revision', 'revisionToken'])
+            ->json();
+        $revisionToken = $workspace['revisionToken'];
+
+        $initialResponse = $this
+            ->getJson('/api/workspace/revision', [
+                'X-Workspace-Revision-Token' => $revisionToken,
+            ])
+            ->assertOk()
+            ->assertJsonStructure(['revision', 'revisionToken']);
+        $initialRevision = $initialResponse->json('revision');
+        $revisionToken = $initialResponse->json('revisionToken');
+
+        $this->assertIsString($initialRevision);
+        $this->assertSame(64, strlen($initialRevision));
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $revisionToken,
+        ])->assertOk();
+        $this->assertCount(1, DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $this->travel(1)->second();
+        $report->touch();
+
+        $changedRevision = $this
+            ->getJson('/api/workspace/revision', [
+                'X-Workspace-Revision-Token' => $revisionToken,
+            ])
+            ->assertOk()
+            ->json('revision');
+
+        $this->assertNotSame($initialRevision, $changedRevision);
+    }
+
+    public function test_workspace_revision_rejects_missing_tampered_and_expired_credentials(): void
+    {
+        $token = $this->actingAs($this->nurse)
+            ->withHeader('Referer', 'http://localhost')
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->json('revisionToken');
+        $this->assertIsString($token);
+
+        $this->getJson('/api/workspace/revision')->assertStatus(428);
+        $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $token.'tampered',
+        ])->assertStatus(428);
+
+        $this->travel(12)->hours();
+        $this->travel(1)->second();
+        $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $token,
+        ])->assertStatus(428);
+    }
+
+    public function test_deferred_access_request_slice_is_available_without_reloading_workspace(): void
+    {
+        $this->actingAs($this->admin)
+            ->getJson('/api/workspace/access-requests?status=pending')
+            ->assertOk()
+            ->assertJsonStructure(['data']);
+
+        $this->actingAs($this->nurse)
+            ->getJson('/api/workspace/access-requests')
+            ->assertOk()
+            ->assertJsonStructure(['data']);
+    }
+
     public function test_workspace_profiles_stay_workspace_agnostic_for_admins(): void
     {
         $resident = User::factory()->role('resident', 'Resident')->create(['full_name' => 'Rita Resident']);
@@ -150,9 +324,9 @@ class WorkspaceApiTest extends TestCase
         // resolve display names by id from it, so it must never be split by
         // workspace even though the admin roster is.
         $profileIds = $this->actingAs($this->admin)
-            ->getJson('/api/workspace?includeProfiles=1')
+            ->getJson('/api/workspace/profiles')
             ->assertOk()
-            ->json('state.profiles.*.id');
+            ->json('data.*.id');
 
         $this->assertEqualsCanonicalizing(
             [$this->admin->id, $this->nurse->id, $this->otherNurse->id, $resident->id, $consultant->id, $studentRep->id],
@@ -248,7 +422,7 @@ class WorkspaceApiTest extends TestCase
         $this->assertTrue(password_verify('NewPassword123!', $this->nurse->refresh()->password));
     }
 
-    public function test_workspace_report_summaries_default_to_recent_period_window_and_can_load_all_history(): void
+    public function test_report_summaries_are_paginated_while_workspace_stays_bounded(): void
     {
         Carbon::setTestNow('2026-05-26 12:00:00');
 
@@ -264,18 +438,23 @@ class WorkspaceApiTest extends TestCase
             $reports = $periods->map(fn (ReportingPeriod $period): Report => $this->report($assignment, $period));
 
             $defaultResponse = $this->actingAs($this->admin)
-                ->getJson('/api/workspace')
+                ->getJson('/api/reports')
                 ->assertOk()
-                ->assertJsonCount(9, 'state.reports');
-            $defaultReportIds = collect($defaultResponse->json('state.reports'))->pluck('id')->all();
+                ->assertJsonCount(9, 'data');
+            $defaultReportIds = collect($defaultResponse->json('data'))->pluck('id')->all();
 
             $this->assertEmpty(array_intersect($reports->take(2)->pluck('id')->all(), $defaultReportIds));
             $this->assertEqualsCanonicalizing($reports->slice(2)->pluck('id')->all(), $defaultReportIds);
 
             $this->actingAs($this->admin)
+                ->getJson('/api/reports?reportPeriodWindow=all')
+                ->assertOk()
+                ->assertJsonCount(11, 'data');
+            $this->actingAs($this->admin)
                 ->getJson('/api/workspace?reportPeriodWindow=all')
                 ->assertOk()
-                ->assertJsonCount(11, 'state.reports');
+                ->assertJsonCount(0, 'state.reports')
+                ->assertJsonCount(11, 'state.reportingPeriods');
         } finally {
             Carbon::setTestNow();
         }
@@ -319,5 +498,66 @@ class WorkspaceApiTest extends TestCase
             'quarter_label' => sprintf('Q%d %d', $start->quarter, $start->year),
             'year_num' => $start->year,
         ]);
+    }
+
+    public function test_workspace_revision_credential_dies_with_the_session_that_issued_it(): void
+    {
+        // A browser request (Sanctum stateful: Referer on the stateful list)
+        // carries a session; the credential is bound to that session (QA-016).
+        $token = $this->actingAs($this->nurse)
+            ->withHeader('Referer', 'http://localhost')
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->json('revisionToken');
+        $this->assertIsString($token);
+        $sessionId = session()->getId();
+
+        $renewed = $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $token,
+        ])->assertOk()->json('revisionToken');
+        $this->assertIsString($renewed);
+
+        // Signing that session out revokes the original and every renewal.
+        // (JSON test requests only carry cookies with withCredentials().)
+        $this->actingAs($this->nurse)
+            ->withHeader('Referer', 'http://localhost')
+            ->withCredentials()
+            ->withCookie(config('session.cookie'), $sessionId)
+            ->postJson('/api/auth/logout')
+            ->assertNoContent();
+
+        foreach ([$token, $renewed] as $credential) {
+            $this->getJson('/api/workspace/revision', [
+                'X-Workspace-Revision-Token' => $credential,
+            ])->assertStatus(428);
+        }
+
+        // A fresh sign-in (a browser receives a new session id after logout;
+        // the test client would otherwise keep replaying the old cookie) issues
+        // a working credential again, and the revoked one stays dead.
+        $fresh = $this->actingAs($this->nurse)
+            ->withHeader('Referer', 'http://localhost')
+            ->withCookie(config('session.cookie'), Str::random(40))
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->json('revisionToken');
+        $this->assertIsString($fresh);
+        $this->assertNotSame($token, $fresh);
+        $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $fresh,
+        ])->assertOk();
+        $this->getJson('/api/workspace/revision', [
+            'X-Workspace-Revision-Token' => $token,
+        ])->assertStatus(428);
+    }
+
+    public function test_workspace_revision_credential_is_only_issued_to_sessions(): void
+    {
+        // Without a session there is nothing to bind to, so no credential is
+        // issued and the poll stays off for that client.
+        $this->actingAs($this->nurse)
+            ->getJson('/api/workspace')
+            ->assertOk()
+            ->assertJsonPath('revisionToken', null);
     }
 }

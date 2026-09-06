@@ -18,12 +18,14 @@ class LeadershipDigestMail extends Mailable
      */
     public function __construct(
         public readonly array $digest,
-    ) {}
+    ) {
+        $this->onQueue('notifications');
+    }
 
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'Weekly leadership digest - '.($this->digest['periodLabel'] ?? 'St Paul Internal Medicine'),
+            subject: 'Weekly leadership digest - '.($this->digest['periodLabel'] ?? 'St Paul\'s Internal Medicine'),
         );
     }
 

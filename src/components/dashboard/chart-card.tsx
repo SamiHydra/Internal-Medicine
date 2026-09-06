@@ -1,5 +1,47 @@
 import { motion } from 'framer-motion'
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+
+function DeferredChartContent({ children }: { children: ReactNode }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [shouldRender, setShouldRender] = useState(
+    () => typeof IntersectionObserver === 'undefined',
+  )
+
+  useEffect(() => {
+    if (shouldRender || !containerRef.current) {
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) {
+          return
+        }
+        setShouldRender(true)
+        observer.disconnect()
+      },
+      // Prepare chart SVG before the card reaches the viewport so scrolling
+      // never exposes a skeleton-to-chart reveal.
+      { rootMargin: '800px 0px' },
+    )
+
+    observer.observe(containerRef.current)
+    return () => observer.disconnect()
+  }, [shouldRender])
+
+  return (
+    <div ref={containerRef} className="mt-4 min-h-[260px] flex-1">
+      {shouldRender ? (
+        children
+      ) : (
+        <div
+          aria-hidden="true"
+          className="h-full min-h-[260px] animate-pulse rounded-[0.3rem] bg-[#edf1f5]"
+        />
+      )}
+    </div>
+  )
+}
 
 export function ChartCard({
   title,
@@ -26,7 +68,7 @@ export function ChartCard({
           {actions}
         </div>
         <p className="mt-1 text-sm leading-6 text-[#74777f]">{description}</p>
-        <div className="mt-4 flex-1">{children}</div>
+        <DeferredChartContent>{children}</DeferredChartContent>
       </div>
     </motion.div>
   )

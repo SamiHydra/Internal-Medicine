@@ -3,7 +3,7 @@ import { authFile } from './helpers/auth'
 import { captureDiagnostics, summarize } from './helpers/diagnostics'
 
 async function shellReady(page: Page) {
-  await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible({ timeout: 20_000 })
 }
 
 test.describe('Admin clinical dashboard', () => {

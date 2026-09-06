@@ -30,16 +30,16 @@ export function AcademicSetupBanner() {
   if (setup.consultantsWithoutSection > 0) {
     issues.push({
       text: `${setup.consultantsWithoutSection} consultant${setup.consultantsWithoutSection === 1 ? ' has' : 's have'} no section`,
-      href: '/admin/academic/structure',
-      action: 'Open structure',
+      href: '/admin/academic/structure?tab=sections&issue=consultants-without-section#section-gaps',
+      action: 'Assign section',
     })
   }
 
   if (setup.peopleWithoutAssignment > 0) {
     issues.push({
       text: `${setup.peopleWithoutAssignment} ${setup.peopleWithoutAssignment === 1 ? 'person has' : 'people have'} no monthly assignment covering today`,
-      href: '/admin/academic/roster',
-      action: 'Open coverage',
+      href: '/admin/academic/roster?issue=missing-monthly-coverage#coverage-gaps',
+      action: 'Assign coverage',
     })
   }
 

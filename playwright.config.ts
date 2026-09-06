@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 /**
- * Pre-deployment QA suite for the St Paul reporting app.
+ * Pre-deployment QA suite for the St Paul's reporting app.
  *
  * The SPA (Vite, :5173) proxies /api and /sanctum to the Laravel API (:8000),
  * so the browser treats them as same-origin - required for Sanctum's SameSite
@@ -136,10 +136,14 @@ export default defineConfig({
   ],
   webServer: [
     {
+      // Generous because this command seeds the whole fixture before it serves,
+      // and a perf run may ask for a much deeper archive than the gate's default
+      // (SEED_HISTORY_WEEKS). A timeout only caps the wait; a fast seed still
+      // starts testing immediately.
       command: 'node scripts/start-e2e-backend.mjs',
       url: 'http://127.0.0.1:8000/up',
       reuseExistingServer: false,
-      timeout: 120_000,
+      timeout: 600_000,
     },
     {
       command: 'npm run dev -- --host 127.0.0.1 --port 5173 --strictPort',

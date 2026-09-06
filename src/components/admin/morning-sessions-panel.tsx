@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
-import { Clock3, Plus, Save, Sunrise, X } from "lucide-react";
+import {
+  ArrowRight,
+  Clock3,
+  MinusCircle,
+  Plus,
+  PlusCircle,
+  Save,
+  Sunrise,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +44,7 @@ import {
 } from "@/lib/api/morning";
 import { getApiBrowserClient } from "@/lib/api/client";
 import { getErrorMessage } from "@/lib/api/helpers";
+import { cn } from "@/lib/utils";
 
 const statusVariant: Record<
   MorningSessionRecord["status"],
@@ -48,6 +59,55 @@ function formatSessionDate(value: string) {
   const parsed = parseISO(value);
 
   return Number.isNaN(parsed.getTime()) ? value : format(parsed, "EEE, MMM d, yyyy");
+}
+
+/** Override dates arrive as ISO days; nobody reads "2026-09-01" as a date. */
+function formatDay(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = parseISO(value);
+
+  return Number.isNaN(parsed.getTime()) ? value : format(parsed, "d MMM yyyy");
+}
+
+function initialsOf(name: string) {
+  return name
+    .split(" ")
+    .filter((part) => !part.endsWith("."))
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+/** Shared shell for the two settings blocks, so both read as one system. */
+function SettingsBlock({
+  title,
+  hint,
+  count,
+  children,
+}: {
+  title: string;
+  hint: string;
+  count?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-4 rounded-[0.4rem] border border-[#e6ecf3] bg-[#f8fafc] p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <p className="text-[12px] font-bold uppercase tracking-[0.16em] text-[#526171]">
+          {title}
+        </p>
+        {count ? (
+          <p className="text-[12px] font-semibold tabular-nums text-[#8b9199]">{count}</p>
+        ) : null}
+      </div>
+      <p className="mt-1 text-[13px] leading-5 text-[#74777f]">{hint}</p>
+      {children}
+    </div>
+  );
 }
 
 /**
@@ -201,49 +261,71 @@ export function MorningSessionsPanel() {
         </div>
       </form>
 
-      {/* ---- Recorders ---- */}
-      <div className="mt-5 rounded-[0.4rem] border border-[#e6ecf3] bg-[#f8fafc] p-4">
-        <p className="text-[12px] font-bold uppercase tracking-[0.16em] text-[#526171]">
-          Designated recorders
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2.5">
-          {recorderIds.length === 0 ? (
-            <p className="text-sm text-[#74777f]">
-              Nobody is designated yet: appoint one standing recorder below.
-            </p>
-          ) : (
-            recorderIds.map((recorderId) => (
-              <span
-                key={recorderId}
-                className="inline-flex h-10 items-center gap-2 rounded-[0.3rem] border border-[#d4dde8] bg-white px-3 text-sm font-semibold text-[#1d3047]"
-              >
-                {nameFor(recorderId)}
-                <button
-                  type="button"
-                  aria-label={`Remove recorder ${nameFor(recorderId)}`}
-                  className="rounded-sm text-[#ba1a1a] transition-colors hover:bg-[#fff1f1] hover:text-[#7f1212] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ba1a1a]/25"
+      {/* ---- Recorders ----
+          Who is appointed and the control that appoints them used to sit in one
+          flex row, so the list and the form were indistinguishable and the
+          dropdown moved as people were added. They are separated now. */}
+      <SettingsBlock
+        title="Designated recorders"
+        hint="They open the morning session and mark who attended. Nobody else can."
+        count={
+          recorderIds.length
+            ? `${recorderIds.length} appointed`
+            : undefined
+        }
+      >
+        {recorderIds.length === 0 ? (
+          <p className="mt-3 flex items-start gap-2 rounded-[0.3rem] border border-[#f0d9aa] bg-[#fdf7ec] px-3 py-2.5 text-[13px] leading-5 text-[#7a4f00]">
+            <TriangleAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
+            No one is appointed, so attendance cannot be recorded. Appoint someone below.
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-[#eef2f6] rounded-[0.3rem] border border-[#e6ecf3] bg-white">
+            {recorderIds.map((recorderId) => (
+              <li key={recorderId} className="flex items-center gap-3 px-3 py-2">
+                <span
+                  aria-hidden
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#04162f] text-[10px] font-bold text-[#f0b429]"
+                >
+                  {initialsOf(nameFor(recorderId))}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[#1d3047]">
+                  {nameFor(recorderId)}
+                </span>
+                {/* A bare red cross beside the only person who can record
+                    attendance was one misclick away from a silent outage. */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 shrink-0 px-2 text-[13px] text-[#ba1a1a] hover:bg-[#fff1f1]"
+                  disabled={busy === "recorders"}
                   onClick={() =>
                     void run(
                       "recorders",
                       async () => {
-                        const next = recorderIds.filter(
-                          (id) => id !== recorderId,
-                        );
+                        const next = recorderIds.filter((id) => id !== recorderId);
                         await updateMorningRecorders(client!, next);
                         setRecorderIds(next);
+                        toast.success(`${nameFor(recorderId)} is no longer a recorder.`);
                       },
                       "Unable to update the recorders.",
                     )
                   }
                 >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </span>
-            ))
-          )}
+                  Remove
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <Select value={newRecorderId} onValueChange={setNewRecorderId}>
-            <SelectTrigger className="h-10 w-full text-sm sm:w-[18rem]" aria-label="Add recorder">
-              <SelectValue placeholder="Add a recorder" />
+            <SelectTrigger
+              className="h-10 w-full bg-white text-sm sm:w-[18rem]"
+              aria-label="Add recorder"
+            >
+              <SelectValue placeholder="Choose someone" />
             </SelectTrigger>
             <SelectContent>
               {academicPeople
@@ -268,6 +350,7 @@ export function MorningSessionsPanel() {
                   await updateMorningRecorders(client!, next);
                   setRecorderIds(next);
                   setNewRecorderId("");
+                  toast.success("Recorder appointed.");
                 },
                 "Unable to update the recorders.",
               )
@@ -276,75 +359,95 @@ export function MorningSessionsPanel() {
             <Plus className="mr-1 h-4 w-4" /> Appoint
           </Button>
         </div>
-      </div>
+      </SettingsBlock>
 
-      {/* ---- Roster overrides ---- */}
-      <div className="mt-4 rounded-[0.4rem] border border-[#e6ecf3] bg-[#f8fafc] p-4">
-        <p className="text-[12px] font-bold uppercase tracking-[0.16em] text-[#526171]">
-          Roster overrides
-        </p>
-        <div className="mt-3 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-[minmax(11rem,1fr)_minmax(13rem,1.15fr)_minmax(10.5rem,1fr)_minmax(10.5rem,1fr)_auto]">
-          <Select
-            value={overrideDraft.userId}
-            onValueChange={(userId) =>
-              setOverrideDraft((prev) => ({ ...prev, userId }))
-            }
-          >
-            <SelectTrigger className="h-10 text-sm" aria-label="Override person">
-              <SelectValue placeholder="Person" />
-            </SelectTrigger>
-            <SelectContent>
-              {academicPeople.map((person) => (
-                <SelectItem key={person.id} value={person.id}>
-                  {person.fullName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={overrideDraft.action}
-            onValueChange={(action) =>
-              setOverrideDraft((prev) => ({
-                ...prev,
-                action: action as "include" | "exclude",
-              }))
-            }
-          >
-            <SelectTrigger className="h-10 text-sm" aria-label="Override action">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="exclude">Exclude from roster</SelectItem>
-              <SelectItem value="include">Include on roster</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input
-            type="date"
-            value={overrideDraft.startsOn}
-            aria-label="Override from"
-            className="h-10 text-sm"
-            onChange={(event) =>
-              setOverrideDraft((prev) => ({
-                ...prev,
-                startsOn: event.target.value,
-              }))
-            }
-          />
-          <Input
-            type="date"
-            value={overrideDraft.endsOn}
-            aria-label="Override until (optional)"
-            className="h-10 text-sm"
-            onChange={(event) =>
-              setOverrideDraft((prev) => ({
-                ...prev,
-                endsOn: event.target.value,
-              }))
-            }
-          />
+      {/* ---- Roster overrides ----
+          Four unlabelled controls, two of them identical date boxes, gave no
+          way to tell "from" from "until" or to know that "until" is optional.
+          The rules they produce now read as sentences rather than as
+          "− Name · 2026-09-01 to 2026-09-30". */}
+      <SettingsBlock
+        title="Roster overrides"
+        hint="Add or drop one person from the morning roster for a period. Everyone else follows the standard roster."
+        count={overrides.length ? `${overrides.length} active` : undefined}
+      >
+        <div className="mt-3 grid gap-x-3 gap-y-3 sm:grid-cols-2 xl:grid-cols-[minmax(10rem,1fr)_minmax(9rem,1fr)_minmax(9rem,1fr)_minmax(9rem,1fr)_auto]">
+          <label className="space-y-1.5">
+            <Label>Person</Label>
+            <Select
+              value={overrideDraft.userId}
+              onValueChange={(userId) =>
+                setOverrideDraft((prev) => ({ ...prev, userId }))
+              }
+            >
+              <SelectTrigger className="h-10 bg-white text-sm" aria-label="Override person">
+                <SelectValue placeholder="Choose someone" />
+              </SelectTrigger>
+              <SelectContent>
+                {academicPeople.map((person) => (
+                  <SelectItem key={person.id} value={person.id}>
+                    {person.fullName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="space-y-1.5">
+            <Label>Change</Label>
+            <Select
+              value={overrideDraft.action}
+              onValueChange={(action) =>
+                setOverrideDraft((prev) => ({
+                  ...prev,
+                  action: action as "include" | "exclude",
+                }))
+              }
+            >
+              <SelectTrigger className="h-10 bg-white text-sm" aria-label="Override action">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="exclude">Drop from roster</SelectItem>
+                <SelectItem value="include">Add to roster</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="space-y-1.5">
+            <Label>From</Label>
+            <Input
+              type="date"
+              value={overrideDraft.startsOn}
+              aria-label="Override from"
+              className="h-10 bg-white text-sm"
+              onChange={(event) =>
+                setOverrideDraft((prev) => ({
+                  ...prev,
+                  startsOn: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="space-y-1.5">
+            <Label>
+              Until <span className="font-normal text-[#9aa6b5]">optional</span>
+            </Label>
+            <Input
+              type="date"
+              value={overrideDraft.endsOn}
+              min={overrideDraft.startsOn || undefined}
+              aria-label="Override until (optional)"
+              className="h-10 bg-white text-sm"
+              onChange={(event) =>
+                setOverrideDraft((prev) => ({
+                  ...prev,
+                  endsOn: event.target.value,
+                }))
+              }
+            />
+          </label>
           <Button
             size="sm"
-            className="h-10 min-w-[7.5rem] px-4 text-sm"
+            className="h-10 min-w-[7.5rem] px-4 text-sm xl:self-end"
             disabled={
               !overrideDraft.userId ||
               !overrideDraft.startsOn ||
@@ -366,6 +469,7 @@ export function MorningSessionsPanel() {
                     startsOn: "",
                     endsOn: "",
                   });
+                  toast.success("Override saved.");
                   await load();
                 },
                 "Unable to save the override.",
@@ -375,38 +479,61 @@ export function MorningSessionsPanel() {
             <Plus className="mr-1 h-4 w-4" /> Add
           </Button>
         </div>
+
         {overrides.length ? (
-          <div className="mt-2.5 flex flex-wrap gap-2">
-            {overrides.map((override) => (
-              <span
-                key={override.id}
-                className="inline-flex items-center gap-1.5 rounded-[0.25rem] border border-[#d4dde8] bg-white px-2.5 py-1 text-[13px] font-medium text-[#44474e]"
-              >
-                {override.action === "exclude" ? "−" : "+"} {override.userName}{" "}
-                · {override.startsOn}
-                {override.endsOn ? ` to ${override.endsOn}` : " onward"}
-                <button
-                  type="button"
-                  aria-label={`Remove override for ${override.userName}`}
-                  className="text-[#ba1a1a] hover:text-[#7f1212]"
-                  onClick={() =>
-                    void run(
-                      `override-${override.id}`,
-                      async () => {
-                        await deleteMorningOverride(client!, override.id);
-                        await load();
-                      },
-                      "Unable to remove the override.",
-                    )
-                  }
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </span>
-            ))}
-          </div>
-        ) : null}
-      </div>
+          <ul className="mt-3 divide-y divide-[#eef2f6] rounded-[0.3rem] border border-[#e6ecf3] bg-white">
+            {overrides.map((override) => {
+              const dropped = override.action === "exclude";
+              const Icon = dropped ? MinusCircle : PlusCircle;
+
+              return (
+                <li key={override.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+                  <Icon
+                    aria-hidden
+                    className={cn(
+                      "h-4 w-4 shrink-0",
+                      dropped ? "text-[#ba1a1a]" : "text-[#1f9254]",
+                    )}
+                  />
+                  <span className="min-w-0 flex-1 text-[13px] leading-5 text-[#52606d]">
+                    <span className="font-semibold text-[#1d3047]">{override.userName}</span>
+                    {dropped ? " is off the roster" : " is on the roster"}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1.5 text-[13px] tabular-nums text-[#52606d]">
+                    {formatDay(override.startsOn)}
+                    <ArrowRight aria-hidden className="h-3 w-3 text-[#c0c8d2]" />
+                    {formatDay(override.endsOn) ?? (
+                      <span className="text-[#8b9199]">no end</span>
+                    )}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 shrink-0 px-2 text-[13px] text-[#ba1a1a] hover:bg-[#fff1f1]"
+                    disabled={busy === `override-${override.id}`}
+                    onClick={() =>
+                      void run(
+                        `override-${override.id}`,
+                        async () => {
+                          await deleteMorningOverride(client!, override.id);
+                          await load();
+                        },
+                        "Unable to remove the override.",
+                      )
+                    }
+                  >
+                    Remove
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="mt-3 rounded-[0.3rem] border border-dashed border-[#dbe3ec] bg-white px-3 py-2.5 text-[13px] text-[#74777f]">
+            No overrides. Everyone follows the standard roster.
+          </p>
+        )}
+      </SettingsBlock>
 
       {/* ---- Session log ---- */}
       {sessions.length === 0 ? (

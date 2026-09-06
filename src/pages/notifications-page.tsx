@@ -12,6 +12,7 @@ import {
   Bell,
   CheckCheck,
   CheckCircle2,
+  Download,
   FileLock2,
   PencilLine,
   RotateCcw,
@@ -165,6 +166,12 @@ const notificationMeta: Record<
     iconTone: 'bg-[#fceeee] text-[#ba1a1a]',
     chipTone: 'border-[#f3cccc] bg-[#fceeee] text-[#ba1a1a]',
   },
+  analytics_export_ready: {
+    label: 'Export ready',
+    icon: Download,
+    iconTone: 'bg-[#edf7f0] text-[#1f6b3b]',
+    chipTone: 'border-[#cfe7d9] bg-[#edf7f0] text-[#1f6b3b]',
+  },
   nurse_access_request: {
     label: 'Access request',
     icon: UserRoundPlus,
@@ -185,6 +192,24 @@ const notificationMeta: Record<
   },
   critical_value_alert: {
     label: 'Critical',
+    icon: Siren,
+    iconTone: 'bg-[#fceeee] text-[#ba1a1a]',
+    chipTone: 'border-[#f3cccc] bg-[#fceeee] text-[#ba1a1a]',
+  },
+  critical_value_corrected: {
+    label: 'Correction',
+    icon: ShieldAlert,
+    iconTone: 'bg-[#fbf4e6] text-[#8a5a00]',
+    chipTone: 'border-[#f0d9aa] bg-[#fbf4e6] text-[#8a5a00]',
+  },
+  action_item_assigned: {
+    label: 'Assigned',
+    icon: UserRoundPlus,
+    iconTone: 'bg-[#edf4fb] text-[#005db6]',
+    chipTone: 'border-[#cfe0f4] bg-[#edf4fb] text-[#005db6]',
+  },
+  action_item_overdue: {
+    label: 'Action overdue',
     icon: Siren,
     iconTone: 'bg-[#fceeee] text-[#ba1a1a]',
     chipTone: 'border-[#f3cccc] bg-[#fceeee] text-[#ba1a1a]',
@@ -376,12 +401,9 @@ export function NotificationsPage() {
         className="rounded-[0.35rem] bg-white px-4 py-5 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] sm:px-5 sm:py-6 md:px-6 md:py-7"
       >
         {/* Header */}
-        <div className="flex items-center gap-2">
-          <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
-            Inbox
-          </p>
-        </div>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+          Inbox
+        </p>
         <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
           Recent activity
         </h2>

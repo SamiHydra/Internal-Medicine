@@ -117,6 +117,11 @@ describe('TeachingAnalyticsTab', () => {
       reason: 'Lecturer unavailable',
     }
     fetchTeachingAnalytics.mockResolvedValue({
+      window: {
+        fromDate: '2025-09-14',
+        toDate: '2026-09-14',
+        maxDays: 366,
+      },
       byActivity: [{ activityType: 'lecture', ...occurrence }],
       byBatch: [{ batchId: 'block-1', batchLabel: 'C1 Block 2', ...occurrence }],
       blocks: [{

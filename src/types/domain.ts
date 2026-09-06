@@ -39,10 +39,14 @@ export type NotificationType =
   | 'report_locked'
   | 'report_unlocked'
   | 'overdue_report'
+  | 'analytics_export_ready'
   | 'nurse_access_request'
   | 'admin_access_request'
   | 'access_request_reviewed'
   | 'critical_value_alert'
+  | 'critical_value_corrected'
+  | 'action_item_assigned'
+  | 'action_item_overdue'
   | 'trend_alert'
 
 export type Weekday =
@@ -68,6 +72,7 @@ export interface UserProfile {
   role: UserRole
   title: string
   active: boolean
+  sectionId?: string | null
   phone?: string
   avatar?: string
   passwordChangeRequired?: boolean
@@ -124,13 +129,6 @@ export interface ChartMappingConfig {
   series: ChartSeriesConfig[]
 }
 
-export interface ChangeWatchRule {
-  fieldId?: string
-  metricId?: string
-  percentThreshold: number
-  messageTemplate: string
-}
-
 export interface ReportTemplateConfig {
   id: string
   family: ReportFamily
@@ -141,7 +139,6 @@ export interface ReportTemplateConfig {
   fields: ReportTemplateField[]
   summaryCards: SummaryCardConfig[]
   chartMappings: ChartMappingConfig[]
-  changeRules: ChangeWatchRule[]
 }
 
 export interface ReportAssignment {

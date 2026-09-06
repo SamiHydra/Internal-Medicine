@@ -125,6 +125,17 @@ export async function deleteAcademicSection(
   await client.delete(`/api/admin/academic/sections/${sectionId}`)
 }
 
+export async function assignConsultantToSection(
+  client: LaravelApiClient,
+  sectionId: string,
+  userId: string,
+): Promise<{ userId: string; sectionId: string }> {
+  return client.post<{ userId: string; sectionId: string }>(
+    `/api/admin/academic/sections/${sectionId}/set-consultant`,
+    { userId },
+  )
+}
+
 // ---- Duty types ----
 
 export type SaveDutyTypePayload = {

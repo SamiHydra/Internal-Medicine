@@ -1,4 +1,4 @@
-# Supabase Audit — St Paul Hospital Reporting System
+# Supabase Audit — St Paul's Hospital Reporting System
 
 **Phase 1 deliverable.** Read-only inventory of every Supabase touch-point in the React/Vite frontend. No code modified.
 

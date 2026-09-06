@@ -23,6 +23,15 @@ const environment = {
   APP_URL: 'http://localhost:5173',
   DB_CONNECTION: 'sqlite',
   DB_DATABASE: databasePath,
+  // This database is disposable and every account shares one known password, so
+  // production-grade hashing only buys startup latency. At the seeded headcount
+  // (180+ accounts) the default cost dominated the whole gate's startup budget.
+  BCRYPT_ROUNDS: '4',
+  // The gate tests behaviour, not scale: a fixture deep enough for trends is
+  // plenty, and seeding a full year would push startup past the webServer
+  // timeout. Perf runs opt into a bigger archive by exporting this themselves,
+  // e.g. SEED_HISTORY_WEEKS=52 npm run test:e2e.
+  SEED_HISTORY_WEEKS: process.env.SEED_HISTORY_WEEKS ?? '30',
   CACHE_STORE: 'database',
   SESSION_DRIVER: 'database',
   SESSION_DOMAIN: '',
@@ -31,8 +40,16 @@ const environment = {
   QUEUE_CONNECTION: 'sync',
   MAIL_MAILER: 'array',
   BROADCAST_CONNECTION: 'log',
-  SANCTUM_STATEFUL_DOMAINS: 'localhost:5173,127.0.0.1:5173',
-  CORS_ALLOWED_ORIGINS: 'http://localhost:5173',
+  SANCTUM_STATEFUL_DOMAINS: 'localhost:5173,127.0.0.1:5173,localhost:4173,127.0.0.1:4173',
+  CORS_ALLOWED_ORIGINS: 'http://localhost:5173,http://localhost:4173',
+  // PHP's built-in server handles one request at a time, so the dashboard's
+  // parallel API burst serialises and every timing the browser sees on Linux
+  // CI is inflated. PHP >= 7.4 forks workers on Linux/macOS when this is set
+  // (Windows ignores it); SQLite runs in WAL mode with a 5 s busy timeout, so
+  // a few concurrent workers are safe.
+  ...(process.platform === 'win32'
+    ? {}
+    : { PHP_CLI_SERVER_WORKERS: process.env.PHP_CLI_SERVER_WORKERS ?? '4' }),
 }
 
 // Cached Laravel configuration takes precedence over environment overrides.

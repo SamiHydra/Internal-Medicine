@@ -22,14 +22,13 @@ import { ChartCard } from '@/components/dashboard/chart-card'
 import { InsightPanel } from '@/components/dashboard/insight-panel'
 import { AnalyticsContentSkeleton } from '@/components/layout/loading-skeletons'
 import {
-  fetchAcademicPeople,
-  fetchAcademicSummary,
-  fetchAcademicTrend,
+  fetchAcademicSnapshot,
   fetchAcademicWardOptions,
   listAcademicEvaluations,
   type AcademicWardOption,
 } from '@/lib/api/academic'
 import { getApiBrowserClient } from '@/lib/api/client'
+import { readBoundedCache, writeBoundedCache } from '@/lib/bounded-cache'
 import { apiEnvSetupHint } from '@/lib/api/env'
 import { cn } from '@/lib/utils'
 import {
@@ -52,11 +51,6 @@ import type {
 } from '@/lib/api/types'
 
 const ALL = 'all'
-
-const directionOptions = [
-  { value: 'consultant', label: 'Consultant evaluations' },
-  { value: 'resident', label: 'Resident evaluations' },
-] as const
 
 const rangeOptions = [
   { value: ALL, label: 'All time' },
@@ -161,6 +155,7 @@ type PersonData = {
 }
 
 const personDataCache = new Map<string, PersonData>()
+const PERSON_CACHE_MAX_ENTRIES = 12
 
 function personKey(
   userId: string,
@@ -184,11 +179,13 @@ export function AcademicPersonDetailPage() {
     searchParams.get('direction') === 'resident' ? 'resident' : 'consultant'
 
   // Seed from cache so re-opening the same person paints instantly, then revalidates.
-  const cachedPerson = personDataCache.get(
+  const cachedPerson = readBoundedCache(
+    personDataCache,
     personKey(userId, initialDirection, undefined, undefined, undefined),
   )
 
-  const [direction, setDirection] = useState<AcademicDirection>(initialDirection)
+  // Fixed for the lifetime of the page: it is the person's role, not a filter.
+  const direction = initialDirection
   const [wardId, setWardId] = useState<string>(ALL)
   const [range, setRange] = useState<string>(ALL)
 
@@ -197,6 +194,14 @@ export function AcademicPersonDetailPage() {
   const [trend, setTrend] = useState<AcademicTrend | null>(cachedPerson?.trend ?? null)
   const [evaluations, setEvaluations] = useState<AcademicEvaluationRecord[]>(cachedPerson?.evaluations ?? [])
   const [selectedRecord, setSelectedRecord] = useState<AcademicEvaluationRecord | null>(null)
+  // The log shows either evaluations written ABOUT this person (the default) or
+  // the ones they wrote about others.
+  const [logView, setLogView] = useState<'received' | 'given'>('received')
+  // Keyed by filter signature: an absent key means "not fetched yet", which is
+  // also how the loading state is derived (no setState inside the effect).
+  const [authoredByKey, setAuthoredByKey] = useState<
+    Record<string, AcademicEvaluationRecord[]>
+  >({})
   const [headerStat, setHeaderStat] = useState<AcademicPersonStat | null>(cachedPerson?.headerStat ?? null)
   const [error, setError] = useState<string | null>(() =>
     client ? null : `The Laravel API is not configured. ${apiEnvSetupHint}`,
@@ -239,25 +244,30 @@ export function AcademicPersonDetailPage() {
     }
     const cacheKey = personKey(userId, direction, query.wardId, query.dateFrom, query.dateTo)
     Promise.all([
-      fetchAcademicSummary(client, query),
-      fetchAcademicTrend(client, { ...query, granularity: 'weekly' }),
+      fetchAcademicSnapshot(client, { ...query, granularity: 'weekly' }),
       listAcademicEvaluations(client, { ...query, perPage: 50 }),
-      fetchAcademicPeople(client, query),
     ])
-      .then(([fetchedSummary, fetchedTrend, fetchedList, fetchedPeople]) => {
-        personDataCache.set(cacheKey, {
-          summary: fetchedSummary,
-          trend: fetchedTrend,
-          evaluations: fetchedList.data,
-          headerStat: fetchedPeople.people[0] ?? null,
-        })
+      .then(([fetchedSnapshot, fetchedList]) => {
+        const fetchedHeaderStat =
+          fetchedSnapshot.people.people.find((entry) => entry.subjectId === userId) ?? null
+        writeBoundedCache(
+          personDataCache,
+          cacheKey,
+          {
+            summary: fetchedSnapshot.summary,
+            trend: fetchedSnapshot.trend,
+            evaluations: fetchedList.data,
+            headerStat: fetchedHeaderStat,
+          },
+          PERSON_CACHE_MAX_ENTRIES,
+        )
         if (!active) {
           return
         }
-        setSummary(fetchedSummary)
-        setTrend(fetchedTrend)
+        setSummary(fetchedSnapshot.summary)
+        setTrend(fetchedSnapshot.trend)
         setEvaluations(fetchedList.data)
-        setHeaderStat(fetchedPeople.people[0] ?? null)
+        setHeaderStat(fetchedHeaderStat)
         setError(null)
       })
       .catch((fetchError) => {
@@ -279,6 +289,52 @@ export function AcademicPersonDetailPage() {
 
   const isResident = direction === 'resident'
 
+  // Evaluations this person WROTE are always the opposite form: a consultant
+  // writes resident evaluations, a resident writes consultant evaluations.
+  const givenDirection: AcademicDirection = isResident ? 'consultant' : 'resident'
+
+  const givenKey = personKey(
+    userId,
+    givenDirection,
+    wardId === ALL ? undefined : wardId,
+    dateRange.dateFrom,
+    dateRange.dateTo,
+  )
+  const authored = authoredByKey[givenKey]
+  const authoredLoading = logView === 'given' && authored === undefined
+
+  // Fetched only once the Submitted view is opened, so the default page load
+  // costs exactly what it did before.
+  useEffect(() => {
+    if (!client || logView !== 'given' || authoredByKey[givenKey] !== undefined) {
+      return
+    }
+    let active = true
+    listAcademicEvaluations(client, {
+      direction: givenDirection,
+      authorId: userId,
+      wardId: wardId === ALL ? undefined : wardId,
+      dateFrom: dateRange.dateFrom,
+      dateTo: dateRange.dateTo,
+      perPage: 50,
+    })
+      .then((response) => {
+        if (active) {
+          setAuthoredByKey((prev) => ({ ...prev, [givenKey]: response.data }))
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAuthoredByKey((prev) => ({ ...prev, [givenKey]: [] }))
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [client, logView, givenKey, givenDirection, userId, wardId, dateRange, authoredByKey])
+
+  const logRows = logView === 'given' ? (authored ?? []) : evaluations
+
   const subjectName =
     headerStat?.subjectName ?? evaluations[0]?.subjectName ?? 'Selected person'
   const homeWardName = headerStat?.homeWardName ?? null
@@ -288,14 +344,11 @@ export function AcademicPersonDetailPage() {
     [wards],
   )
 
+  // No Direction filter here. A person has one role, so one of its two options
+  // always matched nothing, and because direction feeds the KPIs and charts as
+  // well as the log, choosing it emptied the whole page with no explanation.
+  // The role is fixed by the person and arrives on the URL from the leaderboard.
   const scopeFields = [
-    {
-      label: 'Direction',
-      placeholder: 'Direction',
-      value: direction,
-      options: directionOptions,
-      onValueChange: (value: string) => setDirection(value as AcademicDirection),
-    },
     {
       label: 'Ward',
       placeholder: 'All wards',
@@ -385,12 +438,9 @@ export function AcademicPersonDetailPage() {
         className="overflow-hidden rounded-[0.35rem] bg-[#04162f] px-5 py-6 text-white shadow-[0_26px_64px_-40px_rgba(0,12,35,0.85)] md:px-7 md:py-7"
       >
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#f0b429]">
-              {isResident ? 'Resident' : 'Consultant'}
-            </p>
-          </div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#f0b429]">
+            {isResident ? 'Resident' : 'Consultant'}
+          </p>
           <h1 className="mt-2 font-display text-[1.7rem] font-bold leading-tight tracking-[-0.02em] text-white md:text-[2.1rem]">
             {subjectName}
           </h1>
@@ -520,23 +570,62 @@ export function AcademicPersonDetailPage() {
             transition={{ duration: 0.35, ease: 'easeOut', delay: 0.08 }}
             className={sectionClass}
           >
-            <div className="space-y-1.5">
-              <p className={eyebrowClass}>Recent evaluations</p>
-              <h2 className="font-display text-[1.5rem] leading-tight tracking-[-0.02em] text-[#000a1e]">
-                Evaluation log
-              </h2>
-              <p className="text-sm text-[#74777f]">Every submitted evaluation.</p>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-1.5">
+                <p className={eyebrowClass}>Recent evaluations</p>
+                <h2 className="font-display text-[1.5rem] leading-tight tracking-[-0.02em] text-[#000a1e]">
+                  Evaluation log
+                </h2>
+                <p className="text-sm text-[#74777f]">
+                  {logView === 'given'
+                    ? `Evaluations ${subjectName} submitted about others.`
+                    : `Evaluations submitted about ${subjectName}.`}
+                </p>
+              </div>
+
+              <div
+                role="group"
+                aria-label="Evaluation log view"
+                className="flex gap-1 rounded-[0.35rem] bg-[#eef1f5] p-1"
+              >
+                {(
+                  [
+                    { value: 'received' as const, label: 'Received' },
+                    { value: 'given' as const, label: 'Submitted' },
+                  ]
+                ).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={logView === option.value}
+                    onClick={() => setLogView(option.value)}
+                    className={cn(
+                      'rounded-[0.25rem] px-3.5 py-1.5 text-[13px] tracking-[-0.01em] transition-colors duration-150',
+                      'outline-none focus-visible:ring-2 focus-visible:ring-[#005db6]/45',
+                      logView === option.value
+                        ? 'bg-[#04162f] font-bold text-white'
+                        : 'font-semibold text-[#5b6169] hover:text-[#000a1e]',
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {evaluations.length ? (
+            {authoredLoading && logView === 'given' ? (
+              <div className="mt-5 rounded-[0.35rem] border border-dashed border-[#cbd5e1] bg-white px-5 py-10 text-center text-sm text-[#5b6169]">
+                Loading submitted evaluations...
+              </div>
+            ) : logRows.length ? (
               <div className="mt-5 overflow-hidden rounded-[0.4rem] border border-[#e6ecf3] bg-white">
                 <div className="hidden grid-cols-[124px_minmax(0,2fr)_minmax(0,1.1fr)_104px] items-center gap-4 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f] sm:grid">
                   <span>Date</span>
-                  <span>Author</span>
+                  <span>{logView === 'given' ? 'Evaluated' : 'Author'}</span>
                   <span>Ward</span>
                   <span className="text-right">Score</span>
                 </div>
-                {evaluations.map((record) => {
+                {logRows.map((record) => {
                   const score = Math.round(recordScore(record))
                   return (
                     <button
@@ -550,11 +639,11 @@ export function AcademicPersonDetailPage() {
                       </span>
                       <span className="flex min-w-0 items-center gap-3">
                         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#04162f] text-[11px] font-bold text-[#f0b429]">
-                          {initialsFor(record.authorName)}
+                          {initialsFor(logView === 'given' ? record.subjectName : record.authorName)}
                         </span>
                         <span className="min-w-0">
                           <span className="block truncate font-semibold text-[#000a1e]">
-                            {record.authorName ?? '-'}
+                            {(logView === 'given' ? record.subjectName : record.authorName) ?? '-'}
                           </span>
                           <span className="block truncate text-xs text-[#74777f] sm:hidden">
                             {toDateLabel(record.evaluationDate)} · {record.wardName ?? '-'}
@@ -562,9 +651,8 @@ export function AcademicPersonDetailPage() {
                         </span>
                       </span>
                       <span className="hidden min-w-0 sm:block">
-                        <span className="inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-[#e3e9f1] bg-[#f4f7fb] px-2.5 py-1 text-xs font-medium text-[#44474e]">
-                          <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#005db6]" />
-                          <span className="truncate">{record.wardName ?? '-'}</span>
+                        <span className="block truncate text-[13px] text-[#5b6169]">
+                          {record.wardName ?? '-'}
                         </span>
                       </span>
                       <span className="flex items-center justify-end gap-2">

@@ -75,13 +75,17 @@ row unwritten, so the next attempt fails with `1050 Table already exists` and
 masks the original error. Re-running a failed migration is not safe here the way
 it is on SQLite; you must `docker compose down -v`.
 
-### 2. The `backend-mariadb` CI job cannot install its dependencies
+### 2. The `backend-mariadb` CI job cannot install its dependencies (resolved)
 
-`.github/workflows/ci.yml` pins `php-version: '8.3'`, but `backend/composer.lock`
-locks 17 packages (`symfony/console`, `symfony/http-kernel`, … ) whose
-`require.php` is `>=8.4.1`. `composer install` from that lock file is impossible
-on 8.3, independently of defect 1. This stack therefore runs **PHP 8.4**. See
-gap 8 below.
+`.github/workflows/ci.yml` pins `php-version: '8.3'`, and for a while
+`backend/composer.lock` locked Symfony components whose `require.php` was
+`>=8.4.1`, which made `composer install` impossible on 8.3. The lock file has
+since been re-resolved against the `php: 8.3.0` platform pin in
+`backend/composer.json` (`composer install --no-dev --dry-run` succeeds on
+8.3, verified in the 2026-09 production readiness audit), and the stack builds
+`PHP_VERSION=8.3` again (`docker/Dockerfile` default and `compose.yaml` build
+args). The MariaDB test lane ran green on PHP 8.3 in the 2026-09 remediation
+pass. See gap 8 below.
 
 ### 3. `MariaDbConcurrencyRegressionTest` has a broken teardown
 
@@ -109,7 +113,7 @@ cleanup does not.** This was invisible for as long as the test skipped.
 | Service | Image | What it is | Mirrors |
 |---|---|---|---|
 | `db` | `mariadb:11.4` | The application database. Slow-query log on, `long_query_time=0.5`, `log_queries_not_using_indexes`, `performance_schema=ON`. | MariaDB on the department server; version matches the `backend-mariadb` CI job |
-| `app` | built, target `app` | PHP-FPM **8.4** (8.3 is impossible - see gap 8). Runs migrations, seeds, builds config/route/view caches, then serves FastCGI on 9000. | `php8.3-fpm` + the `deploy.sh` bootstrap order |
+| `app` | built, target `app` | PHP-FPM **8.3** (the same major/minor as the deploy kit; the 8.4 detour is history, see gap 8). Runs migrations, seeds, builds config/route/view caches, then serves FastCGI on 9000. | `php8.3-fpm` + the `deploy.sh` bootstrap order |
 | `web` | built, target `web` | nginx. Serves the **built** SPA from `/opt/imreport/current/dist` and proxies `/api` + `/sanctum` to `app:9000` on the same origin. TLS on 443. | `deploy/nginx.conf` |
 | `queue` | built, target `app` | `php artisan queue:work --tries=3 --backoff=10 --max-time=3600`, `restart: unless-stopped`. | `deploy/queue-worker.service` (`QUEUE_WORKER_MODE=daemon`) |
 | `scheduler` | built, target `app` | `php artisan schedule:work`. | the `* * * * * ... schedule:run` cron line in `deploy/README.md` step 9 |
@@ -392,17 +396,13 @@ only as good as the gap list below.
    container equivalent. Logs go to container stdout.
 7. **Seed step runs as `APP_ENV=local`** (see above). Production would never do
    this; a real server has no dev accounts at all.
-8. **PHP 8.4, NOT the 8.3 the deploy kit specifies.** This is a deviation the
-   stack was forced into, and it is an audit finding in its own right:
-   `backend/composer.lock` pins `symfony/console` v8.1.1 and 17 sibling Symfony
-   components whose `require.php` is `">=8.4.1"`, so `composer install` from
-   that lock file **cannot run on PHP 8.3**. Everything that names 8.3 is stale:
-   `deploy/README.md` step 1, `deploy/nginx.conf`
-   (`fastcgi_pass unix:/run/php/php8.3-fpm.sock`), `deploy/deploy.sh`
-   (`systemctl reload php8.3-fpm`), `docs/OPERATIONS.md`, and the
-   `php-version: '8.3'` in all three `.github/workflows/ci.yml` PHP jobs.
-   `backend/composer.json` also still declares `"php": "^8.3"`.
-   Build with `--build-arg PHP_VERSION=8.3` to reproduce the failure.
+8. **PHP version (resolved).** Historically the stack was forced onto PHP 8.4
+   because `backend/composer.lock` pinned Symfony components requiring
+   `>=8.4.1`. That is no longer the case: the lock file is resolved against the
+   `php: 8.3.0` platform pin, the Dockerfile and `compose.yaml` build PHP 8.3,
+   and the 8.3 named by `deploy/README.md`, `deploy/nginx.conf`,
+   `deploy/deploy.sh`, `docs/OPERATIONS.md` and the `.github/workflows/ci.yml`
+   PHP jobs is the supported runtime everywhere.
 9. **`VITE_API_BASE_URL` is baked at build time** as `https://localhost:8443`
    (`src/lib/api/env.ts` has no runtime fallback). Change the published port and
    you must rebuild `web` with a matching build arg *and* update

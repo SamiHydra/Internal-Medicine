@@ -1,112 +1,192 @@
-import { zodResolver } from '@hookform/resolvers/zod'
 import {
   ArrowRight,
   Eye,
   EyeOff,
   User,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { z } from 'zod'
 
 import { technicalSupport } from '@/config/support'
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
-import { useAppData } from '@/context/app-data-context'
-import { getApiBrowserClient } from '@/lib/api/client'
+import { ApiError, getApiBrowserClient, isApiConfigured } from '@/lib/api/client'
+import { missingApiEnvKeys } from '@/lib/api/env'
+import { hasSessionHint } from '@/lib/session-hint'
+import type { SessionPayload } from '@/lib/api/types'
+import { landingPathForRole } from '@/routes/landing'
+import type { UserRole } from '@/types/domain'
 
-const loginSchema = z.object({
-  identifier: z.string().trim().min(1),
-  password: z.string().min(1),
-})
+function preloadLandingPageForRole(role: UserRole) {
+  switch (role) {
+    case 'nurse':
+      return import('@/pages/nurse/nurse-dashboard-page')
+    case 'resident':
+    case 'consultant':
+      return import('@/pages/academic/academic-home-page')
+    case 'student_rep':
+      return import('@/pages/teaching/rep-log-page')
+    default:
+      return import('@/pages/admin/admin-dashboard-page')
+  }
+}
 
-type LoginValues = z.infer<typeof loginSchema>
+/**
+ * Every authenticated route renders inside this shell, so it can be warmed
+ * before the role is known - unlike the landing page itself.
+ */
+function preloadAuthenticatedShell() {
+  return import('@/routes/route-guards')
+}
 
-export function LoginPage() {
-  const {
-    currentUser,
-    error: appError,
-    isConfigured,
-    isBootstrapping,
-    login,
-    missingEnvVars,
-  } = useAppData()
+type LoginUser = SessionPayload['user']
+
+export function LoginPage({
+  authenticate,
+  onAuthenticated,
+}: {
+  authenticate?: (identifier: string, password: string) => Promise<LoginUser | null>
+  onAuthenticated?: (user: LoginUser) => void | Promise<void>
+} = {}) {
   const location = useLocation()
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
+  const [identifier, setIdentifier] = useState('')
+  const [password, setPassword] = useState('')
+  const [identifierError, setIdentifierError] = useState<string | null>(null)
+  const [passwordError, setPasswordError] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
+  const [isBootstrapping, setIsBootstrapping] = useState(isApiConfigured)
   const [isSigningIn, setIsSigningIn] = useState(false)
-  const form = useForm<LoginValues>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: {
-      identifier: '',
-      password: '',
-    },
-  })
 
-  useEffect(() => {
-    if (currentUser && !isSigningIn) {
-      navigate(currentUser.role === 'nurse' ? '/nurse' : '/admin', {
-        replace: true,
-      })
-    }
-  }, [currentUser, isSigningIn, navigate])
+  const completeAuthentication = useCallback(
+    async (user: LoginUser) => {
+      if (onAuthenticated) {
+        await onAuthenticated(user)
+        return
+      }
+
+      navigate(
+        user.passwordChangeRequired ? '/change-password' : landingPathForRole(user.role),
+        { replace: true },
+      )
+    },
+    [navigate, onAuthenticated],
+  )
 
   useEffect(() => {
     const client = getApiBrowserClient()
 
-    void client?.primeCsrfCookie().catch(() => {
-      // The submit flow will retry CSRF setup and surface any real login error.
-    })
-  }, [])
-
-  useEffect(() => {
-    const preloadDashboards = () => {
-      void import('@/pages/nurse/nurse-dashboard-page')
-      void import('@/pages/admin/admin-dashboard-page')
-    }
-
-    if ('requestIdleCallback' in window) {
-      const idleHandle = window.requestIdleCallback(preloadDashboards, {
-        timeout: 800,
-      })
-
-      return () => {
-        window.cancelIdleCallback(idleHandle)
-      }
-    }
-
-    const timeoutHandle = globalThis.setTimeout(preloadDashboards, 250)
-    return () => {
-      globalThis.clearTimeout(timeoutHandle)
-    }
-  }, [])
-
-  const onSubmit = form.handleSubmit(async (values) => {
-    setError(null)
-    setIsSigningIn(true)
-    const role = await login(values.identifier, values.password)
-
-    if (!role) {
-      setError(appError ?? 'Check your email and password and try again.')
-      setIsSigningIn(false)
+    if (!client) {
       return
     }
 
-    if (role === 'nurse') {
-      await import('@/pages/nurse/nurse-dashboard-page')
-    } else {
-      await import('@/pages/admin/admin-dashboard-page')
-    }
-    navigate(role === 'nurse' ? '/nurse' : '/admin', { replace: true })
-  })
+    let cancelled = false
 
-  const identifierError = form.formState.errors.identifier
-    ? 'Enter your email or username.'
-    : null
-  const passwordError = form.formState.errors.password
-    ? 'Password is required.'
-    : null
+    // A device that never signed in (or signed out) has no session to redirect:
+    // the probe would only answer 401 and put an error in the console on every
+    // cold visit (QA-025). The hint is remembered on every successful workspace
+    // load and cleared on sign-out; when storage is unavailable it reads as
+    // "unknown" and the probe runs as before.
+    if (!hasSessionHint()) {
+      setIsBootstrapping(false)
+      void client.primeCsrfCookie().catch(() => {
+        // The submit flow retries CSRF setup and surfaces a real login error.
+      })
+
+      return () => {
+        cancelled = true
+      }
+    }
+
+    void client
+      .get<SessionPayload>('/api/auth/me')
+      .then(async (payload) => {
+        if (!cancelled) {
+          await completeAuthentication(payload.user)
+        }
+      })
+      .catch((sessionError: unknown) => {
+        if (
+          !cancelled &&
+          !(sessionError instanceof ApiError && sessionError.status === 401)
+        ) {
+          setError('Unable to restore the current session. You can still sign in.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsBootstrapping(false)
+        }
+      })
+
+    void client.primeCsrfCookie().catch(() => {
+      // The submit flow retries CSRF setup and surfaces a real login error.
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [completeAuthentication])
+
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const normalizedIdentifier = identifier.trim()
+    const nextIdentifierError = normalizedIdentifier ? null : 'Enter your email or username.'
+    const nextPasswordError = password ? null : 'Password is required.'
+    setIdentifierError(nextIdentifierError)
+    setPasswordError(nextPasswordError)
+
+    if (nextIdentifierError || nextPasswordError) {
+      return
+    }
+
+    setError(null)
+    setIsSigningIn(true)
+
+    // The shell is needed whatever the role, so fetch it alongside the auth
+    // request rather than waiting for the role to come back.
+    void preloadAuthenticatedShell().catch(() => {
+      // The route-level lazy loader owns the visible error/loading behavior.
+    })
+    try {
+      let user: LoginUser
+
+      if (authenticate) {
+        const authenticatedUser = await authenticate(normalizedIdentifier, password)
+        if (!authenticatedUser) {
+          throw new Error('Unable to sign in.')
+        }
+        user = authenticatedUser
+      } else {
+        const client = getApiBrowserClient()
+        if (!client) {
+          setError('The API is not configured.')
+          setIsSigningIn(false)
+          return
+        }
+
+        const payload = await client.post<SessionPayload>('/api/auth/login', {
+          identifier: normalizedIdentifier,
+          password,
+        })
+        client.emitAuthStateChange('SIGNED_IN', { user: { id: payload.user.id } })
+        user = payload.user
+      }
+
+      void preloadLandingPageForRole(user.role).catch(() => {
+        // The route-level lazy loader owns the visible error/loading behavior.
+      })
+      await completeAuthentication(user)
+    } catch (loginError) {
+      setError(
+        loginError instanceof ApiError && loginError.status === 403
+          ? loginError.message
+          : 'Check your email and password and try again.',
+      )
+      setIsSigningIn(false)
+    }
+  }
+
   const resetSuccess =
     typeof location.state === 'object' &&
     location.state !== null &&
@@ -114,57 +194,57 @@ export function LoginPage() {
     location.state.passwordReset === true
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#f8f9fa] px-3 py-3 sm:px-4 sm:py-4 md:px-5 md:py-5 xl:px-6 xl:py-6">
-      <main className="relative mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[1460px] items-center md:h-[calc(100vh-2.5rem)] md:min-h-0 xl:h-[calc(100vh-3rem)]">
-        <div className="grid w-full overflow-hidden rounded-[0.35rem] bg-white shadow-[0_28px_60px_rgba(0,33,71,0.12)] outline outline-1 outline-[#c8d5e6]/30 md:h-full md:grid-cols-[minmax(0,1fr)_minmax(480px,545px)] xl:grid-cols-[minmax(0,1.04fr)_minmax(520px,590px)]">
-          <section className="relative hidden overflow-hidden bg-[#04162f] text-white md:flex md:h-full md:flex-col md:justify-between md:p-12 lg:p-14 xl:p-16">
+    <div className="login-shell relative min-h-screen overflow-hidden bg-[#f8f9fa] px-3 py-3 sm:px-4 sm:py-4 md:px-5 md:py-5 xl:px-6 xl:py-6">
+      <main className="login-main relative mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[1460px] items-center md:h-[calc(100vh-2.5rem)] md:min-h-0 xl:h-[calc(100vh-3rem)]">
+        <div className="login-card grid w-full overflow-hidden rounded-[0.35rem] bg-white shadow-[0_28px_60px_rgba(0,33,71,0.12)] outline outline-1 outline-[#c8d5e6]/30 md:h-full md:grid-cols-[minmax(0,1fr)_minmax(480px,545px)] xl:grid-cols-[minmax(0,1.04fr)_minmax(520px,590px)]">
+          <section className="login-hero relative hidden overflow-hidden bg-[#04162f] text-white md:flex md:h-full md:flex-col md:justify-between md:p-12 lg:p-14 xl:p-16">
             <div className="absolute inset-y-0 left-0 w-px bg-white/10" />
             <div className="absolute inset-y-0 right-0 w-px bg-white/8" />
 
-            <div className="relative z-10">
-              <div className="flex items-center gap-3">
-                <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
+            <div className="login-hero-content relative z-10">
+              <div className="flex items-center gap-4">
+                <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[8px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
                   <img
                     src={stPaulosLogo}
-                    alt="St Paul logo"
+                    alt="St Paul's logo"
                     className="h-full w-full object-cover"
                   />
                 </div>
                 <div>
                   <p
-                    className="text-[1.55rem] font-extrabold leading-none tracking-[-0.03em] text-white"
+                    className="text-[2.15rem] font-extrabold leading-none tracking-[-0.03em] text-white"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
                     St Paul's
                   </p>
-                  <p className="mt-1 text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
+                  <p className="mt-1.5 text-[0.82rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
                     Internal Medicine
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="relative z-10 max-w-[31rem]">
+            <div className="login-hero-content relative z-10 max-w-[31rem]">
               <h1
                 className="text-[3.95rem] font-extrabold leading-[0.92] tracking-[-0.055em] text-white lg:text-[4.3rem] xl:text-[4.7rem]"
                 style={{ fontFamily: 'Manrope, sans-serif' }}
               >
-                Clinical Operations
+                Department
                 <br />
-                <span className="text-[#63a1ff]">&amp; Academic Review</span>
+                <span className="text-[#63a1ff]">Management System</span>
               </h1>
               <div className="mt-6 h-px w-28 bg-[linear-gradient(90deg,#63a1ff_0%,#f0b429_100%)]" />
             </div>
           </section>
 
-          <section className="relative flex items-center bg-white px-6 py-10 sm:px-10 md:h-full md:px-12 md:py-8 lg:px-16 xl:px-20">
+          <section className="login-panel relative flex items-center bg-white px-6 py-10 sm:px-10 md:h-full md:px-12 md:py-8 lg:px-16 xl:px-20">
             <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_72%,#f0b429_100%)]" />
-            <div className="mx-auto w-full max-w-[20rem] lg:max-w-[21rem]" style={{ fontFamily: 'Inter, sans-serif' }}>
-              <div className="mb-10 flex items-center gap-3 md:hidden">
+            <div className="login-form mx-auto w-full max-w-[20rem] lg:max-w-[21rem]" style={{ fontFamily: 'Inter, sans-serif' }}>
+              <div className="login-mobile-brand mb-10 flex items-center gap-3 md:hidden">
                 <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_12px_24px_rgba(0,33,71,0.14)] ring-1 ring-[#d7dbe0]">
                   <img
                     src={stPaulosLogo}
-                    alt="St Paul logo"
+                    alt="St Paul's logo"
                     className="h-full w-full object-cover"
                   />
                 </div>
@@ -181,7 +261,7 @@ export function LoginPage() {
                 </div>
               </div>
 
-              <header className="mb-10">
+              <header className="login-heading mb-10">
                 <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
                   Secure access
                 </p>
@@ -191,9 +271,6 @@ export function LoginPage() {
                 >
                   Reporting Sign In
                 </h2>
-                <p className="text-sm font-medium text-[#5b6169]">
-                  Access the internal medicine operations and academic platform
-                </p>
                 <div className="mt-4 h-px w-24 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_68%,#f0b429_100%)]" />
               </header>
 
@@ -213,8 +290,12 @@ export function LoginPage() {
                       autoComplete="username"
                       aria-invalid={identifierError ? 'true' : 'false'}
                       className="h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 pr-11 text-[0.95rem] font-medium text-[#191c1d] outline-none transition placeholder:text-[#8c929b] focus:border-[#005db6] focus:bg-[#fbfdff]"
-                      disabled={!isConfigured || isSigningIn}
-                      {...form.register('identifier')}
+                      disabled={!isApiConfigured || isSigningIn}
+                      value={identifier}
+                      onChange={(event) => {
+                        setIdentifier(event.target.value)
+                        setIdentifierError(null)
+                      }}
                     />
                     <User className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#c4c6cf]" />
                   </div>
@@ -241,10 +322,10 @@ export function LoginPage() {
                         fontWeight: 900,
                       }}
                       onClick={() => {
-                        const identifier = form.getValues('identifier').trim()
+                        const normalizedIdentifier = identifier.trim()
                         navigate(
-                          identifier && identifier.includes('@')
-                            ? `/forgot-password?email=${encodeURIComponent(identifier)}`
+                          normalizedIdentifier && normalizedIdentifier.includes('@')
+                            ? `/forgot-password?email=${encodeURIComponent(normalizedIdentifier)}`
                             : '/forgot-password',
                         )
                       }}
@@ -260,15 +341,19 @@ export function LoginPage() {
                       autoComplete="current-password"
                       aria-invalid={passwordError ? 'true' : 'false'}
                       className="h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 pr-11 text-[0.95rem] font-medium text-[#191c1d] outline-none transition placeholder:text-[#8c929b] focus:border-[#005db6] focus:bg-[#fbfdff]"
-                      disabled={!isConfigured || isSigningIn}
-                      {...form.register('password')}
+                      disabled={!isApiConfigured || isSigningIn}
+                      value={password}
+                      onChange={(event) => {
+                        setPassword(event.target.value)
+                        setPasswordError(null)
+                      }}
                     />
                     <button
                       type="button"
                       className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#c4c6cf] transition hover:text-[#000a1e]"
                       onClick={() => setShowPassword((current) => !current)}
                       aria-label={showPassword ? 'Hide password' : 'Show password'}
-                      disabled={!isConfigured || isSigningIn}
+                      disabled={!isApiConfigured || isSigningIn}
                     >
                       {showPassword ? (
                         <EyeOff className="h-4 w-4" />
@@ -290,16 +375,16 @@ export function LoginPage() {
                     Password updated. Sign in with your new password.
                   </p>
                 ) : null}
-                {!isConfigured ? (
+                {!isApiConfigured ? (
                   <p className="text-sm font-medium text-[#8a5a00]">
-                    Missing environment: {missingEnvVars.join(', ')}
+                    Missing environment: {missingApiEnvKeys.join(', ')}
                   </p>
                 ) : null}
 
                 <button
                   className="flex h-12 w-full items-center justify-center gap-2 whitespace-nowrap rounded-[3px] bg-[#002147] px-4 text-[0.68rem] font-bold uppercase leading-none tracking-[0.08em] text-white shadow-[0_14px_28px_rgba(0,33,71,0.28)] transition-[background-color,transform] duration-150 ease-out hover:bg-[#06305f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#005db6] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-[#778197] disabled:shadow-none sm:text-[0.8rem] sm:tracking-[0.12em]"
                   type="submit"
-                  disabled={!isConfigured || isBootstrapping || isSigningIn}
+                  disabled={!isApiConfigured || isBootstrapping || isSigningIn}
                   style={{ fontFamily: 'Manrope, sans-serif' }}
                 >
                   {isBootstrapping

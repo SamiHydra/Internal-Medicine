@@ -10,7 +10,7 @@ use Illuminate\Database\Seeder;
  * Backfills the presentation/UI metadata that historically lived only in the
  * frontend config (src/config/templates.ts, exported to
  * database/data/templates-config.json) into the existing JSON metadata columns:
- *  - report_templates.metadata.presentation = { sections, summaryCards, chartMappings, changeRules }
+ *  - report_templates.metadata.presentation = { sections, summaryCards, chartMappings }
  *  - report_field_definitions.metadata += { unit, highlightWhenNonZero, readOnlyWeeklyTotal, options, description }
  *
  * Idempotent and edit-safe: it only ADDS missing keys, never overwrites a
@@ -54,7 +54,6 @@ class BackfillTemplatePresentationSeeder extends Seeder
                     'sections' => $tpl['sections'] ?? [],
                     'summaryCards' => $tpl['summaryCards'] ?? [],
                     'chartMappings' => $tpl['chartMappings'] ?? [],
-                    'changeRules' => $tpl['changeRules'] ?? [],
                 ];
                 $template->forceFill(['metadata' => $metadata])->save();
                 $templatesTouched++;

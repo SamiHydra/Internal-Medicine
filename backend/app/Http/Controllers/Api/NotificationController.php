@@ -63,14 +63,19 @@ class NotificationController extends Controller
             ->whereIn('id', $validated['ids'])
             ->get();
 
-        $notifications->each(function (Notification $notification): void {
-            Gate::authorize('update', $notification);
-            $notification->forceFill(['read_at' => $notification->read_at ?? now()])->save();
+        $notifications->each(fn (Notification $notification) => Gate::authorize('update', $notification));
+        $readAt = now();
+        Notification::query()
+            ->whereIn('id', $notifications->pluck('id'))
+            ->whereNull('read_at')
+            ->update(['read_at' => $readAt]);
+        $notifications->each(function (Notification $notification) use ($readAt): void {
+            $notification->read_at ??= $readAt;
         });
 
         return response()->json([
             'updated' => $notifications->count(),
-            'data' => $notifications->map(fn (Notification $notification) => $this->serializeNotification($notification->refresh()))->values(),
+            'data' => $notifications->map(fn (Notification $notification) => $this->serializeNotification($notification))->values(),
         ]);
     }
 
@@ -95,10 +100,8 @@ class NotificationController extends Controller
             ->whereIn('id', $validated['ids'])
             ->get();
 
-        $notifications->each(function (Notification $notification): void {
-            Gate::authorize('delete', $notification);
-            $notification->delete();
-        });
+        $notifications->each(fn (Notification $notification) => Gate::authorize('delete', $notification));
+        Notification::query()->whereIn('id', $notifications->pluck('id'))->delete();
 
         return response()->json(['deleted' => $notifications->count()]);
     }

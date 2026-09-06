@@ -8,8 +8,9 @@ import { defineConfig } from 'vitest/config'
 
 // Replace __SW_VERSION__ in the built service worker with a hash of the emitted
 // asset filenames. Those names are content-hashed, so any code change yields a
-// new SW cache key and the SW's 'activate' step purges the stale shell — closing
-// the "offline user keeps an old index.html referencing dead assets" gap.
+// new SW cache key and the SW's 'activate' step purges the stale shell. The same
+// pass injects the emitted asset list so the first online visit installs a
+// complete offline shell rather than caching chunks only after they are used.
 function stampServiceWorker() {
   return {
     name: 'stamp-service-worker',
@@ -17,20 +18,65 @@ function stampServiceWorker() {
     closeBundle() {
       const swPath = path.resolve(__dirname, 'dist/sw.js')
       const assetsDir = path.resolve(__dirname, 'dist/assets')
+      const indexPath = path.resolve(__dirname, 'dist/index.html')
       if (!fs.existsSync(swPath)) {
         return
       }
-      const seed = fs.existsSync(assetsDir) ? fs.readdirSync(assetsDir).sort().join('|') : ''
+      const assets = fs.existsSync(assetsDir)
+        ? fs
+            .readdirSync(assetsDir)
+            .sort()
+            .map((assetName) => `/assets/${assetName}`)
+        : []
+      const seed = assets.join('|')
       const version = createHash('sha256').update(seed).digest('hex').slice(0, 12)
-      const stamped = fs.readFileSync(swPath, 'utf8').replaceAll('__SW_VERSION__', version)
+      const indexHtml = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, 'utf8') : ''
+      const entryAssets = [...indexHtml.matchAll(/(?:src|href)=["'](\/assets\/[^"']+)/g)].map(
+        (match) => match[1],
+      )
+      const staticAssets = assets.filter((asset) => !/\.(?:css|js)$/i.test(asset))
+      const precacheEntries = [...new Set([...entryAssets, ...staticAssets])]
+        .map((asset) => JSON.stringify(asset))
+        .join(', ')
+      const stamped = fs
+        .readFileSync(swPath, 'utf8')
+        .replaceAll('__SW_VERSION__', version)
+        .replace('/* __SW_PRECACHE__ */', precacheEntries)
       fs.writeFileSync(swPath, stamped)
+    },
+  }
+}
+
+function deferLoginRouteStyles() {
+  return {
+    name: 'defer-login-route-styles',
+    apply: 'build' as const,
+    closeBundle() {
+      const indexPath = path.resolve(__dirname, 'dist/index.html')
+      if (!fs.existsSync(indexPath)) {
+        return
+      }
+
+      const html = fs.readFileSync(indexPath, 'utf8')
+      const transformed = html.replace(
+        /<link rel="stylesheet"([^>]*href=["'][^"']+\.css["'][^>]*)>/g,
+        (stylesheet) => {
+          const preload = stylesheet
+            .replace('rel="stylesheet"', 'rel="preload" as="style"')
+            .replace('<link ', '<link data-deferred-app-styles ')
+
+          return `${preload}<noscript>${stylesheet}</noscript>`
+        },
+      )
+
+      fs.writeFileSync(indexPath, transformed)
     },
   }
 }
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), stampServiceWorker()],
+  plugins: [react(), tailwindcss(), deferLoginRouteStyles(), stampServiceWorker()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -54,36 +100,17 @@ export default defineConfig({
     },
   },
   build: {
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) {
-            return
-          }
-
-          if (id.includes('recharts')) {
-            return 'charts'
-          }
-
-          if (id.includes('framer-motion')) {
-            return 'motion'
-          }
-
-          if (id.includes('@radix-ui')) {
-            return 'radix-ui'
-          }
-
-          if (
-            id.includes('react-router') ||
-            id.includes('react-dom') ||
-            id.includes('/react/')
-          ) {
-            return 'react-core'
-          }
-
-          return 'vendor'
-        },
-      },
+    // Preserve route-level dependency boundaries. The previous broad manual
+    // chunks pulled charting and UI libraries into the login preload graph.
+    modulePreload: {
+      resolveDependencies: (_filename, dependencies, context) =>
+        context.hostType === 'html'
+          ? dependencies.filter(
+              (dependency) =>
+                !dependency.includes('charts') &&
+                !dependency.includes('recharts'),
+            )
+          : dependencies,
     },
   },
   test: {

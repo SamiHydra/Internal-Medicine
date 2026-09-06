@@ -40,6 +40,15 @@ tools/shots/
 # Local Playwright dashboard screenshots (dev verification only)
 artifacts/dashboard-shots/
 
+# Ad-hoc screenshot/trace output from local verification runs. Regenerated on
+# demand and worth tens of MB, so it is evidence rather than source.
+output/
+
+# Binary decks and scanned form references kept alongside the repo for
+# convenience. Not inputs to the build.
+*.pptx
+*.pdf
+
 # Local agent/browser automation state
 .claude/
 .playwright-cli/
@@ -54,9 +63,16 @@ artifacts/pre-deployment-qa/evidence/
 artifacts/pre-deployment-qa/PLAYWRIGHT_TESTS/.auth/
 tests/e2e/.auth/
 test-results/
+test-results-external/
 playwright-report/
+.lighthouseci/
 dist-*/
 
 # Docker production-parity stack: .env.docker holds only local throwaway
 # placeholders and is a deliverable, so it is exempt from the .env.* rule above.
 !.env.docker
+artifacts/audit-2026-07-21/mobile/*.png
+
+# Generated performance/load-test output. This includes large runtime logs and
+# disposable benchmark credentials; keep the audit harness, not its run data.
+docker/audit/evidence/

@@ -28,6 +28,7 @@ the application timezone can reinterpret existing clinical timestamps.
 | Failing check | What it means | What to do |
 |---|---|---|
 | Database backup fresher than 26h | Last night's backup did not run | See "Backups" below |
+| Storage backup fresher than 26h | Last night's run did not archive the uploaded files | See "Backups" below; make sure the cron runs the current `deploy/backup.sh` |
 | Persistent queue worker active | Emails/notifications are queuing up | See "Restart services" |
 | Scheduler heartbeat fresh | Scheduled jobs stopped running | See "Restart services" |
 | Free disk above threshold | The disk is filling up | Call Hospital IT |
@@ -42,7 +43,8 @@ Safe at any time; users see at most a few seconds of delay.
 ```
 sudo systemctl restart php8.3-fpm      # the application
 sudo systemctl restart nginx           # the web server
-sudo systemctl restart imreport-queue  # emails & notifications
+sudo systemctl restart imreport-queue  # analytics and ordinary jobs
+sudo systemctl restart imreport-queue-notifications # email/SMS/digests
 sudo systemctl restart cron            # scheduled jobs
 ```
 
@@ -54,6 +56,9 @@ Then run the health check above. If a service will not start, call Hospital IT.
 
 A backup of the whole database is taken automatically every night at 02:00,
 kept for 30 days in `/var/backups/imreport`, and copied to the second disk.
+The same run archives the uploaded files (action-item evidence and import
+files under `/opt/imreport/shared/storage/app`) as a `.tar.gz` next to the
+dump. Analytics export files are not archived: the app rebuilds them on demand.
 
 **Check backups exist:**
 
@@ -61,7 +66,9 @@ kept for 30 days in `/var/backups/imreport`, and copied to the second disk.
 ls -lh /var/backups/imreport | tail
 ```
 
-You should see a file from last night (named like `imreport-20260915-020001.sql.gz`).
+You should see two files from last night: the database dump (named like
+`imreport-20260915-020001.sql.gz`) and the files archive (named like
+`imreport-storage-20260915-020001.tar.gz`).
 
 **Monthly restore drill (do this once a month, ~10 minutes):** restore last
 night's backup into a scratch database and confirm it loads. This proves the
@@ -83,7 +90,17 @@ readiness deliberately fails after 90 days without another successful drill.
 **Real restore (ONLY after data loss, and preferably with Hospital IT on the
 phone):** the same `gunzip -c ... | mysql imreport` but into the live
 database. This OVERWRITES current data with the backup - everything since the
-backup was taken is lost.
+backup was taken is lost. Restore the uploaded files from the archive taken in
+the same run, otherwise evidence links in the restored database point at
+files that no longer exist:
+
+```
+sudo -u imreport tar -xzf /var/backups/imreport/imreport-storage-<same stamp>.tar.gz -C /opt/imreport/shared/storage
+```
+
+The archive unpacks as `app/...` under `shared/storage`, matching the live
+layout; existing files with the same name are overwritten by the archived
+copy.
 
 ---
 
@@ -133,7 +150,8 @@ previous code release and prints the database recovery warning.
 |---|---|
 | Application errors | `/opt/imreport/shared/storage/logs/laravel.log` |
 | Scheduled jobs | `/opt/imreport/shared/storage/logs/schedule.log` |
-| Queue worker (emails/notifications) | `/var/log/imreport-queue.log` |
+| Analytics/default queue worker | `/var/log/imreport-queue.log` |
+| Notification queue worker | `/var/log/imreport-queue-notifications.log` |
 | Nightly backups | `/var/log/imreport-backup.log` |
 | Web server | `/var/log/nginx/error.log` |
 
@@ -142,6 +160,12 @@ previous code release and prints the database recovery warning.
 Set `ERROR_MONITORING_CHANNEL` in `backend.env` to the real operational path
 that watches these errors, such as a Sentry project name or a named daily
 Hospital IT log-review procedure. Leaving it blank makes strict readiness fail.
+
+The scheduler runs `php artisan queue:monitor-health --json` every minute.
+Warnings mean a named queue exceeded `QUEUE_DEPTH_WARNING` or a database-backed
+job waited longer than `QUEUE_OLDEST_WARNING_SECONDS`. Check both worker units
+and their logs; do not move analytics work onto the notification worker as a
+shortcut.
 
 ---
 

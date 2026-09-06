@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\ActionItem;
 use App\Models\Department;
 use App\Models\Notification;
 use App\Models\Report;
@@ -73,12 +74,16 @@ class CriticalEventAlertTest extends TestCase
         ])->assertCreated();
 
         $report = Report::query()->firstOrFail();
+        $item = ActionItem::query()->where('report_id', $report->id)->firstOrFail();
 
+        // The alert opens the action item, not the read-only report: only the
+        // action sheet can acknowledge, assign, and resolve the follow-up.
         $this->assertDatabaseHas('notifications', [
             'recipient_id' => $this->admin->id,
             'type' => 'critical_value_alert',
-            'related_entity' => 'critical_alert',
-            'related_id' => $report->id,
+            'related_entity' => 'action_item',
+            'related_id' => $item->id,
+            'related_route' => '/admin/action-items?item='.$item->id,
         ]);
 
         // One summary alert per recipient (not one per field).

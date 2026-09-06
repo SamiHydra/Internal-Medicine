@@ -10,6 +10,7 @@ use App\Models\StudentAttendance;
 use App\Models\StudentBatch;
 use App\Models\TeachingSession;
 use App\Services\Academic\Concerns\CachesByContentStamp;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -79,14 +80,19 @@ final class AcademicOperationsAnalyticsService
                 'people' => DB::table('morning_attendance')
                     ->join('users', 'users.id', '=', 'morning_attendance.user_id')
                     ->whereIn('morning_attendance.morning_session_id', $sessionIds)
-                    ->selectRaw('morning_attendance.user_id, users.full_name, count(*) as expected, sum(case when present then 1 else 0 end) as present')
-                    ->groupBy('morning_attendance.user_id', 'users.full_name')
+                    // role_key travels with the row so the dashboard can link
+                    // each person to their own page with the right evaluation
+                    // direction; without it a resident would open a consultant
+                    // view and read as all zeros.
+                    ->selectRaw('morning_attendance.user_id, users.full_name, users.role_key, count(*) as expected, sum(case when present then 1 else 0 end) as present')
+                    ->groupBy('morning_attendance.user_id', 'users.full_name', 'users.role_key')
                     ->orderByDesc(DB::raw('count(*)'))
                     ->limit(200)
                     ->get()
                     ->map(fn ($row) => [
                         'userId' => $row->user_id,
                         'fullName' => $row->full_name,
+                        'role' => $row->role_key,
                         'expectedCount' => (int) $row->expected,
                         'presentCount' => (int) $row->present,
                         'attendanceRate' => $row->expected > 0 ? round($row->present / $row->expected * 100, 1) : 0.0,
@@ -121,14 +127,15 @@ final class AcademicOperationsAnalyticsService
      *
      * @return array<string, mixed>
      */
-    public function teaching(): array
+    public function teaching(?AcademicOperationsFilters $filters = null): array
     {
-        $stamp = $this->contentStamp(TeachingSession::query())
-            .'|'.$this->contentStamp(StudentBatch::query());
+        $filters ??= AcademicOperationsFilters::fromArray([]);
+        $stamp = $this->contentStamp($this->teachingSessionsQuery($filters))
+            .'|'.$this->contentStamp($this->studentBatchesQuery($filters));
 
-        return $this->cached('teaching', $stamp, function (): array {
-            $sessions = TeachingSession::query()->with('batch')->get();
-            $blocks = StudentBatch::query()
+        return $this->cached('teaching:'.$filters->memoKey(), $stamp, function () use ($filters): array {
+            $sessions = $this->teachingSessionsQuery($filters)->with('batch')->get();
+            $blocks = $this->studentBatchesQuery($filters)
                 ->orderByDesc('active')
                 ->orderByDesc('starts_on')
                 ->orderBy('label')
@@ -211,6 +218,7 @@ final class AcademicOperationsAnalyticsService
                 ->values();
 
             return [
+                'window' => $filters->window(),
                 'byActivity' => $byActivity($sessions),
                 'byBatch' => $blockBreakdown
                     ->map(fn (array $block) => [
@@ -234,15 +242,34 @@ final class AcademicOperationsAnalyticsService
      *
      * @return array<string, mixed>
      */
-    public function students(): array
+    public function students(?AcademicOperationsFilters $filters = null): array
     {
-        $stamp = $this->contentStamp(Student::query())
-            .'|'.$this->contentStamp(StudentBatch::query())
-            .'|'.$this->contentStamp(StudentAttendance::query())
-            .'|'.$this->contentStamp(Evaluation::query()->whereIn('form_key', ['student_weekly', 'student_final']));
+        $filters ??= AcademicOperationsFilters::fromArray([]);
+        $studentQuery = $this->studentsQuery($filters);
+        $evaluationQuery = Evaluation::query()
+            ->whereIn('form_key', ['student_weekly', 'student_final'])
+            ->whereDate('evaluation_date', '>=', $filters->dateFrom)
+            ->whereDate('evaluation_date', '<=', $filters->dateTo)
+            ->whereIn('subject_student_id', (clone $studentQuery)->select('students.id'));
+        $attendanceQuery = StudentAttendance::query()
+            ->whereHas('session', fn ($query) => $this->applyTeachingSessionFilters($query, $filters));
+        $stamp = $this->contentStamp($studentQuery)
+            .'|'.$this->contentStamp($this->studentBatchesQuery($filters))
+            .'|'.$this->contentStamp($attendanceQuery)
+            .'|'.$this->contentStamp($evaluationQuery);
 
-        return $this->cached('students', $stamp, function (): array {
+        return $this->cached('students:'.$filters->memoKey(), $stamp, function () use ($filters): array {
+            $studentModels = $this->studentsQuery($filters)
+                ->with('batch')
+                ->orderBy('full_name')
+                ->get();
+            $studentIds = $studentModels->pluck('id');
+
             $attendance = DB::table('student_attendance')
+                ->join('teaching_sessions', 'teaching_sessions.id', '=', 'student_attendance.teaching_session_id')
+                ->whereIn('student_attendance.student_id', $studentIds)
+                ->whereBetween('teaching_sessions.scheduled_date', [$filters->dateFrom, $filters->dateTo])
+                ->when($filters->batchId, fn ($query, string $batchId) => $query->where('teaching_sessions.batch_id', $batchId))
                 ->selectRaw('student_id, count(*) as expected, sum(case when present then 1 else 0 end) as present')
                 ->groupBy('student_id')
                 ->get()
@@ -252,15 +279,14 @@ final class AcademicOperationsAnalyticsService
                 ->with('answers')
                 ->whereIn('form_key', ['student_weekly', 'student_final'])
                 ->whereNotNull('subject_student_id')
+                ->whereIn('subject_student_id', $studentIds)
+                ->whereDate('evaluation_date', '>=', $filters->dateFrom)
+                ->whereDate('evaluation_date', '<=', $filters->dateTo)
                 ->orderBy('evaluation_date')
                 ->get()
                 ->groupBy('subject_student_id');
 
-            $students = Student::query()
-                ->with('batch')
-                ->where('active', true)
-                ->orderBy('full_name')
-                ->get()
+            $students = $studentModels
                 ->map(function (Student $student) use ($attendance, $evaluations) {
                     $rows = $attendance->get($student->id);
                     $evals = $evaluations->get($student->id, collect());
@@ -294,6 +320,7 @@ final class AcademicOperationsAnalyticsService
                 ->all();
 
             return [
+                'window' => $filters->window(),
                 'students' => $students,
                 'batches' => collect($students)
                     ->groupBy('batchLabel')
@@ -313,6 +340,35 @@ final class AcademicOperationsAnalyticsService
                     ->all(),
             ];
         });
+    }
+
+    private function teachingSessionsQuery(AcademicOperationsFilters $filters): Builder
+    {
+        return $this->applyTeachingSessionFilters(TeachingSession::query(), $filters);
+    }
+
+    private function applyTeachingSessionFilters(
+        Builder $query,
+        AcademicOperationsFilters $filters,
+    ): Builder {
+        return $query
+            ->whereBetween('scheduled_date', [$filters->dateFrom, $filters->dateTo])
+            ->when($filters->batchId, fn ($builder, string $batchId) => $builder->where('batch_id', $batchId));
+    }
+
+    private function studentBatchesQuery(AcademicOperationsFilters $filters): Builder
+    {
+        return StudentBatch::query()
+            ->whereDate('starts_on', '<=', $filters->dateTo)
+            ->whereDate('ends_on', '>=', $filters->dateFrom)
+            ->when($filters->batchId, fn ($query, string $batchId) => $query->whereKey($batchId));
+    }
+
+    private function studentsQuery(AcademicOperationsFilters $filters): Builder
+    {
+        return Student::query()
+            ->where('active', true)
+            ->whereIn('batch_id', (clone $this->studentBatchesQuery($filters))->select('student_batches.id'));
     }
 
     /**

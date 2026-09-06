@@ -34,6 +34,9 @@ class ReportAssignmentController extends Controller
             'department_id' => ['sometimes', 'string', 'max:80'],
             'template_id' => ['sometimes', 'string', 'max:80'],
             'active' => ['sometimes', 'boolean'],
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'perPage' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
         $query = ReportAssignment::query()
             ->with(['nurse', 'department', 'template', 'approver'])
@@ -57,8 +60,18 @@ class ReportAssignmentController extends Controller
             $query->where('active', (bool) $validated['active']);
         }
 
+        $assignments = $query->paginate((int) ($validated['per_page'] ?? $validated['perPage'] ?? 100));
+
         return response()->json([
-            'data' => $query->get()->map(fn (ReportAssignment $assignment) => $this->serializeAssignment($assignment)),
+            'data' => $assignments->getCollection()
+                ->map(fn (ReportAssignment $assignment) => $this->serializeAssignment($assignment))
+                ->values(),
+            'meta' => [
+                'currentPage' => $assignments->currentPage(),
+                'lastPage' => $assignments->lastPage(),
+                'perPage' => $assignments->perPage(),
+                'total' => $assignments->total(),
+            ],
         ]);
     }
 

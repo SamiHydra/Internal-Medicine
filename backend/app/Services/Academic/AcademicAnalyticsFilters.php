@@ -44,6 +44,21 @@ class AcademicAnalyticsFilters
         ]);
     }
 
+    /**
+     * @return array<string, string|null>
+     */
+    public function toArray(): array
+    {
+        return [
+            'direction' => $this->direction,
+            'ward_id' => $this->wardId,
+            'subject_id' => $this->subjectId,
+            'date_from' => $this->dateFrom,
+            'date_to' => $this->dateTo,
+            'granularity' => $this->granularity,
+        ];
+    }
+
     private static function nullableString(mixed $value): ?string
     {
         if (! is_string($value) && ! is_numeric($value)) {

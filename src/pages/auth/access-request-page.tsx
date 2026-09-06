@@ -456,7 +456,6 @@ export function AccessRequestPage() {
             transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.23, 1, 0.32, 1] }}
             className="relative rounded-[0.35rem] border border-white/10 bg-white/[0.03] py-3.5 pl-4 pr-3.5"
           >
-            <span className="absolute inset-y-2.5 left-0 w-[3px] rounded-r-[2px] bg-[#f0b429]" />
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#9fb4d0]">
@@ -594,6 +593,17 @@ export function AccessRequestPage() {
         ? 'Request reporting access'
         : 'Request additional access'
 
+  // The hero heading names the track being requested. "Request Access" used to
+  // sit above it, which repeated the panel title on the right and the submit
+  // button below, so the track name now stands on its own.
+  const heroAccent = showAdmin
+    ? 'Administration'
+    : showAcademic
+      ? 'Academic Review'
+      : isNewAccountFlow
+        ? 'Clinical Reporting'
+        : 'Additional Reporting Access'
+
   return (
     <div className="relative min-h-screen overflow-x-clip bg-[#f8f9fa] px-3 py-3 sm:px-4 sm:py-4 md:px-5 md:py-5 xl:px-6 xl:py-6">
       <main className="relative mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[1460px] items-start">
@@ -604,18 +614,18 @@ export function AccessRequestPage() {
             <div className="absolute inset-y-0 right-0 w-px bg-white/8" />
 
             <div className="relative z-10 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
-                  <img src={stPaulosLogo} alt="St Paul logo" className="h-full w-full object-cover" />
+              <div className="flex items-center gap-4">
+                <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[8px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
+                  <img src={stPaulosLogo} alt="St Paul's logo" className="h-full w-full object-cover" />
                 </div>
                 <div>
                   <p
-                    className="text-[1.55rem] font-extrabold leading-none tracking-[-0.03em] text-white"
+                    className="text-[2.15rem] font-extrabold leading-none tracking-[-0.03em] text-white"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
-                    St Paul
+                    St Paul's
                   </p>
-                  <p className="mt-1 text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
+                  <p className="mt-1.5 text-[0.82rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
                     Internal Medicine
                   </p>
                 </div>
@@ -640,16 +650,11 @@ export function AccessRequestPage() {
                   {isNewAccountFlow ? 'Platform enrollment' : 'Access extension'}
                 </p>
                 <h1
-                  className="text-[2.9rem] font-extrabold leading-[0.95] tracking-[-0.05em] text-white lg:text-[3.2rem] xl:text-[3.5rem]"
+                  className="text-[2.35rem] font-extrabold leading-[0.98] tracking-[-0.045em] text-white lg:text-[2.6rem] xl:text-[2.85rem]"
                   style={{ fontFamily: 'Manrope, sans-serif' }}
                 >
-                  {isNewAccountFlow ? 'Request Access' : 'Request Additional'}
-                  <br />
-                  <span className="text-[#63a1ff]">
-                    {isNewAccountFlow ? '& Academic Review' : 'Reporting Access'}
-                  </span>
+                  {heroAccent}
                 </h1>
-                <div className="h-1 w-12 bg-[#f0b429]" />
               </div>
 
               {isNewAccountFlow ? (
@@ -681,7 +686,7 @@ export function AccessRequestPage() {
                       <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_12px_24px_rgba(0,33,71,0.14)] ring-1 ring-[#d7dbe0]">
                         <img
                           src={stPaulosLogo}
-                          alt="St Paul logo"
+                          alt="St Paul's logo"
                           className="h-full w-full object-cover"
                         />
                       </div>
@@ -690,7 +695,7 @@ export function AccessRequestPage() {
                           className="text-base font-extrabold leading-none tracking-[-0.03em] text-[#000a1e]"
                           style={{ fontFamily: 'Manrope, sans-serif' }}
                         >
-                          St Paul
+                          St Paul's
                         </p>
                         <p className="mt-1 text-[0.6rem] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
                           Internal Medicine

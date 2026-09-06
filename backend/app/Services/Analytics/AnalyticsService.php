@@ -6,8 +6,10 @@ use App\Models\Department;
 use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportingPeriod;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class AnalyticsService
 {
@@ -74,6 +76,9 @@ class AnalyticsService
             'fieldKeys' => ['dialysis_acute', 'dialysis_chronic'],
         ],
     ];
+
+    /** Report ids per aggregate query, kept well inside SQLite's bound-parameter limit. */
+    private const PRIME_CHUNK_SIZE = 400;
 
     private const WEEKDAY_ORDER = [
         'monday' => 0,
@@ -155,6 +160,15 @@ class AnalyticsService
     /** @var array<string, array<string, mixed>> */
     private array $weeklyFieldValueMemo = [];
 
+    /**
+     * Report ids whose field aggregates have been fetched. Distinct from the two
+     * memos above because an empty entry is a real answer ("this report has no
+     * analytics values"), not a cache miss to be recomputed.
+     *
+     * @var array<string, true>
+     */
+    private array $primedReports = [];
+
     public function flushMemo(): void
     {
         $this->reportsMemo = [];
@@ -162,6 +176,7 @@ class AnalyticsService
         $this->assignmentCountMemo = [];
         $this->reportFieldSumsMemo = [];
         $this->weeklyFieldValueMemo = [];
+        $this->primedReports = [];
     }
 
     /**
@@ -177,6 +192,27 @@ class AnalyticsService
             'summary' => $this->summary($reports, $periods, $filters),
             'weekly' => $this->weekly($filters, reports: $reports),
             'monthly' => $this->monthly($filters, reports: $reports),
+        ];
+    }
+
+    /**
+     * Dashboard-specific overview shape. The SPA consumes the aggregate summary
+     * here and the family weekly rows below; returning a second overview weekly
+     * series plus monthly rollups duplicated CPU and payload on every cold load.
+     *
+     * @return array<string, mixed>
+     */
+    public function dashboardOverview(AnalyticsFilters $filters, Collection $reports): array
+    {
+        return [
+            'scope' => $this->scope($filters),
+            'summary' => $this->summary(
+                $reports,
+                $this->periodsForReports($reports, $filters),
+                $filters,
+            ),
+            'weekly' => [],
+            'monthly' => [],
         ];
     }
 
@@ -201,6 +237,33 @@ class AnalyticsService
     }
 
     /**
+     * Lean family shape for the combined dashboard endpoint. Detailed
+     * department summaries and monthly rollups remain available from their
+     * dedicated endpoints, while dashboard charts use the weekly rows (which
+     * already include per-department chart metrics).
+     *
+     * @return array<string, mixed>
+     */
+    public function dashboardFamilySummary(
+        string $family,
+        AnalyticsFilters $filters,
+        Collection $reports,
+    ): array {
+        return [
+            'scope' => $this->scope($filters, $family),
+            'summary' => $this->summary(
+                $reports,
+                $this->periodsForReports($reports, $filters),
+                $filters,
+                $family,
+            ),
+            'departments' => [],
+            'weekly' => $this->weekly($filters, $family, $reports),
+            'monthly' => [],
+        ];
+    }
+
+    /**
      * @return list<array<string, mixed>>
      */
     public function weekly(
@@ -214,15 +277,18 @@ class AnalyticsService
             ->groupBy('reporting_period_id')
             ->map(function (Collection $bucket) use ($filters, $family): array {
                 $period = $bucket->first()->reportingPeriod;
+                // One pass for the whole bucket; the summary, the chart metrics
+                // and the per-department breakdown all read from it.
+                $aggregate = $this->aggregate($bucket);
 
                 return [
                     'periodId' => $period->id,
                     'weekStart' => $period->week_start?->toDateString(),
                     'weekEnd' => $period->week_end?->toDateString(),
                     'label' => $period->week_start?->format('M j'),
-                    'summary' => $this->summary($bucket, collect([$period]), $filters, $family),
-                    'chartMetrics' => $this->chartMetrics($bucket, $family),
-                    'departments' => $this->chartDepartmentMetrics($bucket, $family),
+                    'summary' => $this->summary($bucket, collect([$period]), $filters, $family, aggregate: $aggregate),
+                    'chartMetrics' => $this->chartMetrics($aggregate, $family),
+                    'departments' => $this->chartDepartmentMetrics($aggregate, $family),
                 ];
             })
             ->sortBy('weekStart')
@@ -391,7 +457,9 @@ class AnalyticsService
             return $this->reportsMemo[$memoKey];
         }
 
-        $analyticsFieldKeys = $this->analyticsFieldKeys();
+        // Field values are deliberately NOT eager loaded. Every graph reads them
+        // through reportFieldSums()/weeklyFieldValue(), both of which are served
+        // from aggregates computed in SQL by primeFieldAggregates() below.
         $query = Report::query()
             ->select([
                 'id',
@@ -404,23 +472,6 @@ class AnalyticsService
             ->with([
                 'department:id,slug,name,family,bed_count,active',
                 'reportingPeriod:id,week_start,week_end,month_label,quarter_label,year_num',
-                'fieldValues' => fn ($fieldValueQuery) => $fieldValueQuery
-                    ->select([
-                        'id',
-                        'report_id',
-                        'field_definition_id',
-                        'day_name',
-                        'value_number',
-                        'value_text',
-                        'value_time',
-                        'value_json',
-                    ])
-                    ->whereHas(
-                        'fieldDefinition',
-                        fn (Builder $definitionQuery) => $definitionQuery
-                            ->whereIn('field_key', $analyticsFieldKeys),
-                    ),
-                'fieldValues.fieldDefinition:id,field_key,aggregate_type',
             ])
             ->whereHas('department', function (Builder $departmentQuery) use ($filters, $family): void {
                 $effectiveFamily = $this->effectiveFamily($filters, $family);
@@ -457,13 +508,17 @@ class AnalyticsService
             $query->whereHas('department', fn (Builder $departmentQuery) => $departmentQuery->where('family', $filters->reportType));
         }
 
-        return $this->reportsMemo[$memoKey] = $query
+        $reports = $query
             ->get()
             ->sortBy(fn (Report $report) => [
                 $report->reportingPeriod?->week_start?->toDateString(),
                 $report->department?->name,
             ])
             ->values();
+
+        $this->primeFieldAggregates($reports);
+
+        return $this->reportsMemo[$memoKey] = $reports;
     }
 
     /**
@@ -549,85 +604,86 @@ class AnalyticsService
         ?string $family = null,
         ?Collection $departments = null,
         ?int $expectedReports = null,
+        ?array $aggregate = null,
     ): array {
         $departments ??= $this->scopedDepartments($filters, $family);
         $expectedReports ??= $this->expectedReportCount($filters, $periods, $family);
-        $totalPatientDays = $this->sumFields($reports, ['total_patient_days']);
-        $totalDischarges = $this->sumFields($reports, ['discharged_home', 'discharged_ama']);
-        $totalOutpatientVisits = $this->sumFields($reports, ['total_patients_seen']);
-        $failedToCome = $this->sumFields($reports, ['failed_to_come']);
+        // Callers that also need chart metrics for the same set (weekly()) pass
+        // their aggregate in, so one pass serves the whole bucket.
+        $aggregate ??= $this->aggregate($reports);
+
+        $totalPatientDays = $this->sumOf($aggregate, ['total_patient_days']);
+        $totalDischarges = $this->sumOf($aggregate, ['discharged_home', 'discharged_ama']);
+        $totalOutpatientVisits = $this->sumOf($aggregate, ['total_patients_seen']);
+        $failedToCome = $this->sumOf($aggregate, ['failed_to_come']);
 
         return [
-            'totalReports' => $reports->count(),
+            'totalReports' => $aggregate['count'],
             'expectedReports' => $expectedReports,
-            'missingReports' => max($expectedReports - $reports->count(), 0),
-            'statusCounts' => [
-                'draft' => $reports->where('status', 'draft')->count(),
-                'submitted' => $reports->where('status', 'submitted')->count(),
-                'edited_after_submission' => $reports->where('status', 'edited_after_submission')->count(),
-                'locked' => $reports->where('status', 'locked')->count(),
-                'overdue' => $reports->where('status', 'overdue')->count(),
-            ],
+            'missingReports' => max($expectedReports - $aggregate['count'], 0),
+            'statusCounts' => $aggregate['status'],
             'totals' => [
-                'totalAdmissions' => $this->sumFields($reports, ['total_admitted_patients', 'new_admitted_patients']),
-                'newAdmissions' => $this->sumFields($reports, ['new_admitted_patients']),
+                'totalAdmissions' => $this->sumOf($aggregate, ['total_admitted_patients', 'new_admitted_patients']),
+                'newAdmissions' => $this->sumOf($aggregate, ['new_admitted_patients']),
                 'totalDischarges' => $totalDischarges,
                 'totalPatientDays' => $totalPatientDays,
                 'totalOutpatientVisits' => $totalOutpatientVisits,
                 'totalPatientsSeen' => $totalOutpatientVisits,
-                'followUpPatients' => $this->sumFields($reports, ['follow_up_patients']),
-                'newPatientsSeen' => $this->sumFields($reports, ['new_patients_seen']),
-                'notSeenSameDay' => $this->sumFields($reports, ['not_seen_same_day']),
+                'followUpPatients' => $this->sumOf($aggregate, ['follow_up_patients']),
+                'newPatientsSeen' => $this->sumOf($aggregate, ['new_patients_seen']),
+                'notSeenSameDay' => $this->sumOf($aggregate, ['not_seen_same_day']),
                 'failedToCome' => $failedToCome,
                 'noShowCount' => $failedToCome,
-                'notSeenAppointment' => $this->sumFields($reports, ['not_seen_appointment']),
-                'haiCount' => $this->sumFields($reports, ['total_hai']),
-                'deaths' => $this->sumFields($reports, ['new_deaths']),
-                'newPressureUlcers' => $this->sumFields($reports, ['new_pressure_ulcer']),
-                'procedureThroughput' => $this->procedureThroughput($reports),
+                'notSeenAppointment' => $this->sumOf($aggregate, ['not_seen_appointment']),
+                'haiCount' => $this->sumOf($aggregate, ['total_hai']),
+                'deaths' => $this->sumOf($aggregate, ['new_deaths']),
+                'newPressureUlcers' => $this->sumOf($aggregate, ['new_pressure_ulcer']),
+                'procedureThroughput' => $this->procedureThroughput($aggregate),
             ],
-            'occupancy' => $this->occupancy($reports, $departments, max($periods->count() * 7, 30)),
+            'occupancy' => $this->occupancy($aggregate, $departments, max($periods->count() * 7, 30)),
         ];
     }
 
     /**
-     * @param  Collection<int, Report>  $reports
+     * @param  array<string, mixed>  $aggregate
      * @return array<string, mixed>
      */
-    private function chartMetrics(Collection $reports, ?string $family): array
+    private function chartMetrics(array $aggregate, ?string $family): array
     {
         return match ($family) {
-            'inpatient' => $this->inpatientChartMetrics($reports),
+            'inpatient' => $this->inpatientChartMetrics($aggregate),
             'outpatient' => [
-                ...$this->outpatientChartMetrics($reports),
-                'availability' => $this->availabilityCounts($reports),
+                ...$this->outpatientChartMetrics($aggregate),
+                'availability' => $this->availabilityCounts($aggregate),
             ],
-            'procedure' => $this->procedureChartMetrics($reports),
+            'procedure' => $this->procedureChartMetrics($aggregate),
             default => [],
         };
     }
 
     /**
-     * @param  Collection<int, Report>  $reports
+     * @param  array<string, mixed>  $aggregate
      * @return list<array<string, mixed>>
      */
-    private function chartDepartmentMetrics(Collection $reports, ?string $family): array
+    private function chartDepartmentMetrics(array $aggregate, ?string $family): array
     {
         if (! in_array($family, ['inpatient', 'outpatient'], true)) {
             return [];
         }
 
-        return $reports
-            ->groupBy('department_id')
-            ->map(function (Collection $bucket) use ($family): array {
-                $department = $bucket->first()->department;
+        // aggregate()['departments'] is keyed in first-appearance order, the
+        // same order groupBy('department_id') produced, so this sorts and
+        // outputs identically.
+        return collect($aggregate['departments'])
+            ->map(function (array $departmentAggregate) use ($family): array {
+                $department = $departmentAggregate['department'];
 
                 return [
-                    'departmentId' => $bucket->first()->department_id,
+                    'departmentId' => $departmentAggregate['departmentId'],
                     'departmentSlug' => $department?->slug,
                     'departmentName' => $department?->name,
                     'family' => $department?->family,
-                    'metrics' => $this->chartMetrics($bucket, $family),
+                    'metrics' => $this->chartMetrics($departmentAggregate, $family),
                 ];
             })
             ->sortBy('departmentName')
@@ -639,25 +695,25 @@ class AnalyticsService
      * @param  Collection<int, Report>  $reports
      * @return array<string, float>
      */
-    private function inpatientChartMetrics(Collection $reports): array
+    private function inpatientChartMetrics(array $aggregate): array
     {
         return collect(self::INPATIENT_CHART_METRICS)
             ->mapWithKeys(fn (array $fieldKeys, string $key): array => [
-                $key => $this->sumFields($reports, $fieldKeys),
+                $key => $this->sumOf($aggregate, $fieldKeys),
             ])
             ->all();
     }
 
     /**
-     * @param  Collection<int, Report>  $reports
+     * @param  array<string, mixed>  $aggregate
      * @return array<string, float|null>
      */
-    private function outpatientChartMetrics(Collection $reports): array
+    private function outpatientChartMetrics(array $aggregate): array
     {
         return collect(self::OUTPATIENT_CHART_METRICS)
             ->mapWithKeys(fn (array $metric): array => [
                 $metric['key'] => $this->outpatientChartMetricValue(
-                    $reports,
+                    $aggregate,
                     $metric['fieldKey'],
                     $metric['valueType'],
                 ),
@@ -666,26 +722,26 @@ class AnalyticsService
     }
 
     /**
-     * @param  Collection<int, Report>  $reports
+     * @param  array<string, mixed>  $aggregate
      */
-    private function outpatientChartMetricValue(Collection $reports, string $fieldKey, string $valueType): ?float
+    private function outpatientChartMetricValue(array $aggregate, string $fieldKey, string $valueType): ?float
     {
         return match ($valueType) {
-            'sum' => $this->sumFields($reports, [$fieldKey]),
-            'average' => $this->averageWeeklyField($reports, $fieldKey),
-            'timeAverage' => $this->averageTimeWeeklyField($reports, $fieldKey),
+            'sum' => $this->sumOf($aggregate, [$fieldKey]),
+            'average' => $this->averageWeeklyField($aggregate, $fieldKey),
+            'timeAverage' => $this->averageTimeWeeklyField($aggregate, $fieldKey),
             default => null,
         };
     }
 
     /**
-     * @param  Collection<int, Report>  $reports
+     * @param  array<string, mixed>  $aggregate
      * @return array<string, mixed>
      */
-    private function procedureChartMetrics(Collection $reports): array
+    private function procedureChartMetrics(array $aggregate): array
     {
         return [
-            'totalThroughput' => $this->procedureThroughput($reports),
+            'totalThroughput' => $this->procedureThroughput($aggregate),
             'services' => collect(self::PROCEDURE_SERVICES)
                 ->map(fn (array $service): array => [
                     'serviceId' => $service['id'],
@@ -693,32 +749,32 @@ class AnalyticsService
                     'departmentSlug' => $service['departmentSlug'],
                     'metricLabel' => $service['metricLabel'],
                     'fieldIds' => implode(', ', $service['fieldKeys']),
-                    'total' => $this->sumFields(
-                        $reports->filter(fn (Report $report) => $report->department?->slug === $service['departmentSlug']),
+                    'total' => $this->sumOf(
+                        $this->departmentAggregate($aggregate, $service['departmentSlug']),
                         $service['fieldKeys'],
                     ),
                 ])
                 ->values()
                 ->all(),
-            'dialysisMix' => $this->procedureMix($reports, 'dialysis_unit', self::PROCEDURE_DIALYSIS_MIX),
-            'endoscopyMix' => $this->procedureMix($reports, 'endoscopy_lab', self::PROCEDURE_ENDOSCOPY_MIX),
+            'dialysisMix' => $this->procedureMix($aggregate, 'dialysis_unit', self::PROCEDURE_DIALYSIS_MIX),
+            'endoscopyMix' => $this->procedureMix($aggregate, 'endoscopy_lab', self::PROCEDURE_ENDOSCOPY_MIX),
         ];
     }
 
     /**
-     * @param  Collection<int, Report>  $reports
+     * @param  array<string, mixed>  $aggregate
      * @param  list<array{key: string, label: string, fieldKeys: list<string>}>  $definitions
      * @return list<array<string, mixed>>
      */
-    private function procedureMix(Collection $reports, string $departmentSlug, array $definitions): array
+    private function procedureMix(array $aggregate, string $departmentSlug, array $definitions): array
     {
-        $departmentReports = $reports->filter(fn (Report $report) => $report->department?->slug === $departmentSlug);
+        $departmentAggregate = $this->departmentAggregate($aggregate, $departmentSlug);
 
         return collect($definitions)
             ->map(fn (array $definition): array => [
                 'key' => $definition['key'],
                 'label' => $definition['label'],
-                'value' => $this->sumFields($departmentReports, $definition['fieldKeys']),
+                'value' => $this->sumOf($departmentAggregate, $definition['fieldKeys']),
                 'fieldIds' => implode(', ', $definition['fieldKeys']),
             ])
             ->values()
@@ -731,13 +787,15 @@ class AnalyticsService
      */
     public function outpatientExtras(Collection $reports): array
     {
+        $aggregate = $this->aggregate($reports);
+
         return [
             'averages' => [
-                'waitTimeNewDays' => $this->averageWeeklyField($reports, 'wait_time_new_days'),
-                'waitTimeFollowupMonths' => $this->averageWeeklyField($reports, 'wait_time_followup_months'),
-                'clinicStartMinutes' => $this->averageTimeWeeklyField($reports, 'clinic_start_time'),
+                'waitTimeNewDays' => $this->averageWeeklyField($aggregate, 'wait_time_new_days'),
+                'waitTimeFollowupMonths' => $this->averageWeeklyField($aggregate, 'wait_time_followup_months'),
+                'clinicStartMinutes' => $this->averageTimeWeeklyField($aggregate, 'clinic_start_time'),
             ],
-            'seniorPhysicianAvailability' => $this->availabilityCounts($reports),
+            'seniorPhysicianAvailability' => $this->availabilityCounts($aggregate),
         ];
     }
 
@@ -747,8 +805,10 @@ class AnalyticsService
      */
     public function procedureExtras(Collection $reports): array
     {
+        $aggregate = $this->aggregate($reports);
+
         return [
-            'totalThroughput' => $this->procedureThroughput($reports),
+            'totalThroughput' => $this->procedureThroughput($aggregate),
             'services' => collect(self::PROCEDURE_SERVICES)
                 ->map(fn (array $service) => [
                     'serviceId' => $service['id'],
@@ -756,23 +816,25 @@ class AnalyticsService
                     'departmentSlug' => $service['departmentSlug'],
                     'metricLabel' => $service['metricLabel'],
                     'fieldKeys' => $service['fieldKeys'],
-                    'total' => $this->sumFields(
-                        $reports->filter(fn (Report $report) => $report->department?->slug === $service['departmentSlug']),
+                    'total' => $this->sumOf(
+                        $this->departmentAggregate($aggregate, $service['departmentSlug']),
                         $service['fieldKeys'],
                     ),
                 ])
                 ->values()
                 ->all(),
+            // Deliberately NOT department-scoped, unlike procedureChartMetrics'
+            // mixes: these totals span the whole filtered set.
             'dialysisMix' => [
-                'acuteHd' => $this->sumFields($reports, ['dialysis_acute']),
-                'chronicHd' => $this->sumFields($reports, ['dialysis_chronic']),
+                'acuteHd' => $this->sumOf($aggregate, ['dialysis_acute']),
+                'chronicHd' => $this->sumOf($aggregate, ['dialysis_chronic']),
             ],
             'endoscopyMix' => [
-                'ugi' => $this->sumFields($reports, ['upper_gi_elective', 'upper_gi_emergency']),
-                'ercp' => $this->sumFields($reports, ['ercp']),
-                'colonoscopy' => $this->sumFields($reports, ['colonoscopy']),
-                'bronchoscopy' => $this->sumFields($reports, ['bronchoscopy']),
-                'ligation' => $this->sumFields($reports, ['variceal_ligation']),
+                'ugi' => $this->sumOf($aggregate, ['upper_gi_elective', 'upper_gi_emergency']),
+                'ercp' => $this->sumOf($aggregate, ['ercp']),
+                'colonoscopy' => $this->sumOf($aggregate, ['colonoscopy']),
+                'bronchoscopy' => $this->sumOf($aggregate, ['bronchoscopy']),
+                'ligation' => $this->sumOf($aggregate, ['variceal_ligation']),
             ],
         ];
     }
@@ -782,16 +844,160 @@ class AnalyticsService
      */
     public function sumFields(Collection $reports, array $fieldKeys): float
     {
-        return (float) $reports->sum(function (Report $report) use ($fieldKeys): float {
-            $fieldSums = $this->reportFieldSums($report);
-            $total = 0.0;
+        return $this->sumOf($this->aggregate($reports), $fieldKeys);
+    }
 
-            foreach ($fieldKeys as $fieldKey) {
-                $total += $fieldSums[$fieldKey] ?? 0.0;
+    /**
+     * Everything the summaries and charts read from a report set, computed in a
+     * SINGLE pass: totals per field key, the per-report values that feed the
+     * averages, status counts, and the same again broken down per department.
+     *
+     * Every metric helper below reads from this structure. They each used to
+     * rescan the collection instead - roughly forty scans per weekly bucket per
+     * family - which is why a long range cost far more than its row count.
+     *
+     * @param  Collection<int, Report>  $reports
+     * @return array<string, mixed>
+     */
+    private function aggregate(Collection $reports): array
+    {
+        $weeklyKeys = $this->weeklyValueFieldKeys();
+        $aggregate = $this->emptyAggregate();
+
+        foreach ($reports as $report) {
+            $departmentKey = (string) $report->department_id;
+
+            if (! isset($aggregate['departments'][$departmentKey])) {
+                $aggregate['departments'][$departmentKey] = $this->emptyAggregate(
+                    $report->department,
+                    $report->department_id,
+                );
+
+                if ($report->department?->slug !== null) {
+                    $aggregate['bySlug'][$report->department->slug] = $departmentKey;
+                }
             }
 
-            return $total;
-        });
+            $this->accumulate($aggregate, $report, $weeklyKeys);
+            $this->accumulate($aggregate['departments'][$departmentKey], $report, $weeklyKeys);
+        }
+
+        return $aggregate;
+    }
+
+    /**
+     * @param  array<string, mixed>  $target
+     * @param  list<string>  $weeklyKeys
+     */
+    private function accumulate(array &$target, Report $report, array $weeklyKeys): void
+    {
+        $target['count']++;
+
+        // Only the five reportable statuses are tallied; anything else is
+        // counted in totalReports but in no status bucket, as before.
+        if (array_key_exists($report->status, $target['status'])) {
+            $target['status'][$report->status]++;
+        }
+
+        foreach ($this->reportFieldSums($report) as $fieldKey => $value) {
+            $target['sums'][$fieldKey] = ($target['sums'][$fieldKey] ?? 0.0) + $value;
+        }
+
+        // Report order is preserved, so the averages below see the same value
+        // sequence - and therefore the same floating-point result - as the old
+        // per-report map did. Nulls (a template without the field, or a week of
+        // blank days) are dropped by every consumer anyway, so not collecting
+        // them keeps these lists to the reports that carry the metric at all.
+        foreach ($weeklyKeys as $fieldKey) {
+            $value = $this->weeklyFieldValue($report, $fieldKey);
+
+            if ($value !== null) {
+                $target['weeklyValues'][$fieldKey][] = $value;
+            }
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function emptyAggregate(?Department $department = null, mixed $departmentId = null): array
+    {
+        return [
+            'department' => $department,
+            'departmentId' => $departmentId,
+            'count' => 0,
+            'status' => [
+                'draft' => 0,
+                'submitted' => 0,
+                'edited_after_submission' => 0,
+                'locked' => 0,
+                'overdue' => 0,
+            ],
+            'sums' => [],
+            'weeklyValues' => [],
+            'departments' => [],
+            'bySlug' => [],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $aggregate
+     * @param  list<string>  $fieldKeys
+     */
+    private function sumOf(array $aggregate, array $fieldKeys): float
+    {
+        $total = 0.0;
+
+        foreach ($fieldKeys as $fieldKey) {
+            $total += $aggregate['sums'][$fieldKey] ?? 0.0;
+        }
+
+        return $total;
+    }
+
+    /**
+     * One department's slice of an aggregate, or an empty one when the set holds
+     * no reports for it - which reads as zero, exactly like filtering the
+     * collection down to nothing did.
+     *
+     * @param  array<string, mixed>  $aggregate
+     * @return array<string, mixed>
+     */
+    private function departmentAggregate(array $aggregate, string $departmentSlug): array
+    {
+        $departmentKey = $aggregate['bySlug'][$departmentSlug] ?? null;
+
+        return $departmentKey === null
+            ? $this->emptyAggregate()
+            : $aggregate['departments'][$departmentKey];
+    }
+
+    /**
+     * Field keys read as a per-report weekly VALUE (honouring the definition's
+     * aggregate_type) rather than as a plain total, so aggregate() knows which
+     * ones to collect. Derived from the metric definitions themselves so the two
+     * cannot drift apart.
+     *
+     * @return list<string>
+     */
+    private function weeklyValueFieldKeys(): array
+    {
+        $keys = [
+            // outpatientExtras averages.
+            'wait_time_new_days',
+            'wait_time_followup_months',
+            'clinic_start_time',
+            // availabilityCounts.
+            'senior_physician_availability',
+        ];
+
+        foreach (self::OUTPATIENT_CHART_METRICS as $metric) {
+            if ($metric['valueType'] !== 'sum') {
+                $keys[] = $metric['fieldKey'];
+            }
+        }
+
+        return array_values(array_unique($keys));
     }
 
     /**
@@ -799,23 +1005,155 @@ class AnalyticsService
      */
     private function reportFieldSums(Report $report): array
     {
-        if (isset($this->reportFieldSumsMemo[$report->id])) {
-            return $this->reportFieldSumsMemo[$report->id];
+        $this->ensurePrimed($report);
+
+        return $this->reportFieldSumsMemo[(string) $report->id] ?? [];
+    }
+
+    /**
+     * Compute both per-report field aggregates in SQL rather than hydrating the
+     * underlying rows. A year-long dashboard spans ~68k field values; as Eloquent
+     * models those alone exceeded PHP's default 128 MB limit, while the numbers
+     * the graphs actually read collapse to ~12k plain floats.
+     *
+     * Every id passed in is marked primed, so a report with no values answers
+     * from the memo instead of lazy-loading the relation reports() no longer
+     * eager loads.
+     *
+     * @param  Collection<int, Report>  $reports
+     */
+    private function primeFieldAggregates(Collection $reports): void
+    {
+        $ids = $reports
+            ->pluck('id')
+            ->filter()
+            ->map(fn (mixed $id): string => (string) $id)
+            ->reject(fn (string $id): bool => isset($this->primedReports[$id]))
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return;
         }
 
-        $sums = [];
+        foreach ($ids as $id) {
+            $this->primedReports[$id] = true;
+            $this->reportFieldSumsMemo[$id] ??= [];
+            $this->weeklyFieldValueMemo[$id] ??= [];
+        }
 
-        foreach ($report->fieldValues as $value) {
-            $fieldKey = $value->fieldDefinition?->field_key;
+        $fieldKeys = $this->analyticsFieldKeys();
 
-            if ($fieldKey === null || $value->value_number === null) {
-                continue;
+        // Chunked so the bound-parameter count stays well inside SQLite's limit.
+        foreach ($ids->chunk(self::PRIME_CHUNK_SIZE) as $chunk) {
+            $this->primeNumericAggregates($chunk->values()->all(), $fieldKeys);
+            $this->primeLatestValues($chunk->values()->all(), $fieldKeys);
+        }
+    }
+
+    /**
+     * @param  list<string>  $reportIds
+     * @param  list<string>  $fieldKeys
+     */
+    private function primeNumericAggregates(array $reportIds, array $fieldKeys): void
+    {
+        $rows = DB::table('report_field_values as v')
+            ->join('report_field_definitions as d', 'd.id', '=', 'v.field_definition_id')
+            ->whereIn('v.report_id', $reportIds)
+            ->whereIn('d.field_key', $fieldKeys)
+            ->groupBy('v.report_id', 'd.field_key', 'd.aggregate_type')
+            ->select([
+                'v.report_id',
+                'd.field_key',
+                'd.aggregate_type',
+                DB::raw('SUM(v.value_number) as sum_number'),
+                DB::raw('AVG(v.value_number) as avg_number'),
+            ])
+            ->get();
+
+        foreach ($rows as $row) {
+            $reportId = (string) $row->report_id;
+            $fieldKey = (string) $row->field_key;
+
+            // A field whose every day is blank contributes no numeric total,
+            // exactly as the old per-value loop recorded no entry for it.
+            if ($row->sum_number !== null) {
+                $this->reportFieldSumsMemo[$reportId][$fieldKey] = (float) $row->sum_number;
             }
 
-            $sums[$fieldKey] = ($sums[$fieldKey] ?? 0.0) + (float) $value->value_number;
+            $this->weeklyFieldValueMemo[$reportId][$fieldKey] = match ($row->aggregate_type) {
+                'sum' => (float) ($row->sum_number ?? 0),
+                'average' => $row->avg_number !== null ? (float) $row->avg_number : null,
+                // 'latest' is resolved from the day rows below. Seeding it null
+                // keeps an all-blank field answerable without a lazy load.
+                default => null,
+            };
+        }
+    }
+
+    /**
+     * @param  list<string>  $reportIds
+     * @param  list<string>  $fieldKeys
+     */
+    private function primeLatestValues(array $reportIds, array $fieldKeys): void
+    {
+        $rows = DB::table('report_field_values as v')
+            ->join('report_field_definitions as d', 'd.id', '=', 'v.field_definition_id')
+            ->whereIn('v.report_id', $reportIds)
+            ->whereIn('d.field_key', $fieldKeys)
+            ->where('d.aggregate_type', 'latest')
+            ->where(fn ($query) => $query
+                ->whereNotNull('v.value_number')
+                ->orWhereNotNull('v.value_text')
+                ->orWhereNotNull('v.value_time')
+                ->orWhereNotNull('v.value_json'))
+            ->select([
+                'v.report_id',
+                'd.field_key',
+                'v.value_number',
+                'v.value_text',
+                'v.value_time',
+                'v.value_json',
+            ])
+            ->orderBy('v.report_id')
+            ->orderBy('d.field_key')
+            ->orderByRaw($this->weekdayOrderExpression().' asc')
+            ->get();
+
+        // Each field's rows arrive grouped and in ascending weekday order, so
+        // the last one written for a field is the latest day carrying a value -
+        // the same pick the old sortBy()->reverse()->first() made.
+        foreach ($rows as $row) {
+            $this->weeklyFieldValueMemo[(string) $row->report_id][(string) $row->field_key] = $this->rowToScalar($row);
+        }
+    }
+
+    /**
+     * Weekday name to ordinal, as a portable CASE expression. Built from
+     * WEEKDAY_ORDER so the SQL ordering and the PHP constant cannot drift, and
+     * safe to inline because every value is a hard-coded constant.
+     */
+    private function weekdayOrderExpression(): string
+    {
+        $cases = '';
+
+        foreach (self::WEEKDAY_ORDER as $day => $ordinal) {
+            $cases .= sprintf(" when '%s' then %d", $day, $ordinal);
         }
 
-        return $this->reportFieldSumsMemo[$report->id] = $sums;
+        return 'case v.day_name'.$cases.' else 99 end';
+    }
+
+    /**
+     * summary() and its callers are public and accept any report collection, so
+     * a report that never came through reports() must still answer with its real
+     * numbers rather than silently reading as all-zero.
+     */
+    private function ensurePrimed(Report $report): void
+    {
+        if (! isset($this->primedReports[(string) $report->id])) {
+            $this->primeFieldAggregates(collect([$report]));
+        }
     }
 
     /**
@@ -837,10 +1175,12 @@ class AnalyticsService
         ];
     }
 
-    private function averageWeeklyField(Collection $reports, string $fieldKey): ?float
+    /**
+     * @param  array<string, mixed>  $aggregate
+     */
+    private function averageWeeklyField(array $aggregate, string $fieldKey): ?float
     {
-        $values = $reports
-            ->map(fn (Report $report) => $this->weeklyFieldValue($report, $fieldKey))
+        $values = collect($aggregate['weeklyValues'][$fieldKey] ?? [])
             ->filter(fn (mixed $value) => is_numeric($value))
             ->map(fn (mixed $value) => (float) $value)
             ->values();
@@ -848,10 +1188,13 @@ class AnalyticsService
         return $values->isEmpty() ? null : (float) $values->average();
     }
 
-    private function averageTimeWeeklyField(Collection $reports, string $fieldKey): ?float
+    /**
+     * @param  array<string, mixed>  $aggregate
+     */
+    private function averageTimeWeeklyField(array $aggregate, string $fieldKey): ?float
     {
-        $values = $reports
-            ->map(fn (Report $report) => $this->timeToMinutes($this->weeklyFieldValue($report, $fieldKey)))
+        $values = collect($aggregate['weeklyValues'][$fieldKey] ?? [])
+            ->map(fn (mixed $value) => $this->timeToMinutes($value))
             ->filter(fn (?int $value) => $value !== null)
             ->values();
 
@@ -860,55 +1203,33 @@ class AnalyticsService
 
     private function weeklyFieldValue(Report $report, string $fieldKey): mixed
     {
-        if (array_key_exists($fieldKey, $this->weeklyFieldValueMemo[$report->id] ?? [])) {
-            return $this->weeklyFieldValueMemo[$report->id][$fieldKey];
-        }
+        $this->ensurePrimed($report);
 
-        $values = $report->fieldValues
-            ->filter(fn ($value) => $value->fieldDefinition?->field_key === $fieldKey)
-            ->sortBy(fn ($value) => self::WEEKDAY_ORDER[$value->day_name] ?? 99)
-            ->values();
-        $definition = $values->first()?->fieldDefinition;
-
-        if (! $definition) {
-            return $this->weeklyFieldValueMemo[$report->id][$fieldKey] = null;
-        }
-
-        if ($definition->aggregate_type === 'sum') {
-            return $this->weeklyFieldValueMemo[$report->id][$fieldKey] =
-                (float) $values->sum(fn ($value) => (float) ($value->value_number ?? 0));
-        }
-
-        if ($definition->aggregate_type === 'average') {
-            $numbers = $values
-                ->filter(fn ($value) => $value->value_number !== null)
-                ->map(fn ($value) => (float) $value->value_number);
-
-            return $this->weeklyFieldValueMemo[$report->id][$fieldKey] =
-                $numbers->isEmpty() ? null : (float) $numbers->average();
-        }
-
-        $latest = $values
-            ->reverse()
-            ->first(fn ($value) => $value->value_number !== null || $value->value_text !== null || $value->value_time !== null || $value->value_json !== null);
-
-        return $this->weeklyFieldValueMemo[$report->id][$fieldKey] =
-            $latest ? $this->valueToScalar($latest) : null;
+        return $this->weeklyFieldValueMemo[(string) $report->id][$fieldKey] ?? null;
     }
 
-    private function valueToScalar(mixed $value): mixed
+    /**
+     * Collapse one raw value row to the scalar the charts expect. Mirrors the
+     * Eloquent attribute shapes the old model-based path returned, including the
+     * array cast on value_json.
+     */
+    private function rowToScalar(object $row): mixed
     {
-        if ($value->value_number !== null) {
-            $number = (float) $value->value_number;
+        if ($row->value_number !== null) {
+            $number = (float) $row->value_number;
 
             return floor($number) === $number ? (int) $number : $number;
         }
 
-        if ($value->value_time !== null) {
-            return substr((string) $value->value_time, 0, 5);
+        if ($row->value_time !== null) {
+            return substr((string) $row->value_time, 0, 5);
         }
 
-        return $value->value_text ?? $value->value_json;
+        if ($row->value_text !== null) {
+            return $row->value_text;
+        }
+
+        return $row->value_json !== null ? json_decode((string) $row->value_json, true) : null;
     }
 
     private function timeToMinutes(mixed $value): ?int
@@ -921,10 +1242,10 @@ class AnalyticsService
     }
 
     /**
-     * @param  Collection<int, Report>  $reports
+     * @param  array<string, mixed>  $aggregate
      * @return array<string, int>
      */
-    private function availabilityCounts(Collection $reports): array
+    private function availabilityCounts(array $aggregate): array
     {
         $counts = [
             'fullDay' => 0,
@@ -933,8 +1254,7 @@ class AnalyticsService
             'total' => 0,
         ];
 
-        foreach ($reports as $report) {
-            $value = $this->weeklyFieldValue($report, 'senior_physician_availability');
+        foreach ($aggregate['weeklyValues']['senior_physician_availability'] ?? [] as $value) {
             $key = match ($value) {
                 'Full day' => 'fullDay',
                 'Partial day' => 'partialDay',
@@ -952,32 +1272,41 @@ class AnalyticsService
     }
 
     /**
-     * @param  Collection<int, Report>  $reports
+     * @param  array<string, mixed>  $aggregate
      */
-    private function procedureThroughput(Collection $reports): float
+    private function procedureThroughput(array $aggregate): float
     {
         return collect(self::PROCEDURE_SERVICES)
-            ->sum(fn (array $service) => $this->sumFields(
-                $reports->filter(fn (Report $report) => $report->department?->slug === $service['departmentSlug']),
+            ->sum(fn (array $service) => $this->sumOf(
+                $this->departmentAggregate($aggregate, $service['departmentSlug']),
                 $service['fieldKeys'],
             ));
     }
 
     /**
-     * @param  Collection<int, Report>  $reports
+     * @param  array<string, mixed>  $aggregate
      * @param  Collection<int, Department>  $departments
      * @return array<string, float|null>
      */
-    private function occupancy(Collection $reports, Collection $departments, int $coveredDays): array
+    private function occupancy(array $aggregate, Collection $departments, int $coveredDays): array
     {
         $eligibleDepartments = $departments
             ->filter(fn (Department $department) => $department->family === 'inpatient' && (int) $department->bed_count > 0)
             ->unique('id');
-        $eligibleDepartmentIds = $eligibleDepartments->pluck('id')->all();
-        $eligibleReports = $reports->filter(fn (Report $report) => in_array($report->department_id, $eligibleDepartmentIds, true));
         $totalBeds = (int) $eligibleDepartments->sum('bed_count');
-        $totalPatientDays = $this->sumFields($eligibleReports, ['total_patient_days']);
-        $totalDischarges = $this->sumFields($eligibleReports, ['discharged_home', 'discharged_ama']);
+        $totalPatientDays = 0.0;
+        $totalDischarges = 0.0;
+
+        foreach ($eligibleDepartments as $department) {
+            $departmentAggregate = $aggregate['departments'][(string) $department->id] ?? null;
+
+            if ($departmentAggregate === null) {
+                continue;
+            }
+
+            $totalPatientDays += $this->sumOf($departmentAggregate, ['total_patient_days']);
+            $totalDischarges += $this->sumOf($departmentAggregate, ['discharged_home', 'discharged_ama']);
+        }
 
         return [
             'borPercent' => $totalBeds ? ($totalPatientDays / ($totalBeds * $coveredDays)) * 100 : null,
@@ -1104,24 +1433,33 @@ class AnalyticsService
         }
 
         if ($filters->weekStart) {
-            $periodQuery->whereDate('week_start', $filters->weekStart);
+            $weekStart = CarbonImmutable::parse($filters->weekStart)->startOfDay();
+            $periodQuery
+                ->where('week_start', '>=', $weekStart->toDateString())
+                ->where('week_start', '<', $weekStart->addDay()->toDateString());
         }
 
         if ($filters->dateFrom) {
-            $periodQuery->whereDate('week_start', '>=', $filters->dateFrom);
+            $periodQuery->where('week_start', '>=', CarbonImmutable::parse($filters->dateFrom)->toDateString());
         }
 
         if ($filters->dateTo) {
-            $periodQuery->whereDate('week_start', '<=', $filters->dateTo);
+            $periodQuery->where('week_start', '<', CarbonImmutable::parse($filters->dateTo)->addDay()->toDateString());
         }
 
         if ($filters->month) {
             [$year, $month] = explode('-', $filters->month);
-            $periodQuery->whereYear('week_start', (int) $year)->whereMonth('week_start', (int) $month);
+            $monthStart = CarbonImmutable::create((int) $year, (int) $month, 1)->startOfDay();
+            $periodQuery
+                ->where('week_start', '>=', $monthStart->toDateString())
+                ->where('week_start', '<', $monthStart->addMonth()->toDateString());
         }
 
         if ($filters->year) {
-            $periodQuery->whereYear('week_start', $filters->year);
+            $yearStart = CarbonImmutable::create($filters->year, 1, 1)->startOfDay();
+            $periodQuery
+                ->where('week_start', '>=', $yearStart->toDateString())
+                ->where('week_start', '<', $yearStart->addYear()->toDateString());
         }
     }
 

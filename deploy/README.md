@@ -1,6 +1,6 @@
 # Department server deployment
 
-Production runs on one Ubuntu LTS server on the hospital LAN. Nginx serves the SPA and proxies `/api` and `/sanctum` to PHP-FPM from the same HTTPS origin. MariaDB, database-backed cache, sessions, and queues remain local to the server.
+Production runs on one Ubuntu LTS server on the hospital LAN. Nginx serves the SPA and proxies `/api` and `/sanctum` to PHP-FPM from the same HTTPS origin. MariaDB is local to the server. Cache, sessions, and queues may start on the database driver; Redis is the supported scale-up path once production measurements show database contention.
 
 ## Directory layout
 
@@ -20,8 +20,10 @@ The queue worker, Nginx, cron, and operators always use `/opt/imreport/current`.
 | File | Purpose | Install target |
 |---|---|---|
 | `nginx.conf` | Same-origin SPA and Laravel host | `/etc/nginx/sites-available/imreport` |
-| `queue-worker.service` | Persistent database queue worker | `/etc/systemd/system/imreport-queue.service` |
-| `backup.sh` | Daily consistent dump, retention, secondary copy, integrity check | Cron at 02:00 |
+| `php-fpm.conf` | Explicit worker limits, memory limit, recycling, timeout, and slow log | `/etc/php/8.3/fpm/pool.d/imreport.conf` |
+| `queue-worker.service` | Analytics/default database queue worker | `/etc/systemd/system/imreport-queue.service` |
+| `queue-notifications-worker.service` | Isolated notification/default worker | `/etc/systemd/system/imreport-queue-notifications.service` |
+| `backup.sh` | Daily consistent dump plus a tar.gz of `shared/storage/app` (evidence and import files), retention, secondary copy, integrity check | Cron at 02:00 |
 | `deploy.sh` | Locked, versioned, backup-first atomic deployment | Run from the source checkout |
 | `ufw.sh` | Hospital-LAN firewall rules | Run once |
 | `logrotate.conf` | Application and operations log rotation | `/etc/logrotate.d/imreport` |
@@ -42,11 +44,13 @@ The queue worker, Nginx, cron, and operators always use `/opt/imreport/current`.
    - `SANCTUM_STATEFUL_DOMAINS=im.hospital.internal`
    - `CORS_ALLOWED_ORIGINS=https://im.hospital.internal`
    - `QUEUE_WORKER_MODE=daemon`
-   - `TRUSTED_PROXIES=*`, `QUEUE_WORKER_SERVICE=imreport-queue.service`
+   - `TRUSTED_PROXIES=*`
+   - `QUEUE_WORKER_SERVICES=imreport-queue.service,imreport-queue-notifications.service`
+   - `QUEUE_DEPTH_WARNING=100`, `QUEUE_OLDEST_WARNING_SECONDS=300`
    - `BACKUP_DIR=/var/backups/imreport`, `SECONDARY_BACKUP_DIR=/mnt/backup/imreport`, `MIN_FREE_DISK_GB=5`
    - `BACKUP_RESTORE_VERIFIED_AT=<ISO-8601 time of the latest successful restore drill>`
    - `ERROR_MONITORING_CHANNEL=<Sentry project or named scheduled log-review process>`
-8. Install the Nginx, systemd, logrotate, and firewall files.
+8. Install the Nginx, PHP-FPM pool, both queue-worker systemd units, logrotate, and firewall files. Enable `imreport-queue.service` and `imreport-queue-notifications.service`. Disable the distribution `www` pool if it is otherwise unused, then validate with `php-fpm8.3 -t` before reloading PHP-FPM.
 9. Install `/etc/cron.d/imreport` using the stable active-release link and the explicit service account:
 
    ```cron
@@ -60,8 +64,77 @@ The queue worker, Nginx, cron, and operators always use `/opt/imreport/current`.
    does not match Laravel's `DB_DATABASE`.
 
 10. Run `sudo -u imreport /opt/imreport/source/deploy/deploy.sh --dry-run` and correct every missing prerequisite.
-11. Run `sudo -u imreport /opt/imreport/source/deploy/deploy.sh`.
-12. Confirm `cd /opt/imreport/current/backend && php artisan app:launch-readiness --strict` is green.
+11. Run `sudo -u imreport /opt/imreport/source/deploy/deploy.sh`. On a fresh database the script migrates and then seeds the reference data (roles, report templates, departments, field definitions, settings, reporting periods) with `php artisan app:seed-reference-data`; the step is idempotent and never installs the development fixture accounts.
+12. First install only: create the maintenance account, which is the only way to obtain the first login:
+
+    ```
+    cd /opt/imreport/current/backend
+    php artisan app:create-superadmin --email=<email> --username=<username> --full-name="<name>"
+    ```
+
+    The command refuses to run before the reference data exists and prints the generated password once; store it and change it at first login.
+13. Confirm `cd /opt/imreport/current/backend && php artisan app:launch-readiness --strict` is green. It fails until the reference data is seeded and warns when the PHP-FPM pool's upload limits are below the 10 MB file rule.
+
+## Queue worker layout
+
+The primary worker consumes `analytics,default`; the second consumes
+`notifications,default`. Analytics warms and exports therefore retain a worker
+even when an SMTP/SMS delivery is slow. `queue:monitor-health --json` runs each
+minute and logs every queue's depth and oldest-job age, warning above the
+configured thresholds.
+
+For the smallest install, one worker is supported only as an explicit fallback:
+disable `imreport-queue-notifications.service` and override the primary unit's
+command to:
+
+```text
+/usr/bin/php artisan queue:work --queue=analytics,notifications,default --tries=3 --backoff=10 --max-time=3600
+```
+
+The single-worker fallback sacrifices isolation and should be replaced by the
+two-unit layout when notification delivery is enabled.
+
+## Capacity and Redis scale-up
+
+The committed PHP-FPM pool makes concurrency finite and observable instead of
+depending on distribution defaults. Keep 20 children on hardware comparable to
+the audited host. Before changing `pm.max_children`, measure p95 PHP worker RSS,
+MariaDB `Threads_connected`, and CPU/queue behavior during the standard peak
+and spike tests. Size the pool as:
+
+```text
+max_children = min(
+  floor(PHP_RAM_budget / (p95_worker_RSS × 1.25)),
+  floor(max_connections × 0.8) - reserved_non_FPM_connections,
+  CPU/load-tested_cap
+)
+```
+
+The production-shaped audit measured p95 worker RSS at about 47 MiB. The
+committed 256 MiB PHP memory limit is an allocation ceiling, not observed
+worker RSS, and must not be used as the divisor. CPU is the observed binding
+constraint: never raise the child count from memory arithmetic alone. Retest
+the candidate value on the target host and reject it if ordinary API latency or
+FPM queue gates fail.
+
+If database-backed cache/session/queue traffic is materially contributing to
+MariaDB latency, install a LAN-local Redis instance with authentication and
+persistence appropriate to Hospital IT policy, then set:
+
+```dotenv
+CACHE_STORE=redis
+SESSION_DRIVER=redis
+QUEUE_CONNECTION=redis
+QUEUE_WORKER_MODE=daemon
+REDIS_CLIENT=phpredis
+REDIS_HOST=127.0.0.1
+REDIS_PASSWORD=<managed secret>
+REDIS_PORT=6379
+```
+
+Run the same load test before and after the switch. Do not enable Redis merely
+from a development SQLite result: record workspace/API p95, MariaDB query time,
+PHP-FPM queue depth, and failed-job count as the acceptance evidence.
 
 ## TLS for the internal hostname
 

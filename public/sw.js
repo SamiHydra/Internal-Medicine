@@ -1,5 +1,5 @@
-// Offline-first service worker (no build step). Runtime-caches the app shell
-// and fingerprinted static assets so the SPA loads on a cold start while
+// Offline-first service worker. Runtime-caches the app shell and fingerprinted
+// static assets so the SPA loads on a cold start while
 // offline. API/auth requests are never cached — writes are handled by the
 // in-app offline save queue (IndexedDB). After the first online visit, a nurse
 // can reopen the installed app offline and the form will render.
@@ -10,15 +10,25 @@
 // is harmless (it is just part of the cache key string).
 const CACHE = 'stpaul-shell-__SW_VERSION__'
 const OFFLINE_URL = '/index.html'
+const PRECACHE_URLS = [
+  '/',
+  OFFLINE_URL,
+  '/favicon.svg',
+  '/manifest.webmanifest',
+  /* __SW_PRECACHE__ */
+]
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(['/', OFFLINE_URL]))
-      .catch(() => {}),
+      .then(async (cache) => {
+        const urls = [...new Set(PRECACHE_URLS)]
+        await cache.addAll(urls.slice(0, 4))
+        await Promise.allSettled(urls.slice(4).map((url) => cache.add(url)))
+        await self.skipWaiting()
+      }),
   )
-  self.skipWaiting()
 })
 
 self.addEventListener('activate', (event) => {

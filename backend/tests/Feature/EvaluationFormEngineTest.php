@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\WarmAcademicAnalytics;
 use App\Models\ConsultantEvaluation;
 use App\Models\Department;
 use App\Models\DutyAssignment;
@@ -22,7 +23,9 @@ use Database\Seeders\RoleSeeder;
 use Illuminate\Cache\CacheManager;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
@@ -88,6 +91,7 @@ class EvaluationFormEngineTest extends TestCase
             'criticalLabsReviewed' => true,
             'pctPatientsSeen' => 80,
             'roundDelayed' => false,
+            'overallRating' => 4,
             'mdtParticipants' => ['consultant', 'nurse'],
             'systemIssues' => [],
         ];
@@ -690,6 +694,73 @@ class EvaluationFormEngineTest extends TestCase
         $this->assertSame(2, $third['evaluationCount']);
     }
 
+    public function test_snapshot_hydrates_the_evaluation_graph_once_and_all_views_share_it(): void
+    {
+        $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', $this->validConsultantPayload())
+            ->assertCreated();
+        $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', [
+                ...$this->validConsultantPayload(),
+                'evaluationDate' => now()->toDateString(),
+            ])
+            ->assertCreated();
+
+        Cache::flush();
+        $filters = new AcademicAnalyticsFilters(direction: 'consultant');
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $snapshot = app(AcademicAnalyticsService::class)->snapshot($filters);
+        // MariaDB quotes identifiers with backticks, SQLite with double quotes;
+        // normalise so the "hydrated once" assertions hold on both lanes (QA-008).
+        $coldQueries = collect(DB::getQueryLog())
+            ->pluck('query')
+            ->map(fn (string $sql): string => str_replace('`', '"', strtolower($sql)));
+        DB::disableQueryLog();
+
+        $this->assertSame(2, $snapshot['summary']['evaluationCount']);
+        $this->assertNotEmpty($snapshot['trend']['points']);
+        $this->assertCount(1, $snapshot['people']['people']);
+        $this->assertLessThanOrEqual(15, $coldQueries->count(), 'The cold snapshot query count regressed.');
+        $this->assertCount(1, $coldQueries->filter(
+            fn (string $sql): bool => str_contains($sql, 'from "evaluations"')
+                && ! str_contains($sql, 'count(*)'),
+        ), 'The snapshot must hydrate the evaluation graph once.');
+        $this->assertCount(1, $coldQueries->filter(
+            fn (string $sql): bool => str_contains($sql, 'from "evaluation_answers"'),
+        ), 'The snapshot must hydrate answers once.');
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $people = app()->make(AcademicAnalyticsService::class)->people($filters);
+        $warmQueries = collect(DB::getQueryLog())->pluck('query')->map('strtolower');
+        DB::disableQueryLog();
+
+        $this->assertSame($snapshot['people'], $people);
+        $this->assertFalse($warmQueries->contains(
+            fn (string $sql): bool => str_contains($sql, 'from "evaluation_answers"'),
+        ), 'A second analytics view must not hydrate answers.');
+        $this->assertFalse($warmQueries->contains(
+            fn (string $sql): bool => str_contains($sql, 'from "evaluations"')
+                && ! str_contains($sql, 'count(*)'),
+        ), 'A second analytics view must not hydrate evaluations.');
+    }
+
+    public function test_evaluation_write_queues_one_unique_academic_snapshot_warm(): void
+    {
+        config()->set('queue.default', 'database');
+        Queue::fake();
+
+        $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', $this->validConsultantPayload())
+            ->assertCreated();
+
+        app(AcademicAnalyticsService::class)->scheduleWarm();
+
+        Queue::assertPushed(WarmAcademicAnalytics::class, 1);
+    }
+
     public function test_every_evaluation_analytics_database_cache_hit_contains_only_plain_data(): void
     {
         $this->actingAs($this->resident)
@@ -765,7 +836,7 @@ class EvaluationFormEngineTest extends TestCase
     public function test_only_contract_fields_are_core_and_scores_follow_active_indicators(): void
     {
         foreach ([
-            'consultant_mdt' => ['senior_present', 'senior_joined_at', 'presence_minutes'],
+            'consultant_mdt' => ['senior_present', 'senior_joined_at', 'presence_minutes', 'overall_rating'],
             'resident_acgme' => ['overall_rating'],
         ] as $key => $expectedCore) {
             $form = EvaluationForm::query()->where('key', $key)->where('status', 'published')->firstOrFail();
@@ -888,5 +959,48 @@ class EvaluationFormEngineTest extends TestCase
         $extras = collect($created->json('extraAnswers'));
         $this->assertTrue((bool) $extras->firstWhere('key', 'teaching_points_given')['value']);
         $this->assertSame('Teaching points given', $extras->firstWhere('key', 'teaching_points_given')['label']);
+    }
+
+    public function test_consultant_form_offers_a_first_class_overall_rating(): void
+    {
+        // Parity with resident_acgme: the consultant form carries the same
+        // 1-to-5 rating, now MANDATORY and CORE so the combined leaderboard
+        // rank always has both halves (recorded only - not a score item).
+        $field = collect(
+            $this->actingAs($this->consultant)
+                ->getJson('/api/academic/evaluation-forms/consultant_mdt')
+                ->assertOk()
+                ->json('fields'),
+        )->firstWhere('key', 'overall_rating');
+
+        $this->assertNotNull($field, 'consultant_mdt should expose an overall_rating field');
+        $this->assertSame('rating', $field['type']);
+        $this->assertTrue($field['active']);
+        $this->assertTrue($field['isCore']);
+        $this->assertTrue($field['required']);
+
+        // A submitted rating round-trips as a first-class field, NOT as an
+        // admin-added extra answer.
+        $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', [
+                ...$this->validConsultantPayload(),
+                'overallRating' => 4,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('overallRating', 4)
+            ->assertJsonMissing(['key' => 'overall_rating']);
+    }
+
+    public function test_consultant_overall_rating_is_required_on_submission(): void
+    {
+        // The rating is mandatory: dropping it fails validation with the
+        // field's own key, exactly like the resident form already does.
+        $payload = $this->validConsultantPayload();
+        unset($payload['overallRating']);
+
+        $this->actingAs($this->resident)
+            ->postJson('/api/academic/consultant-evaluations', $payload)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['overall_rating']);
     }
 }

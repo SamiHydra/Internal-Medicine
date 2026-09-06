@@ -97,10 +97,10 @@ function backoffMs(retryAfter: string | undefined, attempt: number): number {
  *
  * Gates on the header Notifications button (src/components/layout/app-shell.tsx):
  * it renders for every authenticated role with no responsive gating, so it is
- * present at desktop AND phone widths. The desktop "Sign out" control lives in a
- * `hidden ... sm:flex` block and is display:none below 640px, so waiting on it
- * times out on the mobile-chrome (393px) and tablet projects - the mobile
- * readiness bug this replaces.
+ * present at desktop AND phone widths. "Sign out" is a poor readiness signal by
+ * comparison: it is `sm:`-gated and so display:none on the mobile-chrome (393px)
+ * project, where waiting on it times out. Specs that used it as a load gate were
+ * moved onto this button.
  */
 export async function shellReady(page: Page): Promise<void> {
   await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible({
@@ -110,20 +110,23 @@ export async function shellReady(page: Page): Promise<void> {
 }
 
 /**
- * Log out via the app shell. The desktop shell renders an icon button with
- * aria-label "Sign out"; the mobile shell exposes the same label inside its
- * slide-out menu. We click the first visible one.
+ * Log out via the app shell. Sign out is an icon button on the desktop bar
+ * (`sm:` and up); below that it lives inside the slide-out account sheet, so
+ * the sheet has to be opened first.
  */
 export async function uiLogout(page: Page): Promise<void> {
   const signOut = page.getByRole('button', { name: 'Sign out' })
+
   if (await signOut.first().isVisible().catch(() => false)) {
     await signOut.first().click()
   } else {
-    // Mobile: open the menu first (hamburger / menu trigger).
-    const trigger = page.getByRole('button', { name: /open menu|menu|navigation/i }).first()
+    const trigger = page
+      .getByRole('button', { name: /open account menu|open menu|menu|navigation/i })
+      .first()
     if ((await trigger.count()) > 0) await trigger.click()
     await signOut.first().click()
   }
+
   await page.waitForURL(/\/login/, { timeout: 15_000 })
 }
 

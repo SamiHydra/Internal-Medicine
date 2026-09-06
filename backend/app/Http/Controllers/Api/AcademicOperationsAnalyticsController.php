@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\ConsultantEvaluation;
 use App\Services\Academic\AcademicOperationsAnalyticsService;
+use App\Services\Academic\AcademicOperationsFilters;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -31,17 +32,31 @@ class AcademicOperationsAnalyticsController extends Controller
         return response()->json($this->analytics->morning($validated['userId'] ?? null));
     }
 
-    public function teaching(): JsonResponse
+    public function teaching(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', ConsultantEvaluation::class);
 
-        return response()->json($this->analytics->teaching());
+        return response()->json($this->analytics->teaching($this->filters($request)));
     }
 
-    public function students(): JsonResponse
+    public function students(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', ConsultantEvaluation::class);
 
-        return response()->json($this->analytics->students());
+        return response()->json($this->analytics->students($this->filters($request)));
+    }
+
+    private function filters(Request $request): AcademicOperationsFilters
+    {
+        $validated = $request->validate([
+            'date_from' => ['sometimes', 'date_format:Y-m-d'],
+            'dateFrom' => ['sometimes', 'date_format:Y-m-d'],
+            'date_to' => ['sometimes', 'date_format:Y-m-d'],
+            'dateTo' => ['sometimes', 'date_format:Y-m-d'],
+            'batch_id' => ['sometimes', 'uuid', 'exists:student_batches,id'],
+            'batchId' => ['sometimes', 'uuid', 'exists:student_batches,id'],
+        ]);
+
+        return AcademicOperationsFilters::fromArray($validated);
     }
 }

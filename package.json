@@ -3,16 +3,22 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
     "dev:host": "vite --host",
     "build": "tsc -b && vite build",
+    "perf:budget": "node scripts/check-performance-budget.mjs",
+    "perf:lighthouse": "node scripts/run-lighthouse-ci.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e": "node scripts/run-e2e.mjs",
-    "verify": "npm run lint && npm run test:run && npm run build",
+    "test:load-contract": "node --test scripts/load-test.contract.test.mjs",
+    "verify": "npm run lint && npm run test:run && npm run test:load-contract && npm run build && npm run perf:budget",
     "load:test": "node scripts/load-test.mjs"
   },
   "dependencies": {
@@ -47,11 +53,13 @@
     "recharts": "^3.8.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
+    "web-vitals": "^6.0.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.3",
     "@eslint/js": "^9.39.4",
+    "@lhci/cli": "^0.15.1",
     "@playwright/test": "^1.60.0",
     "@tailwindcss/vite": "^4.2.2",
     "@testing-library/jest-dom": "^6.9.1",

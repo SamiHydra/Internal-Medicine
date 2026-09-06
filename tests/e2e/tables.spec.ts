@@ -7,13 +7,13 @@ test.describe('Tables, search, filter, pagination, empty states', () => {
 
   test('Users roster: search filters rows and shows an empty state', async ({ page }) => {
     await page.goto('/admin/users')
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible()
     const search = page.getByPlaceholder('Search name or email')
     await expect(search).toBeVisible()
 
     // Filter to a seeded nurse.
     await search.fill('Abel')
-    await expect(page.getByText('Abel Gemechu')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText('Abel Gemechu').first()).toBeVisible({ timeout: 10_000 })
 
     // Gibberish -> empty state.
     await search.fill('zzz-no-such-user-zzz')
@@ -21,13 +21,13 @@ test.describe('Tables, search, filter, pagination, empty states', () => {
 
     // Clearing restores the list.
     await search.fill('')
-    await expect(page.getByText('Abel Gemechu')).toBeVisible()
+    await expect(page.getByText('Abel Gemechu').first()).toBeVisible()
   })
 
   test('Academic submissions: list paginates', async ({ page }) => {
     const diag = captureDiagnostics(page)
     await page.goto('/admin/academic/submissions')
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible()
     const pageLabel = page.getByText(/Page \d+ of \d+/i)
     await expect(pageLabel).toBeVisible({ timeout: 15_000 })
 
@@ -44,7 +44,7 @@ test.describe('Tables, search, filter, pagination, empty states', () => {
   test('Submission board loads with content', async ({ page }) => {
     const diag = captureDiagnostics(page)
     await page.goto('/admin/submissions')
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible()
     const main = page.locator('main').first()
     await expect(async () => {
       expect((await main.innerText()).trim().length).toBeGreaterThan(40)
@@ -56,7 +56,7 @@ test.describe('Tables, search, filter, pagination, empty states', () => {
   test('Audit log loads (entries or empty state) without errors', async ({ page }) => {
     const diag = captureDiagnostics(page)
     await page.goto('/admin/audit')
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible()
     await expect(page.locator('main').first()).toBeVisible()
     expect(diag.pageErrors, summarize(diag)).toHaveLength(0)
   })

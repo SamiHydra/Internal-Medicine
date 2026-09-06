@@ -203,11 +203,18 @@ class AuthApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('status', 'approved');
 
-        $this->assertDatabaseHas('users', ['email' => 'pending@example.test', 'active' => true]);
+        $this->assertDatabaseHas('users', [
+            'email' => 'pending@example.test',
+            'active' => true,
+            'title' => 'Nurse',
+        ]);
         $this->postJson('/api/auth/login', [
             'identifier' => 'pending@example.test',
             'password' => 'StPaul2026!',
-        ])->assertOk()->assertJsonPath('user.active', true);
+        ])
+            ->assertOk()
+            ->assertJsonPath('user.active', true)
+            ->assertJsonPath('user.title', 'Nurse');
     }
 
     public function test_password_change_required_gates_the_app_until_changed(): void

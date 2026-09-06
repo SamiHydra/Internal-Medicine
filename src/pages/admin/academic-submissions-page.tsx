@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { AcademicEvaluationDetailSheet } from '@/components/admin/academic-evaluation-detail-sheet'
@@ -8,8 +8,7 @@ import { ExternalEvaluationPanel } from '@/components/admin/external-evaluation-
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { TableSkeleton } from '@/components/layout/loading-skeletons'
 import {
-  fetchAcademicPeople,
-  fetchAcademicSummary,
+  fetchAcademicSnapshot,
   fetchAcademicWardOptions,
   listAcademicEvaluations,
   type AcademicWardOption,
@@ -21,7 +20,6 @@ import type {
   AcademicDirection,
   AcademicEvaluationRecord,
   AcademicPeople,
-  AcademicSummary,
 } from '@/lib/api/types'
 
 const ALL = 'all'
@@ -101,7 +99,6 @@ export function AcademicSubmissionsPage() {
 
   const [wards, setWards] = useState<AcademicWardOption[]>([])
   const [people, setPeople] = useState<AcademicPeople | null>(null)
-  const [, setSummary] = useState<AcademicSummary | null>(null)
   const [evaluations, setEvaluations] = useState<AcademicEvaluationRecord[]>([])
   const [lastPage, setLastPage] = useState(1)
   const [total, setTotal] = useState(0)
@@ -142,7 +139,7 @@ export function AcademicSubmissionsPage() {
       return
     }
     let active = true
-    fetchAcademicPeople(client, {
+    fetchAcademicSnapshot(client, {
       direction,
       wardId: wardId === ALL ? undefined : wardId,
       dateFrom: dateRange.dateFrom,
@@ -150,12 +147,12 @@ export function AcademicSubmissionsPage() {
     })
       .then((fetched) => {
         if (active) {
-          setPeople(fetched)
+          setPeople(fetched.people)
         }
       })
       .catch(() => {
         if (active) {
-          setPeople({ direction, people: [] })
+          setPeople({ direction, ratingWeight: 0.5, minEvaluationsForRank: 3, people: [] })
         }
       })
     return () => {
@@ -163,7 +160,7 @@ export function AcademicSubmissionsPage() {
     }
   }, [client, direction, wardId, dateRange])
 
-  // Summary (KPIs) + the paginated list react to the full filter set.
+  // The paginated list reacts to the full filter set.
   useEffect(() => {
     if (!client) {
       return
@@ -181,15 +178,11 @@ export function AcademicSubmissionsPage() {
       dateFrom: dateRange.dateFrom,
       dateTo: dateRange.dateTo,
     }
-    Promise.all([
-      fetchAcademicSummary(client, query),
-      listAcademicEvaluations(client, { ...query, page, perPage: PER_PAGE }),
-    ])
-      .then(([fetchedSummary, fetchedList]) => {
+    listAcademicEvaluations(client, { ...query, page, perPage: PER_PAGE })
+      .then((fetchedList) => {
         if (!active) {
           return
         }
-        setSummary(fetchedSummary)
         setEvaluations(fetchedList.data)
         setLastPage(fetchedList.meta.lastPage)
         setTotal(fetchedList.meta.total)
@@ -334,7 +327,22 @@ export function AcademicSubmissionsPage() {
               No evaluations match the current filters.
             </div>
           ) : (
-            <>
+            <div className="relative">
+              {isLoading ? (
+                <div className="pointer-events-none absolute inset-x-0 -top-5 z-10 flex justify-center">
+                  <span className="inline-flex items-center gap-2 rounded-full bg-white px-3.5 py-1.5 text-xs font-semibold text-[#005db6] shadow-[0_12px_30px_-14px_rgba(0,33,71,0.45)] ring-1 ring-[#dbe7f5]">
+                    <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                    Updating results
+                  </span>
+                </div>
+              ) : null}
+              <div
+                aria-busy={isLoading}
+                className={cn(
+                  'transition-opacity duration-150',
+                  isLoading && 'pointer-events-none opacity-45',
+                )}
+              >
               <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
                 <div className="hidden grid-cols-[124px_minmax(0,2fr)_minmax(0,1.1fr)_minmax(0,1.4fr)_104px] items-center gap-4 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-3 text-xs font-bold uppercase tracking-[0.1em] text-[#526171] sm:grid">
                   <span>Date</span>
@@ -369,9 +377,8 @@ export function AcademicSubmissionsPage() {
                         </span>
                       </span>
                       <span className="hidden min-w-0 sm:block">
-                        <span className="inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-[#e3e9f1] bg-[#f4f7fb] px-2.5 py-1 text-[13px] font-medium text-[#44474e]">
-                          <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#005db6]" />
-                          <span className="truncate">{record.wardName ?? '-'}</span>
+                        <span className="block truncate text-[13px] text-[#5b6169]">
+                          {record.wardName ?? '-'}
                         </span>
                       </span>
                       <span className="hidden min-w-0 truncate text-sm text-[#5f6670] sm:block">
@@ -420,7 +427,8 @@ export function AcademicSubmissionsPage() {
                   </div>
                 </div>
               ) : null}
-            </>
+              </div>
+            </div>
           )}
         </motion.section>
       )}

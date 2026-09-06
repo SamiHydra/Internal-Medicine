@@ -194,6 +194,7 @@ function ScoreHeader({ value, label }: { value: number; label: string }) {
 
 function ConsultantDetail({ record }: { record: ConsultantEvaluationRecord }) {
   const metCount = CONSULTANT_SCORE_ITEMS.filter((item) => record[item.name]).length
+  const descriptor = overallRatingDescriptor(record.overallRating)
   return (
     <>
       <Section label="Round details">
@@ -212,6 +213,14 @@ function ConsultantDetail({ record }: { record: ConsultantEvaluationRecord }) {
             <MetaRow label="Patients seen" value={`${record.pctPatientsSeen}%`} />
           ) : null}
           <MetaRow label="Round delayed" value={record.roundDelayed ? 'Yes' : 'No'} />
+          <MetaRow
+            label="Overall rating"
+            value={
+              record.overallRating != null
+                ? `${record.overallRating} / 5${descriptor ? ` · ${descriptor}` : ''}`
+                : '-'
+            }
+          />
         </div>
       </Section>
 
@@ -319,7 +328,7 @@ export function AcademicEvaluationDetailSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="max-w-md p-0">
-        <div className="flex h-full flex-col overflow-y-auto px-6 pb-8 pt-6">
+        <div className="scrollbar-on-dark flex h-full flex-col overflow-y-auto px-6 pb-8 pt-6">
           {record ? (
             <>
               <div className="pr-9">

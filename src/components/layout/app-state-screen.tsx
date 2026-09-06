@@ -1,5 +1,4 @@
 import { AlertTriangle, ShieldCheck, Wrench } from 'lucide-react'
-import { motion, useReducedMotion } from 'framer-motion'
 
 import stPaulosLogo from '@/assets/StPaulosLogoColor.jpg'
 import { FullPageSkeleton } from '@/components/layout/loading-skeletons'
@@ -41,7 +40,6 @@ export function AppStateScreen({
   description: string
   detail?: string | null
 }) {
-  const reduceMotion = useReducedMotion()
   const tone = resolveScreenTone(title)
 
   if (tone === 'loading') {
@@ -52,39 +50,22 @@ export function AppStateScreen({
   const Icon = tone === 'setup' ? Wrench : tone === 'error' ? AlertTriangle : ShieldCheck
   const eyebrow =
     tone === 'setup' ? 'Setup required' : tone === 'error' ? 'Connection issue' : 'Workspace status'
-  const animateBar = false
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#f8f9fa] px-4 py-10">
-      <motion.section
-        initial={reduceMotion ? false : { opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.26, ease: [0.23, 1, 0.32, 1] }}
-        className="w-full max-w-md overflow-hidden rounded-[0.4rem] bg-white outline outline-1 outline-[#d4dde8] shadow-[0_30px_70px_-44px_rgba(0,33,71,0.42)]"
-      >
-        {/* Top status bar: indeterminate sweep while loading, solid accent otherwise. */}
+      <section className="app-state-enter w-full max-w-md overflow-hidden rounded-[0.4rem] bg-white outline outline-1 outline-[#d4dde8] shadow-[0_30px_70px_-44px_rgba(0,33,71,0.42)]">
         <div className="relative h-[3px] overflow-hidden bg-[#eef2f6]">
-          {animateBar ? (
-            <motion.div
-              className="absolute inset-y-0 left-0 w-1/3 rounded-full"
-              style={{ backgroundColor: accent }}
-              initial={{ x: '-110%' }}
-              animate={{ x: '320%' }}
-              transition={{ duration: 1.15, ease: 'easeInOut', repeat: Infinity }}
-            />
-          ) : (
-            <div className="absolute inset-0" style={{ backgroundColor: accent }} />
-          )}
+          <div className="absolute inset-0" style={{ backgroundColor: accent }} />
         </div>
 
         <div className="space-y-7 p-7 sm:p-8">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-[0.4rem] bg-white outline outline-1 outline-[#e1e6ec]">
-              <img src={stPaulosLogo} alt="St Paul logo" className="h-full w-full object-cover" />
+              <img src={stPaulosLogo} alt="St Paul's logo" className="h-full w-full object-cover" />
             </div>
             <div>
               <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
-                St Paul Hospital
+                St Paul's Hospital
               </p>
               <p className="font-display text-[1.05rem] font-bold tracking-[-0.02em] text-[#000a1e]">
                 Internal Medicine
@@ -94,7 +75,6 @@ export function AppStateScreen({
 
           <div className="space-y-3.5">
             <div className="flex items-center gap-2">
-              <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
               <span
                 className="text-[11px] font-semibold uppercase tracking-[0.2em]"
                 style={{ color: label }}
@@ -120,7 +100,7 @@ export function AppStateScreen({
             </div>
           ) : null}
         </div>
-      </motion.section>
+      </section>
     </div>
   )
 }

@@ -17,8 +17,18 @@ use ZipArchive;
  */
 class XlsxReader
 {
-    /** Reject any single XML part that decompresses beyond this (zip-bomb guard). */
-    private const MAX_PART_BYTES = 64 * 1024 * 1024;
+    /** Hard bounds keep a compressed upload from exhausting a PHP-FPM worker. */
+    private const MAX_PART_BYTES = 32 * 1024 * 1024;
+
+    private const MAX_TOTAL_UNCOMPRESSED_BYTES = 48 * 1024 * 1024;
+
+    private const MAX_ROWS = 25_000;
+
+    private const MAX_COLUMNS = 256;
+
+    private const MAX_CELL_BYTES = 65_536;
+
+    private const MAX_SHARED_STRINGS = 100_000;
 
     /**
      * @return array<int, array<int, string>> rows of string cells (header first)
@@ -32,6 +42,7 @@ class XlsxReader
         }
 
         try {
+            $this->guardArchiveSize($zip);
             $shared = $this->sharedStrings($zip);
             $sheetXml = $this->firstSheetXml($zip);
         } finally {
@@ -59,7 +70,11 @@ class XlsxReader
 
         $strings = [];
         foreach ($doc->si as $si) {
-            $strings[] = $this->stringItemText($si);
+            if (count($strings) >= self::MAX_SHARED_STRINGS) {
+                throw new RuntimeException('The spreadsheet contains too many shared strings.');
+            }
+
+            $strings[] = $this->guardCell($this->stringItemText($si));
         }
 
         return $strings;
@@ -120,6 +135,28 @@ class XlsxReader
         return $data === false ? null : $data;
     }
 
+    private function guardArchiveSize(ZipArchive $zip): void
+    {
+        $total = 0;
+
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $stat = $zip->statIndex($i);
+            if ($stat === false) {
+                continue;
+            }
+
+            $size = (int) ($stat['size'] ?? 0);
+            if ($size > self::MAX_PART_BYTES) {
+                throw new RuntimeException('The spreadsheet is too large to import.');
+            }
+
+            $total += $size;
+            if ($total > self::MAX_TOTAL_UNCOMPRESSED_BYTES) {
+                throw new RuntimeException('The spreadsheet expands beyond the import safety limit.');
+            }
+        }
+    }
+
     private function loadXml(string $xml): ?SimpleXMLElement
     {
         // OOXML parts must not carry a DTD; reject one to block entity-expansion
@@ -146,6 +183,10 @@ class XlsxReader
 
         $rows = [];
         foreach ($doc->sheetData->row as $row) {
+            if (count($rows) >= self::MAX_ROWS) {
+                throw new RuntimeException('The spreadsheet contains too many rows.');
+            }
+
             $cells = [];
             $maxColumn = -1;
             $cursor = 0;
@@ -155,9 +196,14 @@ class XlsxReader
                 // Positional cells (no `r`, as some non-Excel writers emit) advance
                 // a cursor instead of all collapsing to column 0.
                 $column = $reference !== '' ? $this->columnIndex($reference) : $cursor;
+                if ($column >= self::MAX_COLUMNS) {
+                    throw new RuntimeException('The spreadsheet contains too many columns.');
+                }
                 $cursor = $column + 1;
 
-                $cells[$column] = $this->cellValue($cell, (string) ($cell['t'] ?? ''), $shared);
+                $cells[$column] = $this->guardCell(
+                    $this->cellValue($cell, (string) ($cell['t'] ?? ''), $shared),
+                );
                 $maxColumn = max($maxColumn, $column);
             }
 
@@ -170,6 +216,15 @@ class XlsxReader
         }
 
         return $rows;
+    }
+
+    private function guardCell(string $value): string
+    {
+        if (strlen($value) > self::MAX_CELL_BYTES) {
+            throw new RuntimeException('A spreadsheet cell exceeds the import safety limit.');
+        }
+
+        return $value;
     }
 
     /**

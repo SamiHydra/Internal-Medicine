@@ -128,8 +128,25 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    # Same queues as deploy/queue-worker.service: analytics exports are
+    # dispatched to the `analytics` queue, so a worker on `default` alone left
+    # every export pending (found during the 2026-09 release validation).
     command:
-      ["php", "artisan", "queue:work", "--tries=3", "--backoff=10", "--max-time=3600"]
+      ["php", "artisan", "queue:work", "--queue=analytics,default", "--tries=3", "--backoff=10", "--max-time=3600"]
+
+  # deploy/queue-notifications-worker.service, containerised: mail, SMS and
+  # digest deliveries run on their own worker so a slow gateway never blocks
+  # the analytics worker.
+  queue-notifications:
+    <<: *php-image
+    restart: unless-stopped
+    environment:
+      STACK_ROLE: worker
+    depends_on:
+      app:
+        condition: service_healthy
+    command:
+      ["php", "artisan", "queue:work", "--queue=notifications,default", "--tries=3", "--backoff=10", "--max-time=3600"]
 
   # ----------------------------------------------------------- scheduler ---
   # The department server runs `php artisan schedule:run` from cron every

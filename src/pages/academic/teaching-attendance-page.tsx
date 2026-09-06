@@ -56,6 +56,17 @@ export function TeachingAttendancePage() {
   const [formKey, setFormKey] = useState<'student_weekly' | 'student_final'>('student_weekly')
   const [evaluationDate, setEvaluationDate] = useState(todayString)
 
+  /**
+   * Sessions only. Saving attendance cannot change the student directory or
+   * the evaluation form definitions, so those are fetched once on mount and
+   * never again (see INTERACTION_LATENCY_AUDIT.md).
+   */
+  const reloadSessions = useCallback(async () => {
+    if (client) {
+      setSessions(await fetchTodayTeachingSessions(client))
+    }
+  }, [client])
+
   const load = useCallback(async () => {
     if (!client) {
       setSessions([])
@@ -102,7 +113,7 @@ export function TeachingAttendancePage() {
         delete next[session.id]
         return next
       })
-      await load()
+      await reloadSessions()
     } catch (error) {
       toast.error(getErrorMessage(error, 'Unable to save attendance.'))
     } finally {

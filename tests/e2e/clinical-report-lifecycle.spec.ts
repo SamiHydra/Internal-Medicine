@@ -41,7 +41,16 @@ test.describe('Clinical report lifecycle (nurse write -> admin lock -> IDOR)', (
       { headers: ajaxHeaders() },
     )
     const body: any = await res.json()
-    return (body.data ?? [])[0]
+    const summary = (body.data ?? [])[0]
+    if (!summary) {
+      return undefined
+    }
+
+    // The collection endpoint is intentionally summary-only; field values are
+    // loaded from the object detail endpoint.
+    const detail = await nurseApi.get(`/api/reports/${summary.id}`, { headers: ajaxHeaders() })
+    expect(detail.status()).toBe(200)
+    return detail.json()
   }
 
   function hasCellValue(report: any, value: number): boolean {
@@ -54,41 +63,48 @@ test.describe('Clinical report lifecycle (nurse write -> admin lock -> IDOR)', (
   test.beforeAll(async () => {
     nurseApi = await apiContextFromState('nurse')
 
-    // Discover the nurse's assignments, every reporting period and every existing
-    // report from the workspace bootstrap, then pick an assignment + a period that
-    // has NO report yet (a clean not_started slot -> a first save yields 'draft').
+    // Give the seeded nurse a dedicated assignment for this lifecycle. The deep
+    // history seed intentionally fills every period for the nurse's normal
+    // assignments, so trying to infer a blank pair from that history is not a
+    // stable fixture.
     const res = await nurseApi.get('/api/workspace?report_period_window=all', { headers: ajaxHeaders() })
-    const state: any = (await res.json()).state
+    const workspace: any = await res.json()
+    const state: any = workspace.state
     const assignments: any[] = state.assignments ?? []
     const periods: any[] = state.reportingPeriods ?? []
-    const reports: any[] = state.reports ?? []
-
     expect(assignments.length, 'the seeded nurse must have at least one active assignment').toBeGreaterThan(0)
+    expect(periods.length, 'the seed must expose an interactive reporting period').toBeGreaterThan(0)
 
-    const assignment = assignments[0]
-    const filled = new Set(reports.map((r) => `${r.assignmentId}|${r.reportingPeriodId}`))
-    // Stay inside the loaded reporting window: pick a free period no newer than
-    // the newest period that already has a report. A future / far-past period is
-    // outside the default window the report page loads, so its report never
-    // hydrates and the locked read-only surface cannot render (that out-of-window
-    // rendering gap is tracked separately as AUD-UI-020). Reported periods are
-    // in-window by construction, so a free period adjacent to them is too.
-    const reportedWeekStarts = periods
-      .filter((p) => reports.some((r) => r.reportingPeriodId === p.id))
-      .map((p) => String(p.weekStart))
+    const assignedDepartmentSlugs = new Set(assignments.map((assignment) => assignment.departmentId))
+    const departmentIds: Record<string, string> = workspace.references?.departmentDbIdBySlug ?? {}
+    const templateIds: Record<string, string> =
+      workspace.references?.templateDbIdByDepartmentSlug ?? {}
+    const candidates = Object.keys(departmentIds)
+      .filter((slug) => !assignedDepartmentSlugs.has(slug) && templateIds[slug])
       .sort()
-    const newestReported = reportedWeekStarts[reportedWeekStarts.length - 1] ?? '9999-12-31'
-    const freePeriods = periods
-      .filter((p) => !filled.has(`${assignment.id}|${p.id}`))
-      .filter((p) => String(p.weekStart) <= newestReported)
-      .sort((a, b) => String(b.weekStart).localeCompare(String(a.weekStart)))
-
-    expect(freePeriods.length, 'need an un-reported period to create a clean draft').toBeGreaterThan(
+    expect(candidates.length, 'need an unassigned department for an isolated lifecycle').toBeGreaterThan(
       projectIndex(),
     )
 
-    assignmentId = assignment.id
-    periodId = freePeriods[Math.min(projectIndex(), freePeriods.length - 1)].id
+    const departmentSlug = candidates[projectIndex()]
+    const admin = await apiContextFromState('superadmin')
+    try {
+      const token = await xsrfToken(admin)
+      const createAssignment = await admin.post('/api/admin/assignments', {
+        headers: ajaxHeaders(token),
+        data: {
+          nurseId: state.currentUserId,
+          departmentId: departmentSlug,
+          templateId: templateIds[departmentSlug],
+        },
+      })
+      expect(createAssignment.status(), 'the isolated nurse assignment must be created').toBe(201)
+      assignmentId = (await createAssignment.json()).id
+    } finally {
+      await admin.dispose()
+    }
+
+    periodId = periods[periods.length - 1].id
   })
 
   test.afterAll(async () => {

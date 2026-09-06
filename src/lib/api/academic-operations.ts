@@ -21,6 +21,8 @@ const morningAnalyticsSchema = z.object({
   people: z.array(z.object({
     userId: z.string(),
     fullName: z.string(),
+    /** Decides which evaluation direction their detail page opens on. */
+    role: z.string().nullable().optional(),
     expectedCount: z.number(),
     presentCount: z.number(),
     attendanceRate: z.number(),
@@ -53,6 +55,18 @@ const teachingOccurrenceSchema = z.object({
   heldRate: z.number().nullable(),
 })
 
+const academicOperationsWindowSchema = z.object({
+  fromDate: z.string(),
+  toDate: z.string(),
+  maxDays: z.number(),
+})
+
+export type AcademicOperationsQuery = {
+  dateFrom?: string
+  dateTo?: string
+  batchId?: string
+}
+
 export type TeachingOccurrenceRow = z.infer<typeof teachingOccurrenceSchema>
 
 const missedTeachingSessionSchema = z.object({
@@ -79,6 +93,7 @@ const teachingBlockSchema = teachingOccurrenceSchema.extend({
 })
 
 const teachingAnalyticsSchema = z.object({
+  window: academicOperationsWindowSchema,
   byActivity: z.array(teachingOccurrenceSchema.extend({ activityType: z.string() })),
   byBatch: z.array(teachingOccurrenceSchema.extend({
     batchId: z.string(),
@@ -92,9 +107,12 @@ const teachingAnalyticsSchema = z.object({
 
 export type TeachingAnalytics = z.infer<typeof teachingAnalyticsSchema>
 
-export async function fetchTeachingAnalytics(client: LaravelApiClient) {
+export async function fetchTeachingAnalytics(
+  client: LaravelApiClient,
+  query?: AcademicOperationsQuery,
+) {
   return teachingAnalyticsSchema.parse(
-    await client.get<unknown>('/api/academic/analytics/teaching'),
+    await client.get<unknown>('/api/academic/analytics/teaching', { query }),
   )
 }
 
@@ -117,6 +135,7 @@ const studentAnalyticsRowSchema = z.object({
 export type StudentAnalyticsRow = z.infer<typeof studentAnalyticsRowSchema>
 
 const studentAnalyticsSchema = z.object({
+  window: academicOperationsWindowSchema,
   students: z.array(studentAnalyticsRowSchema),
   batches: z.array(z.object({
     batchLabel: z.string().nullable(),
@@ -129,8 +148,11 @@ const studentAnalyticsSchema = z.object({
 
 export type StudentAnalytics = z.infer<typeof studentAnalyticsSchema>
 
-export async function fetchStudentAnalytics(client: LaravelApiClient) {
+export async function fetchStudentAnalytics(
+  client: LaravelApiClient,
+  query?: AcademicOperationsQuery,
+) {
   return studentAnalyticsSchema.parse(
-    await client.get<unknown>('/api/academic/analytics/students'),
+    await client.get<unknown>('/api/academic/analytics/students', { query }),
   )
 }

@@ -9,8 +9,10 @@ use App\Http\Controllers\Api\Admin\AcademicEvaluationController as AdminAcademic
 use App\Http\Controllers\Api\Admin\AcademicStructureController;
 use App\Http\Controllers\Api\Admin\AccessRequestController;
 use App\Http\Controllers\Api\Admin\ActionItemController;
+use App\Http\Controllers\Api\Admin\ActionItemEvidenceController;
 use App\Http\Controllers\Api\Admin\AdminAccessRequestController;
 use App\Http\Controllers\Api\Admin\AuditLogController;
+use App\Http\Controllers\Api\Admin\ClinicalAlertRuleController;
 use App\Http\Controllers\Api\Admin\DutyRosterController;
 use App\Http\Controllers\Api\Admin\EvaluationFormController;
 use App\Http\Controllers\Api\Admin\ReferenceDataController;
@@ -27,17 +29,23 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\MorningSessionController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PasswordResetController;
+use App\Http\Controllers\Api\PerformanceMetricController;
 use App\Http\Controllers\Api\ReportCommentController;
 use App\Http\Controllers\Api\ReportWorkflowController;
 use App\Http\Controllers\Api\TeachingSessionController;
 use App\Http\Controllers\Api\TransferRequestController;
 use App\Http\Controllers\Api\WorkspaceController;
 use Illuminate\Support\Facades\Route;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
+// Each public auth action keeps its own limiter bucket (the third throttle
+// argument is the key prefix). With the shared default key, five failed logins
+// from one address also locked forgot-password and registration for a minute
+// (QA-024). The three registration tracks share one "registration" bucket.
 Route::prefix('auth')->group(function (): void {
-    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
-    Route::post('/forgot-password', [PasswordResetController::class, 'forgot'])->middleware('throttle:5,1');
-    Route::post('/reset-password', [PasswordResetController::class, 'reset'])->middleware('throttle:5,1');
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1,login');
+    Route::post('/forgot-password', [PasswordResetController::class, 'forgot'])->middleware('throttle:5,1,forgot-password');
+    Route::post('/reset-password', [PasswordResetController::class, 'reset'])->middleware('throttle:5,1,reset-password');
 
     Route::middleware('auth:sanctum')->group(function (): void {
         // Same per-user ceiling the rest of the API uses, and deliberately the
@@ -61,9 +69,17 @@ Route::prefix('auth')->group(function (): void {
     });
 });
 
-Route::post('/access-requests', [AccessRequestSubmissionController::class, 'store'])->middleware('throttle:10,1');
-Route::post('/academic-access-requests', [AcademicRegistrationController::class, 'store'])->middleware('throttle:10,1');
-Route::post('/admin-access-requests', [AdminRegistrationController::class, 'store'])->middleware('throttle:10,1');
+Route::post('/access-requests', [AccessRequestSubmissionController::class, 'store'])->middleware('throttle:10,1,registration');
+Route::post('/academic-access-requests', [AcademicRegistrationController::class, 'store'])->middleware('throttle:10,1,registration');
+Route::post('/admin-access-requests', [AdminRegistrationController::class, 'store'])->middleware('throttle:10,1,registration');
+
+// The workspace bootstrap issues a short-lived signed credential for this
+// read-only global ledger. Removing Sanctum's stateful wrapper here avoids a
+// database session read/write on every polling tab; no workspace data is
+// exposed, and forged/expired credentials are rejected before the ledger read.
+Route::get('/workspace/revision', [WorkspaceController::class, 'revision'])
+    ->middleware('revision-token')
+    ->withoutMiddleware(EnsureFrontendRequestsAreStateful::class);
 
 // Test-only: clears the rate-limiter store so the e2e suite can reset the
 // shared per-IP throttle bucket between specs (Laravel keys the default limiter
@@ -86,10 +102,21 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
     // so the SPA can resolve currentUser (incl. passwordChangeRequired) and render
     // the forced change-password gate. Every other endpoint stays behind the gate.
     Route::get('/workspace', [WorkspaceController::class, 'show'])->withoutMiddleware('password-changed');
+    Route::get('/workspace/access-requests', [WorkspaceController::class, 'accessRequests']);
+    // The profile directory alone. Same rows and same shape the workspace
+    // payload carries, without the ~214 KB of reports/audit/notifications that
+    // callers needing only the directory were pulling with it.
+    Route::get('/workspace/profiles', [WorkspaceController::class, 'profiles']);
+
+    // Sampled real-user performance telemetry only. The endpoint accepts a
+    // small allow-list of timing metadata and has no report/patient fields.
+    Route::post('/performance/rum', [PerformanceMetricController::class, 'store']);
 
     Route::get('/reports', [ReportWorkflowController::class, 'index']);
+    Route::get('/reporting-periods', [ReportWorkflowController::class, 'periods']);
     Route::post('/reports', [ReportWorkflowController::class, 'store']);
     Route::get('/reports/details', [ReportWorkflowController::class, 'details']);
+    Route::get('/reports/status-history', [ReportWorkflowController::class, 'statusHistory']);
     Route::get('/reports/{report}', [ReportWorkflowController::class, 'show']);
     Route::put('/reports/{report}', [ReportWorkflowController::class, 'update']);
     Route::post('/reports/{report}/submit', [ReportWorkflowController::class, 'submit']);
@@ -120,7 +147,10 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
             Route::get('/yearly', [AnalyticsController::class, 'yearly']);
             Route::get('/departments', [AnalyticsController::class, 'departments']);
             Route::get('/wards', [AnalyticsController::class, 'wards']);
-            Route::get('/export', [AnalyticsController::class, 'export']);
+            Route::get('/exports/scope', [AnalyticsController::class, 'exportScope']);
+            Route::post('/exports', [AnalyticsController::class, 'queueExport']);
+            Route::get('/exports', [AnalyticsController::class, 'exports']);
+            Route::get('/exports/{analyticsExport}/download', [AnalyticsController::class, 'download']);
         });
 
     Route::prefix('academic')->group(function (): void {
@@ -131,6 +161,7 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::get('/my-performance', [AcademicEvaluationController::class, 'myPerformance'])->middleware('permission:academic.submit');
         Route::get('/evaluation-forms/{key}', [AcademicEvaluationController::class, 'form'])->middleware('permission:academic.submit');
 
+        Route::get('/analytics/snapshot', [AcademicAnalyticsController::class, 'snapshot'])->middleware('permission:academic.view');
         Route::get('/analytics/summary', [AcademicAnalyticsController::class, 'summary'])->middleware('permission:academic.view');
         Route::get('/analytics/trend', [AcademicAnalyticsController::class, 'trend'])->middleware('permission:academic.view');
         Route::get('/analytics/people', [AcademicAnalyticsController::class, 'people'])->middleware('permission:academic.view');
@@ -219,7 +250,17 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
 
         Route::get('/action-items', [ActionItemController::class, 'index'])->middleware('permission:actionItems.view');
         Route::post('/action-items', [ActionItemController::class, 'store'])->middleware('permission:actionItems.manage');
+        Route::get('/action-items/{actionItem}', [ActionItemController::class, 'show'])->middleware('permission:actionItems.view');
         Route::patch('/action-items/{actionItem}', [ActionItemController::class, 'update'])->middleware('permission:actionItems.manage');
+        Route::post('/action-items/{actionItem}/comments', [ActionItemController::class, 'storeComment'])->middleware('permission:actionItems.manage');
+        Route::post('/action-items/{actionItem}/evidence', [ActionItemEvidenceController::class, 'store'])->middleware('permission:actionItems.manage');
+        Route::get('/action-items/{actionItem}/evidence/{evidence}/download', [ActionItemEvidenceController::class, 'download'])->middleware('permission:actionItems.view');
+        Route::delete('/action-items/{actionItem}/evidence/{evidence}', [ActionItemEvidenceController::class, 'destroy'])->middleware('permission:actionItems.manage');
+
+        Route::get('/clinical-alert-rules', [ClinicalAlertRuleController::class, 'index'])->middleware('permission:actionItems.view');
+        Route::post('/clinical-alert-rules', [ClinicalAlertRuleController::class, 'store'])->middleware('permission:actionItems.manage');
+        Route::patch('/clinical-alert-rules/{clinicalAlertRule}', [ClinicalAlertRuleController::class, 'update'])->middleware('permission:actionItems.manage');
+        Route::delete('/clinical-alert-rules/{clinicalAlertRule}', [ClinicalAlertRuleController::class, 'destroy'])->middleware('permission:actionItems.manage');
 
         Route::get('/academic/evaluations', [AdminAcademicEvaluationController::class, 'index'])->middleware('permission:academic.view');
         Route::get('/academic/audit', [AdminAcademicEvaluationController::class, 'audit'])->middleware('permission:academic.view');
