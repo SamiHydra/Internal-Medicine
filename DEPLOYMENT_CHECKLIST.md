@@ -112,7 +112,7 @@ Frontend build variables:
 ## CI/CD
 
 - [x] Every job's local equivalent is green after remediation except one Playwright timing budget: frontend (lint, unit tests, build, budget), backend SQLite (composer audit, tests), backend MariaDB (Docker lane), deployment scripts (`bash -n`; ShellCheck runs in CI). The Playwright gate passes every functional, security and responsive spec; the development-server early-navigation budget in `performance.spec.ts` fails in the full local run and passes alone (see `FINAL_DEPLOYMENT_READINESS.md`, Playwright Results).
-- [x] Remote CI observed on pull request #3 (run 34048693882): Frontend, Backend SQLite, Backend MariaDB, Mobile Lighthouse budgets (now also the production-bundle interaction budgets) and Deployment shell scripts green; the Isolated Playwright gate failed only on the Linux-font overflow sweep, fixed in `87d0aef`. The re-run on the fixed tree (run 34052298633, commit `4fce246`) was green on all six jobs.
+- [x] Remote CI observed on pull request #3 (run 34048693882): Frontend, Backend SQLite, Backend MariaDB, Mobile Lighthouse budgets (now also the production-bundle interaction budgets) and Deployment shell scripts green; the Isolated Playwright gate failed only on the Linux-font overflow sweep, fixed in `87d0aef`. The re-run on the fixed tree (run 34052298633, commit `4fce246`) and the closing run on the final code tree (run 34054054057, commit `32fabae`) were green on all six jobs.
 - [x] Workflow triggers on pull requests and pushes to `main`; there is no automatic deploy job, so a red pipeline cannot deploy anything by itself.
 - [x] Branch protection requires the five blocking jobs.
 
