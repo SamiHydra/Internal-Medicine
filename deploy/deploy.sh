@@ -173,6 +173,14 @@ fi
 echo "==> Applying database migrations"
 cd "${RELEASE_DIR}/backend"
 php artisan migrate --force
+
+# First install only in practice: the reference seeders (roles, templates,
+# departments, field definitions, settings, reporting periods) are skipped once
+# roles exist, so a re-deploy never overwrites admin-edited reference rows.
+# Without this a fresh server has no roles and app:create-superadmin fails on
+# the users.role_key foreign key (QA-007).
+echo "==> Ensuring reference data"
+php artisan app:seed-reference-data
 php artisan config:cache
 php artisan route:cache
 php artisan view:cache
@@ -192,6 +200,14 @@ MAINTENANCE=0
 STATUS="$(curl -fsSk -o /dev/null -w '%{http_code}' "${APP_URL}/api/workspace" || true)"
 if [ "${STATUS}" != "401" ] && [ "${STATUS}" != "419" ]; then
   echo "Health check failed: expected 401 or 419, got ${STATUS:-no response}." >&2
+  false
+fi
+# /up is routed to Laravel by deploy/nginx.conf (QA-020): it answers 200 only
+# when the framework boots on the new release, and it is the path external
+# monitors should probe.
+UP_STATUS="$(curl -fsSk -o /dev/null -w '%{http_code}' "${APP_URL}/up" || true)"
+if [ "${UP_STATUS}" != "200" ]; then
+  echo "Liveness check failed: expected 200 from /up, got ${UP_STATUS:-no response}. Is the /up location present in the active nginx vhost?" >&2
   false
 fi
 

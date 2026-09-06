@@ -135,7 +135,7 @@ A Laravel 11/12-style application. All routes live under the `api` middleware gr
 
 - **`$middleware->statefulApi()`** enables Sanctum SPA mode: requests from configured **stateful domains** (`config/sanctum.php → stateful`, sourced from `SANCTUM_STATEFUL_DOMAINS`) are treated as first-party **session-cookie** requests rather than token requests, activating session + CSRF cookie middleware for the API group. The explicit `prepend: [EnsureFrontendRequestsAreStateful]` is redundant but harmless.
 - The guard is **`web`** (session driver = `database` by default), so authenticated state lives server-side in the `sessions` table, carried by an encrypted session cookie. CSRF is enforced via Sanctum's `ValidateCsrfToken`.
-- `routes/web.php` serves a welcome view at `/`; `route('/up')` is the health check.
+- `routes/web.php` serves Laravel's stock welcome view at `/`, which is unreachable in production because nginx serves the SPA at `/`. `/up` is the health check: `deploy/nginx.conf` routes it to Laravel so external monitors and `deploy.sh` get a 200 only when the framework boots.
 - **Production safety:** `AppServiceProvider::boot()` throws `RuntimeException('APP_DEBUG must be false in production.')` if `app.debug` is true in the `production` environment.
 
 ### Custom middleware aliases

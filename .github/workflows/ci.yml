@@ -131,6 +131,11 @@ jobs:
             sleep 1
           done
           npm run perf:lighthouse
+          # Interaction budgets are a production-bundle gate: the same preview
+          # server the Lighthouse run used serves tests/e2e/performance.spec.ts
+          # (the isolated Vite gate records but does not assert the early
+          # navigation sample; see the spec).
+          E2E_BASE_URL=http://localhost:4173 npx playwright test --config playwright.external.config.ts tests/e2e/performance.spec.ts
 
       - name: Upload Lighthouse reports
         if: always()

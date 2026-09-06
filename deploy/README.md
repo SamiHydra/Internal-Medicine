@@ -23,7 +23,7 @@ The queue worker, Nginx, cron, and operators always use `/opt/imreport/current`.
 | `php-fpm.conf` | Explicit worker limits, memory limit, recycling, timeout, and slow log | `/etc/php/8.3/fpm/pool.d/imreport.conf` |
 | `queue-worker.service` | Analytics/default database queue worker | `/etc/systemd/system/imreport-queue.service` |
 | `queue-notifications-worker.service` | Isolated notification/default worker | `/etc/systemd/system/imreport-queue-notifications.service` |
-| `backup.sh` | Daily consistent dump, retention, secondary copy, integrity check | Cron at 02:00 |
+| `backup.sh` | Daily consistent dump plus a tar.gz of `shared/storage/app` (evidence and import files), retention, secondary copy, integrity check | Cron at 02:00 |
 | `deploy.sh` | Locked, versioned, backup-first atomic deployment | Run from the source checkout |
 | `ufw.sh` | Hospital-LAN firewall rules | Run once |
 | `logrotate.conf` | Application and operations log rotation | `/etc/logrotate.d/imreport` |
@@ -64,8 +64,16 @@ The queue worker, Nginx, cron, and operators always use `/opt/imreport/current`.
    does not match Laravel's `DB_DATABASE`.
 
 10. Run `sudo -u imreport /opt/imreport/source/deploy/deploy.sh --dry-run` and correct every missing prerequisite.
-11. Run `sudo -u imreport /opt/imreport/source/deploy/deploy.sh`.
-12. Confirm `cd /opt/imreport/current/backend && php artisan app:launch-readiness --strict` is green.
+11. Run `sudo -u imreport /opt/imreport/source/deploy/deploy.sh`. On a fresh database the script migrates and then seeds the reference data (roles, report templates, departments, field definitions, settings, reporting periods) with `php artisan app:seed-reference-data`; the step is idempotent and never installs the development fixture accounts.
+12. First install only: create the maintenance account, which is the only way to obtain the first login:
+
+    ```
+    cd /opt/imreport/current/backend
+    php artisan app:create-superadmin --email=<email> --username=<username> --full-name="<name>"
+    ```
+
+    The command refuses to run before the reference data exists and prints the generated password once; store it and change it at first login.
+13. Confirm `cd /opt/imreport/current/backend && php artisan app:launch-readiness --strict` is green. It fails until the reference data is seeded and warns when the PHP-FPM pool's upload limits are below the 10 MB file rule.
 
 ## Queue worker layout
 
