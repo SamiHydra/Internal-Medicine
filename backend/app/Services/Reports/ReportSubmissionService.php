@@ -2,6 +2,7 @@
 
 namespace App\Services\Reports;
 
+use App\Exceptions\ReportConflictException;
 use App\Models\AuditLog;
 use App\Models\Notification;
 use App\Models\Report;
@@ -36,16 +37,29 @@ class ReportSubmissionService
     ) {}
 
     /**
+     * Sentinel for $expectedRevision: the caller believes no report exists yet
+     * for this assignment and week, so finding one is a conflict.
+     */
+    public const EXPECT_NO_REPORT = 'none';
+
+    /**
      * @param  array<string, mixed>  $values
+     * @param  string|null  $expectedRevision  null skips the check (last write
+     *                                         wins, the historical behaviour);
+     *                                         EXPECT_NO_REPORT refuses when a
+     *                                         report already exists; any other
+     *                                         value is the updatedAt the client
+     *                                         loaded and must still match.
      *
      * @throws AuthorizationException
      * @throws ValidationException
+     * @throws ReportConflictException
      */
-    public function save(User $actor, ReportAssignment $assignment, ReportingPeriod $period, array $values, bool $submit = false, bool $invalidateAnalytics = true): Report
+    public function save(User $actor, ReportAssignment $assignment, ReportingPeriod $period, array $values, bool $submit = false, bool $invalidateAnalytics = true, ?string $expectedRevision = null): Report
     {
         $this->assertPeriodHasStarted($period);
 
-        $report = DB::transaction(function () use ($actor, $assignment, $period, $values, $submit): Report {
+        $report = DB::transaction(function () use ($actor, $assignment, $period, $values, $submit, $expectedRevision): Report {
             $assignment->loadMissing(['department', 'template.fieldDefinitions']);
 
             $this->authorizeAssignmentEdit($actor, $assignment);
@@ -56,6 +70,11 @@ class ReportSubmissionService
                 ->where('reporting_period_id', $period->id)
                 ->lockForUpdate()
                 ->first();
+
+            // Stale-write detection runs under the same row lock as the write,
+            // so two devices saving the same week are serialised and the second
+            // one is told about the first instead of overwriting it.
+            $this->assertRevisionMatches($report, $expectedRevision);
 
             if ($report?->locked_at !== null) {
                 throw ValidationException::withMessages([
@@ -462,6 +481,46 @@ class ReportSubmissionService
             throw ValidationException::withMessages([
                 'reportingPeriodId' => ['This reporting week has not started yet; reports can only be filed for the current or an earlier week.'],
             ]);
+        }
+    }
+
+    /**
+     * @throws ReportConflictException
+     */
+    private function assertRevisionMatches(?Report $report, ?string $expectedRevision): void
+    {
+        if ($expectedRevision === null) {
+            return;
+        }
+
+        if ($expectedRevision === self::EXPECT_NO_REPORT) {
+            if ($report !== null) {
+                throw new ReportConflictException($report, ReportConflictException::REASON_EXISTS);
+            }
+
+            return;
+        }
+
+        if ($report === null) {
+            // The client loaded a report that has since disappeared; nothing to
+            // overwrite, so the save proceeds and recreates it.
+            return;
+        }
+
+        try {
+            $expected = Carbon::parse($expectedRevision)->utc()->format('Y-m-d H:i:s');
+        } catch (\Throwable) {
+            throw ValidationException::withMessages([
+                'expectedUpdatedAt' => 'The expected revision must be a valid timestamp.',
+            ]);
+        }
+
+        // Stored timestamps carry second precision; the JSON the client echoes
+        // back carries microseconds, so both sides are compared at the second.
+        $stored = $report->updated_at?->copy()->utc()->format('Y-m-d H:i:s');
+
+        if ($stored !== $expected) {
+            throw new ReportConflictException($report, ReportConflictException::REASON_STALE);
         }
     }
 

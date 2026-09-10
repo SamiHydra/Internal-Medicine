@@ -12,6 +12,7 @@ import {
 } from '@/components/dashboard/section-panel'
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { SubmissionBoardGrid } from '@/components/dashboard/submission-board-grid'
+import { OfflineSaveBanner } from '@/components/reports/offline-save-banner'
 import { ReportAssignmentCard } from '@/components/reports/report-assignment-card'
 import { Button } from '@/components/ui/button'
 import {
@@ -85,6 +86,7 @@ export function ReportSelectionPage() {
 
   return (
     <div className="space-y-6 px-4 py-6 md:px-6 md:py-8">
+      <OfflineSaveBanner />
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}

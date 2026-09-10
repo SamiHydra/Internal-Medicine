@@ -16,6 +16,7 @@ import { createEmptyAppState } from '@/lib/app-state'
 import { clearAuthenticatedQueryCache } from '@/lib/query-client'
 import { departmentMap, templateMap } from '@/config/templates'
 import type {
+  ReportConflictSnapshot,
   AcademicWorkspaceState,
   AccessRequestPayload,
   AdminAccessRequest,
@@ -76,14 +77,19 @@ import {
   missingApiEnvKeys,
 } from '@/lib/api/env'
 import {
+  classifyQueuedSaveFailure,
   getReportSaveQueueId,
   isBrowserOffline,
   isLikelyOfflineError,
   listQueuedReportSaves,
+  markQueuedReportSaveConflict,
   MAX_QUEUED_SAVE_ATTEMPTS,
   queueReportSave,
   recordQueuedReportSaveFailure,
   removeQueuedReportSave,
+  retryQueuedReportSave,
+  type QueuedReportSave,
+  type QueuedSaveConflictReason,
 } from '@/lib/offline/report-save-queue'
 import {
   clearWorkspaceCache,
@@ -91,6 +97,7 @@ import {
   writeWorkspaceCache,
   type WorkspaceCacheRecord,
 } from '@/lib/offline/workspace-cache'
+import { reportClientError } from '@/lib/observability/error-reporter'
 import { workspacePollDelay } from '@/lib/workspace-poll'
 import {
   getCurrentPeriod,
@@ -133,8 +140,24 @@ type AppDataContextValue = {
   ) => Promise<void>
   rejectAdminAccessRequest: (requestId: string) => Promise<void>
   saveReport: (payload: SaveReportPayload) => Promise<SaveReportResult>
+  /** Offline saves still waiting for the network (docs/OFFLINE_SYNC_MODEL.md). */
   queuedReportSaveCount: number
+  /** Offline saves the server refused; they wait for the user's decision. */
+  conflictedReportSaveCount: number
+  /** Every queued or parked save for the signed-in user, oldest first. */
+  queuedReportSaves: QueuedReportSave[]
   hasQueuedReportSave: (assignmentId: string, reportingPeriodId: string) => boolean
+  getQueuedReportSave: (assignmentId: string, reportingPeriodId: string) => QueuedReportSave | null
+  /** Drop a parked or pending offline save; the server copy stands. */
+  discardQueuedReportSave: (queuedSaveId: string) => Promise<void>
+  /**
+   * Replay a parked save now, re-based on the revision the server reported so
+   * the replay is an explicit overwrite. Resolves true when it was applied.
+   */
+  applyQueuedReportSave: (
+    queuedSaveId: string,
+    options?: { expectedUpdatedAt?: string | null },
+  ) => Promise<boolean>
   lockReport: (reportId: string, actorId: string) => Promise<void>
   unlockReport: (reportId: string, actorId: string) => Promise<void>
   isReportDetailLoaded: (reportId: string) => boolean
@@ -165,6 +188,30 @@ type AppDataContextValue = {
 
 const AppDataContext = createContext<AppDataContextValue | null>(null)
 
+const QUEUE_SYNC_LOCK = 'stpaul:offline-report-sync'
+
+/**
+ * Run the queue replay under a browser-wide lock so only one tab of this
+ * origin replays at a time; a tab that finds the lock taken simply skips this
+ * round (the holder drains the whole queue) and refreshes its view later.
+ */
+async function withQueueSyncLock(task: () => Promise<void>) {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
+
+  if (!locks) {
+    await task()
+    return
+  }
+
+  await locks.request(QUEUE_SYNC_LOCK, { ifAvailable: true }, async (lock) => {
+    if (!lock) {
+      return
+    }
+
+    await task()
+  })
+}
+
 // isSyncing/isDataRefreshing live in a separate context so the frequent
 // background-sync flag flips (20s poll, sync indicator) do not re-render every
 // useAppData() consumer - only components that actually read the sync status.
@@ -192,9 +239,17 @@ type EnsureReportSummaryOptions = {
   force?: boolean
 }
 
+export type SaveReportConflict = {
+  reason: QueuedSaveConflictReason
+  message: string
+  serverReport: ReportConflictSnapshot | null
+}
+
 type SaveReportResult = {
   saved: boolean
   queued: boolean
+  /** Set when the server refused the save because the loaded copy was stale. */
+  conflict?: SaveReportConflict
 }
 
 const idleReportDetailLoadState: ReportDetailLoadState = {
@@ -298,8 +353,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [error, setError] = useState<string | null>(null)
   const [academic, setAcademic] = useState<AcademicWorkspaceState | null>(null)
   const [adminAccessRequests, setAdminAccessRequests] = useState<AdminAccessRequest[]>([])
-  const [queuedReportSaveIds, setQueuedReportSaveIds] = useState<Set<string>>(
-    () => new Set(),
+  const [queuedReportSaves, setQueuedReportSaves] = useState<Record<string, QueuedReportSave>>(
+    () => ({}),
   )
   const [reportDetailLoadStates, setReportDetailLoadStates] = useState<
     Record<string, ReportDetailLoadState>
@@ -374,26 +429,34 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const refreshQueuedReportSaveState = useCallback(async (userId?: string | null) => {
     if (!userId) {
-      setQueuedReportSaveIds(new Set())
+      setQueuedReportSaves({})
       return
     }
 
     const queuedSaves = await listQueuedReportSaves(userId)
-    setQueuedReportSaveIds(new Set(queuedSaves.map((queuedSave) => queuedSave.id)))
+    setQueuedReportSaves(
+      Object.fromEntries(queuedSaves.map((queuedSave) => [queuedSave.id, queuedSave])),
+    )
   }, [])
 
-  const hasQueuedReportSave = useCallback(
-    (assignmentId: string, reportingPeriodId: string) => {
+  const getQueuedReportSave = useCallback(
+    (assignmentId: string, reportingPeriodId: string): QueuedReportSave | null => {
       const userId = currentUserIdRef.current
       if (!userId) {
-        return false
+        return null
       }
 
-      return queuedReportSaveIds.has(
-        getReportSaveQueueId(userId, assignmentId, reportingPeriodId),
+      return (
+        queuedReportSaves[getReportSaveQueueId(userId, assignmentId, reportingPeriodId)] ?? null
       )
     },
-    [queuedReportSaveIds],
+    [queuedReportSaves],
+  )
+
+  const hasQueuedReportSave = useCallback(
+    (assignmentId: string, reportingPeriodId: string) =>
+      getQueuedReportSave(assignmentId, reportingPeriodId)?.status === 'pending',
+    [getQueuedReportSave],
   )
 
   useEffect(() => {
@@ -630,7 +693,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     setIsBootstrapping(false)
     setIsSyncing(false)
     setIsDataRefreshing(false)
-    setQueuedReportSaveIds(new Set())
+    // The offline queue itself is NOT cleared here: it lives in IndexedDB keyed
+    // by user, and unsynced work must survive a sign-out or an expired session.
+    setQueuedReportSaves({})
   }, [resetDeferredDataState])
 
   const applyAuthenticatedProfile = useCallback(
@@ -1577,6 +1642,147 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [applySavedReportDetails],
   )
 
+  const replayQueuedReportSaves = useCallback(
+    async (userId: string, options?: { silent?: boolean }) => {
+      if (!client) {
+        return
+      }
+
+      let shouldEndBackgroundSync = false
+      let syncedCount = 0
+      let conflictCount = 0
+      let authInterrupted = false
+
+      try {
+        const queuedSaves = await listQueuedReportSaves(userId)
+        if (!queuedSaves.length) {
+          setQueuedReportSaves({})
+          return
+        }
+
+        // Parked saves wait for the user's decision; only pending ones replay,
+        // oldest first, so the order the nurse saved in is the order applied.
+        const pendingSaves = queuedSaves.filter((queuedSave) => queuedSave.status === 'pending')
+        if (!pendingSaves.length) {
+          await refreshQueuedReportSaveState(userId)
+          return
+        }
+
+        beginBackgroundSync()
+        shouldEndBackgroundSync = true
+
+        const syncedSaves: Array<{ payload: SaveReportPayload; report: ReportResponse }> = []
+
+        for (const queuedSave of pendingSaves) {
+          try {
+            const report = await saveReportMutation(client, queuedSave.payload)
+            await removeQueuedReportSave(queuedSave.id)
+            syncedCount += 1
+            syncedSaves.push({ payload: queuedSave.payload, report })
+          } catch (syncError) {
+            const failure = classifyQueuedSaveFailure(syncError)
+
+            if (failure.kind === 'offline') {
+              // The network dropped again: keep everything, try later.
+              await recordQueuedReportSaveFailure(queuedSave.id, failure.message, {
+                countAttempt: false,
+              })
+              break
+            }
+
+            if (failure.kind === 'auth') {
+              // The session expired while the save waited. The API client has
+              // already signed the app out; the queue stays intact and replays
+              // after the next sign-in. Nothing is counted against the save.
+              await recordQueuedReportSaveFailure(queuedSave.id, failure.message, {
+                countAttempt: false,
+              })
+              authInterrupted = true
+              break
+            }
+
+            if (failure.kind === 'conflict') {
+              // The server refused the save for a reason a retry cannot fix
+              // (stale copy, lock, validation, lost assignment). Park it with
+              // the server's answer so the user can compare and decide.
+              await markQueuedReportSaveConflict(queuedSave.id, {
+                reason: failure.reason,
+                message: failure.message,
+                httpStatus: failure.httpStatus,
+                serverReport: failure.serverReport,
+              })
+              conflictCount += 1
+              continue
+            }
+
+            // Transient (timeout, 5xx, rate limit): count the attempt and keep
+            // retrying; after the cap the save is parked, never deleted.
+            const updated = await recordQueuedReportSaveFailure(queuedSave.id, failure.message)
+
+            if (updated && updated.attempts >= MAX_QUEUED_SAVE_ATTEMPTS) {
+              await markQueuedReportSaveConflict(queuedSave.id, {
+                reason: 'exhausted',
+                message: failure.message,
+                httpStatus: failure.httpStatus,
+                serverReport: null,
+              })
+              conflictCount += 1
+              // Operational signal only: the message carries no report values.
+              reportClientError(
+                'offline-sync',
+                `Offline report save gave up after ${MAX_QUEUED_SAVE_ATTEMPTS} attempts: ${failure.message}`,
+                { status: failure.httpStatus },
+              )
+            }
+          }
+        }
+
+        if (syncedSaves.length) {
+          await applyServerSavedReports(syncedSaves)
+        }
+
+        if (authInterrupted) {
+          toast.warning('Your session expired before your offline changes could sync.', {
+            description: 'Sign in again; the saved changes are kept on this device and will sync after sign-in.',
+          })
+          return
+        }
+
+        await refreshQueuedReportSaveState(userId)
+
+        if (syncedCount > 0 && !options?.silent) {
+          toast.success(
+            syncedCount === 1
+              ? 'Offline report save synced.'
+              : `${syncedCount} offline report saves synced.`,
+          )
+        }
+
+        if (conflictCount > 0) {
+          toast.error(
+            conflictCount === 1
+              ? 'An offline report save needs your review before it can be applied.'
+              : `${conflictCount} offline report saves need your review before they can be applied.`,
+            {
+              description: 'Open the report to compare your values with the server copy, then apply or discard them.',
+            },
+          )
+        }
+      } finally {
+        if (shouldEndBackgroundSync) {
+          endBackgroundSync()
+        }
+      }
+    },
+    [
+      applyServerSavedReports,
+      beginBackgroundSync,
+      client,
+      endBackgroundSync,
+      refreshQueuedReportSaveState,
+    ],
+  )
+
   const flushQueuedReportSaves = useCallback(
     async (options?: { silent?: boolean }) => {
       const userId = currentUserIdRef.current
@@ -1591,87 +1797,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       queuedReportSyncInFlightRef.current = true
-      let shouldEndBackgroundSync = false
-      let syncedCount = 0
-      let discardedCount = 0
 
       try {
-        const queuedSaves = await listQueuedReportSaves(userId)
-        if (!queuedSaves.length) {
-          setQueuedReportSaveIds(new Set())
-          return
-        }
-
-        beginBackgroundSync()
-        shouldEndBackgroundSync = true
-
-        const syncedSaves: Array<{ payload: SaveReportPayload; report: ReportResponse }> = []
-
-        for (const queuedSave of queuedSaves) {
-          try {
-            const report = await saveReportMutation(client, queuedSave.payload)
-            await removeQueuedReportSave(queuedSave.id)
-            syncedCount += 1
-            syncedSaves.push({ payload: queuedSave.payload, report })
-          } catch (syncError) {
-            if (isLikelyOfflineError(syncError)) {
-              await recordQueuedReportSaveFailure(
-                queuedSave.id,
-                getMessage(syncError, 'Unable to sync the queued report save.'),
-              )
-              break
-            }
-
-            // A non-offline failure (e.g. the report was locked or the
-            // assignment removed) will never succeed on retry - count attempts
-            // and dead-letter after the cap instead of retrying forever.
-            const updated = await recordQueuedReportSaveFailure(
-              queuedSave.id,
-              getMessage(syncError, 'Unable to sync the queued report save.'),
-            )
-
-            if (updated && updated.attempts >= MAX_QUEUED_SAVE_ATTEMPTS) {
-              await removeQueuedReportSave(queuedSave.id)
-              discardedCount += 1
-            }
-          }
-        }
-
-        if (syncedSaves.length) {
-          await applyServerSavedReports(syncedSaves)
-        }
-
-        await refreshQueuedReportSaveState(userId)
-
-        if (syncedCount > 0 && !options?.silent) {
-          toast.success(
-            syncedCount === 1
-              ? 'Offline report save synced.'
-              : `${syncedCount} offline report saves synced.`,
-          )
-        }
-
-        if (discardedCount > 0) {
-          toast.error(
-            discardedCount === 1
-              ? 'A queued report save could not be synced after several attempts and was discarded. Please re-enter it.'
-              : `${discardedCount} queued report saves could not be synced and were discarded. Please re-enter them.`,
-          )
-        }
+        // One tab replays the queue at a time. Every open tab listens for the
+        // same online/visibility events, and without this they would each
+        // POST the same queued saves (idempotent on the server, but wasteful
+        // and confusing in the audit trail). Browsers without Web Locks fall
+        // back to the per-tab guard above.
+        await withQueueSyncLock(() => replayQueuedReportSaves(userId, options))
       } finally {
         queuedReportSyncInFlightRef.current = false
-        if (shouldEndBackgroundSync) {
-          endBackgroundSync()
-        }
       }
     },
-    [
-      applyServerSavedReports,
-      beginBackgroundSync,
-      client,
-      endBackgroundSync,
-      refreshQueuedReportSaveState,
-    ],
+    [client, replayQueuedReportSaves],
   )
 
   useEffect(() => {
@@ -2076,6 +2214,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           }
         }
 
+        // A stale copy (another device or an administrator saved first) is not
+        // an error toast: the form shows both versions and asks the user.
+        if (saveError instanceof ApiError && saveError.status === 409) {
+          const failure = classifyQueuedSaveFailure(saveError)
+          if (failure.kind === 'conflict') {
+            return {
+              saved: false,
+              queued: false,
+              conflict: {
+                reason: failure.reason,
+                message: failure.message,
+                serverReport: failure.serverReport,
+              },
+            }
+          }
+        }
+
         toast.error(getMessage(saveError, 'Unable to save the report.'))
         return { saved: false, queued: false }
       }
@@ -2085,6 +2240,30 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       client,
       refreshQueuedReportSaveState,
     ],
+  )
+
+  const discardQueuedReportSave = useCallback(
+    async (queuedSaveId: string): Promise<void> => {
+      await removeQueuedReportSave(queuedSaveId)
+      await refreshQueuedReportSaveState(currentUserIdRef.current)
+      toast.info('Offline changes discarded. The server copy stands.')
+    },
+    [refreshQueuedReportSaveState],
+  )
+
+  const applyQueuedReportSave = useCallback(
+    async (
+      queuedSaveId: string,
+      options?: { expectedUpdatedAt?: string | null },
+    ): Promise<boolean> => {
+      await retryQueuedReportSave(queuedSaveId, options)
+      await refreshQueuedReportSaveState(currentUserIdRef.current)
+      await flushQueuedReportSaves()
+
+      const remaining = await listQueuedReportSaves(currentUserIdRef.current ?? undefined)
+      return !remaining.some((queuedSave) => queuedSave.id === queuedSaveId)
+    },
+    [flushQueuedReportSaves, refreshQueuedReportSaveState],
   )
 
   const lockReport = useCallback(
@@ -2463,6 +2642,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     )?.[0] ?? null
   }, [])
 
+  const queuedReportSaveList = useMemo(
+    () =>
+      Object.values(queuedReportSaves).sort((left, right) =>
+        left.queuedAt.localeCompare(right.queuedAt),
+      ),
+    [queuedReportSaves],
+  )
+
   const value = useMemo<AppDataContextValue>(
     () => ({
       state,
@@ -2487,8 +2674,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       approveAdminAccessRequest,
       rejectAdminAccessRequest,
       saveReport,
-      queuedReportSaveCount: queuedReportSaveIds.size,
+      queuedReportSaveCount: queuedReportSaveList.filter((queuedSave) => queuedSave.status === 'pending').length,
+      conflictedReportSaveCount: queuedReportSaveList.filter((queuedSave) => queuedSave.status === 'conflict').length,
+      queuedReportSaves: queuedReportSaveList,
       hasQueuedReportSave,
+      getQueuedReportSave,
+      discardQueuedReportSave,
+      applyQueuedReportSave,
       lockReport,
       unlockReport,
       isReportDetailLoaded,
@@ -2531,8 +2723,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       approveAdminAccessRequest,
       rejectAdminAccessRequest,
       saveReport,
-      queuedReportSaveIds,
+      queuedReportSaveList,
       hasQueuedReportSave,
+      getQueuedReportSave,
+      discardQueuedReportSave,
+      applyQueuedReportSave,
       lockReport,
       unlockReport,
       isReportDetailLoaded,

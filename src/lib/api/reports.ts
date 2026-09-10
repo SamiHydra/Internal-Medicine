@@ -100,6 +100,11 @@ export async function saveReport(
     reportingPeriodId: payload.reportingPeriodId,
     values: payload.values,
     submit: payload.submit ?? false,
+    // Only sent when the caller opted into stale-write detection; the key's
+    // presence is what switches the server check on.
+    ...(payload.expectedUpdatedAt !== undefined
+      ? { expectedUpdatedAt: payload.expectedUpdatedAt }
+      : {}),
   })
 }
 

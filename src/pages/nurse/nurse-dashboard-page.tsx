@@ -10,6 +10,7 @@ import {
   SectionHeader,
   panelClass,
 } from '@/components/dashboard/section-panel'
+import { OfflineSaveBanner } from '@/components/reports/offline-save-banner'
 import { ReportAssignmentCard } from '@/components/reports/report-assignment-card'
 import { Button } from '@/components/ui/button'
 import { getCurrentWeekAssignmentCards } from '@/data/selectors'
@@ -51,6 +52,7 @@ export function NurseDashboardPage() {
 
   return (
     <div className="space-y-6 px-4 py-6 md:px-6 md:py-8">
+      <OfflineSaveBanner />
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -159,7 +161,7 @@ export function NurseDashboardPage() {
                     <div className="min-w-0 space-y-1">
                       <p className="text-sm font-semibold text-[#000a1e]">{notification.title}</p>
                       <p className="text-sm leading-6 text-[#5b6169]">{notification.message}</p>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9aa7b8]">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#69727d]">
                         {formatTimestamp(notification.createdAt)}
                       </p>
                     </div>
@@ -197,7 +199,7 @@ export function NurseDashboardPage() {
           <h2 className="mt-1.5 font-display text-[1.4rem] font-bold leading-tight tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
             Need another service?
           </h2>
-          <p className="mt-1.5 text-sm leading-6 text-[#74777f]">
+          <p className="mt-1.5 text-sm leading-6 text-[#666970]">
             Request access to an additional reporting assignment or service line.
           </p>
           <Button asChild size="sm" variant="secondary" className="mt-4">

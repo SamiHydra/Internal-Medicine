@@ -17,6 +17,35 @@ export type SaveReportPayload = {
   actorId: string
   values: Record<string, ReportFieldValue>
   submit?: boolean
+  /**
+   * Optimistic-concurrency token (docs/OFFLINE_SYNC_MODEL.md): the report's
+   * `updatedAt` as the client loaded it, or `null` when the client saw no
+   * report for the week yet. The server answers 409 when it no longer matches.
+   * Leave undefined to skip the check (historical last-write-wins save).
+   */
+  expectedUpdatedAt?: string | null
+}
+
+/** The server's copy of a report as returned inside a 409 conflict response. */
+export type ReportConflictSnapshot = {
+  id: string
+  assignmentId: string
+  reportingPeriodId: string
+  status: string
+  submittedAt: string | null
+  lockedAt: string | null
+  updatedAt: string | null
+  updatedById: string | null
+  updatedByName: string | null
+  values: Record<string, ReportFieldValue>
+}
+
+export type ReportConflictResponse = {
+  message: string
+  conflict: {
+    reason: 'stale' | 'exists'
+    report: ReportConflictSnapshot
+  }
 }
 
 export type AccessRequestPayload = {
@@ -494,6 +523,69 @@ export type AdminAuditResponse = {
     entityTypes: AdminAuditEntityOption[]
     actors: Array<{ id: string; name: string }>
   }
+}
+
+/** GET /api/admin/system-health (maintenance only). States, ages and counts; never secrets. */
+export type SystemHealthCheck = {
+  key: string
+  label: string
+  status: 'pass' | 'warn' | 'fail'
+  detail: string
+}
+
+export type SystemHealthSnapshot = {
+  status: 'healthy' | 'degraded' | 'unhealthy'
+  checkedAt: string
+  release: { sha: string; builtAt: string | null; source: string }
+  application: {
+    name: string
+    environment: string
+    debug: boolean
+    phpVersion: string
+    frameworkVersion: string
+    opcache: boolean
+    configCached: boolean
+    routesCached: boolean
+    timezone: string
+    hospitalTimezone: string
+  }
+  database: {
+    driver: string
+    connected: boolean
+    latencyMs: number | null
+    pendingMigrations: number | null
+  }
+  queue: {
+    connection: string
+    driver: string
+    workerMode: string
+    thresholds: { depth: number; oldestJobAgeSeconds: number }
+    queues: Array<{ name: string; depth: number; oldestJobAgeSeconds: number | null }>
+    failedJobs: { total: number | null; last24h: number | null; latestFailedAt: string | null }
+  }
+  scheduler: { lastTick: string | null; ageSeconds: number | null; fresh: boolean }
+  backups: {
+    directory: string
+    secondaryDirectory: string
+    latestDump: { at: string | null; ageHours: number | null }
+    latestStorageArchive: { at: string | null; ageHours: number | null }
+    latestSecondaryDump: { at: string | null; ageHours: number | null }
+    restoreDrillVerifiedAt: string | null
+    restoreDrillMaxAgeDays: number
+  }
+  storage: { writable: boolean; freeDiskGb: number | null; minFreeDiskGb: number; uploadsDisk: string }
+  transports: {
+    mail: { driver: string; configured: boolean }
+    sms: { driver: string; configured: boolean }
+  }
+  observability: {
+    webhookConfigured: boolean
+    errorMonitoringChannel: string | null
+    slowRequestThresholdMs: number
+    clientErrorReporting: boolean
+    counters: Record<string, { lastHour: number; previousHour: number }>
+  }
+  checks: SystemHealthCheck[]
 }
 
 export type AdminAuditQuery = {

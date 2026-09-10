@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { panelClass, SectionEyebrow } from '@/components/dashboard/section-panel'
 import { ReportContentSkeleton } from '@/components/layout/loading-skeletons'
 import { ReportComments } from '@/components/reports/report-comments'
+import { ReportConflictPanel } from '@/components/reports/report-conflict-panel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -23,7 +24,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { departmentMap, templateMap } from '@/config/templates'
 import { deriveReportStatus, getReportForAssignmentPeriod } from '@/data/selectors'
-import { useAppData, useAppSync } from '@/context/app-data-context'
+import { useAppData, useAppSync, type SaveReportConflict } from '@/context/app-data-context'
 import { formatTimestamp, getDeadlineForPeriod } from '@/lib/dates'
 import { computeWeeklyValue } from '@/lib/metrics'
 import { cn } from '@/lib/utils'
@@ -31,6 +32,7 @@ import type {
   ReportAssignment,
   ReportFieldValue,
   ReportingPeriod,
+  ReportRecord,
   ReportStatus,
   ReportTemplateConfig,
   ReportTemplateField,
@@ -39,6 +41,17 @@ import type {
 
 type ReportFormValues = {
   values: Record<string, Partial<Record<Weekday, string>>>
+}
+
+/**
+ * An online save the server refused because the copy this form loaded was
+ * stale (docs/OFFLINE_SYNC_MODEL.md). The values the user tried to save are
+ * kept here until they apply or drop them; the form itself is left untouched.
+ */
+type LocalConflict = {
+  conflict: SaveReportConflict
+  values: Record<string, ReportFieldValue>
+  submit: boolean
 }
 
 // Generous upper bound for any plausible weekly hospital metric. Guards against
@@ -102,7 +115,7 @@ function createTemplateSchema(template: ReportTemplateConfig) {
 
 function createDefaultValues(
   template: ReportTemplateConfig,
-  report: ReturnType<typeof getReportForAssignmentPeriod>,
+  report: Pick<ReportRecord, 'values'> | null,
 ) {
   const values = Object.fromEntries(
     template.fields.map((field) => [
@@ -322,7 +335,7 @@ function ReportStatePanel({
         <h1 className="font-display text-[1.6rem] font-bold leading-tight tracking-[-0.02em] text-[#000a1e] md:text-[1.8rem]">
           {title}
         </h1>
-        <p className="max-w-xl text-sm leading-6 text-[#74777f]">{description}</p>
+        <p className="max-w-xl text-sm leading-6 text-[#666970]">{description}</p>
         {detail ? (
           <p className="max-w-xl rounded-[0.35rem] border border-[#e6ecf3] bg-[#f8fafc] px-4 py-3 text-sm leading-6 text-[#5b6169]">
             {detail}
@@ -444,6 +457,10 @@ type ResolvedReportFormProps = Pick<
   | 'isReportDetailLoaded'
   | 'queuedReportSaveCount'
   | 'hasQueuedReportSave'
+  | 'getQueuedReportSave'
+  | 'discardQueuedReportSave'
+  | 'applyQueuedReportSave'
+  | 'ensureReportSummaryData'
 > & {
   currentUser: NonNullable<ReturnType<typeof useAppData>['currentUser']>
   assignment: ReportAssignment
@@ -463,6 +480,10 @@ function ResolvedReportForm({
   isReportDetailLoaded,
   queuedReportSaveCount,
   hasQueuedReportSave,
+  getQueuedReportSave,
+  discardQueuedReportSave,
+  applyQueuedReportSave,
+  ensureReportSummaryData,
   isDataRefreshing,
   isSyncing,
   assignment,
@@ -473,6 +494,15 @@ function ResolvedReportForm({
   const [isAutosaving, setIsAutosaving] = useState(false)
   const [isSavingDraft, setIsSavingDraft] = useState(false)
   const [isSubmittingReport, setIsSubmittingReport] = useState(false)
+  const [isTogglingLock, setIsTogglingLock] = useState(false)
+  const [localConflict, setLocalConflict] = useState<LocalConflict | null>(null)
+  const [isResolvingConflict, setIsResolvingConflict] = useState(false)
+  // Signature of the values the server last refused (an HTTP error, not an
+  // offline drop). Autosave stays quiet for those exact values: every failed
+  // save toggles the pending flags the autosave effect depends on, so without
+  // this it re-armed itself 1.4 s later and hammered a failing server with an
+  // error toast per attempt. An edit or an explicit Save/Submit clears it.
+  const failedSaveSignatureRef = useRef<string | null>(null)
   const template = templateMap[assignment.templateId]
   const department = departmentMap[assignment.departmentId]
   const report = getReportForAssignmentPeriod(state, assignment.id, period.id)
@@ -490,6 +520,11 @@ function ResolvedReportForm({
     currentUser.role !== 'nurse' || currentUser.id === assignment.nurseId
   const canEdit = reportStatus !== 'locked' && canView
   const hasQueuedSaveForReport = hasQueuedReportSave(assignment.id, period.id)
+  const queuedSaveRecord = getQueuedReportSave(assignment.id, period.id)
+  // An offline save the server refused once the network came back. It stays
+  // on this device until the user applies or discards it from the panel.
+  const parkedSave = queuedSaveRecord?.status === 'conflict' ? queuedSaveRecord : null
+  const hasOpenConflict = Boolean(parkedSave || localConflict)
   const [mobileActiveDay, setMobileActiveDay] = useState<Weekday>(
     () => template.activeDays[0] ?? 'monday',
   )
@@ -700,6 +735,7 @@ function ResolvedReportForm({
       !canEdit ||
       !reportDetailsLoaded ||
       isLiveReportLookupPending ||
+      hasOpenConflict ||
       !form.formState.isDirty ||
       !form.formState.isValid ||
       isAutosaving ||
@@ -712,6 +748,10 @@ function ResolvedReportForm({
     const timer = window.setTimeout(() => {
       const values = form.getValues()
       const savedValuesSignature = JSON.stringify(values.values)
+      if (failedSaveSignatureRef.current === savedValuesSignature) {
+        return
+      }
+      const persistedValues = buildPersistedValues(template, values.values)
       setIsAutosaving(true)
 
       void (async () => {
@@ -720,12 +760,19 @@ function ResolvedReportForm({
             assignmentId: assignment.id,
             reportingPeriodId: period.id,
             actorId: currentUser.id,
-            values: buildPersistedValues(template, values.values),
+            values: persistedValues,
             submit: false,
+            expectedUpdatedAt: report?.updatedAt ?? null,
           })
-          if (!result.saved) {
+          if (result.conflict) {
+            setLocalConflict({ conflict: result.conflict, values: persistedValues, submit: false })
             return
           }
+          if (!result.saved) {
+            failedSaveSignatureRef.current = savedValuesSignature
+            return
+          }
+          failedSaveSignatureRef.current = null
 
           const currentValues = form.getValues()
           const currentValuesSignature = JSON.stringify(currentValues.values)
@@ -754,11 +801,13 @@ function ResolvedReportForm({
     form,
     form.formState.isDirty,
     form.formState.isValid,
+    hasOpenConflict,
     isAutosaving,
     isSavingDraft,
     isSubmittingReport,
     isLiveReportLookupPending,
     period.id,
+    report?.updatedAt,
     reportDetailsLoaded,
     saveReport,
     template,
@@ -853,17 +902,26 @@ function ResolvedReportForm({
 
     try {
       const savedValuesSignature = JSON.stringify(values.values)
+      const persistedValues = buildPersistedValues(template, values.values)
       const result = await saveReport({
         assignmentId: assignment.id,
         reportingPeriodId: period.id,
         actorId: currentUser.id,
-        values: buildPersistedValues(template, values.values),
+        values: persistedValues,
         submit: false,
+        expectedUpdatedAt: report?.updatedAt ?? null,
       })
 
-      if (!result.saved) {
+      if (result.conflict) {
+        setLocalConflict({ conflict: result.conflict, values: persistedValues, submit: false })
         return
       }
+
+      if (!result.saved) {
+        failedSaveSignatureRef.current = savedValuesSignature
+        return
+      }
+      failedSaveSignatureRef.current = null
 
       const currentValues = form.getValues()
       if (JSON.stringify(currentValues.values) === savedValuesSignature) {
@@ -884,17 +942,26 @@ function ResolvedReportForm({
 
     try {
       const submittedValuesSignature = JSON.stringify(values.values)
+      const persistedValues = buildPersistedValues(template, values.values)
       const result = await saveReport({
         assignmentId: assignment.id,
         reportingPeriodId: period.id,
         actorId: currentUser.id,
-        values: buildPersistedValues(template, values.values),
+        values: persistedValues,
         submit: true,
+        expectedUpdatedAt: report?.updatedAt ?? null,
       })
 
-      if (!result.saved) {
+      if (result.conflict) {
+        setLocalConflict({ conflict: result.conflict, values: persistedValues, submit: true })
         return
       }
+
+      if (!result.saved) {
+        failedSaveSignatureRef.current = submittedValuesSignature
+        return
+      }
+      failedSaveSignatureRef.current = null
 
       const currentValues = form.getValues()
       if (JSON.stringify(currentValues.values) === submittedValuesSignature) {
@@ -915,6 +982,26 @@ function ResolvedReportForm({
       setIsSubmittingReport(false)
     }
   }, handleInvalidSubmit)
+
+  // One lock/unlock in flight at a time: the buttons carried no pending state,
+  // so a double-click (or a click while a slow answer was pending) sent the
+  // request twice.
+  const toggleLock = async (locked: boolean) => {
+    if (!report || isTogglingLock) {
+      return
+    }
+
+    setIsTogglingLock(true)
+    try {
+      if (locked) {
+        await lockReport(report.id, currentUser.id)
+      } else {
+        await unlockReport(report.id, currentUser.id)
+      }
+    } finally {
+      setIsTogglingLock(false)
+    }
+  }
 
   const deadlineAt = state.settings.deadlineEnforced
     ? getDeadlineForPeriod(
@@ -963,6 +1050,111 @@ function ResolvedReportForm({
       setMobileActiveDay(nextDay)
     }
   }
+
+  const clockLabel = () =>
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+  // Reload the server's copy of this week and put it in the grid, replacing
+  // whatever the user had typed: the explicit "keep the server copy" outcome.
+  const refreshServerCopy = async (serverReportId?: string | null) => {
+    await ensureReportSummaryData({
+      assignmentId: assignment.id,
+      reportingPeriodId: period.id,
+      force: true,
+    })
+    const targetId = serverReportId ?? report?.id
+    if (!targetId) {
+      form.reset(createDefaultValues(template, null))
+      return
+    }
+
+    const details = await ensureReportDetails([targetId], { force: true })
+    const detail = details[targetId]
+    form.reset(createDefaultValues(template, detail ? { values: detail.values } : report))
+  }
+
+  const keepServerCopy = async () => {
+    setIsResolvingConflict(true)
+
+    try {
+      const serverReportId =
+        parkedSave?.conflict?.serverReport?.id ?? localConflict?.conflict.serverReport?.id ?? null
+
+      if (parkedSave) {
+        await discardQueuedReportSave(parkedSave.id)
+      }
+
+      setLocalConflict(null)
+      setFormErrorMessage(null)
+      setAutosaveLabel(null)
+      await refreshServerCopy(serverReportId)
+    } finally {
+      setIsResolvingConflict(false)
+    }
+  }
+
+  const applyMyChanges = async () => {
+    setIsResolvingConflict(true)
+
+    try {
+      if (parkedSave) {
+        // Re-base the queued save on the revision the server reported, so the
+        // replay is an explicit, audited overwrite rather than a stale write.
+        const serverRevision = parkedSave.conflict?.serverReport?.updatedAt ?? null
+        const applied = await applyQueuedReportSave(
+          parkedSave.id,
+          serverRevision ? { expectedUpdatedAt: serverRevision } : undefined,
+        )
+
+        if (applied) {
+          setFormErrorMessage(null)
+          setAutosaveLabel(
+            `${parkedSave.payload.submit ? 'Offline submission applied' : 'Offline changes applied'} at ${clockLabel()}`,
+          )
+        }
+
+        return
+      }
+
+      if (!localConflict) {
+        return
+      }
+
+      const result = await saveReport({
+        assignmentId: assignment.id,
+        reportingPeriodId: period.id,
+        actorId: currentUser.id,
+        values: localConflict.values,
+        submit: localConflict.submit,
+        expectedUpdatedAt:
+          localConflict.conflict.serverReport?.updatedAt ?? report?.updatedAt ?? null,
+      })
+
+      if (result.conflict) {
+        setLocalConflict({ ...localConflict, conflict: result.conflict })
+        return
+      }
+
+      if (!result.saved) {
+        return
+      }
+
+      setLocalConflict(null)
+      form.reset(form.getValues())
+      setFormErrorMessage(null)
+      setAutosaveLabel(
+        `${localConflict.submit ? (result.queued ? 'Submission queued offline' : 'Report submitted') : result.queued ? 'Draft queued offline' : 'Draft saved'} at ${clockLabel()}`,
+      )
+
+      if (localConflict.submit && !result.queued) {
+        toast.success('Report submitted', {
+          description: `${department.name} for ${period.label} was sent for review.`,
+        })
+      }
+    } finally {
+      setIsResolvingConflict(false)
+    }
+  }
   const summaryItems = [
     {
       label: 'Status',
@@ -992,6 +1184,23 @@ function ResolvedReportForm({
 
   return (
     <div className="min-w-0 space-y-6">
+      {parkedSave || localConflict ? (
+        <ReportConflictPanel
+          template={template}
+          reason={parkedSave?.conflict?.reason ?? localConflict?.conflict.reason ?? 'rejected'}
+          message={parkedSave?.conflict?.message ?? localConflict?.conflict.message ?? ''}
+          detectedAt={parkedSave?.conflict?.detectedAt ?? null}
+          localValues={parkedSave?.payload.values ?? localConflict?.values ?? {}}
+          serverReport={
+            parkedSave?.conflict?.serverReport ?? localConflict?.conflict.serverReport ?? null
+          }
+          submitIntended={Boolean(parkedSave?.payload.submit ?? localConflict?.submit)}
+          isApplying={isResolvingConflict}
+          onApply={() => void applyMyChanges()}
+          onKeepServer={() => void keepServerCopy()}
+        />
+      ) : null}
+
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1004,7 +1213,7 @@ function ResolvedReportForm({
             <h1 className="mt-1.5 font-display text-[1.5rem] font-bold leading-tight tracking-[-0.02em] text-[#000a1e] md:text-[1.7rem]">
               {department.name} weekly report
             </h1>
-            <p className="mt-1.5 text-sm text-[#74777f]">
+            <p className="mt-1.5 text-sm text-[#666970]">
               {template.name} · {period.label}
             </p>
           </div>
@@ -1031,13 +1240,13 @@ function ResolvedReportForm({
               key={item.label}
               className="rounded-[0.3rem] border border-[#e6ecf3] bg-[#f8fafc] px-3.5 py-3"
             >
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#666970]">
                 {item.label}
               </p>
               <p className="mt-2 break-words font-display text-[1.2rem] font-bold leading-[1.12] tracking-[-0.02em] text-[#000a1e]">
                 {item.value}
               </p>
-              <p className="mt-1 text-xs leading-5 text-[#74777f]">{item.note}</p>
+              <p className="mt-1 text-xs leading-5 text-[#666970]">{item.note}</p>
             </div>
           ))}
         </div>
@@ -1071,9 +1280,18 @@ function ResolvedReportForm({
                   Offline save queued
                 </span>
               ) : null}
+              {parkedSave ? (
+                <span className="rounded-[0.25rem] border border-[#f1d1d1] bg-[#fff1f1] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9d2a2a]">
+                  Offline changes need review
+                </span>
+              ) : null}
             </div>
 
-            <p className={cn('text-sm', formErrorMessage ? 'text-[#ba1a1a]' : 'text-[#5b6169]')}>
+            <p
+              role="status"
+              aria-live="polite"
+              className={cn('text-sm', formErrorMessage ? 'text-[#ba1a1a]' : 'text-[#5b6169]')}
+            >
               {formErrorMessage ?? autosaveStatusLabel}
             </p>
           </div>
@@ -1083,15 +1301,19 @@ function ResolvedReportForm({
               reportStatus === 'locked' ? (
                 <Button
                   variant="secondary"
-                  onClick={() => void unlockReport(report.id, currentUser.id)}
+                  onClick={() => void toggleLock(false)}
+                  disabled={isTogglingLock}
                 >
+                  {isTogglingLock ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   Unlock report
                 </Button>
               ) : (
                 <Button
                   variant="secondary"
-                  onClick={() => void lockReport(report.id, currentUser.id)}
+                  onClick={() => void toggleLock(true)}
+                  disabled={isTogglingLock}
                 >
+                  {isTogglingLock ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   Lock report
                 </Button>
               )
@@ -1099,12 +1321,12 @@ function ResolvedReportForm({
             <Button
               variant="secondary"
               onClick={saveDraft}
-              disabled={!canEdit || isSavingDraft || isSubmittingReport}
+              disabled={!canEdit || hasOpenConflict || isSavingDraft || isSubmittingReport}
             >
               {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {isSavingDraft ? 'Saving...' : 'Save draft'}
             </Button>
-            <Button onClick={submitReport} disabled={!canEdit || isSubmittingReport || isSavingDraft}>
+            <Button onClick={submitReport} disabled={!canEdit || hasOpenConflict || isSubmittingReport || isSavingDraft}>
               {isSubmittingReport ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {isSubmittingReport ? 'Submitting...' : 'Submit report'}
             </Button>
@@ -1152,7 +1374,7 @@ function ResolvedReportForm({
                 ))}
               </ul>
             ) : null}
-            <p className="text-xs text-[#74777f]">
+            <p className="text-xs text-[#666970]">
               Warnings are advisory - you can still submit. Errors must be corrected before the report is accepted.
             </p>
           </div>
@@ -1175,7 +1397,7 @@ function ResolvedReportForm({
                 <ChevronLeft className="h-5 w-5" />
               </Button>
               <div className="min-w-0 text-center">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#666970]">
                   Day {mobileDayProgressLabel}
                 </p>
                 <p className="mt-1 font-display text-[1.35rem] font-bold leading-tight text-[#000a1e]">
@@ -1196,7 +1418,7 @@ function ResolvedReportForm({
             </div>
 
             <div
-              className="mt-3 grid gap-2"
+              className="mt-3 grid gap-1"
               style={{ gridTemplateColumns: `repeat(${template.activeDays.length}, minmax(0, 1fr))` }}
             >
               {template.activeDays.map((day) => (
@@ -1205,7 +1427,7 @@ function ResolvedReportForm({
                   type="button"
                   onClick={() => setMobileActiveDay(day)}
                   className={cn(
-                    'h-11 rounded-[0.25rem] border px-1 text-xs font-bold uppercase tracking-[0.08em] transition-colors',
+                    'h-11 min-w-11 rounded-[0.25rem] border px-1 text-xs font-bold uppercase tracking-[0.08em] transition-colors',
                     day === activeMobileDay
                       ? 'border-[#005db6] bg-[#edf4fb] text-[#005db6]'
                       : 'border-[#d4dde8] bg-white text-[#5b6169]',
@@ -1239,7 +1461,7 @@ function ResolvedReportForm({
                     {section.title}
                   </h2>
                   {section.description ? (
-                    <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[#74777f]">{section.description}</p>
+                    <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[#666970]">{section.description}</p>
                   ) : null}
                 </div>
 
@@ -1247,7 +1469,7 @@ function ResolvedReportForm({
                   <div className="overflow-x-auto pb-2">
                     <div className="min-w-[980px] space-y-3 pr-2">
                       <div
-                        className="grid gap-3 px-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#74777f]"
+                        className="grid gap-3 px-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#666970]"
                         style={{ gridTemplateColumns: desktopGridTemplate }}
                       >
                         <span>Metric</span>
@@ -1283,7 +1505,7 @@ function ResolvedReportForm({
                                 <Label className="text-sm font-semibold text-[#000a1e]">
                                   {field.label}
                                 </Label>
-                                <p className={cn('text-xs', rowErrorMessage ? 'text-[#ba1a1a]' : 'text-[#74777f]')}>
+                                <p className={cn('text-xs', rowErrorMessage ? 'text-[#ba1a1a]' : 'text-[#666970]')}>
                                   {rowErrorMessage ??
                                     (field.unit ? `Unit: ${field.unit}` : 'Daily entry')}
                                 </p>
@@ -1361,7 +1583,7 @@ function ResolvedReportForm({
                                     'mt-1 text-xs leading-5',
                                     activeDayErrorMessage
                                       ? 'text-[#ba1a1a]'
-                                      : 'text-[#74777f]',
+                                      : 'text-[#666970]',
                                   )}
                                 >
                                   {activeDayErrorMessage ?? field.unit}
@@ -1372,7 +1594,7 @@ function ResolvedReportForm({
                                 box was 100px wide and wrapped most labels onto
                                 a second and third line. */}
                             <span className="shrink-0 whitespace-nowrap rounded-[0.25rem] border border-[#d9e0e7] bg-white px-2 py-1 text-[12px] font-bold tabular-nums text-[#1d3047]">
-                              <span className="font-semibold text-[#74777f]">Week </span>
+                              <span className="font-semibold text-[#666970]">Week </span>
                               {renderComputedValue(field, fieldValues, template, watchedValues ?? {})}
                             </span>
                           </div>
@@ -1418,14 +1640,16 @@ function ResolvedReportForm({
               <p className="truncate text-[13px] font-semibold text-[#000a1e] sm:text-sm">
                 {hasQueuedSaveForReport
                   ? 'Offline changes queued'
-                  : form.formState.isDirty
-                    ? 'Unsaved changes present'
-                    : 'All changes saved'}
+                  : hasOpenConflict
+                    ? 'Changes need your review'
+                    : form.formState.isDirty
+                      ? 'Unsaved changes present'
+                      : 'All changes saved'}
               </p>
               <p
                 className={cn(
                   'text-[13px] leading-5 text-[#5b6169] sm:text-sm',
-                  formErrorMessage || hasQueuedSaveForReport
+                  formErrorMessage || hasQueuedSaveForReport || hasOpenConflict
                     ? 'block'
                     : 'hidden sm:block',
                 )}
@@ -1433,7 +1657,9 @@ function ResolvedReportForm({
                 {formErrorMessage ??
                   (hasQueuedSaveForReport
                     ? 'This report will sync automatically when the connection returns.'
-                    : 'Weekly totals calculate automatically and remain read-only.')}
+                    : hasOpenConflict
+                      ? 'Use the review panel above to apply or discard the refused changes.'
+                      : 'Weekly totals calculate automatically and remain read-only.')}
               </p>
             </div>
             <div className="flex shrink-0 gap-2 sm:gap-3">
@@ -1443,7 +1669,7 @@ function ResolvedReportForm({
                 type="button"
                 className="sm:h-12 sm:px-4 sm:text-sm"
                 onClick={saveDraft}
-                disabled={!canEdit || isSavingDraft || isSubmittingReport}
+                disabled={!canEdit || hasOpenConflict || isSavingDraft || isSubmittingReport}
               >
                 {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 {isSavingDraft ? 'Saving...' : 'Save'}
@@ -1453,7 +1679,7 @@ function ResolvedReportForm({
                 type="submit"
                 size="sm"
                 className="sm:h-12 sm:px-4 sm:text-sm"
-                disabled={!canEdit || isSubmittingReport || isSavingDraft}
+                disabled={!canEdit || hasOpenConflict || isSubmittingReport || isSavingDraft}
               >
                 {isSubmittingReport ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 {isSubmittingReport ? 'Submitting...' : 'Submit'}

@@ -12,6 +12,7 @@ use App\Services\Reports\ReportQualityService;
 use App\Services\Reports\ReportSubmissionService;
 use App\Support\Authorization\Permissions;
 use App\Support\Reports\ReportPeriodWindow;
+use App\Support\Reports\ReportValues;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -263,6 +264,11 @@ class ReportWorkflowController extends Controller
             'reportingPeriodId' => ['required_without:reporting_period_id', 'uuid'],
             'values' => ['sometimes', 'array'],
             'submit' => ['sometimes', 'boolean'],
+            // Optimistic concurrency (docs/OFFLINE_SYNC_MODEL.md): the updatedAt
+            // the client loaded, or null when it believes no report exists yet.
+            // Omit the key entirely to keep the historical last-write-wins save.
+            'expected_updated_at' => ['sometimes', 'nullable', 'date'],
+            'expectedUpdatedAt' => ['sometimes', 'nullable', 'date'],
         ]);
 
         $assignment = ReportAssignment::query()->findOrFail($validated['assignment_id'] ?? $validated['assignmentId']);
@@ -274,6 +280,7 @@ class ReportWorkflowController extends Controller
             $period,
             $validated['values'] ?? [],
             (bool) ($validated['submit'] ?? false),
+            expectedRevision: $this->expectedRevision($request),
         );
 
         return response()->json($this->serializeReport($report, withTrends: true), 201);
@@ -286,6 +293,8 @@ class ReportWorkflowController extends Controller
         $validated = $request->validate([
             'values' => ['required', 'array'],
             'submit' => ['sometimes', 'boolean'],
+            'expected_updated_at' => ['sometimes', 'nullable', 'date'],
+            'expectedUpdatedAt' => ['sometimes', 'nullable', 'date'],
         ]);
         $report->loadMissing(['assignment', 'reportingPeriod']);
 
@@ -295,6 +304,7 @@ class ReportWorkflowController extends Controller
             $report->reportingPeriod,
             $validated['values'],
             (bool) ($validated['submit'] ?? false),
+            expectedRevision: $this->expectedRevision($request),
         );
 
         return response()->json($this->serializeReport($savedReport, withTrends: true));
@@ -306,6 +316,8 @@ class ReportWorkflowController extends Controller
 
         $validated = $request->validate([
             'values' => ['sometimes', 'array'],
+            'expected_updated_at' => ['sometimes', 'nullable', 'date'],
+            'expectedUpdatedAt' => ['sometimes', 'nullable', 'date'],
         ]);
         $report->loadMissing(['assignment', 'reportingPeriod']);
 
@@ -315,6 +327,7 @@ class ReportWorkflowController extends Controller
             $report->reportingPeriod,
             $validated['values'] ?? [],
             true,
+            expectedRevision: $this->expectedRevision($request),
         );
 
         return response()->json($this->serializeReport($savedReport, withTrends: true));
@@ -356,6 +369,27 @@ class ReportWorkflowController extends Controller
         $query->whereHas('assignment', fn ($assignmentQuery) => $assignmentQuery
             ->where('nurse_id', $user->id)
             ->where('active', true));
+    }
+
+    /**
+     * Presence of the key is the opt-in: absent means the historical
+     * last-write-wins save; present-but-null means "I loaded no report".
+     */
+    private function expectedRevision(Request $request): ?string
+    {
+        foreach (['expectedUpdatedAt', 'expected_updated_at'] as $key) {
+            if (! $request->has($key)) {
+                continue;
+            }
+
+            $value = $request->input($key);
+
+            return $value === null || $value === ''
+                ? ReportSubmissionService::EXPECT_NO_REPORT
+                : (string) $value;
+        }
+
+        return null;
     }
 
     private function loadReport(Report $report): Report
@@ -452,35 +486,7 @@ class ReportWorkflowController extends Controller
      */
     private function serializeValues(Report $report): array
     {
-        $values = [];
-
-        foreach ($report->fieldValues as $fieldValue) {
-            $fieldKey = $fieldValue->fieldDefinition?->field_key;
-
-            if (! $fieldKey) {
-                continue;
-            }
-
-            $values[$fieldKey] ??= [
-                'fieldId' => $fieldKey,
-                'dailyValues' => [],
-            ];
-            $values[$fieldKey]['dailyValues'][$fieldValue->day_name] = match (true) {
-                $fieldValue->value_number !== null => $this->numericValue($fieldValue->value_number),
-                $fieldValue->value_time !== null => substr((string) $fieldValue->value_time, 0, 5),
-                $fieldValue->value_text !== null => $fieldValue->value_text,
-                default => $fieldValue->value_json,
-            };
-        }
-
-        return $values;
-    }
-
-    private function numericValue(mixed $value): int|float
-    {
-        $number = (float) $value;
-
-        return floor($number) === $number ? (int) $number : $number;
+        return ReportValues::serialize($report);
     }
 
     private function nullableFloat(mixed $value): ?float
