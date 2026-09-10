@@ -143,15 +143,22 @@ class ObservabilityTest extends TestCase
 
     public function test_slow_requests_are_logged_with_duration_and_counted(): void
     {
-        // Every request takes at least a millisecond; 0 would mean "disabled".
-        config(['observability.slow_request_ms' => 1]);
+        // A request that is guaranteed to exceed the threshold: an unauthenticated
+        // 401 can complete in under a millisecond on a fast runner and rounded
+        // to 0 ms, which made this assertion racy on CI. 0 would mean "disabled".
+        config(['observability.slow_request_ms' => 5]);
+        Route::middleware('api')->get('/api/observability-slow-probe', function () {
+            usleep(20_000);
+
+            return response()->json(['ok' => true]);
+        });
         Log::spy();
 
-        $this->getJson('/api/workspace')->assertStatus(401);
+        $this->getJson('/api/observability-slow-probe')->assertOk();
 
         Log::shouldHaveReceived('warning')
             ->withArgs(fn (string $message, array $context): bool => $message === 'Slow request'
-                && $context['path'] === '/api/workspace'
+                && $context['path'] === '/api/observability-slow-probe'
                 && array_key_exists('durationMs', $context)
                 && ! array_key_exists('body', $context))
             ->atLeast()->once();
