@@ -2,10 +2,12 @@
 
 namespace App\Console\Commands;
 
+use App\Models\AnalyticsExport;
 use Illuminate\Console\Command;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 
 class PruneOperationalData extends Command
 {
@@ -69,11 +71,67 @@ class PruneOperationalData extends Command
             'real-user performance metrics',
             $dryRun,
         );
+        $total += $this->pruneExpiredExports($dryRun);
 
         $verb = $dryRun ? 'eligible' : 'pruned';
         $this->info("{$total} row(s) {$verb} in total.");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Generated analytics exports: the file first, then the row. The download
+     * already 410s past expires_at, so nothing a user can still fetch is
+     * removed. Files are deleted individually (never a directory sweep) so a
+     * stray path in the column can never widen this into a storage wipe.
+     */
+    private function pruneExpiredExports(bool $dryRun): int
+    {
+        $days = (int) config('reports.retention.export_days', 0);
+
+        if ($days <= 0) {
+            $this->line('Skipped generated analytics exports; retention is disabled.');
+
+            return 0;
+        }
+
+        if (! Schema::hasTable('analytics_exports')) {
+            return 0;
+        }
+
+        $cutoff = now()->subDays($days);
+        $exports = AnalyticsExport::query()
+            ->where('created_at', '<', $cutoff)
+            ->get(['id', 'file_path']);
+
+        if ($exports->isEmpty()) {
+            $this->line("0 generated analytics exports older than {$days} days pruned.");
+
+            return 0;
+        }
+
+        if ($dryRun) {
+            $this->line("{$exports->count()} generated analytics exports older than {$days} days eligible.");
+
+            return $exports->count();
+        }
+
+        $disk = Storage::disk('local');
+        $filesRemoved = 0;
+
+        foreach ($exports as $export) {
+            $path = (string) $export->file_path;
+
+            if ($path !== '' && str_starts_with($path, 'analytics-exports/') && $disk->exists($path)) {
+                $disk->delete($path);
+                $filesRemoved++;
+            }
+        }
+
+        $removed = AnalyticsExport::query()->whereKey($exports->pluck('id'))->delete();
+        $this->line("{$removed} generated analytics exports older than {$days} days pruned ({$filesRemoved} file(s) removed).");
+
+        return $removed;
     }
 
     private function pruneByRetention(

@@ -33,7 +33,11 @@ class AccessRequestReviewService
                 ->with(['user', 'items.department', 'items.template'])
                 ->lockForUpdate()
                 ->findOrFail($accessRequest->id);
-            $oldValues = $lockedRequest->only(['status', 'reviewed_at', 'reviewed_by']);
+            $oldValues = [
+                ...$lockedRequest->only(['status', 'reviewed_at', 'reviewed_by']),
+                'userActive' => (bool) $lockedRequest->user?->active,
+            ];
+            $grantedAssignments = [];
 
             $lockedRequest->forceFill([
                 'status' => $decision,
@@ -66,7 +70,7 @@ class AccessRequestReviewService
                 }
 
                 foreach ($lockedRequest->items as $item) {
-                    ReportAssignment::query()->updateOrCreate(
+                    $assignment = ReportAssignment::query()->updateOrCreate(
                         [
                             'nurse_id' => $lockedRequest->user_id,
                             'department_id' => $item->department_id,
@@ -78,6 +82,11 @@ class AccessRequestReviewService
                             'approved_by' => $actor->id,
                         ],
                     );
+                    $grantedAssignments[] = [
+                        'id' => $assignment->id,
+                        'departmentId' => $item->department_id,
+                        'templateId' => $item->template_id,
+                    ];
                 }
             }
 
@@ -88,7 +97,14 @@ class AccessRequestReviewService
                 'access_request',
                 $lockedRequest->id,
                 $oldValues,
-                $lockedRequest->fresh()->only(['status', 'reviewed_at', 'reviewed_by']),
+                // Approval also activates the applicant and grants the requested
+                // assignments; the row records those side effects, not only the
+                // decision, so the trail explains where a nurse's access came from.
+                [
+                    ...$lockedRequest->fresh()->only(['status', 'reviewed_at', 'reviewed_by']),
+                    'userActive' => (bool) $lockedRequest->user?->active,
+                    'grantedAssignments' => $grantedAssignments,
+                ],
                 request(),
             );
 

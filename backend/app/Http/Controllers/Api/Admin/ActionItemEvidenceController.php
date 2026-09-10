@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Exceptions\StorageWriteFailedException;
 use App\Http\Controllers\Controller;
 use App\Models\ActionItem;
 use App\Models\ActionItemEvidence;
@@ -43,7 +44,15 @@ class ActionItemEvidenceController extends Controller
         $file = $validated['file'];
         $extension = strtolower($file->extension() ?: 'bin');
         $path = sprintf('action-items/%s/%s.%s', $actionItem->id, Str::uuid(), $extension);
-        Storage::disk('local')->putFileAs(dirname($path), $file, basename($path));
+        // The local disk answers `false` instead of throwing when the file
+        // cannot be written (config/filesystems.php, throw => false). Recording
+        // the row anyway produced a 201 for a file that never existed (storage
+        // drill, 2026-09-07); refuse before any metadata is written.
+        if (Storage::disk('local')->putFileAs(dirname($path), $file, basename($path)) === false) {
+            throw new StorageWriteFailedException(
+                'The evidence file could not be written to the server\'s storage, so nothing was saved. Ask an administrator to check the storage disk and its permissions, then try again.',
+            );
+        }
 
         try {
             $evidence = DB::transaction(function () use ($request, $actionItem, $file, $path): ActionItemEvidence {

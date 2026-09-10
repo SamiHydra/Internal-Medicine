@@ -40,6 +40,34 @@ function preloadAuthenticatedShell() {
 
 type LoginUser = SessionPayload['user']
 
+const CREDENTIALS_MESSAGE = 'Check your email and password and try again.'
+
+/**
+ * A credential rejection (401/422) keeps the generic wording: the API answers
+ * an unknown identifier and a wrong password identically, and this page must
+ * not undo that. Every other failure is not the user's fault and has to say
+ * so - a throttled address ("Too Many Attempts."), an inactive account, an
+ * outage, a hung or unreachable server - otherwise the user is told to
+ * re-check a password that was never examined and keeps retyping it.
+ */
+function loginFailureMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 401 || error.status === 422) {
+      return CREDENTIALS_MESSAGE
+    }
+    if (error.status >= 500) {
+      return `Sign-in is unavailable right now (${error.message}). Please try again in a moment.`
+    }
+    return error.message
+  }
+
+  if (error instanceof TypeError) {
+    return 'Unable to reach the server. Check your connection and try again.'
+  }
+
+  return CREDENTIALS_MESSAGE
+}
+
 export function LoginPage({
   authenticate,
   onAuthenticated,
@@ -178,11 +206,7 @@ export function LoginPage({
       })
       await completeAuthentication(user)
     } catch (loginError) {
-      setError(
-        loginError instanceof ApiError && loginError.status === 403
-          ? loginError.message
-          : 'Check your email and password and try again.',
-      )
+      setError(loginFailureMessage(loginError))
       setIsSigningIn(false)
     }
   }
@@ -225,14 +249,14 @@ export function LoginPage({
             </div>
 
             <div className="login-hero-content relative z-10 max-w-[31rem]">
-              <h1
+              <p
                 className="text-[3.95rem] font-extrabold leading-[0.92] tracking-[-0.055em] text-white lg:text-[4.3rem] xl:text-[4.7rem]"
                 style={{ fontFamily: 'Manrope, sans-serif' }}
               >
                 Department
                 <br />
                 <span className="text-[#63a1ff]">Management System</span>
-              </h1>
+              </p>
               <div className="mt-6 h-px w-28 bg-[linear-gradient(90deg,#63a1ff_0%,#f0b429_100%)]" />
             </div>
           </section>
@@ -265,12 +289,12 @@ export function LoginPage({
                 <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
                   Secure access
                 </p>
-                <h2
+                <h1
                   className="mb-2 text-[2rem] font-extrabold tracking-[-0.035em] text-[#000a1e]"
                   style={{ fontFamily: 'Manrope, sans-serif' }}
                 >
                   Reporting Sign In
-                </h2>
+                </h1>
                 <div className="mt-4 h-px w-24 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_68%,#f0b429_100%)]" />
               </header>
 
@@ -289,7 +313,7 @@ export function LoginPage({
                       placeholder="resident.id@stpaul.edu"
                       autoComplete="username"
                       aria-invalid={identifierError ? 'true' : 'false'}
-                      className="h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 pr-11 text-[0.95rem] font-medium text-[#191c1d] outline-none transition placeholder:text-[#8c929b] focus:border-[#005db6] focus:bg-[#fbfdff]"
+                      className="h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 pr-11 text-[0.95rem] font-medium text-[#191c1d] outline-none transition placeholder:text-[#8c929b] focus:border-[#005db6] focus:bg-[#fbfdff] focus-visible:ring-2 focus-visible:ring-[#005db6]/35"
                       disabled={!isApiConfigured || isSigningIn}
                       value={identifier}
                       onChange={(event) => {
@@ -314,7 +338,7 @@ export function LoginPage({
                     </label>
                     <button
                       type="button"
-                      className="appearance-none border-0 bg-transparent p-0 font-black uppercase text-[#005db6] whitespace-nowrap transition-colors hover:text-[#00468c] focus-visible:outline-none focus-visible:text-[#00468c]"
+                      className="appearance-none border-0 bg-transparent p-0 font-black uppercase text-[#005db6] whitespace-nowrap transition-colors hover:text-[#00468c] focus-visible:text-[#00468c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#005db6]"
                       style={{
                         fontSize: '10.5px',
                         lineHeight: '1',
@@ -340,7 +364,7 @@ export function LoginPage({
                       placeholder="************"
                       autoComplete="current-password"
                       aria-invalid={passwordError ? 'true' : 'false'}
-                      className="h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 pr-11 text-[0.95rem] font-medium text-[#191c1d] outline-none transition placeholder:text-[#8c929b] focus:border-[#005db6] focus:bg-[#fbfdff]"
+                      className="h-12 w-full rounded-none border-0 border-b-2 border-transparent bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 pr-11 text-[0.95rem] font-medium text-[#191c1d] outline-none transition placeholder:text-[#8c929b] focus:border-[#005db6] focus:bg-[#fbfdff] focus-visible:ring-2 focus-visible:ring-[#005db6]/35"
                       disabled={!isApiConfigured || isSigningIn}
                       value={password}
                       onChange={(event) => {
@@ -368,7 +392,7 @@ export function LoginPage({
                 </div>
 
                 {error ? (
-                  <p className="text-sm font-medium text-[#ba1a1a]">{error}</p>
+                  <p role="alert" className="text-sm font-medium text-[#ba1a1a]">{error}</p>
                 ) : null}
                 {resetSuccess ? (
                   <p className="text-sm font-medium text-[#1f6b3b]">

@@ -41,6 +41,8 @@ import { cn } from '@/lib/utils'
 type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Radix's close-time focus handler; the page uses it to return focus to the row that opened the sheet. */
+  onCloseAutoFocus?: (event: Event) => void
   item: ActionItem | null
   creating: boolean
   client: LaravelApiClient | null
@@ -189,7 +191,7 @@ function DetailSection({ title, icon: Icon, children }: { title: string; icon: t
 }
 
 export function ActionItemSheet(props: Props) {
-  const { open, onOpenChange, item, creating, client, managers, departments, onChanged, onCreated } = props
+  const { open, onOpenChange, onCloseAutoFocus, item, creating, client, managers, departments, onChanged, onCreated } = props
   const [pending, setPending] = useState(false)
   const [assignee, setAssignee] = useState('unassigned')
   const [severity, setSeverity] = useState<'low' | 'medium' | 'high'>('medium')
@@ -281,7 +283,10 @@ export function ActionItemSheet(props: Props) {
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full max-w-2xl overflow-y-auto bg-none bg-white px-5 py-6 text-[#000a1e] [&>button]:text-[#657180] sm:px-7">
+      <SheetContent
+        onCloseAutoFocus={onCloseAutoFocus}
+        className="w-full max-w-2xl overflow-y-auto bg-none bg-white px-5 py-6 text-[#000a1e] [&>button]:text-[#657180] sm:px-7"
+      >
         {creating ? (
           <div className="space-y-6">
             <div className="pr-10"><SheetTitle className="font-display text-xl text-[#000a1e]">New action</SheetTitle><SheetDescription className="sr-only">Create a clinical action with an owner and a deadline.</SheetDescription></div>
@@ -362,15 +367,15 @@ export function ActionItemSheet(props: Props) {
             </DetailSection>
 
             <DetailSection title="Notes" icon={MessageSquareText}>
-              <div className="space-y-3"><Textarea rows={2} className="min-h-16" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Add a note" /><Button type="button" variant="secondary" disabled={pending || !comment.trim()} onClick={() => void addComment()}>Add note</Button>{item.comments?.map((entry) => <article key={entry.id} className="border-l-2 border-[#cfe0f4] pl-3"><p className="text-sm leading-6 text-[#1d3047]">{entry.body}</p><p className="mt-1 text-xs text-[#74777f]">{entry.authorName} · {entry.createdAt ? format(parseISO(entry.createdAt), 'MMM d, HH:mm') : 'recently'}</p></article>)}</div>
+              <div className="space-y-3"><Textarea rows={2} className="min-h-16" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Add a note" /><Button type="button" variant="secondary" disabled={pending || !comment.trim()} onClick={() => void addComment()}>Add note</Button>{item.comments?.map((entry) => <article key={entry.id} className="border-l-2 border-[#cfe0f4] pl-3"><p className="text-sm leading-6 text-[#1d3047]">{entry.body}</p><p className="mt-1 text-xs text-[#666970]">{entry.authorName} · {entry.createdAt ? format(parseISO(entry.createdAt), 'MMM d, HH:mm') : 'recently'}</p></article>)}</div>
             </DetailSection>
 
             <DetailSection title="Evidence" icon={FileUp}>
-              <div className="space-y-3"><label className="inline-flex cursor-pointer items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-white px-3 py-2 text-sm font-semibold text-[#1d3047] hover:bg-[#f3f6f9]"><FileUp className="h-4 w-4" />Upload<input type="file" className="sr-only" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.csv,.txt" onChange={(event) => void upload(event)} /></label><p className="text-xs text-[#74777f]">PDF, image, Office, CSV or text · max 10 MB</p>{item.evidence?.map((file) => <a key={file.id} href={file.downloadUrl} className="flex items-center justify-between gap-3 border-t border-[#e6ecf3] py-2 text-sm font-semibold text-[#005db6]"><span className="truncate">{file.originalName}</span><Download className="h-4 w-4 shrink-0" /></a>)}</div>
+              <div className="space-y-3"><label className="inline-flex cursor-pointer items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-white px-3 py-2 text-sm font-semibold text-[#1d3047] hover:bg-[#f3f6f9]"><FileUp className="h-4 w-4" />Upload<input type="file" className="sr-only" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.csv,.txt" onChange={(event) => void upload(event)} /></label><p className="text-xs text-[#666970]">PDF, image, Office, CSV or text · max 10 MB</p>{item.evidence?.map((file) => <a key={file.id} href={file.downloadUrl} className="flex items-center justify-between gap-3 border-t border-[#e6ecf3] py-2 text-sm font-semibold text-[#005db6]"><span className="truncate">{file.originalName}</span><Download className="h-4 w-4 shrink-0" /></a>)}</div>
             </DetailSection>
 
             <DetailSection title="History" icon={History}>
-              <ol className="space-y-4">{item.history?.map((entry) => <li key={entry.id} className="relative pl-5 before:absolute before:left-0 before:top-1.5 before:h-2 before:w-2 before:rounded-full before:bg-[#005db6]"><p className="text-sm font-semibold text-[#1d3047]">{readableEvent(entry.event)}</p>{entry.note ? <p className="mt-1 text-sm leading-6 text-[#657180]">{entry.note}</p> : null}<p className="mt-1 text-xs text-[#74777f]">{entry.changedByName} · {entry.createdAt ? format(parseISO(entry.createdAt), 'MMM d, yyyy HH:mm') : 'recently'}</p></li>)}</ol>
+              <ol className="space-y-4">{item.history?.map((entry) => <li key={entry.id} className="relative pl-5 before:absolute before:left-0 before:top-1.5 before:h-2 before:w-2 before:rounded-full before:bg-[#005db6]"><p className="text-sm font-semibold text-[#1d3047]">{readableEvent(entry.event)}</p>{entry.note ? <p className="mt-1 text-sm leading-6 text-[#657180]">{entry.note}</p> : null}<p className="mt-1 text-xs text-[#666970]">{entry.changedByName} · {entry.createdAt ? format(parseISO(entry.createdAt), 'MMM d, yyyy HH:mm') : 'recently'}</p></li>)}</ol>
             </DetailSection>
           </div>
         ) : <div className="grid min-h-64 place-items-center"><SheetTitle className="sr-only">Loading clinical action</SheetTitle><SheetDescription className="sr-only">Loading the clinical action details and investigation history.</SheetDescription><Loader2 className="h-6 w-6 animate-spin text-[#005db6]" /></div>}

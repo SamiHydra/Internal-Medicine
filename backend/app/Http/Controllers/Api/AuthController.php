@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Services\Admin\AdminAuditService;
 use App\Services\Workspace\WorkspaceRevisionToken;
 use App\Support\Authorization\Permissions;
 use App\Support\RoleTitles;
@@ -24,6 +25,10 @@ class AuthController extends Controller
      * default BCRYPT_ROUNDS; regenerate it if that config changes.
      */
     private const NO_USER_PASSWORD_HASH = '$2y$12$FX6Hs3lmAm3ZXzMcBAWq0.CetT/jNh2m76HgshAKTJF6bm8hTYARO';
+
+    public function __construct(
+        private readonly AdminAuditService $auditService,
+    ) {}
 
     public function login(Request $request): JsonResponse
     {
@@ -108,12 +113,26 @@ class AuthController extends Controller
             ]);
         }
 
+        $oldValues = $user->only(['password_change_required']);
+
         // The 'password' cast hashes the value; clearing the flag releases the user
         // from the EnsurePasswordChanged gate on the next request.
         $user->forceFill([
             'password' => $validated['password'],
             'password_change_required' => false,
         ])->save();
+
+        // Record the fact of the change, never the password or its hash, so a
+        // credential change from a hijacked session still leaves a trail.
+        $this->auditService->record(
+            $user,
+            'change_password',
+            'user',
+            $user->id,
+            $oldValues,
+            ['password_change_required' => false, 'method' => 'self_service'],
+            $request,
+        );
 
         return response()->json($this->sessionPayload($user->refresh()));
     }

@@ -67,6 +67,12 @@ return [
             'engine' => null,
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 Mysql::ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
+                // Bound the connect wait. With the database unreachable (not
+                // refusing: a stopped container or a hung host drops packets)
+                // every PHP-FPM worker otherwise blocks for the OS TCP timeout,
+                // the pool starves and recovery after the database returns took
+                // 188 s in the MariaDB drill (docs/FAILURE_RECOVERY_TEST_REPORT.md).
+                PDO::ATTR_TIMEOUT => max(1, (int) env('DB_CONNECT_TIMEOUT', 5)),
             ]) : [],
         ],
 

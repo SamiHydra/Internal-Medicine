@@ -67,6 +67,13 @@ return [
         'audit_log_days' => (int) env('REPORT_AUDIT_RETENTION_DAYS', 0),
         'admin_audit_log_days' => (int) env('ADMIN_AUDIT_RETENTION_DAYS', 0),
         'status_history_days' => (int) env('REPORT_STATUS_HISTORY_RETENTION_DAYS', 0),
+        // Generated analytics exports are regenerable on demand and are the
+        // only unbounded generated data on disk (they are already excluded
+        // from the nightly storage archive). A download 410s after seven days
+        // (BuildAnalyticsExport sets expires_at), so the file and its row are
+        // dead weight after that. 0 disables the cleanup.
+        // See docs/DATA_RETENTION_POLICY_TEMPLATE.md.
+        'export_days' => (int) env('EXPORT_RETENTION_DAYS', 30),
     ],
 
     /*

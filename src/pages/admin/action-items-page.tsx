@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowRight, ChevronLeft, ChevronRight, Plus, Search, ShieldCheck } from 'lucide-react'
@@ -197,18 +197,43 @@ export function ActionItemsPage() {
     })()
   }, [client, deepLinkItemId, handledDeepLink])
 
+  // The row's "Open <title>" button is re-rendered while the sheet loads the
+  // item, so Radix's default focus return (to the original element) can land
+  // on a detached node; look the button up again by its label instead.
+  const sheetTriggerLabel = useRef<string | null>(null)
+  const restoreSheetFocus = (event: Event) => {
+    const label = sheetTriggerLabel.current
+    if (!label) return
+    const target = Array.from(document.querySelectorAll<HTMLElement>('button[aria-label]')).find(
+      (element) => element.getAttribute('aria-label') === label && element.offsetParent !== null,
+    )
+    if (!target) return
+    event.preventDefault()
+    target.focus()
+  }
+
   const closeSheet = (open: boolean) => {
     setIsSheetOpen(open)
     if (!open && searchParams.has('item')) {
       const next = new URLSearchParams(searchParams)
       next.delete('item')
       setSearchParams(next, { replace: true })
-      setHandledDeepLink(null)
     }
   }
 
+  // The handled id is released only once the URL has actually dropped
+  // `?item=`. Resetting it in closeSheet raced the router transition: one
+  // render still carried the old URL with the flag cleared, so the deep-link
+  // effect above re-opened the sheet that had just been closed.
+  useEffect(() => {
+    if (!deepLinkItemId) {
+      setHandledDeepLink(null)
+    }
+  }, [deepLinkItemId])
+
   const openItem = async (item: ActionItem) => {
     if (!client) return
+    sheetTriggerLabel.current = document.activeElement?.getAttribute('aria-label') ?? null
     setSelected(item)
     setIsCreating(false)
     setIsSheetOpen(true)
@@ -280,7 +305,7 @@ export function ActionItemsPage() {
           >
             <label className="relative col-span-2 xl:col-span-1">
               <span className="sr-only">Search action items</span>
-              <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-[#74777f]" />
+              <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-[#666970]" />
               <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search actions" className="h-10 pl-9" />
             </label>
             <Select value={status} onValueChange={(value) => { setPage(1); setStatus(value as QueueStatus) }}>
@@ -365,13 +390,13 @@ export function ActionItemsPage() {
                     </button>
                     <div className="min-w-0 text-sm">
                       <p className="truncate font-semibold text-[#1d3047]">{item.assignedToName ?? item.responsibleRole ?? 'Unassigned'}</p>
-                      <p className="mt-0.5 truncate text-xs text-[#74777f]">{item.departmentName ?? 'No department'}</p>
+                      <p className="mt-0.5 truncate text-xs text-[#666970]">{item.departmentName ?? 'No department'}</p>
                     </div>
                     <div className="text-right text-sm lg:text-left">
                       <p className={cn('font-semibold', item.isOverdue ? 'text-[#ba1a1a]' : 'text-[#1d3047]')}>
                         {item.isOverdue ? 'Overdue' : item.dueAt ? format(parseISO(item.dueAt), 'MMM d, HH:mm') : 'No deadline'}
                       </p>
-                      {item.isOverdue && item.dueAt ? <p className="mt-0.5 text-xs text-[#74777f]">{format(parseISO(item.dueAt), 'MMM d, HH:mm')}</p> : null}
+                      {item.isOverdue && item.dueAt ? <p className="mt-0.5 text-xs text-[#666970]">{format(parseISO(item.dueAt), 'MMM d, HH:mm')}</p> : null}
                     </div>
                     <Button className="hidden lg:inline-flex" variant="ghost" size="icon" aria-label={`Open ${item.title}`} onClick={() => void openItem(item)}>
                       <ArrowRight className="h-4 w-4" />
@@ -399,6 +424,7 @@ export function ActionItemsPage() {
       <ActionItemSheet
         open={isSheetOpen}
         onOpenChange={closeSheet}
+        onCloseAutoFocus={restoreSheetFocus}
         item={selected}
         creating={isCreating}
         client={client}

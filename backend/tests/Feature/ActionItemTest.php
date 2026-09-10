@@ -15,8 +15,10 @@ use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportFieldDefinitionSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class ActionItemTest extends TestCase
@@ -87,6 +89,28 @@ class ActionItemTest extends TestCase
         $this->assertDatabaseCount('action_item_evidence', 0);
 
         @unlink($temporaryPath);
+    }
+
+    public function test_evidence_upload_refuses_and_records_nothing_when_storage_cannot_write(): void
+    {
+        $this->submitCriticalReport();
+        $item = ActionItem::query()->firstOrFail();
+
+        // The local disk reports a failed write as `false` (throw => false).
+        $disk = \Mockery::mock(Filesystem::class);
+        $disk->shouldReceive('putFileAs')->once()->andReturn(false);
+        $disk->shouldNotReceive('delete');
+        Storage::shouldReceive('disk')->with('local')->andReturn($disk);
+
+        $response = $this->actingAs($this->admin)
+            ->post("/api/admin/action-items/{$item->id}/evidence", [
+                'file' => UploadedFile::fake()->createWithContent('evidence.txt', 'storage failure probe'),
+            ], ['Accept' => 'application/json'])
+            ->assertStatus(500);
+
+        $this->assertStringContainsString('could not be written', (string) $response->json('message'));
+        $this->assertDatabaseCount('action_item_evidence', 0);
+        $this->assertDatabaseMissing('admin_audit_logs', ['action' => 'upload_evidence']);
     }
 
     private function submitCriticalReport(int $deaths = 2): Report
@@ -236,6 +260,34 @@ class ActionItemTest extends TestCase
             ->assertJsonPath('createdByName', 'Admin One');
 
         $this->assertSame(1, ActionItem::query()->where('source', 'manual')->count());
+    }
+
+    /**
+     * Starting work needs an owner. Clearing the assignee in the same request
+     * that moves the item to in_progress used to pass the guard (the null was
+     * read as "field absent") and left an in-progress item nobody owned.
+     */
+    public function test_starting_work_while_clearing_the_assignee_is_refused(): void
+    {
+        $item = $this->actingAs($this->admin)
+            ->postJson('/api/admin/action-items', [
+                'title' => 'Escalate the pending pharmacy audit',
+                'severity' => 'high',
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/action-items/{$item['id']}", [
+                'status' => 'in_progress',
+                'assigned_to' => null,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['assigned_to']);
+
+        $row = ActionItem::query()->findOrFail($item['id']);
+        $this->assertSame('assigned', $row->status);
+        $this->assertSame($this->admin->id, $row->assigned_to);
     }
 
     public function test_nurses_cannot_access_action_items(): void

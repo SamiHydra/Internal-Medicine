@@ -40,6 +40,7 @@ final class AuditRegistry
         'report_assignment' => [self::WORKSPACE_CLINICAL, 'Report assignment'],
         'action_item' => [self::WORKSPACE_CLINICAL, 'Clinical action item'],
         'clinical_alert_rule' => [self::WORKSPACE_CLINICAL, 'Clinical alert rule'],
+        'report_comment' => [self::WORKSPACE_CLINICAL, 'Report comment'],
 
         // -- Academic: structure -------------------------------------------
         'ward' => [self::WORKSPACE_ACADEMIC, 'Ward'],
@@ -115,6 +116,7 @@ final class AuditRegistry
         'approve_admin_request' => 'Account request approved',
         'reject_admin_request' => 'Account request rejected',
         'reset_password' => 'Password reset',
+        'change_password' => 'Password changed',
         'save_roster_month' => 'Roster month saved',
         'save_daily_duty' => 'Duty assigned',
         'remove_daily_duty' => 'Duty cleared',

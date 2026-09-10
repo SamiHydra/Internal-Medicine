@@ -257,7 +257,10 @@ class ActionItemController extends Controller
             throw ValidationException::withMessages(['status' => "The action item cannot move from {$item->status} to {$next}."]);
         }
 
-        $assignee = $validated['assigned_to'] ?? $item->assigned_to;
+        // An explicit `assigned_to: null` in the same request must count as
+        // "no assignee": `??` treated it as absent and let an item start work
+        // with no owner (business-logic regression audit, 2026-09-09).
+        $assignee = array_key_exists('assigned_to', $validated) ? $validated['assigned_to'] : $item->assigned_to;
         if (in_array($next, ['assigned', 'in_progress'], true) && ! $assignee) {
             throw ValidationException::withMessages(['assigned_to' => 'Assign an active administrator before starting this work.']);
         }

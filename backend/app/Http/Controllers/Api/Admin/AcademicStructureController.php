@@ -82,9 +82,18 @@ class AcademicStructureController extends Controller
     {
         Gate::authorize('delete', $ward);
 
-        if ($ward->dutyTypes()->exists() || $ward->departments()->exists()) {
+        // Every table that points at a ward, not only the two the catalog
+        // owns: a placement's foreign key is restrict-on-delete (the database
+        // would answer with a 500), and the evaluation and teaching-session
+        // ward columns are null-on-delete snapshots that a delete would wipe
+        // silently. Both belong behind the same "deactivate instead" refusal.
+        if ($ward->dutyTypes()->exists()
+            || $ward->departments()->exists()
+            || $ward->subgroupPlacements()->exists()
+            || $ward->teachingSessions()->exists()
+            || $ward->evaluations()->exists()) {
             throw ValidationException::withMessages([
-                'ward' => ['This ward is referenced by duty types or departments. Deactivate it instead.'],
+                'ward' => ['This ward is referenced by duty types, departments, student placements, teaching sessions or evaluations. Deactivate it instead.'],
             ]);
         }
 
@@ -207,9 +216,15 @@ class AcademicStructureController extends Controller
     {
         Gate::authorize('delete', $section);
 
-        if ($section->dutyTypes()->exists() || $section->consultants()->exists()) {
+        // transfer_requests.from/to_section_id are restrict-on-delete, so a
+        // section with any transfer history would otherwise answer a delete
+        // with the database's own refusal (a 500) instead of this 422.
+        if ($section->dutyTypes()->exists()
+            || $section->consultants()->exists()
+            || $section->inboundTransferRequests()->exists()
+            || $section->outboundTransferRequests()->exists()) {
             throw ValidationException::withMessages([
-                'section' => ['This section is referenced by duty types or consultants. Deactivate it instead.'],
+                'section' => ['This section is referenced by duty types, consultants or transfer requests. Deactivate it instead.'],
             ]);
         }
 
