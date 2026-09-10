@@ -44,7 +44,7 @@ export function SubmissionBoardGrid({
           <h2 className="mt-2 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
             {title}
           </h2>
-          <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[#74777f]">{description}</p>
+          <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[#666970]">{description}</p>
         </div>
 
         {/* Each row is an info column + a self-labeled grid of weekly status cards.
@@ -62,7 +62,7 @@ export function SubmissionBoardGrid({
               <div className="min-w-0">
                 <p className="font-semibold text-[#000a1e]">{row.departmentName}</p>
                 {row.assigneeName ? (
-                  <p className="text-sm text-[#74777f]">{row.assigneeName}</p>
+                  <p className="text-sm text-[#666970]">{row.assigneeName}</p>
                 ) : null}
                 <p className="mt-1 text-sm text-[#44474e]">{row.templateName}</p>
               </div>

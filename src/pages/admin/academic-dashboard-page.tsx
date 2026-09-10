@@ -511,7 +511,7 @@ export function AcademicDashboardPage() {
           >
             {trendData.length ? (
               <ResponsiveContainer width="100%" height={260}>
-                <AreaChart data={trendData} margin={{ top: 16, right: 20, left: 0, bottom: 8 }}>
+                <AreaChart title="Score trend" data={trendData} margin={{ top: 16, right: 20, left: 0, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                   <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                   <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} domain={[0, 100]} />
@@ -554,6 +554,7 @@ export function AcademicDashboardPage() {
               {indicatorData.length ? (
                 <ResponsiveContainer width="100%" height={sharedChartHeight}>
                   <BarChart
+                    title="Indicator compliance"
                     data={indicatorData}
                     layout="vertical"
                     margin={{ top: 8, right: 64, left: 8, bottom: 8 }}
@@ -606,6 +607,7 @@ export function AcademicDashboardPage() {
               {sortedIssueData.length ? (
                 <ResponsiveContainer width="100%" height={sharedChartHeight}>
                   <BarChart
+                    title={isResident ? 'Concerns' : 'System issues'}
                     data={sortedIssueData}
                     layout="vertical"
                     margin={{ top: 8, right: 64, left: 8, bottom: 8 }}
@@ -663,7 +665,7 @@ export function AcademicDashboardPage() {
               <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
                 {isResident ? 'Residents' : 'Consultants'} by combined rank
               </h2>
-              <p className="mt-1 text-sm text-[#74777f]">
+              <p className="mt-1 text-sm text-[#666970]">
                 Ranked by a blend of the 1–5 rating and the indicator score
                 {' '}({Math.round((people?.ratingWeight ?? 0.5) * 100)}% rating +{' '}
                 {100 - Math.round((people?.ratingWeight ?? 0.5) * 100)}% score). Select a person to open their history.
@@ -677,7 +679,7 @@ export function AcademicDashboardPage() {
                 minEvaluationsForRank={people?.minEvaluationsForRank ?? 3}
               />
             ) : (
-              <div className="mt-5 rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-5 py-10 text-center text-sm text-[#74777f]">
+              <div className="mt-5 rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-5 py-10 text-center text-sm text-[#666970]">
                 No evaluations match the current filters.
               </div>
             )}
@@ -694,7 +696,7 @@ export function AcademicDashboardPage() {
 
 function EmptyChart({ message }: { message: string }) {
   return (
-    <div className="flex h-[260px] items-center justify-center text-sm text-[#74777f]">
+    <div className="flex h-[260px] items-center justify-center text-sm text-[#666970]">
       {message}
     </div>
   )

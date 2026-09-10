@@ -80,14 +80,14 @@ function AuditValue({ value }: { value: unknown }) {
     const entries = Object.entries(value)
 
     if (entries.length === 0) {
-      return <span className="text-[#74777f]">None</span>
+      return <span className="text-[#666970]">None</span>
     }
 
     return (
       <ul className="mt-1 space-y-1 border-l border-[#dbe3ec] pl-3">
         {entries.map(([key, nested]) => (
           <li key={key} className="text-[13px] leading-5 text-[#1d3047]">
-            <span className="text-[#74777f]">{auditFieldLabel(key)}: </span>
+            <span className="text-[#666970]">{auditFieldLabel(key)}: </span>
             {isPlainObject(nested) ? (
               <AuditValue value={nested} />
             ) : (
@@ -137,7 +137,7 @@ function DetailRow({
   // left the eye no column to run down.
   return (
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 py-1.5">
-      <dt className="w-32 shrink-0 text-[12.5px] text-[#8b9199]">{label}</dt>
+      <dt className="w-32 shrink-0 text-[12.5px] text-[#6c7177]">{label}</dt>
       <dd className="min-w-0 flex-1 break-words text-[13px] leading-5 text-[#1d3047]">
         {changed ? (
           <span className="flex flex-wrap items-baseline gap-1.5">
@@ -196,7 +196,7 @@ function AuditRow({ entry }: { entry: AdminAuditEntry }) {
         <time
           dateTime={entry.createdAt ?? undefined}
           title={formatTimestamp(entry.createdAt)}
-          className="w-11 shrink-0 pt-0.5 text-xs tabular-nums text-[#8b9199]"
+          className="w-11 shrink-0 pt-0.5 text-xs tabular-nums text-[#6c7177]"
         >
           {entry.createdAt ? format(parseISO(entry.createdAt), 'HH:mm') : '--:--'}
         </time>
@@ -375,7 +375,7 @@ export function WorkspaceAuditTrail({
         <div className="relative min-w-[13rem] flex-1">
           <Search
             aria-hidden
-            className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9aa7b8]"
+            className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#69727d]"
           />
           <Input
             value={search}
@@ -408,19 +408,19 @@ export function WorkspaceAuditTrail({
             <div className="max-h-[62vh] overflow-y-auto overscroll-contain">
               {days.map((day) => (
                 <section key={day.heading}>
-                  <h4 className="sticky top-0 z-10 border-b border-[#eef2f6] bg-[#f8fafc]/95 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#8b9199] backdrop-blur">
+                  <h3 className="sticky top-0 z-10 border-b border-[#eef2f6] bg-[#f8fafc]/95 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#6c7177] backdrop-blur">
                     {day.heading}
                     <span className="ml-2 font-medium normal-case tracking-normal text-[#a9b2bd]">
                       {day.entries.length}
                     </span>
-                  </h4>
+                  </h3>
                   {day.entries.map((entry) => (
                     <AuditRow key={entry.id} entry={entry} />
                   ))}
                 </section>
               ))}
             </div>
-            <p className="border-t border-[#eef2f6] bg-[#f8fafc] px-3 py-2 text-xs text-[#8b9199]">
+            <p className="border-t border-[#eef2f6] bg-[#f8fafc] px-3 py-2 text-xs text-[#6c7177]">
               {entries.length} of the last 500 actions
             </p>
           </div>

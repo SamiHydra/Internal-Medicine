@@ -88,7 +88,7 @@ function RecentSubmissions({ submissions }: { submissions: AcademicMySubmissions
                 <p className="truncate text-sm font-semibold text-[#000a1e]">
                   {record.subjectName ?? 'Unknown'}
                 </p>
-                <p className="truncate text-xs leading-5 text-[#74777f]">
+                <p className="truncate text-xs leading-5 text-[#666970]">
                   {toDateLabel(record.evaluationDate)} · {record.wardName ?? '-'}
                 </p>
               </div>
@@ -263,7 +263,7 @@ export function AcademicEvaluationFormPage() {
             )}
           </div>
 
-          <aside className="order-first min-w-0 space-y-6 xl:order-last xl:sticky xl:top-24">
+          <aside aria-label="Evaluation summary" className="order-first min-w-0 space-y-6 xl:order-last xl:sticky xl:top-24">
             <motion.section
               initial={reduceMotion ? false : { opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
@@ -288,7 +288,7 @@ export function AcademicEvaluationFormPage() {
                 />
               </div>
               <div className="mt-5 border-l-2 border-[#f0b429] pl-3.5">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f]">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#666970]">
                   Placement on this date
                 </p>
                 <p className="mt-1 text-sm font-medium leading-6 text-[#1d3047]">

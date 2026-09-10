@@ -66,7 +66,7 @@ function RuleRow({ rule, client, onSaved }: { rule: ClinicalAlertRule; client: L
         <div className="min-w-0 2xl:w-52 2xl:shrink-0">
           <div className="flex items-start gap-2"><span className={`mt-[7px] h-2 w-2 shrink-0 rounded-full ${active ? "bg-[#1f6b3b]" : "bg-[#9aa0a8]"}`} /><p className="font-display text-base font-bold text-[#000a1e]">{rule.fieldLabel}</p></div>
           <p className="mt-1 text-xs text-[#657180]">{rule.templateName} · version {rule.version}</p>
-          <p className="mt-2 break-words font-mono text-[11px] text-[#74777f]">{rule.fieldKey}</p>
+          <p className="mt-2 break-words font-mono text-[11px] text-[#666970]">{rule.fieldKey}</p>
         </div>
         <div className="grid flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-[152px_88px_112px_100px_128px_minmax(164px,340px)_auto]">
           <label className="space-y-1.5"><Label>Trigger</Label><Select value={operator} onValueChange={(value) => setOperator(value as typeof operator)}><SelectTrigger aria-label={`${rule.fieldLabel} trigger`}><SelectValue /></SelectTrigger><SelectContent>{Object.entries(operatorLabel).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>

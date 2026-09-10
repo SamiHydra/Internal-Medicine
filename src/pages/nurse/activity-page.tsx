@@ -128,7 +128,7 @@ export function NurseActivityPage() {
 
                   <div className="flex flex-wrap gap-4 text-sm text-[#5b6169]">
                     <span className="inline-flex items-center gap-2">
-                      <UserRound className="h-4 w-4 text-[#9aa7b8]" />
+                      <UserRound className="h-4 w-4 text-[#69727d]" />
                       {item.entry.changedByName}
                     </span>
                   </div>
@@ -136,10 +136,10 @@ export function NurseActivityPage() {
 
                 <div className="space-y-2 lg:text-right">
                   <div className="inline-flex items-center gap-2 rounded-[0.25rem] border border-[#d4dde8] bg-[#f8fafc] px-3 py-1.5 text-xs font-semibold text-[#44474e] lg:ml-auto">
-                    <Clock3 className="h-3.5 w-3.5 text-[#9aa7b8]" />
+                    <Clock3 className="h-3.5 w-3.5 text-[#69727d]" />
                     {formatTimestamp(item.entry.changedAt)}
                   </div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9aa7b8]">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#69727d]">
                     Report lifecycle
                   </p>
                 </div>

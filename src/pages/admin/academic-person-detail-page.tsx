@@ -497,7 +497,7 @@ export function AcademicPersonDetailPage() {
             <ChartCard title="Score trend" description="Average score per week.">
               {trendData.length ? (
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={trendData} margin={{ top: 16, right: 20, left: 0, bottom: 8 }}>
+                  <LineChart title="Score trend" data={trendData} margin={{ top: 16, right: 20, left: 0, bottom: 8 }}>
                     <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                     <XAxis dataKey="label" tick={chartTick} axisLine={false} tickLine={false} tickMargin={12} />
                     <YAxis tick={chartTick} axisLine={false} tickLine={false} width={44} domain={[0, 100]} />
@@ -536,6 +536,7 @@ export function AcademicPersonDetailPage() {
             {indicatorData.length ? (
               <ResponsiveContainer width="100%" height={indicatorHeight}>
                 <BarChart
+                  title="Indicator breakdown"
                   data={indicatorData}
                   layout="vertical"
                   margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
@@ -576,7 +577,7 @@ export function AcademicPersonDetailPage() {
                 <h2 className="font-display text-[1.5rem] leading-tight tracking-[-0.02em] text-[#000a1e]">
                   Evaluation log
                 </h2>
-                <p className="text-sm text-[#74777f]">
+                <p className="text-sm text-[#666970]">
                   {logView === 'given'
                     ? `Evaluations ${subjectName} submitted about others.`
                     : `Evaluations submitted about ${subjectName}.`}
@@ -619,7 +620,7 @@ export function AcademicPersonDetailPage() {
               </div>
             ) : logRows.length ? (
               <div className="mt-5 overflow-hidden rounded-[0.4rem] border border-[#e6ecf3] bg-white">
-                <div className="hidden grid-cols-[124px_minmax(0,2fr)_minmax(0,1.1fr)_104px] items-center gap-4 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f] sm:grid">
+                <div className="hidden grid-cols-[124px_minmax(0,2fr)_minmax(0,1.1fr)_104px] items-center gap-4 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#666970] sm:grid">
                   <span>Date</span>
                   <span>{logView === 'given' ? 'Evaluated' : 'Author'}</span>
                   <span>Ward</span>
@@ -645,7 +646,7 @@ export function AcademicPersonDetailPage() {
                           <span className="block truncate font-semibold text-[#000a1e]">
                             {(logView === 'given' ? record.subjectName : record.authorName) ?? '-'}
                           </span>
-                          <span className="block truncate text-xs text-[#74777f] sm:hidden">
+                          <span className="block truncate text-xs text-[#666970] sm:hidden">
                             {toDateLabel(record.evaluationDate)} · {record.wardName ?? '-'}
                           </span>
                         </span>
@@ -683,7 +684,7 @@ export function AcademicPersonDetailPage() {
           >
             {issueData.length ? (
               <ResponsiveContainer width="100%" height={Math.max(220, issueData.length * 40)}>
-                <BarChart data={issueData} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
+                <BarChart title={isResident ? 'Concerns' : 'System issues'} data={issueData} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} horizontal={false} />
                   <XAxis type="number" tick={chartTick} axisLine={false} tickLine={false} allowDecimals={false} />
                   <YAxis
@@ -727,7 +728,7 @@ export function AcademicPersonDetailPage() {
 
 function EmptyChart({ message }: { message: string }) {
   return (
-    <div className="flex h-[260px] items-center justify-center text-sm text-[#74777f]">
+    <div className="flex h-[260px] items-center justify-center text-sm text-[#666970]">
       {message}
     </div>
   )

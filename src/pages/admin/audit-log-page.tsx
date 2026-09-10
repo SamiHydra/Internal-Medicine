@@ -198,7 +198,7 @@ export function AuditLogPage() {
               </SelectContent>
             </Select>
             <div className="relative min-w-[13rem] flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9aa7b8]" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#69727d]" />
               <Input
                 value={auditSearch}
                 onChange={(event) => setAuditSearch(event.target.value)}
@@ -213,7 +213,7 @@ export function AuditLogPage() {
               <div
                 className={cn(
                   EDIT_GRID,
-                  'hidden border-b border-[#eef2f6] bg-[#f8fafc] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#8b9199] lg:grid',
+                  'hidden border-b border-[#eef2f6] bg-[#f8fafc] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#6c7177] lg:grid',
                 )}
               >
                 <span>When</span>
@@ -238,7 +238,7 @@ export function AuditLogPage() {
                       onClick={() => toggleExpanded(entry.id)}
                       className={cn(EDIT_GRID, 'w-full px-3 py-2 text-left transition-colors hover:bg-[#f7f9fc]')}
                     >
-                      <span className="order-2 shrink-0 whitespace-nowrap text-xs tabular-nums text-[#8b9199] lg:order-none">
+                      <span className="order-2 shrink-0 whitespace-nowrap text-xs tabular-nums text-[#6c7177] lg:order-none">
                         {formatTimestamp(entry.changedAt)}
                       </span>
                       <span className="order-3 col-span-2 truncate text-[13px] text-[#52606d] lg:order-none lg:col-span-1">
@@ -247,12 +247,12 @@ export function AuditLogPage() {
                       <span className="order-1 min-w-0 truncate text-[13px] lg:order-none">
                         <span className="font-semibold text-[#000a1e]">{entry.fieldLabel}</span>
                         <span className="text-[#9aa6b5]"> · </span>
-                        <span className="text-[#74777f]">
+                        <span className="text-[#666970]">
                           {department?.name ?? entry.departmentId} · {templateName}
                         </span>
                       </span>
                       <span className="order-4 col-span-2 flex min-w-0 items-baseline gap-1.5 text-xs lg:order-none lg:col-span-1">
-                        <span className="min-w-0 truncate text-[#8b9199] line-through decoration-[#c4c6cf]">
+                        <span className="min-w-0 truncate text-[#6c7177] line-through decoration-[#c4c6cf]">
                           {formatAuditValue(entry.oldValue)}
                         </span>
                         <ArrowRight aria-hidden className="h-3 w-3 shrink-0 self-center text-[#c0c8d2]" />
@@ -275,19 +275,19 @@ export function AuditLogPage() {
                       <div className="mx-3 mb-2.5 space-y-2.5 rounded-[0.35rem] bg-[#f7f9fc] px-3.5 py-3">
                         <dl className="grid gap-x-6 gap-y-2.5 sm:grid-cols-2">
                           <div className="flex flex-col gap-0.5">
-                            <dt className="text-[12px] font-medium text-[#74777f]">Before</dt>
+                            <dt className="text-[12px] font-medium text-[#666970]">Before</dt>
                             <dd className="break-words text-[13px] leading-5 text-[#52606d]">
                               {formatAuditValue(entry.oldValue)}
                             </dd>
                           </div>
                           <div className="flex flex-col gap-0.5">
-                            <dt className="text-[12px] font-medium text-[#74777f]">After</dt>
+                            <dt className="text-[12px] font-medium text-[#666970]">After</dt>
                             <dd className="break-words text-[13px] font-medium leading-5 text-[#000a1e]">
                               {formatAuditValue(entry.newValue)}
                             </dd>
                           </div>
                         </dl>
-                        <div className="flex flex-wrap items-center gap-2 border-t border-[#e6ecf3] pt-2.5 text-xs text-[#8b9199]">
+                        <div className="flex flex-wrap items-center gap-2 border-t border-[#e6ecf3] pt-2.5 text-xs text-[#6c7177]">
                           {department ? (
                             <Badge variant="info">{serviceLineLabels[department.family]}</Badge>
                           ) : null}

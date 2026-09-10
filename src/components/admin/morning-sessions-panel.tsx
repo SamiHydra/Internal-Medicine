@@ -101,10 +101,10 @@ function SettingsBlock({
           {title}
         </p>
         {count ? (
-          <p className="text-[12px] font-semibold tabular-nums text-[#8b9199]">{count}</p>
+          <p className="text-[12px] font-semibold tabular-nums text-[#6c7177]">{count}</p>
         ) : null}
       </div>
-      <p className="mt-1 text-[13px] leading-5 text-[#74777f]">{hint}</p>
+      <p className="mt-1 text-[13px] leading-5 text-[#666970]">{hint}</p>
       {children}
     </div>
   );
@@ -503,7 +503,7 @@ export function MorningSessionsPanel() {
                     {formatDay(override.startsOn)}
                     <ArrowRight aria-hidden className="h-3 w-3 text-[#c0c8d2]" />
                     {formatDay(override.endsOn) ?? (
-                      <span className="text-[#8b9199]">no end</span>
+                      <span className="text-[#6c7177]">no end</span>
                     )}
                   </span>
                   <Button
@@ -529,7 +529,7 @@ export function MorningSessionsPanel() {
             })}
           </ul>
         ) : (
-          <p className="mt-3 rounded-[0.3rem] border border-dashed border-[#dbe3ec] bg-white px-3 py-2.5 text-[13px] text-[#74777f]">
+          <p className="mt-3 rounded-[0.3rem] border border-dashed border-[#dbe3ec] bg-white px-3 py-2.5 text-[13px] text-[#666970]">
             No overrides. Everyone follows the standard roster.
           </p>
         )}
@@ -537,7 +537,7 @@ export function MorningSessionsPanel() {
 
       {/* ---- Session log ---- */}
       {sessions.length === 0 ? (
-        <p className="mt-5 flex items-center gap-2 text-sm text-[#74777f]">
+        <p className="mt-5 flex items-center gap-2 text-sm text-[#666970]">
           <Sunrise className="h-4 w-4" /> No morning sessions yet: the first
           opens automatically on the next configured day.
         </p>

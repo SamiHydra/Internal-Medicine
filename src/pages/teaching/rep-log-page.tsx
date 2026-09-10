@@ -123,7 +123,7 @@ export function RepLogPage() {
         />
 
         {sessions === null ? (
-          <div className="flex min-h-[200px] items-center justify-center text-[#74777f]">
+          <div className="flex min-h-[200px] items-center justify-center text-[#666970]">
             <Loader2 className="h-5 w-5 animate-spin" aria-label="Loading sessions" />
           </div>
         ) : loadError ? (

@@ -89,12 +89,12 @@ export function ForgotPasswordPage() {
               <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#f0b429]">
                 Account recovery
               </p>
-              <h1
+              <p
                 className="mt-4 text-[2.35rem] font-extrabold leading-[0.98] tracking-[-0.045em] text-white lg:text-[2.6rem] xl:text-[2.85rem]"
                 style={{ fontFamily: 'Manrope, sans-serif' }}
               >
                 Password Reset
-              </h1>
+              </p>
 
               <ol className="mt-9 space-y-5">
                 {STEPS.map((step, index) => (
@@ -155,12 +155,12 @@ export function ForgotPasswordPage() {
                     <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
                       Password reset
                     </p>
-                    <h2
+                    <h1
                       className="mb-2 text-[2rem] font-extrabold tracking-[-0.035em] text-[#000a1e]"
                       style={{ fontFamily: 'Manrope, sans-serif' }}
                     >
                       Forgot your password?
-                    </h2>
+                    </h1>
                     <div className="mt-4 h-px w-24 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_68%,#f0b429_100%)]" />
                   </header>
 
@@ -213,12 +213,12 @@ export function ForgotPasswordPage() {
                   <span className="mb-6 inline-flex h-12 w-12 items-center justify-center rounded-[0.4rem] bg-[#e8f0fb] text-[#005db6]">
                     <MailCheck className="h-6 w-6" />
                   </span>
-                  <h2
+                  <h1
                     className="mb-2 text-[2rem] font-extrabold tracking-[-0.035em] text-[#000a1e]"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
                     Check your email
-                  </h2>
+                  </h1>
                   <p className="text-sm font-medium leading-6 text-[#5b6169]">
                     If an account exists for{' '}
                     <span className="font-semibold text-[#000a1e]">{sentTo}</span>,
@@ -226,7 +226,7 @@ export function ForgotPasswordPage() {
                   </p>
                   <div className="mt-4 h-px w-24 bg-[linear-gradient(90deg,#005db6_0%,#63a1ff_68%,#f0b429_100%)]" />
 
-                  <p className="mt-6 text-[13px] leading-6 text-[#74777f]">
+                  <p className="mt-6 text-[13px] leading-6 text-[#666970]">
                     The link expires shortly, so use it soon. Nothing arrived after
                     a few minutes? Check your spam folder, then try again.
                   </p>

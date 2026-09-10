@@ -157,7 +157,7 @@ export function MorningAnalyticsTab() {
           <ul className="mt-6 flex max-h-[31rem] flex-col gap-2 overflow-y-auto pr-1">
             <li
               aria-hidden
-              className="hidden grid-cols-[minmax(0,1fr)_84px_72px_16px] items-center gap-5 px-4 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#9aa7b8] sm:grid"
+              className="hidden grid-cols-[minmax(0,1fr)_84px_72px_16px] items-center gap-5 px-4 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#69727d] sm:grid"
             >
               <span>Person</span>
               <span className="text-right">Present</span>
@@ -179,7 +179,7 @@ export function MorningAnalyticsTab() {
                     <span className="block truncate font-semibold text-[#000a1e]">
                       {person.fullName}
                     </span>
-                    <span className="mt-0.5 block truncate text-[12.5px] text-[#8794a5] sm:hidden">
+                    <span className="mt-0.5 block truncate text-[12.5px] text-[#68727f] sm:hidden">
                       {person.presentCount}/{person.expectedCount} present ·{' '}
                       {Math.round(person.attendanceRate)}%
                     </span>
@@ -384,6 +384,7 @@ export function TeachingAnalyticsTab() {
               initialDimension={{ width: 1, height: 260 }}
             >
               <BarChart
+                title="Delivery by activity"
                 data={chart}
                 margin={{ top: 16, right: 20, bottom: 8, left: -12 }}
               >
@@ -441,7 +442,7 @@ export function TeachingAnalyticsTab() {
               />
               <div className="mt-5 max-h-[25rem] overflow-y-auto pr-1">
                 {scopedMissedSessions.length === 0 ? (
-                  <p className="py-8 text-center text-sm text-[#74777f]">
+                  <p className="py-8 text-center text-sm text-[#666970]">
                     No missed teaching recorded for {scopeSentenceLabel}.
                   </p>
                 ) : (
@@ -487,6 +488,7 @@ export function TeachingAnalyticsTab() {
                 initialDimension={{ width: 1, height: 220 }}
               >
                 <BarChart
+                  title="Delivery by block"
                   data={blockChart}
                   layout="vertical"
                   margin={{ top: 8, right: 20, bottom: 8, left: 8 }}

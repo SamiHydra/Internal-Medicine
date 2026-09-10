@@ -21,14 +21,14 @@ export function SelectTrigger({
   return (
     <SelectPrimitive.Trigger
       className={cn(
-        'group flex h-11 w-full min-w-0 items-center justify-between gap-2 overflow-hidden rounded-[0.4rem] border border-[#d4dde8] bg-white px-4 text-sm font-medium text-[#000a1e] outline-none transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#b8c7d8] focus:border-[#005db6] focus:ring-2 focus:ring-[#005db6]/25 data-[placeholder]:text-[#74777f] data-[state=open]:border-[#005db6] data-[state=open]:ring-2 data-[state=open]:ring-[#005db6]/15 [&>*:first-child]:min-w-0 [&>*:first-child]:flex-1 [&>*:first-child]:truncate [&>*:first-child]:whitespace-nowrap',
+        'group flex h-11 w-full min-w-0 items-center justify-between gap-2 overflow-hidden rounded-[0.4rem] border border-[#d4dde8] bg-white px-4 text-sm font-medium text-[#000a1e] outline-none transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#b8c7d8] focus:border-[#005db6] focus:ring-2 focus:ring-[#005db6]/25 data-[placeholder]:text-[#666970] data-[state=open]:border-[#005db6] data-[state=open]:ring-2 data-[state=open]:ring-[#005db6]/15 [&>*:first-child]:min-w-0 [&>*:first-child]:flex-1 [&>*:first-child]:truncate [&>*:first-child]:whitespace-nowrap',
         className,
       )}
       {...props}
     >
       {children}
       <SelectPrimitive.Icon className="shrink-0">
-        <ChevronDown className="h-4 w-4 text-[#74777f] transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] group-data-[state=open]:rotate-180 group-data-[state=open]:text-[#005db6]" />
+        <ChevronDown className="h-4 w-4 text-[#666970] transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] group-data-[state=open]:rotate-180 group-data-[state=open]:text-[#005db6]" />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   )

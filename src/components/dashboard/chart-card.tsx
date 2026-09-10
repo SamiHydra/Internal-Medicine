@@ -64,10 +64,10 @@ export function ChartCard({
     >
       <div className="flex h-full flex-col rounded-[0.35rem] bg-white p-5 outline outline-1 outline-[#d4dde8]/80 shadow-[0_18px_44px_-36px_rgba(0,33,71,0.3)] md:p-6">
         <div className="flex items-start justify-between gap-4">
-          <h3 className="text-sm font-semibold uppercase tracking-[0.22em] text-[#334155]">{title}</h3>
+          <h2 className="text-sm font-semibold uppercase tracking-[0.22em] text-[#334155]">{title}</h2>
           {actions}
         </div>
-        <p className="mt-1 text-sm leading-6 text-[#74777f]">{description}</p>
+        <p className="mt-1 text-sm leading-6 text-[#666970]">{description}</p>
         <DeferredChartContent>{children}</DeferredChartContent>
       </div>
     </motion.div>

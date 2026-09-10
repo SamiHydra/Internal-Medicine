@@ -116,7 +116,7 @@ export function TransferReviewPanel({ allowImmediate = false }: { allowImmediate
                   <span className="block text-[13px] font-semibold text-[#1d3047]">
                     Apply immediately
                   </span>
-                  <span className="block text-[11px] text-[#8b9199]">
+                  <span className="block text-[11px] text-[#6c7177]">
                     Skip the month boundary
                   </span>
                 </span>
@@ -149,7 +149,7 @@ export function TransferReviewPanel({ allowImmediate = false }: { allowImmediate
                     <p className="truncate font-display text-[15px] font-bold text-[#000a1e]">
                       {request.userName ?? 'Consultant'}
                     </p>
-                    <p className="mt-0.5 text-xs text-[#8b9199]">
+                    <p className="mt-0.5 text-xs text-[#6c7177]">
                       Requested {dateLabel(request.requestedAt) ?? '-'}
                     </p>
                   </div>

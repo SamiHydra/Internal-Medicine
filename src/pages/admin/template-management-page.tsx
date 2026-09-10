@@ -446,7 +446,7 @@ export function TemplateManagementPage() {
 
                     <ChevronDown
                       className={cn(
-                        'h-5 w-5 shrink-0 text-[#9aa7b8] transition-transform duration-200',
+                        'h-5 w-5 shrink-0 text-[#69727d] transition-transform duration-200',
                         isOpen && 'rotate-180 text-[#005db6]',
                       )}
                     />
@@ -465,6 +465,7 @@ export function TemplateManagementPage() {
                           <div className="space-y-1.5">
                             <Caption>Report name</Caption>
                             <Input
+                              aria-label="Report name"
                               value={template.name}
                               onChange={(event) =>
                                 mutateTemplate(template.slug, (entry) => ({
@@ -478,6 +479,7 @@ export function TemplateManagementPage() {
                           <div className="space-y-1.5">
                             <Caption>Description</Caption>
                             <Textarea
+                              aria-label="Report description"
                               value={template.description}
                               onChange={(event) =>
                                 mutateTemplate(template.slug, (entry) => ({
@@ -530,7 +532,7 @@ export function TemplateManagementPage() {
                                     'rounded-full px-3.5 py-1.5 text-xs font-semibold uppercase tracking-[0.1em] outline outline-1 transition-[background-color,color,outline-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-safe:active:scale-[0.97]',
                                     on
                                       ? 'bg-[#005db6] text-white outline-[#005db6]'
-                                      : 'bg-white text-[#74777f] outline-[#d4dde8] hover:outline-[#bcd0ea]',
+                                      : 'bg-white text-[#666970] outline-[#d4dde8] hover:outline-[#bcd0ea]',
                                   )}
                                 >
                                   {day.label}
@@ -577,7 +579,7 @@ export function TemplateManagementPage() {
                                         aria-label="Move question up"
                                         onClick={() => moveField(template, fieldIndex, -1)}
                                         disabled={fieldIndex === 0}
-                                        className="rounded-[0.25rem] p-0.5 text-[#9aa7b8] hover:text-[#005db6] disabled:opacity-30 pointer-coarse:p-2.5"
+                                        className="rounded-[0.25rem] p-0.5 text-[#69727d] hover:text-[#005db6] disabled:opacity-30 pointer-coarse:p-2.5"
                                       >
                                         <ArrowUp className="h-3.5 w-3.5" />
                                       </button>
@@ -586,13 +588,14 @@ export function TemplateManagementPage() {
                                         aria-label="Move question down"
                                         onClick={() => moveField(template, fieldIndex, 1)}
                                         disabled={fieldIndex === template.fields.length - 1}
-                                        className="rounded-[0.25rem] p-0.5 text-[#9aa7b8] hover:text-[#005db6] disabled:opacity-30 pointer-coarse:p-2.5"
+                                        className="rounded-[0.25rem] p-0.5 text-[#69727d] hover:text-[#005db6] disabled:opacity-30 pointer-coarse:p-2.5"
                                       >
                                         <ArrowDown className="h-3.5 w-3.5" />
                                       </button>
                                     </div>
 
                                     <Input
+                                      aria-label="Question label"
                                       value={field.label}
                                       onChange={(event) =>
                                         mutateTemplate(template.slug, (entry) => ({
@@ -629,11 +632,11 @@ export function TemplateManagementPage() {
                                         'inline-flex shrink-0 items-center gap-1.5 rounded-[0.25rem] px-2 py-1.5 text-xs font-semibold transition-colors',
                                         settingsOpen
                                           ? 'bg-[#edf4fb] text-[#005db6]'
-                                          : 'text-[#74777f] hover:bg-[#edf1f5] hover:text-[#005db6]',
+                                          : 'text-[#666970] hover:bg-[#edf1f5] hover:text-[#005db6]',
                                       )}
                                     >
-                                      <Settings2 className="h-3.5 w-3.5" />
-                                      <span className="hidden md:inline">Settings</span>
+                                      <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+                                      <span className="sr-only md:not-sr-only md:inline">Settings</span>
                                     </button>
 
                                     <Switch
@@ -809,7 +812,7 @@ export function TemplateManagementPage() {
                                         }
                                         className="h-10 text-sm"
                                       />
-                                      <span className="block text-[12px] leading-4 text-[#74777f]">
+                                      <span className="block text-[12px] leading-4 text-[#666970]">
                                         Showing: {sourceLabel}
                                       </span>
                                     </label>

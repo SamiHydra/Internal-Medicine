@@ -241,7 +241,7 @@ export function ExternalEvaluationPanel({ onRecorded }: { onRecorded: () => void
         <div className="mt-2 divide-y divide-[#eef2f6] rounded-[0.35rem] border border-[#e6ecf3]">
           {RESIDENT_COMPETENCIES.map((group) => (
             <div key={group.group} className="px-3 py-2.5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#8b9199]">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#6c7177]">
                 {group.group}
               </p>
               <div className="mt-1 grid sm:grid-cols-2">

@@ -323,7 +323,7 @@ export function AcademicSubmissionsPage() {
           {isLoading && evaluations.length === 0 ? (
             <TableSkeleton rows={8} columns={5} />
           ) : evaluations.length === 0 ? (
-            <div className="rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-5 py-12 text-center text-sm text-[#74777f]">
+            <div className="rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-5 py-12 text-center text-sm text-[#666970]">
               No evaluations match the current filters.
             </div>
           ) : (

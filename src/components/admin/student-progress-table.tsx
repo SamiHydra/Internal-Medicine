@@ -56,7 +56,7 @@ function FinalPill({ rating }: { rating: number | null }) {
 function DetailFact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-[#8794a5]">{label}</p>
+      <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-[#68727f]">{label}</p>
       <div className="mt-1 leading-none">{children}</div>
     </div>
   )
@@ -97,7 +97,7 @@ function StudentRowItem({ student }: { student: StudentRow }) {
           <p className="truncate text-[15px] font-semibold leading-5 text-[#000a1e]">
             {student.fullName}
           </p>
-          <p className="mt-0.5 truncate text-[12.5px] text-[#8794a5]">{batchLine(student)}</p>
+          <p className="mt-0.5 truncate text-[12.5px] text-[#68727f]">{batchLine(student)}</p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <FinalPill rating={student.finalRating} />

@@ -244,7 +244,7 @@ export function DepartmentDetailPage() {
           <CardContent>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
-                <LineChart data={detail.trends.activity}>
+                <LineChart title="Historical trend" data={detail.trends.activity}>
                   <CartesianGrid strokeDasharray="3 8" stroke="#d4dde8" vertical={false} />
                   <XAxis dataKey="shortLabel" />
                   <YAxis />
@@ -299,7 +299,7 @@ export function DepartmentDetailPage() {
                 <p className="mt-1 text-sm text-[#44474e]">
                   {String(audit.oldValue ?? '-')} → {String(audit.newValue ?? '-')}
                 </p>
-                <p className="mt-2 text-xs text-[#74777f]">
+                <p className="mt-2 text-xs text-[#666970]">
                   {audit.changedByName} at {formatTimestamp(audit.changedAt)}
                 </p>
               </div>

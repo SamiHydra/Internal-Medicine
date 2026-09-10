@@ -47,7 +47,7 @@ function AccountMenu({ open, onClose }: { open: boolean; onClose: () => void }) 
       <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-56 overflow-hidden rounded-[0.4rem] border border-[#e1e6ec] bg-white py-1 shadow-[0_18px_40px_-24px_rgba(0,20,55,0.45)]">
         <div className="border-b border-[#eef2f6] px-3 py-2.5">
           <p className="truncate text-[13.5px] font-semibold text-[#000a1e]">{USER.name}</p>
-          <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8794a5]">
+          <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#68727f]">
             {USER.role}
           </p>
         </div>
@@ -113,7 +113,7 @@ function OptionAQuiet() {
                   {USER.name}
                 </span>
               </span>
-              <ChevronDown className="h-3.5 w-3.5 text-[#8794a5]" />
+              <ChevronDown className="h-3.5 w-3.5 text-[#68727f]" />
             </button>
             <AccountMenu open={open} onClose={() => setOpen(false)} />
           </div>
@@ -144,7 +144,7 @@ function OptionBCluster() {
           <div className="hidden items-center gap-2.5 px-3.5 lg:flex">
             <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#f0b429]" />
             <span className="leading-tight">
-              <span className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8794a5]">
+              <span className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-[#68727f]">
                 Reporting period
               </span>
               <span className="block text-[13px] font-semibold tracking-[-0.01em] text-[#000a1e]">
@@ -168,7 +168,7 @@ function OptionBCluster() {
               <span className="block text-[13.5px] font-semibold text-[#000a1e]">
                 {USER.name}
               </span>
-              <span className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8794a5]">
+              <span className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-[#68727f]">
                 {USER.role}
               </span>
             </span>
@@ -177,7 +177,7 @@ function OptionBCluster() {
           <button
             type="button"
             aria-label="Sign out"
-            className="inline-flex w-11 items-center justify-center border-l border-[#e7ecf1] text-[#8794a5] transition-colors hover:bg-[#f6f8fa] hover:text-[#ba1a1a]"
+            className="inline-flex w-11 items-center justify-center border-l border-[#e7ecf1] text-[#68727f] transition-colors hover:bg-[#f6f8fa] hover:text-[#ba1a1a]"
           >
             <LogOut className="h-4 w-4" />
           </button>
@@ -204,7 +204,7 @@ function OptionCAnchored() {
           <h1 className="mt-1 truncate font-display text-[1.5rem] font-bold leading-tight tracking-[-0.03em] text-[#000a1e]">
             {TITLE}
           </h1>
-          <p className="mt-1.5 flex items-center gap-2 text-[12.5px] text-[#74777f]">
+          <p className="mt-1.5 flex items-center gap-2 text-[12.5px] text-[#666970]">
             <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#f0b429]" />
             Reporting period
             <span aria-hidden className="text-[#c2cad4]">·</span>
@@ -231,7 +231,7 @@ function OptionCAnchored() {
               className="inline-flex h-10 items-center gap-2 rounded-[0.4rem] border border-[#e1e6ec] bg-white pl-1.5 pr-2.5 transition-colors hover:border-[#c8d5e6] hover:bg-[#f6f8fa]"
             >
               <AvatarTile size="sm" />
-              <ChevronDown className="h-3.5 w-3.5 text-[#8794a5]" />
+              <ChevronDown className="h-3.5 w-3.5 text-[#68727f]" />
             </button>
             <AccountMenu open={open} onClose={() => setOpen(false)} />
           </div>
@@ -323,7 +323,7 @@ export default function HeaderLabPage() {
                   <div className="hidden items-center gap-2.5 rounded-[0.4rem] border border-[#e1e6ec] bg-white px-3.5 py-2 lg:flex">
                     <span className="h-2 w-2 rounded-full bg-[#f0b429]" />
                     <div className="leading-tight">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#74777f]">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#666970]">
                         Reporting period
                       </p>
                       <p className="font-display text-[0.92rem] font-semibold leading-none tracking-[-0.02em] text-[#000a1e]">
@@ -340,11 +340,11 @@ export default function HeaderLabPage() {
                       <p className="text-sm font-semibold leading-tight tracking-[-0.01em] text-[#000a1e]">
                         {USER.name}
                       </p>
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#666970]">
                         {USER.role}
                       </p>
                     </div>
-                    <span className="ml-0.5 inline-flex h-9 w-9 items-center justify-center rounded-[0.3rem] border-l border-[#e1e6ec] pl-2 text-[#74777f]">
+                    <span className="ml-0.5 inline-flex h-9 w-9 items-center justify-center rounded-[0.3rem] border-l border-[#e1e6ec] pl-2 text-[#666970]">
                       <LogOut className="h-4 w-4" />
                     </span>
                   </div>

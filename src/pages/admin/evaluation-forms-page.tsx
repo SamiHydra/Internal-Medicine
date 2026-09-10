@@ -298,7 +298,7 @@ export function EvaluationFormsPage() {
 
       <section className={panelClass}>
         {forms === null ? (
-          <div className="flex min-h-[240px] items-center justify-center text-[#74777f]">
+          <div className="flex min-h-[240px] items-center justify-center text-[#666970]">
             <Loader2
               className="h-5 w-5 animate-spin"
               aria-label="Loading forms"
@@ -584,7 +584,7 @@ export function EvaluationFormsPage() {
                               }
                             >
                               {field.isCore ? (
-                                <Lock className="h-4 w-4 text-[#9aa7b8]" />
+                                <Lock className="h-4 w-4 text-[#69727d]" />
                               ) : (
                                 <Trash2 className="h-4 w-4 text-[#ba1a1a]" />
                               )}

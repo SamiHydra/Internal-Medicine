@@ -96,9 +96,9 @@ export function ReportComments({
       </div>
 
       {isLoading ? (
-        <p className="mt-4 text-sm text-[#74777f]">Loading comments…</p>
+        <p className="mt-4 text-sm text-[#666970]">Loading comments…</p>
       ) : comments.length === 0 ? (
-        <p className="mt-4 text-sm text-[#74777f]">
+        <p className="mt-4 text-sm text-[#666970]">
           No comments yet. Ask a question or add context about this report instead of using a side channel.
         </p>
       ) : (
@@ -113,7 +113,7 @@ export function ReportComments({
                   <p className="text-sm font-semibold text-[#000a1e]">
                     <span>{comment.authorName}</span>
                     {comment.authorRole ? (
-                      <span className="ml-2 text-[11px] font-medium uppercase tracking-[0.1em] text-[#74777f]">
+                      <span className="ml-2 text-[11px] font-medium uppercase tracking-[0.1em] text-[#666970]">
                         <span aria-hidden className="mr-1.5 text-[#c2c8d0]">·</span>
                         {comment.authorRole}
                       </span>

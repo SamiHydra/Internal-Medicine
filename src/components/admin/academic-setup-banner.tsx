@@ -82,7 +82,7 @@ export function AcademicSetupBanner() {
         <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0 text-[#b07d10]" aria-hidden="true" />
         <div className="min-w-0">
           <p className="text-sm font-semibold text-[#1d3047]">Scheduling health needs attention</p>
-          <p className="mt-0.5 text-sm leading-6 text-[#74777f]">
+          <p className="mt-0.5 text-sm leading-6 text-[#666970]">
             {issues.map((issue) => issue.text).join('; ')}. Evaluation pairing and morning attendance use this effective coverage.
           </p>
         </div>

@@ -492,7 +492,7 @@ export function DutyRosterPage() {
         </div>
 
         {isLoading ? (
-          <div className="flex min-h-[260px] items-center justify-center text-[#74777f]">
+          <div className="flex min-h-[260px] items-center justify-center text-[#666970]">
             <Loader2
               className="h-5 w-5 animate-spin"
               aria-label="Loading roster"
@@ -525,17 +525,20 @@ export function DutyRosterPage() {
         ) : (
           <div className="mt-5 max-h-[62vh] overflow-auto rounded-[0.4rem] border border-[#e6ecf3]">
             <table className="w-full border-collapse text-sm">
+              <caption className="sr-only">Duty roster: monthly and day duties per person</caption>
               <thead className="sticky top-0 z-10 bg-[#f8fafc]">
                 <tr className="border-b border-[#e6ecf3] text-left text-xs font-bold uppercase tracking-[0.1em] text-[#526171]">
-                  <th className="px-4 py-3">Person</th>
-                  <th className="px-4 py-3">
+                  <th scope="col" className="px-4 py-3">Person</th>
+                  <th scope="col" className="px-4 py-3">
                     {roleFilter === 'consultant' || roleFilter === 'internist'
                       ? 'Section'
                       : 'Group'}
                   </th>
-                  <th className="px-4 py-3">Monthly duty</th>
-                  <th className="px-4 py-3">Day duties</th>
-                  <th className="w-10 px-2 py-3" aria-label="Expand" />
+                  <th scope="col" className="px-4 py-3">Monthly duty</th>
+                  <th scope="col" className="px-4 py-3">Day duties</th>
+                  <th scope="col" className="w-10 px-2 py-3">
+                    <span className="sr-only">Expand</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>

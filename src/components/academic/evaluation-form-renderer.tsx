@@ -123,7 +123,7 @@ function FieldShell({
         {field.label}
       </label>
       {children}
-      {field.helpText && !error ? <p className="text-xs text-[#74777f]">{field.helpText}</p> : null}
+      {field.helpText && !error ? <p className="text-xs text-[#666970]">{field.helpText}</p> : null}
       {error ? <p className="text-sm text-[#ba1a1a]">{error}</p> : null}
     </div>
   )
@@ -404,7 +404,7 @@ export function EvaluationFormRenderer({
           <h2 className="mt-1.5 font-display text-[1.4rem] font-bold leading-tight tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
             Who are you evaluating?
           </h2>
-          <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[#74777f]">
+          <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[#666970]">
             Select one eligible colleague before completing the evaluation.
           </p>
         </>
@@ -454,7 +454,7 @@ export function EvaluationFormRenderer({
                 {section.section}
               </h2>
             </div>
-            <p className="text-xs font-medium text-[#8794a5]">
+            <p className="text-xs font-medium text-[#68727f]">
               {section.fields.length} {section.fields.length === 1 ? 'item' : 'items'}
             </p>
           </div>
@@ -499,7 +499,7 @@ export function EvaluationFormRenderer({
               <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#000a1e]">
                 Ready to submit?
               </p>
-              <p className="mt-1 text-sm leading-6 text-[#74777f]">
+              <p className="mt-1 text-sm leading-6 text-[#666970]">
                 Review each section before filing this evaluation.
               </p>
             </div>

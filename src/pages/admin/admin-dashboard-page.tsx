@@ -131,7 +131,7 @@ function ChartEmptyState({
         'flex h-full flex-col items-center justify-center gap-3 rounded-[0.5rem] border border-dashed px-6 text-center shadow-inner',
         tone === 'dark'
           ? 'border-white/12 bg-white/6 text-[#c6d3e4]'
-          : 'border-[#d4dde8]/80 bg-[linear-gradient(180deg,#ffffff_0%,#f4f7fb_100%)] text-[#64748b]',
+          : 'border-[#d4dde8]/80 bg-[linear-gradient(180deg,#ffffff_0%,#f4f7fb_100%)] text-[#59616f]',
       )}
     >
       <Sparkles className={cn('h-5 w-5', tone === 'dark' ? 'text-[#f0b429]' : 'text-[#005db6]')} />
@@ -155,7 +155,7 @@ function ChartLoadingState({
         'flex h-full flex-col items-center justify-center gap-3 rounded-[0.5rem] border border-dashed px-6 text-center shadow-inner',
         tone === 'dark'
           ? 'border-white/12 bg-white/6 text-[#c6d3e4]'
-          : 'border-[#d4dde8]/80 bg-[linear-gradient(180deg,#ffffff_0%,#f4f7fb_100%)] text-[#64748b]',
+          : 'border-[#d4dde8]/80 bg-[linear-gradient(180deg,#ffffff_0%,#f4f7fb_100%)] text-[#59616f]',
       )}
     >
       <Activity className={cn('h-5 w-5 animate-pulse', tone === 'dark' ? 'text-[#f0b429]' : 'text-[#005db6]')} />
@@ -388,8 +388,8 @@ function SectionHeading({
   right?: ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-4 border-b border-[#eef2f6] pb-5 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex items-center gap-3.5">
+    <div className="flex flex-col gap-4 border-b border-[#eef2f6] pb-5 md:flex-row md:items-center md:justify-between">
+      <div className="flex min-w-0 items-center gap-3.5">
         <span
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[0.45rem]"
           style={{ backgroundColor: accentTint, color: accent }}
@@ -408,7 +408,7 @@ function SectionHeading({
           </h2>
         </div>
       </div>
-      {right ? <div className="shrink-0">{right}</div> : null}
+      {right ? <div className="min-w-0 md:shrink-0">{right}</div> : null}
     </div>
   )
 }
@@ -1735,6 +1735,7 @@ export function AdminDashboardPage() {
     const single = series.length === 1
     return (
       <BarChart
+        title={`Monthly comparison: ${series.map((item) => item.name).join(', ')}`}
         layout="vertical"
         data={data}
         margin={{ top: 6, right: single ? 56 : 16, left: 6, bottom: 6 }}
@@ -1847,9 +1848,9 @@ export function AdminDashboardPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-[#f0b429]" aria-hidden="true" />
                 Reporting overview
               </p>
-              <h1 className="mt-3 max-w-3xl font-display text-[1.65rem] font-bold leading-[1.08] tracking-[-0.035em] text-[#000a1e] md:text-[2rem]">
+              <h2 className="mt-3 max-w-3xl font-display text-[1.65rem] font-bold leading-[1.08] tracking-[-0.035em] text-[#000a1e] md:text-[2rem]">
                 {selectedRangeTitle}
-              </h1>
+              </h2>
             </div>
             {/* Building an export is its own task with its own filters, so the
                 dashboard only points at it. */}
@@ -1873,12 +1874,12 @@ export function AdminDashboardPage() {
                 Filters
               </span>
               <span className="flex min-w-0 items-center gap-2">
-                <span className="max-w-[10.5rem] truncate text-xs text-[#74777f]">
+                <span className="max-w-[10.5rem] truncate text-xs text-[#666970]">
                   {timeRangeLabels[timeRange]} · {familyLabels[familyFilter]}
                 </span>
                 <ChevronDown
                   className={cn(
-                    'h-4 w-4 shrink-0 text-[#74777f] transition-transform duration-200',
+                    'h-4 w-4 shrink-0 text-[#666970] transition-transform duration-200',
                     filtersOpen && 'rotate-180',
                   )}
                 />
@@ -1933,7 +1934,7 @@ export function AdminDashboardPage() {
               />
 
               <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#74777f]">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#666970]">
                   View
                 </p>
                 <div
@@ -1967,7 +1968,7 @@ export function AdminDashboardPage() {
                         }}
                         className={cn(
                           'relative min-w-[86px] rounded-md px-3 text-sm font-semibold transition-colors duration-200',
-                          isActive ? 'text-[#002147]' : 'text-[#64748b] hover:text-[#1d3047]',
+                          isActive ? 'text-[#002147]' : 'text-[#59616f] hover:text-[#1d3047]',
                         )}
                       >
                         {isActive ? (
@@ -2027,7 +2028,7 @@ export function AdminDashboardPage() {
           title="Submission pulse"
           right={
             <ReportingScopePanel
-              className="w-full sm:max-w-[260px]"
+              className="w-full md:max-w-[260px]"
               fields={[
                 {
                   label: 'Submission status',
@@ -2043,15 +2044,16 @@ export function AdminDashboardPage() {
 
         <div className="relative mt-6 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[220px_minmax(0,0.85fr)_minmax(0,1.25fr)]">
           <div className={cn('flex min-w-0 flex-col', chartPanelClass)}>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#74777f]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#666970]">
               Distribution
             </p>
             <div className="relative mt-4 h-[176px]">
               {totalExpected ? (
                 <>
                   <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
-                    <PieChart>
+                    <PieChart title="Submission pulse">
                       <Pie
+                        rootTabIndex={-1}
                         data={statusDistribution}
                         dataKey="count"
                         innerRadius={60}
@@ -2083,7 +2085,7 @@ export function AdminDashboardPage() {
                       variant="compact"
                       className="block font-display text-[2rem] font-bold leading-none tabular-nums text-[#000a1e]"
                     />
-                    <p className="mt-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
+                    <p className="mt-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#666970]">
                       {statusCenterLabel}
                     </p>
                   </div>
@@ -2101,13 +2103,13 @@ export function AdminDashboardPage() {
                 <span className="font-display text-lg font-bold tabular-nums text-[#005db6]">
                   {statusFocusRate}%
                 </span>
-                <span className="text-xs text-[#74777f]">of scope</span>
+                <span className="text-xs text-[#666970]">of scope</span>
               </div>
             ) : null}
           </div>
 
           <div className={cn('space-y-3', chartPanelClass)}>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#74777f]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#666970]">
               Status ledger
             </p>
             {statusDistribution.map((item, index) => {
@@ -2126,7 +2128,7 @@ export function AdminDashboardPage() {
                 >
                   <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.fill }} />
                   <span className="text-sm font-medium text-[#44474e]">{item.label}</span>
-                  <span className="text-sm text-[#74777f]">{share}%</span>
+                  <span className="text-sm text-[#666970]">{share}%</span>
                   <AnimatedMetric
                     value={item.count}
                     variant="compact"
@@ -2142,7 +2144,7 @@ export function AdminDashboardPage() {
                 otherwise pokes past the card (found by the Linux sweep). */}
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#74777f]">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#666970]">
                   {trendScale === 'monthly' ? 'Monthly trend' : 'Weekly trend'}
                 </p>
                 <h3 className="mt-2 font-display text-2xl font-semibold tracking-[-0.02em] text-[#000a1e] md:text-3xl">
@@ -2173,6 +2175,7 @@ export function AdminDashboardPage() {
                 <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                   {trendScale === 'monthly' ? (
                     <BarChart
+                      title="Reporting trend by month"
                       data={reportingTrendSeries}
                       margin={{ top: 12, right: 12, left: 4, bottom: 4 }}
                     >
@@ -2193,6 +2196,7 @@ export function AdminDashboardPage() {
                     </BarChart>
                   ) : (
                     <AreaChart
+                      title="Reporting trend by week"
                       data={reportingTrendSeries}
                       margin={{ top: 12, right: 12, left: 4, bottom: 4 }}
                     >
@@ -2280,7 +2284,7 @@ export function AdminDashboardPage() {
                     variant="compact"
                     className="block font-display text-[1.9rem] font-bold leading-none tabular-nums text-[#000a1e]"
                   />
-                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f]">
+                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#666970]">
                     Admissions
                   </p>
                 </div>
@@ -2349,6 +2353,7 @@ export function AdminDashboardPage() {
                         })
                       ) : (
                         <AreaChart
+                          title="Newly admitted vs discharges"
                           data={inpatientFlowSeries}
                           margin={{ top: 12, right: 12, left: 4, bottom: 4 }}
                         >
@@ -2412,6 +2417,7 @@ export function AdminDashboardPage() {
                         })
                       ) : (
                         <AreaChart
+                          title="Deaths, pressure ulcers, HAI"
                           data={inpatientSafetySeries}
                           margin={{ top: 12, right: 12, left: 4, bottom: 4 }}
                         >
@@ -2446,14 +2452,14 @@ export function AdminDashboardPage() {
                       BOR / BTR / ALOS
                     </h3>
                     <div className="w-full min-w-0 sm:max-w-[280px]">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#74777f]">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#666970]">
                         BOR/BTR/ALOS scope
                       </p>
                       <Select
                         value={inpatientOccupancyScope}
                         onValueChange={setInpatientOccupancyScope}
                       >
-                        <SelectTrigger aria-label="Inpatient occupancy metric scope" className="mt-2 h-10 min-w-0 rounded-[0.25rem] border-[#d9e0e7] bg-[#ffffff] px-3.5 text-left text-[#000a1e] shadow-none focus:ring-0 hover:border-[#c9d4e2]">
+                        <SelectTrigger aria-label="Inpatient occupancy metric scope" className="mt-2 h-10 min-w-0 rounded-[0.25rem] border-[#d9e0e7] bg-[#ffffff] px-3.5 text-left text-[#000a1e] shadow-none focus:ring-0 focus-visible:ring-2 focus-visible:ring-[#005db6]/35 hover:border-[#c9d4e2]">
                           <SelectValue
                             placeholder="BOR/BTR/ALOS scope"
                             className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
@@ -2484,6 +2490,7 @@ export function AdminDashboardPage() {
                     {hasInpatientOccupancySignal && !isOccupancyDetailPending ? (
                       <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
                         <AreaChart
+                          title="BOR / BTR / ALOS"
                           data={inpatientOccupancySeries}
                           margin={{ top: 18, right: 24, left: 0, bottom: 12 }}
                         >
@@ -2546,7 +2553,7 @@ export function AdminDashboardPage() {
                     variant="compact"
                     className="block font-display text-[1.9rem] font-bold leading-none tabular-nums text-[#000a1e]"
                   />
-                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f]">
+                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#666970]">
                     Patients seen
                   </p>
                 </div>
@@ -2612,7 +2619,7 @@ export function AdminDashboardPage() {
                             allowDecimals: false,
                           })
                       ) : (
-                        <AreaChart data={outpatientSeenSeries} margin={{ top: 12, right: 12, left: 4, bottom: 4 }}>
+                        <AreaChart title="Seen vs not seen same day" data={outpatientSeenSeries} margin={{ top: 12, right: 12, left: 4, bottom: 4 }}>
                           <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                           <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                           <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
@@ -2661,7 +2668,7 @@ export function AdminDashboardPage() {
                             allowDecimals: false,
                           })
                         ) : (
-                          <AreaChart data={outpatientVolumeMix} margin={{ top: 12, right: 12, left: 4, bottom: 4 }}>
+                          <AreaChart title="Total seen, new vs follow-up" data={outpatientVolumeMix} margin={{ top: 12, right: 12, left: 4, bottom: 4 }}>
                             <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                             <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                             <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
@@ -2703,7 +2710,7 @@ export function AdminDashboardPage() {
                             tooltipLabelFormatter: formatMonthlyComparisonTooltipLabel,
                           })
                       ) : (
-                        <AreaChart data={outpatientFollowUpWaitSeries} margin={{ top: 12, right: 12, left: 4, bottom: 4 }}>
+                        <AreaChart title="Follow-up wait time" data={outpatientFollowUpWaitSeries} margin={{ top: 12, right: 12, left: 4, bottom: 4 }}>
                           <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                           <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                           <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={34} />
@@ -2743,7 +2750,7 @@ export function AdminDashboardPage() {
                             tooltipFormatter: (value) => [formatMinutesAsTime(Number(value)), 'Start time'],
                           })
                       ) : (
-                        <AreaChart data={outpatientClinicStartSeries} margin={{ top: 12, right: 12, left: 4, bottom: 4 }}>
+                        <AreaChart title="Clinic start time" data={outpatientClinicStartSeries} margin={{ top: 12, right: 12, left: 4, bottom: 4 }}>
                           <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                           <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                           <YAxis tickFormatter={formatMinutesAsTime} tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={44} />
@@ -2791,6 +2798,7 @@ export function AdminDashboardPage() {
                         })
                       ) : (
                         <BarChart
+                          title="Senior physician availability"
                           data={outpatientAvailabilitySeries}
                           margin={{ top: 14, right: 24, left: 0, bottom: 8 }}
                           barGap={5}
@@ -2866,7 +2874,7 @@ export function AdminDashboardPage() {
                     variant="compact"
                     className="block font-display text-[1.9rem] font-bold leading-none tabular-nums text-[#000a1e]"
                   />
-                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f]">
+                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#666970]">
                     Procedures
                   </p>
                 </div>
@@ -2936,7 +2944,7 @@ export function AdminDashboardPage() {
                           allowDecimals: false,
                         })
                       ) : (
-                        <AreaChart data={procedureMainSeries} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
+                        <AreaChart title="Procedure throughput" data={procedureMainSeries} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
                           <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                           <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                           <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={44} />
@@ -3002,7 +3010,7 @@ export function AdminDashboardPage() {
                 <div className="h-[300px]">
                   {hasDialysisMixSignal ? (
                     <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
-                      <BarChart data={resolvedDialysisMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
+                      <BarChart title="Dialysis acute/chronic split" data={resolvedDialysisMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                         <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={44} allowDecimals={false} />
@@ -3042,7 +3050,7 @@ export function AdminDashboardPage() {
                 <div className="h-[300px]">
                   {hasEndoscopyMixSignal ? (
                     <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
-                      <BarChart data={resolvedEndoscopyMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
+                      <BarChart title="Endoscopy procedure mix" data={resolvedEndoscopyMix} margin={{ top: 14, right: 24, left: 0, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 12" stroke={chartGridStroke} vertical={false} />
                         <XAxis dataKey="label" tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} tickMargin={12} padding={trendXPadding} />
                         <YAxis tick={chartTick} axisLine={chartAxisLine} tickLine={chartTickLine} width={44} allowDecimals={false} />

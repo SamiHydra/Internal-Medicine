@@ -140,7 +140,7 @@ export function TeachingAttendancePage() {
           {/* ---- Attendance ---- */}
           <TabsContent value="attendance" className="mt-5">
             {sessions === null ? (
-              <div className="flex min-h-[200px] items-center justify-center text-[#74777f]">
+              <div className="flex min-h-[200px] items-center justify-center text-[#666970]">
                 <Loader2 className="h-5 w-5 animate-spin" aria-label="Loading sessions" />
               </div>
             ) : sessions.length === 0 ? (
@@ -163,9 +163,9 @@ export function TeachingAttendancePage() {
                           <p className="text-sm font-semibold text-[#000a1e]">
                             {ACTIVITY_LABELS[session.activityType]}
                             {session.subgroup ? ` · Subgroup ${session.subgroup}` : ''}
-                            <span className="font-normal text-[#74777f]"> · {session.batchLabel}</span>
+                            <span className="font-normal text-[#666970]"> · {session.batchLabel}</span>
                           </p>
-                          <p className="mt-0.5 text-xs text-[#74777f]">
+                          <p className="mt-0.5 text-xs text-[#666970]">
                             {session.wardName ?? 'No ward assigned'} · {session.roster.length} students
                           </p>
                         </div>
@@ -212,7 +212,7 @@ export function TeachingAttendancePage() {
                             })}
                           </div>
                           <div className="mt-3 flex items-center justify-between">
-                            <p className="text-xs text-[#74777f]">
+                            <p className="text-xs text-[#666970]">
                               {presentCount} of {session.roster.length} present
                             </p>
                             <Button

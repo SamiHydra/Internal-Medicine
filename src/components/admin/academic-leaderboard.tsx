@@ -41,7 +41,7 @@ export function AcademicLeaderboard({ entries, direction, minEvaluationsForRank 
       {/* Column legend — hidden on mobile, where each row carries its own subtext. */}
       <li
         aria-hidden
-        className="hidden grid-cols-[52px_minmax(0,1fr)_64px_64px_64px_24px] items-center gap-5 px-4 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#9aa7b8] sm:grid"
+        className="hidden grid-cols-[52px_minmax(0,1fr)_64px_64px_64px_24px] items-center gap-5 px-4 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#69727d] sm:grid"
       >
         <span className="text-center">Rank</span>
         <span>Name</span>
@@ -93,7 +93,7 @@ export function AcademicLeaderboard({ entries, direction, minEvaluationsForRank 
                     </span>
                   ) : null}
                 </span>
-                <span className="mt-0.5 block truncate text-[12.5px] text-[#8794a5]">
+                <span className="mt-0.5 block truncate text-[12.5px] text-[#68727f]">
                   <span className="sm:hidden">
                     {entry.homeWardName ?? 'Unassigned ward'} · {entry.evaluationCount} evals ·{' '}
                     {entry.ratingAverage !== null ? `★ ${entry.ratingAverage.toFixed(1)}` : 'no rating'} ·{' '}
@@ -108,7 +108,7 @@ export function AcademicLeaderboard({ entries, direction, minEvaluationsForRank 
               {/* Rating chip */}
               <span className="hidden justify-end sm:flex">
                 {entry.ratingAverage !== null ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-[#fef6e6] px-2 py-1 text-[13px] font-semibold tabular-nums text-[#a9761a]">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[#fef6e6] px-2 py-1 text-[13px] font-semibold tabular-nums text-[#936717]">
                     <Star className="h-3 w-3 fill-current" strokeWidth={0} />
                     {entry.ratingAverage.toFixed(1)}
                   </span>

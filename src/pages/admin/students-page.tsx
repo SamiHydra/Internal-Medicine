@@ -101,7 +101,7 @@ function resolveWeekLabel(picked: string): string | null {
 }
 
 const fieldCaptionClass =
-  'text-[11px] font-bold uppercase tracking-[0.1em] text-[#8794a5]';
+  'text-[11px] font-bold uppercase tracking-[0.1em] text-[#68727f]';
 
 /**
  * Where a batch sits against today: the block's own dates decide, independently
@@ -291,7 +291,7 @@ export function StudentsPage() {
 
   if (batches === null) {
     return (
-      <div className="flex min-h-[300px] items-center justify-center text-[#74777f]">
+      <div className="flex min-h-[300px] items-center justify-center text-[#666970]">
         <Loader2
           className="h-5 w-5 animate-spin"
           aria-label="Loading students"
@@ -471,7 +471,7 @@ export function StudentsPage() {
                     <p className="truncate text-[15px] font-semibold tracking-[-0.01em] text-[#000a1e]">
                       {batch.label}
                     </p>
-                    <p className="mt-0.5 text-[13px] leading-5 text-[#74777f]">
+                    <p className="mt-0.5 text-[13px] leading-5 text-[#666970]">
                       {meta
                         ? `${meta.range} · ${meta.totalWeeks} weeks`
                         : `${batch.startsOn} to ${batch.endsOn}`}
@@ -497,7 +497,7 @@ export function StudentsPage() {
                         </span>
                       </>
                     ) : (
-                      <p className="text-[12px] font-bold uppercase tracking-[0.1em] text-[#97a2b0]">
+                      <p className="text-[12px] font-bold uppercase tracking-[0.1em] text-[#6a717b]">
                         {meta?.phase === 'upcoming'
                           ? `Starts ${meta.startLabel}`
                           : 'Finished'}
@@ -509,7 +509,7 @@ export function StudentsPage() {
                     <p className="text-[15px] font-bold tabular-nums text-[#000a1e]">
                       {batch.studentCount}
                     </p>
-                    <p className="text-[10.5px] font-bold uppercase tracking-[0.11em] text-[#97a2b0]">
+                    <p className="text-[10.5px] font-bold uppercase tracking-[0.11em] text-[#6a717b]">
                       Students
                     </p>
                   </div>
@@ -518,7 +518,7 @@ export function StudentsPage() {
                     <span
                       className={cn(
                         'text-[12px] font-bold uppercase tracking-[0.1em]',
-                        batch.active ? 'text-[#000a1e]' : 'text-[#97a2b0]',
+                        batch.active ? 'text-[#000a1e]' : 'text-[#6a717b]',
                       )}
                     >
                       {batch.active ? 'Active' : 'Paused'}
@@ -674,7 +674,7 @@ export function StudentsPage() {
                   <p className="text-[15px] font-semibold tracking-[-0.01em] text-[#000a1e]">
                     Paste a list
                   </p>
-                  <p className="mt-1 text-[13px] leading-5 text-[#74777f]">
+                  <p className="mt-1 text-[13px] leading-5 text-[#666970]">
                     One student per line: name first, then an optional ID and an
                     optional subgroup, separated by commas.
                   </p>
@@ -792,31 +792,31 @@ export function StudentsPage() {
                   <tr className="border-b border-[#eef2f6]">
                     <th
                       scope="col"
-                      className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5]"
+                      className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#68727f]"
                     >
                       Student
                     </th>
                     <th
                       scope="col"
-                      className="hidden px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5] md:table-cell"
+                      className="hidden px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#68727f] md:table-cell"
                     >
                       Batch
                     </th>
                     <th
                       scope="col"
-                      className="hidden px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5] lg:table-cell"
+                      className="hidden px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#68727f] lg:table-cell"
                     >
                       ID
                     </th>
                     <th
                       scope="col"
-                      className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5]"
+                      className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#68727f]"
                     >
                       Subgroup
                     </th>
                     <th
                       scope="col"
-                      className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5]"
+                      className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.14em] text-[#68727f]"
                     >
                       Active
                     </th>
@@ -827,7 +827,7 @@ export function StudentsPage() {
                     <tr>
                       <td
                         colSpan={5}
-                        className="px-4 py-10 text-center text-[13.5px] text-[#74777f]"
+                        className="px-4 py-10 text-center text-[13.5px] text-[#666970]"
                       >
                         No students match this search.
                       </td>
@@ -847,7 +847,7 @@ export function StudentsPage() {
                         </span>
                         {/* The columns these repeat are hidden on narrow
                             screens, so they fall back under the name. */}
-                        <span className="mt-0.5 block truncate text-[13px] leading-5 text-[#74777f] md:hidden">
+                        <span className="mt-0.5 block truncate text-[13px] leading-5 text-[#666970] md:hidden">
                           {student.batchLabel}
                           {student.externalId ? ` · ${student.externalId}` : ''}
                         </span>
@@ -857,7 +857,7 @@ export function StudentsPage() {
                         {student.batchLabel ?? '-'}
                       </td>
 
-                      <td className="hidden whitespace-nowrap px-4 py-2.5 text-[13.5px] tabular-nums text-[#74777f] lg:table-cell">
+                      <td className="hidden whitespace-nowrap px-4 py-2.5 text-[13.5px] tabular-nums text-[#666970] lg:table-cell">
                         {student.externalId ?? '-'}
                       </td>
 
@@ -917,7 +917,7 @@ export function StudentsPage() {
                               'hidden text-[12px] font-bold uppercase tracking-[0.1em] sm:inline',
                               student.active
                                 ? 'text-[#000a1e]'
-                                : 'text-[#97a2b0]',
+                                : 'text-[#6a717b]',
                             )}
                           >
                             {student.active ? 'Active' : 'Paused'}
@@ -1268,7 +1268,7 @@ export function StudentsPage() {
                         <p className="text-[15px] font-medium text-[#000a1e]">
                           {ACTIVITY_LABELS[session.activityType]}
                           {session.subgroup ? ` · ${session.subgroup}` : ''}
-                          <span className="font-normal text-[#74777f]">
+                          <span className="font-normal text-[#666970]">
                             {' '}
                             · {session.batchLabel}
                           </span>

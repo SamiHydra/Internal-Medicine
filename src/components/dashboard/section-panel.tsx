@@ -48,7 +48,7 @@ export function SectionHeader({
           </h2>
         ) : null}
         {description ? (
-          <p className="mt-1.5 max-w-2xl text-[15px] leading-6 text-[#74777f]">{description}</p>
+          <p className="mt-1.5 max-w-2xl text-[15px] leading-6 text-[#666970]">{description}</p>
         ) : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-2.5">{actions}</div> : null}
@@ -80,7 +80,7 @@ export function SectionEmptyState({
       <span className="text-[#005db6]">{icon}</span>
       <div className="space-y-1">
         <p className="text-[15px] font-semibold text-[#1d3047]">{title}</p>
-        <p className="max-w-sm text-sm leading-6 text-[#74777f]">{description}</p>
+        <p className="max-w-sm text-sm leading-6 text-[#666970]">{description}</p>
       </div>
     </div>
   )

@@ -270,7 +270,7 @@ export function AcademicStructurePage() {
 
       <section className={panelClass}>
         {loading ? (
-          <div className="flex min-h-[240px] items-center justify-center text-[#74777f]">
+          <div className="flex min-h-[240px] items-center justify-center text-[#666970]">
             <Loader2
               className="h-5 w-5 animate-spin"
               aria-label="Loading structure"

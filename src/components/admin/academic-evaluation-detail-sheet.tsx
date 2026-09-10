@@ -147,11 +147,11 @@ function ExtraAnswersSection({ extras }: { extras?: ExtraEvaluationAnswer[] }) {
   }
   return (
     <Section label="Additional fields">
-      <div className="divide-y divide-white/10">
+      <dl className="divide-y divide-white/10">
         {extras.map((extra) => (
           <MetaRow key={extra.key} label={extra.label} value={formatExtraValue(extra.value)} />
         ))}
-      </div>
+      </dl>
     </Section>
   )
 }
@@ -198,7 +198,7 @@ function ConsultantDetail({ record }: { record: ConsultantEvaluationRecord }) {
   return (
     <>
       <Section label="Round details">
-        <div className="divide-y divide-white/10">
+        <dl className="divide-y divide-white/10">
           <MetaRow label="Evaluation date" value={formatDate(record.evaluationDate)} />
           <MetaRow label="Ward" value={record.wardName ?? '-'} />
           <MetaRow label="Evaluator" value={record.authorName ?? '-'} />
@@ -221,7 +221,7 @@ function ConsultantDetail({ record }: { record: ConsultantEvaluationRecord }) {
                 : '-'
             }
           />
-        </div>
+        </dl>
       </Section>
 
       <Section
@@ -263,7 +263,7 @@ function ResidentDetail({ record }: { record: ResidentEvaluationRecord }) {
   return (
     <>
       <Section label="Round details">
-        <div className="divide-y divide-white/10">
+        <dl className="divide-y divide-white/10">
           <MetaRow label="Evaluation date" value={formatDate(record.evaluationDate)} />
           <MetaRow label="Ward" value={record.wardName ?? '-'} />
           <MetaRow label="Evaluator" value={record.authorName ?? '-'} />
@@ -275,7 +275,7 @@ function ResidentDetail({ record }: { record: ResidentEvaluationRecord }) {
                 : '-'
             }
           />
-        </div>
+        </dl>
       </Section>
 
       <Section label="Performance">
@@ -328,7 +328,12 @@ export function AcademicEvaluationDetailSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="max-w-md p-0">
-        <div className="scrollbar-on-dark flex h-full flex-col overflow-y-auto px-6 pb-8 pt-6">
+        <div
+          role="region"
+          aria-label="Evaluation details"
+          tabIndex={0}
+          className="scrollbar-on-dark flex h-full flex-col overflow-y-auto px-6 pb-8 pt-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#f0b429]"
+        >
           {record ? (
             <>
               <div className="pr-9">

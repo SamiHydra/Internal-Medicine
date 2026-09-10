@@ -201,7 +201,7 @@ function WorkspaceSwitcher({
             title={collapsed ? option.label : undefined}
             className={cn(
               'flex items-center justify-center font-semibold transition-colors duration-200',
-              collapsed ? 'h-10 w-10 rounded-[0.4rem]' : 'gap-2 rounded-[0.35rem] px-2.5 py-2 text-[13px]',
+              collapsed ? 'h-10 w-10 rounded-[0.4rem]' : 'min-h-11 gap-2 rounded-[0.35rem] px-2.5 py-2 text-[13px]',
               active
                 ? 'bg-[#f0b429] text-[#04162f]'
                 : 'text-[#92a3ba] hover:bg-white/[0.06] hover:text-white',
@@ -232,6 +232,26 @@ export function AppShell({ children }: PropsWithChildren) {
     return window.localStorage.getItem('stpaul:sidebar-collapsed') === '1'
   })
   const mainContentRef = useRef<HTMLDivElement>(null)
+  // The account sheet is opened by two different controls (the avatar button
+  // and the phone tab bar's More tab), neither a Radix trigger, so focus is
+  // put back on whichever one opened it when the sheet closes.
+  const menuTriggerRef = useRef<HTMLElement | null>(null)
+  const openMenu = () => {
+    menuTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setMenuOpen(true)
+  }
+  const restoreMenuFocus = (event: Event) => {
+    event.preventDefault()
+    const remembered = menuTriggerRef.current
+    if (remembered?.isConnected && remembered.offsetParent !== null) {
+      remembered.focus()
+      return
+    }
+    const fallback = Array.from(document.querySelectorAll<HTMLElement>('button[aria-haspopup="dialog"]')).find(
+      (element) => element.offsetParent !== null,
+    )
+    fallback?.focus()
+  }
   const previousSidebarWidthRef = useRef(collapsed ? 84 : 292)
 
   useEffect(() => {
@@ -299,6 +319,7 @@ export function AppShell({ children }: PropsWithChildren) {
     <div className="min-h-screen bg-[#f8f9fa]">
       <aside
         id="desktop-sidebar"
+        aria-label="Sidebar"
         className={cn(
           'fixed inset-y-0 left-0 z-40 hidden border-r border-[#0c2747] bg-[#04162f] transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] sm:block',
           collapsed ? 'w-[84px]' : 'w-[292px]',
@@ -335,7 +356,7 @@ export function AppShell({ children }: PropsWithChildren) {
           aria-controls="desktop-sidebar"
           aria-expanded={!collapsed}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="group absolute -right-5 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-[#315476] bg-[#04162f] text-[#f0b429] shadow-[0_4px_14px_rgba(4,22,47,0.2)] transition-[transform,background-color,border-color,box-shadow] duration-150 ease-out hover:scale-105 hover:border-[#f0b429]/70 hover:bg-[#0a2342] hover:shadow-[0_5px_18px_rgba(4,22,47,0.26)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f0b429] focus-visible:ring-offset-2 active:scale-90 motion-reduce:transition-none"
+          className="group absolute -right-5 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-[#315476] bg-[#04162f] text-[#f0b429] shadow-[0_4px_14px_rgba(4,22,47,0.2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f0b429] focus-visible:ring-offset-2 focus-visible:ring-offset-white transition-[transform,background-color,border-color,box-shadow] duration-150 ease-out hover:scale-105 hover:border-[#f0b429]/70 hover:bg-[#0a2342] hover:shadow-[0_5px_18px_rgba(4,22,47,0.26)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f0b429] focus-visible:ring-offset-2 active:scale-90 motion-reduce:transition-none"
         >
           <ChevronLeft
             aria-hidden="true"
@@ -374,7 +395,7 @@ export function AppShell({ children }: PropsWithChildren) {
                 <div className="hidden items-center gap-2 pr-1 text-[13px] text-[#5b6169] lg:flex">
                   <span className="relative flex h-1.5 w-1.5 items-center justify-center">
                     {isSyncing ? (
-                      <span className="absolute inset-0 animate-ping rounded-full bg-[#63a1ff]/55" />
+                      <span className="absolute inset-0 motion-safe:animate-ping rounded-full bg-[#63a1ff]/55" />
                     ) : null}
                     <span className="relative h-1.5 w-1.5 rounded-full bg-[#f0b429]" />
                   </span>
@@ -419,7 +440,7 @@ export function AppShell({ children }: PropsWithChildren) {
                     <p className="truncate text-[13.5px] font-semibold leading-tight tracking-[-0.01em] text-[#000a1e]">
                       {currentUser.fullName}
                     </p>
-                    <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8794a5]">
+                    <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-[#68727f]">
                       {currentUser.title}
                     </p>
                   </div>
@@ -429,7 +450,7 @@ export function AppShell({ children }: PropsWithChildren) {
                   type="button"
                   aria-label="Sign out"
                   title="Sign out"
-                  className="hidden h-10 w-10 items-center justify-center rounded-[0.35rem] text-[#8794a5] transition-[transform,background-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[#fbecec] hover:text-[#ba1a1a] active:scale-[0.95] sm:inline-flex pointer-coarse:h-11 pointer-coarse:w-11"
+                  className="hidden h-10 w-10 items-center justify-center rounded-[0.35rem] text-[#68727f] transition-[transform,background-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[#fbecec] hover:text-[#ba1a1a] active:scale-[0.95] sm:inline-flex pointer-coarse:h-11 pointer-coarse:w-11"
                   onClick={() => {
                     void logout()
                   }}
@@ -439,7 +460,7 @@ export function AppShell({ children }: PropsWithChildren) {
 
                 <button
                   type="button"
-                  onClick={() => setMenuOpen(true)}
+                  onClick={openMenu}
                   aria-label="Open account menu"
                   aria-haspopup="dialog"
                   className="inline-flex h-10 w-10 items-center justify-center rounded-[0.4rem] border border-[#e1e6ec] bg-white transition-[transform,border-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#c8d5e6] active:scale-[0.95] sm:hidden pointer-coarse:h-11 pointer-coarse:w-11"
@@ -460,13 +481,12 @@ export function AppShell({ children }: PropsWithChildren) {
         </div>
       </div>
 
-      <MobileTabBar items={navItems} onMore={() => setMenuOpen(true)} />
+      <MobileTabBar items={navItems} onMore={openMenu} />
 
       <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
         <SheetContent
           side="left"
-          className="flex w-full max-w-[20rem] flex-col gap-0 border-r border-[#0c2747] p-0"
-        >
+          className="flex w-full max-w-[20rem] flex-col gap-0 border-r border-[#0c2747] p-0" onCloseAutoFocus={restoreMenuFocus}>
           <div className="scrollbar-on-dark flex h-full flex-col overflow-y-auto px-6 pt-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
             <SheetTitle className="sr-only">Account and navigation menu</SheetTitle>
             <BrandLockup compact inverted />

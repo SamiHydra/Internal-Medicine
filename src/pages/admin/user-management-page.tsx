@@ -305,7 +305,7 @@ export function UserManagementPage() {
                   <h2 className="font-display text-[1.25rem] font-bold tracking-[-0.02em] text-[#000a1e]">
                     Access requests
                   </h2>
-                  <p className="mt-1 text-sm leading-5 text-[#6e7580]">
+                  <p className="mt-1 text-sm leading-5 text-[#6b717c]">
                     Nurse access to clinical reporting areas.
                   </p>
                 </div>
@@ -347,11 +347,11 @@ export function UserManagementPage() {
                             <span className="block truncate text-sm font-semibold text-[#000a1e]">
                               {request.userName}
                             </span>
-                            <span className="block truncate text-xs text-[#74777f]">
+                            <span className="block truncate text-xs text-[#666970]">
                               {request.email}
                             </span>
                           </span>
-                          <span className="hidden shrink-0 text-xs font-medium text-[#6e7580] md:block">
+                          <span className="hidden shrink-0 text-xs font-medium text-[#6b717c] md:block">
                             {requestedDepartments.length}{' '}
                             {requestedDepartments.length === 1
                               ? 'department'
@@ -402,7 +402,7 @@ export function UserManagementPage() {
 
                         {expanded ? (
                           <div className="space-y-3 border-t border-[#e7ecf2] bg-[#f8fafc] px-5 py-4 md:px-6 md:pl-[4.75rem]">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#6e7580]">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#6b717c]">
                               Requested coverage
                             </p>
                             <div className="grid gap-x-6 sm:grid-cols-2">
@@ -415,13 +415,13 @@ export function UserManagementPage() {
                                     <span className="font-semibold text-[#182235]">
                                       {department.name}
                                     </span>
-                                    <span className="text-xs text-[#6e7580]">
+                                    <span className="text-xs text-[#6b717c]">
                                       {serviceLineLabels[department.family]}
                                     </span>
                                   </div>
                                 ))
                               ) : (
-                                <span className="text-sm text-[#74777f]">
+                                <span className="text-sm text-[#666970]">
                                   No departments requested.
                                 </span>
                               )}
@@ -464,7 +464,7 @@ export function UserManagementPage() {
                   <h2 className="font-display text-[1.25rem] font-bold tracking-[-0.02em] text-[#000a1e]">
                     Account requests
                   </h2>
-                  <p className="mt-1 text-sm leading-5 text-[#6e7580]">
+                  <p className="mt-1 text-sm leading-5 text-[#6b717c]">
                     New accounts awaiting role approval.
                   </p>
                 </div>
@@ -507,7 +507,7 @@ export function UserManagementPage() {
                             <span className="block truncate text-sm font-semibold text-[#000a1e]">
                               {request.fullName}
                             </span>
-                            <span className="block truncate text-xs text-[#74777f]">{request.email}</span>
+                            <span className="block truncate text-xs text-[#666970]">{request.email}</span>
                           </span>
                           {/* Always visible: approving grants the badged role, so it
                               must be readable before Approve is reachable. */}
@@ -616,7 +616,7 @@ export function UserManagementPage() {
                                       <SelectItem value="3">Year 3</SelectItem>
                                     </SelectContent>
                                   </Select>
-                                  <p className="text-xs leading-5 text-[#74777f]">
+                                  <p className="text-xs leading-5 text-[#666970]">
                                     Submitted value: {request.trainingYear ? `Year ${request.trainingYear}` : 'Not provided'}
                                   </p>
                                 </div>
@@ -639,14 +639,14 @@ export function UserManagementPage() {
                                       })
                                     }
                                   />
-                                  <p className="text-xs leading-5 text-[#74777f]">
+                                  <p className="text-xs leading-5 text-[#666970]">
                                     Year 3 rotations are planned by group.
                                   </p>
                                 </div>
                               </div>
                             ) : null}
                             <div>
-                              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#666970]">
                                 Applicant note
                               </p>
                               <p className="mt-1 text-sm leading-6 text-[#44474e]">
@@ -694,12 +694,12 @@ export function UserManagementPage() {
             <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
               Assignment studio
             </h2>
-            <p className="mt-1 text-sm text-[#74777f]">Grant a nurse direct department access.</p>
+            <p className="mt-1 text-sm text-[#666970]">Grant a nurse direct department access.</p>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
             <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#74777f]">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#666970]">
                 Nurse
               </p>
               <Select value={selectedUserId} onValueChange={setSelectedUserId}>
@@ -717,7 +717,7 @@ export function UserManagementPage() {
             </div>
 
             <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#74777f]">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#666970]">
                 Department
               </p>
               <Select value={selectedDepartmentId} onValueChange={setSelectedDepartmentId}>
@@ -792,7 +792,7 @@ export function UserManagementPage() {
               <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
                 Active roster
               </h2>
-              <p className="mt-1 text-sm text-[#74777f]">
+              <p className="mt-1 text-sm text-[#666970]">
                 {workspace === 'clinical'
                   ? 'Users and their department assignments.'
                   : 'Residents, consultants, student reps, and administrators.'}
@@ -801,7 +801,7 @@ export function UserManagementPage() {
                   by an admin. That happens on the Students page, beside the batch
                   assignment it belongs to; this page manages accounts that exist. */}
               {workspace === 'academic' ? (
-                <p className="mt-1 text-sm text-[#74777f]">
+                <p className="mt-1 text-sm text-[#666970]">
                   Student representatives are created on the{' '}
                   <Link
                     to="/admin/academic/students"
@@ -815,7 +815,7 @@ export function UserManagementPage() {
             </div>
             <div className="flex w-full items-center gap-3 lg:w-auto">
               <div className="relative w-full sm:w-64">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9aa7b8]" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#69727d]" />
                 <Input
                   value={rosterSearch}
                   onChange={(event) => {
@@ -835,7 +835,7 @@ export function UserManagementPage() {
 
           {filteredProfiles.length ? (
             <div className="overflow-hidden rounded-[0.4rem] border border-[#e6ecf3]">
-              <div className="hidden items-center gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#74777f] lg:flex">
+              <div className="hidden items-center gap-3 border-b border-[#eef2f6] bg-[#f7f9fc] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#666970] lg:flex">
                 <span className="w-4 shrink-0" />
                 <span className="w-9 shrink-0" />
                 <span className="min-w-0 flex-[2_1_0%]">Member</span>
@@ -875,7 +875,7 @@ export function UserManagementPage() {
                           event.stopPropagation()
                           toggleExpandedUser(profile.id)
                         }}
-                        className="shrink-0 rounded-[0.25rem] p-0.5 text-[#9aa7b8] outline-none transition-colors hover:text-[#005db6] focus-visible:text-[#005db6]"
+                        className="shrink-0 rounded-[0.25rem] p-0.5 text-[#69727d] outline-none transition-colors hover:text-[#005db6] focus-visible:text-[#005db6]"
                       >
                         <ChevronDown
                           className={cn(
@@ -891,7 +891,7 @@ export function UserManagementPage() {
                         <span className="block truncate text-sm font-semibold text-[#000a1e]">
                           {profile.fullName}
                         </span>
-                        <span className="block truncate text-xs text-[#74777f]">{profile.email}</span>
+                        <span className="block truncate text-xs text-[#666970]">{profile.email}</span>
                       </span>
                       <span className="hidden min-w-[7rem] flex-1 lg:block">
                         <Badge variant={profile.role === 'nurse' ? 'info' : 'success'}>
@@ -908,7 +908,7 @@ export function UserManagementPage() {
                           {profile.active ? 'Active' : 'Inactive'}
                         </span>
                       </span>
-                      <span className="hidden min-w-[6rem] flex-1 text-xs text-[#74777f] lg:block">
+                      <span className="hidden min-w-[6rem] flex-1 text-xs text-[#666970] lg:block">
                         {assignments.length ? `${activeAssignmentCount}/${assignments.length} active` : 'No depts'}
                       </span>
                       <div className="shrink-0 lg:w-[112px] lg:text-right">
@@ -952,7 +952,7 @@ export function UserManagementPage() {
                             email. Only the two admin-created roles are offered. */}
                         {isCorrectableRole(profile.role) ? (
                           <div className="mb-3.5 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[#e6ecf3] pb-3.5">
-                            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#74777f]">
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#666970]">
                               Role
                             </span>
                             <Select
@@ -976,7 +976,7 @@ export function UserManagementPage() {
                                 ))}
                               </SelectContent>
                             </Select>
-                            <p className="text-xs text-[#74777f]">
+                            <p className="text-xs text-[#666970]">
                               {roleChangePending === profile.id
                                 ? 'Saving...'
                                 : 'Corrects an account created under the wrong role.'}
@@ -1001,16 +1001,16 @@ export function UserManagementPage() {
                                     onCheckedChange={() => void toggleAssignmentActive(assignment.id)}
                                   />
                                   <span>{department.name}</span>
-                                  <span className="text-[#9aa7b8]">/</span>
-                                  <span className="text-[#74777f]">{serviceLineLabels[department.family]}</span>
-                                  <span className="text-[#9aa7b8]">/</span>
-                                  <span className="text-[#74777f]">{templateMap[assignment.templateId].name}</span>
+                                  <span className="text-[#69727d]">/</span>
+                                  <span className="text-[#666970]">{serviceLineLabels[department.family]}</span>
+                                  <span className="text-[#69727d]">/</span>
+                                  <span className="text-[#666970]">{templateMap[assignment.templateId].name}</span>
                                 </label>
                               )
                             })}
                           </div>
                         ) : (
-                          <p className="text-sm text-[#74777f]">No department assignments.</p>
+                          <p className="text-sm text-[#666970]">No department assignments.</p>
                         )}
                       </div>
                     ) : null}
@@ -1020,7 +1020,7 @@ export function UserManagementPage() {
 
               {rosterPageCount > 1 ? (
                 <div className="flex items-center justify-between gap-3 border-t border-[#eef2f6] bg-[#f7f9fc] px-4 py-3">
-                  <p className="text-xs font-medium text-[#74777f]">
+                  <p className="text-xs font-medium text-[#666970]">
                     Page {activeRosterPage} of {rosterPageCount}
                   </p>
                   <div className="flex items-center gap-2">
@@ -1049,7 +1049,7 @@ export function UserManagementPage() {
               ) : null}
             </div>
           ) : (
-            <div className="rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-6 py-10 text-center text-sm text-[#74777f]">
+            <div className="rounded-[0.4rem] border border-dashed border-[#d4dde8] bg-[#f7f9fc] px-6 py-10 text-center text-sm text-[#666970]">
               No users match “{rosterSearch}”.
             </div>
           )}

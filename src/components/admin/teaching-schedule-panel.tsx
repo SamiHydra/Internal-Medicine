@@ -244,7 +244,7 @@ export function TeachingSchedulePanel() {
             <tr>
               <th
                 scope="col"
-                className="sticky left-0 z-10 bg-white px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5]"
+                className="sticky left-0 z-10 bg-white px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[#68727f]"
               >
                 Activity
               </th>
@@ -254,7 +254,7 @@ export function TeachingSchedulePanel() {
                   scope="col"
                   className={cn(
                     'px-2 py-3 text-center text-[11px] font-bold uppercase tracking-[0.12em]',
-                    isWeekend(day.value) ? 'text-[#b3bcc8]' : 'text-[#8794a5]',
+                    isWeekend(day.value) ? 'text-[#b3bcc8]' : 'text-[#68727f]',
                   )}
                 >
                   <span aria-hidden>{day.short}</span>
@@ -263,7 +263,7 @@ export function TeachingSchedulePanel() {
               ))}
               <th
                 scope="col"
-                className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.14em] text-[#8794a5]"
+                className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.14em] text-[#68727f]"
               >
                 Days
               </th>
@@ -299,7 +299,7 @@ export function TeachingSchedulePanel() {
                         <span className="block truncate text-[14px] font-semibold tracking-[-0.01em] text-[#000a1e]">
                           {ACTIVITY_LABELS[activity]}
                         </span>
-                        <span className="mt-1 block text-[10.5px] font-bold uppercase tracking-[0.11em] text-[#97a2b0]">
+                        <span className="mt-1 block text-[10.5px] font-bold uppercase tracking-[0.11em] text-[#6a717b]">
                           {SCOPE_LABEL[scope]}
                         </span>
                       </span>
@@ -337,7 +337,7 @@ export function TeachingSchedulePanel() {
                             <Loader2
                               className={cn(
                                 'h-4 w-4 animate-spin',
-                                on ? 'text-white' : 'text-[#8794a5]',
+                                on ? 'text-white' : 'text-[#68727f]',
                               )}
                             />
                           ) : on ? (
@@ -365,7 +365,7 @@ export function TeachingSchedulePanel() {
         </table>
       </div>
 
-      <p className="text-[12.5px] leading-5 text-[#8794a5]">
+      <p className="text-[12.5px] leading-5 text-[#68727f]">
         Filled cells generate sessions automatically each night. Scope is set by
         the activity: lectures and seminars run for the whole cohort, bedside
         teaching and teaching rounds run separately for subgroup A and B.

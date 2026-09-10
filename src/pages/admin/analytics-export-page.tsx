@@ -336,7 +336,7 @@ export function AnalyticsExportPage() {
         <div className="flex items-center justify-between gap-3 border-b border-[#e5ebf2] bg-white px-4 py-2.5 md:px-5">
           <span className="text-[11px] font-bold uppercase tracking-[0.13em] text-[#657180]">
             Wards
-            <span className="ml-2 font-semibold tracking-normal text-[#94a3b8]">
+            <span className="ml-2 font-semibold tracking-normal text-[#687281]">
               {selectedWards.length || 'all'}
             </span>
           </span>
@@ -369,7 +369,7 @@ export function AnalyticsExportPage() {
                 {/* The group action sits beside its label: floated to the far
                     right it read as unrelated to the group it acts on. */}
                 <div className="flex items-center gap-2.5">
-                  <span className="text-[11px] font-bold uppercase tracking-[0.13em] text-[#94a3b8]">
+                  <span className="text-[11px] font-bold uppercase tracking-[0.13em] text-[#687281]">
                     {family}
                   </span>
                   <button
@@ -458,7 +458,7 @@ export function AnalyticsExportPage() {
                   <span>{statusBadge(record)}</span>
                   <span className="truncate text-sm text-[#1d3047]">
                     {createdLabel(record.createdAt)}
-                    <span className="ml-2 text-[#74777f]">{record.format === 'xlsx' ? 'Excel' : 'CSV'}</span>
+                    <span className="ml-2 text-[#666970]">{record.format === 'xlsx' ? 'Excel' : 'CSV'}</span>
                   </span>
                   <span className="text-sm tabular-nums text-[#44474e] lg:text-right">
                     {/* An Excel row is one report; a CSV row is one recorded
@@ -467,7 +467,7 @@ export function AnalyticsExportPage() {
                       ? `${record.rowCount.toLocaleString()} ${record.format === 'xlsx' ? 'reports' : 'values'}`
                       : '-'}
                   </span>
-                  <span className="text-sm tabular-nums text-[#74777f] lg:text-right">
+                  <span className="text-sm tabular-nums text-[#666970] lg:text-right">
                     {fileSize(record.byteSize) || '-'}
                   </span>
                   <span className="col-span-2 lg:col-span-1 lg:text-right">
@@ -483,7 +483,7 @@ export function AnalyticsExportPage() {
                     ) : record.status === 'failed' ? (
                       <span className="text-sm text-[#ba1a1a]">{record.error ?? 'Failed'}</span>
                     ) : (
-                      <span className="text-sm text-[#74777f]">-</span>
+                      <span className="text-sm text-[#666970]">-</span>
                     )}
                   </span>
                 </div>
