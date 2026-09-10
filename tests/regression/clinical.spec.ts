@@ -1,6 +1,6 @@
 /**
  * Clinical business-rule regression: assignments (C), weekly report lifecycle
- * (D), locking (E), comments (F), reporting periods (G), deadline settings (H),
+ * (D), locking (E, and E2 for a locked draft), comments (F), reporting periods (G), deadline settings (H),
  * settings isolation (Y), audit trail (Z) and API-level concurrency (AB).
  *
  * Runs against the already-running dev stack. Every mutation is re-read from
@@ -750,6 +750,56 @@ test('G reporting periods: future refused, past accepted, default window, timezo
   info(D, 'G-07i', 'App timezone (DB timestamps) / business timezone (calendar decisions, HospitalClock)', `${tz} / ${btz}`)
   const expectedMonday = mondayOf(nairobiToday())
   check(D, 'G-07', `reporting_periods.week_start of the current period is the Monday of the current Africa/Nairobi week`, expectedMonday, String(current.week_start).slice(0, 10), String(current.week_start).slice(0, 10) === expectedMonday)
+})
+
+// ---------------------------------------------------------------- E2. locking a DRAFT
+//
+// A lock is an overlay on the lifecycle, not a step in it. Locking a draft
+// must not submit it, and unlocking must hand it back as a draft
+// (ReportLockingService::restoredStatus reads submitted_at, the marker only a
+// real submission writes). The past-week draft created in G is used so the
+// current-week report (submitted in D) is left alone.
+
+test('E2 locking a draft: lock keeps it unsubmitted, unlock restores draft (never submitted), nurse edits again', async () => {
+  test.skip(!S.pastReportId, 'no past-week draft (G)')
+  const admin = S.admin!
+  const nurse = S.nurse!
+  const id = S.pastReportId
+  const before = reportRow(id)
+  check(D, 'E2-00', 'The past-week report from G is still a draft with submitted_at null', 'draft / null', `${before?.status} / ${before?.submitted_at}`, before?.status === 'draft' && before?.submitted_at === null)
+  const valuesBefore = dbFlat(id)
+  const auditBefore = q.count('SELECT count(*) c FROM audit_logs WHERE report_id = ?', [id])
+  const submitNotifsBefore = q.count("SELECT count(*) c FROM notifications WHERE type = 'new_report_submitted' AND related_id = ?", [id])
+
+  const lock = await rc(admin, 'POST', `/api/reports/${id}/lock`)
+  const rL = reportRow(id)
+  check(D, 'E2-01', 'Locking a DRAFT: 200, status locked, locked_at set, submitted_at STILL null (a lock carries no submission semantics)', '200 locked, submitted_at null', `${lock.status} ${rL?.status} locked_at=${rL?.locked_at} submitted_at=${rL?.submitted_at}`,
+    lock.status === 200 && rL?.status === 'locked' && !!rL?.locked_at && rL?.submitted_at === null)
+  const nurseSave = await rc(nurse, 'PUT', `/api/reports/${id}`, { data: { values: valuesFor(70, `${PREFIX}lockeddraft`) } })
+  check(D, 'E2-02', 'Nurse save on the locked draft is refused (403, ReportPolicy::update) and the values are unchanged', '403, DB unchanged', `${excerpt(nurseSave)} same=${same(dbFlat(id), valuesBefore)}`,
+    nurseSave.status === 403 && same(dbFlat(id), valuesBefore))
+
+  const unlock = await rc(admin, 'POST', `/api/reports/${id}/unlock`)
+  const rU = reportRow(id)
+  check(D, 'E2-03', 'Unlocking the draft: 200, response status draft, DB status draft, locked_at null, submitted_at null (ReportLockingService::restoredStatus)', '200 draft / null / null', `${unlock.status} json=${unlock.json?.status} db=${rU?.status} locked_at=${rU?.locked_at} submitted_at=${rU?.submitted_at}`,
+    unlock.status === 200 && unlock.json?.status === 'draft' && rU?.status === 'draft' && rU?.locked_at === null && rU?.submitted_at === null)
+  const show = await rc(nurse, 'GET', `/api/reports/${id}`)
+  check(D, 'E2-04', 'GET /api/reports/{id} re-read independently of the unlock response: status draft, submittedAt null, lockedAt null', 'draft / null / null', `${show.status} ${show.json?.status} / ${show.json?.submittedAt} / ${show.json?.lockedAt}`,
+    show.status === 200 && show.json?.status === 'draft' && show.json?.submittedAt === null && show.json?.lockedAt === null)
+  const trail = q.all<{ status: string; note: string; changed_by: string }>('SELECT status, note, changed_by FROM report_status_history WHERE report_id = ? ORDER BY changed_at, rowid', [id])
+  check(D, 'Z-E2', 'Audit trail reads draft (nurse) -> locked (admin) -> draft (admin, "Report unlocked for correction."); no "submitted" row was written by the lock cycle', 'draft,locked,draft', trail.map((t) => `${t.status}`).join(','),
+    trail.map((t) => t.status).join(',') === 'draft,locked,draft' && trail[0]?.changed_by === S.qaNurseId && trail[1]?.changed_by === S.adminId && trail[2]?.changed_by === S.adminId && trail[2]?.note === 'Report unlocked for correction.')
+  const submitNotifsAfter = q.count("SELECT count(*) c FROM notifications WHERE type = 'new_report_submitted' AND related_id = ?", [id])
+  const nurseNotifs = q.all<{ type: string }>('SELECT type FROM notifications WHERE related_id = ? AND recipient_id = ? ORDER BY created_at, rowid', [id, S.qaNurseId]).map((n) => n.type)
+  const auditAfter = q.count('SELECT count(*) c FROM audit_logs WHERE report_id = ?', [id])
+  check(D, 'E2-05', 'The lock cycle produced no submission notification and no audit_logs cell rows; the nurse received report_locked then report_unlocked', `${submitNotifsBefore} submission notifications / report_locked,report_unlocked / ${auditBefore} audit rows`, `${submitNotifsAfter} / ${nurseNotifs.join(',')} / ${auditAfter}`,
+    submitNotifsAfter === submitNotifsBefore && nurseNotifs.join(',') === 'report_locked,report_unlocked' && auditAfter === auditBefore)
+
+  const v = valuesFor(26, `${PREFIX}past2_${S.suffix}`)
+  const edit = await rc(nurse, 'PUT', `/api/reports/${id}`, { data: { values: v, expectedUpdatedAt: unlock.json?.updatedAt } })
+  const rE = reportRow(id)
+  check(D, 'E2-06', 'After the unlock the nurse edits the draft under draft rules: 200, status draft, values replaced, no audit_logs rows, submitted_at still null', '200 draft, DB = new values, 0 audit rows', `${edit.status} ${rE?.status} same=${same(dbFlat(id), flatPayload(v))} audit=${q.count('SELECT count(*) c FROM audit_logs WHERE report_id = ?', [id])} submitted_at=${rE?.submitted_at}`,
+    edit.status === 200 && rE?.status === 'draft' && same(dbFlat(id), flatPayload(v)) && q.count('SELECT count(*) c FROM audit_logs WHERE report_id = ?', [id]) === auditBefore && rE?.submitted_at === null)
 })
 
 // ---------------------------------------------------------------- H. deadline settings

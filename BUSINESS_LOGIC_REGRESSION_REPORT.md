@@ -114,17 +114,34 @@ and the buttons are disabled while a save is pending.
 VERIFIED: an admin lock sets `locked_at`, writes the history row and notifies
 the nurse; nurse save/submit and admin save on a locked report are refused
 (403 from `ReportPolicy::update`, values unchanged); unlock clears the lock
-and restores `submitted` (or `edited_after_submission` when that history
-exists) and the nurse may edit again; the lock/unlock buttons send one
-request each. Comments: the report owner and an administrator can comment
-(201, row, `comment` audit row carrying the body, participants notified); a
-foreign nurse gets 403; a comment leaves the report's status and values
-untouched; the author can delete their own comment (audit `delete` keeps the
-body), a foreign user cannot (403). PRE-EXISTING observation: locking a
-report that is still a draft and unlocking it leaves it `submitted` because
-`ReportLockingService` restores `submitted`/`edited_after_submission` rather
-than the pre-lock status (identical at the baseline; recorded in Remaining
-Concerns).
+and restores the report's pre-lock lifecycle state, and the nurse may edit
+again; the lock/unlock buttons send one request each. Comments: the report
+owner and an administrator can comment (201, row, `comment` audit row
+carrying the body, participants notified); a foreign nurse gets 403; a
+comment leaves the report's status and values untouched; the author can
+delete their own comment (audit `delete` keeps the body), a foreign user
+cannot (403).
+
+Business rule (product-owner decision, 2026-09-10): **locking a report
+temporarily prevents modification. Locking does not submit a draft report.
+Unlocking restores the report to its existing lifecycle state. A draft
+remains a draft; a submitted report remains submitted.** Submission happens
+only through the submit workflow.
+
+VERIFIED after the fix (`clinical.spec.ts` E2, `ui-clinical.spec.ts` D-3,
+`offline-rules.spec.ts` AA-09, backend `ReportLockLifecycleTest`, e2e
+`report-lock-lifecycle.spec.ts`): a locked draft keeps `submitted_at` null;
+the unlock response, an independent `GET /api/reports/{id}` and the row all
+read `draft` with `locked_at` and `submitted_at` null; the trail reads
+`draft -> locked -> draft` with no `submitted` row, no submission
+notification and no `audit_logs` cell rows; the nurse's form shows the
+Status card "Draft", no "Submitted" chip, the unchanged values, and a save
+lands under draft rules; `submitted -> lock -> unlock` stays `submitted`
+with `submitted_at` unchanged and the form still says "Submitted";
+`edited_after_submission` is restored as before. Before the fix the same
+draft came back as `submitted` (the four draft scenarios of
+`ReportLockLifecycleTest` fail against the old service with
+`'draft'` expected, `'submitted'` actual).
 
 # Reporting Periods and Deadlines
 
@@ -334,6 +351,15 @@ session expiry (the app goes to the login page, the IndexedDB record stays)
 and replays after the next sign-in. The queue carries no authority: every
 replay is an ordinary authenticated request judged by the server.
 
+Lock fix regression (2026-09-10): the same lock-while-waiting scenario now
+asserts that after the unlock the status and `submitted_at` equal exactly
+their pre-lock values (AA-09; the seeded report was `edited_after_submission`
+and came back as such), and the isolated e2e scenario B
+(`offline-sync.spec.ts`) asserts that a locked DRAFT returns as `draft` with
+no `submitted_at`, the parked offline value (6) not replayed and the server
+copy (5) kept. Server conflict rules stayed authoritative: the replay is
+still refused with 409 while locked and "Keep the server copy" drops it.
+
 # Concurrent Editing
 
 VERIFIED (API in `clinical.spec.ts`, two browser sessions in
@@ -458,18 +484,62 @@ Both pre-existing defects above, minimally:
   verified by `ui-clinical.spec.ts` AE-06 (closes within 4 s, no request
   sent, row unchanged).
 
+Draft unlock business-rule correction (product-owner decision, 2026-09-10;
+commit "fix: preserve draft status across report lock lifecycle"):
+
+- Root cause: `ReportLockingService::setLockState(false)` restored
+  `edited_after_submission` when that history row existed and otherwise
+  `submitted`, without ever checking whether the report had been submitted,
+  so `draft -> lock -> unlock` produced `submitted` with `submitted_at` still
+  null. Lock state is design A (the `status` column itself becomes `locked`,
+  `locked_at` set) and no explicit pre-lock column exists; the pre-lock state
+  is nevertheless fully determined by `submitted_at`, which only the
+  submission workflow writes and nothing clears (the same invariant
+  `ReportSubmissionService::save` uses as `$hadSubmission`; every seeder and
+  test that creates a submitted report sets it). No schema change.
+- `backend/app/Services/Reports/ReportLockingService.php`: unlock restores
+  `draft` when `submitted_at` is null, otherwise `edited_after_submission`
+  when the history carries it or `submitted` (`restoredStatus()`); the lock
+  branch is unchanged and never touches `submitted_at`. Regression class
+  `backend/tests/Feature/ReportLockLifecycleTest.php` (8 tests: draft and
+  submitted and edited round trips, no submission side effects on lock or
+  unlock, view/comment/list never submit, nurse resumes draft editing and
+  can still submit explicitly, submitted-report rules after unlock).
+- `src/context/app-data-context.tsx` (`loadReportSummaries` merge): a
+  pre-existing client gap that the corrected rule made reachable. When a
+  report summary arrives with a changed `updatedAt` (an unlock changes it),
+  the record was replaced by the value-less summary but its id stayed in the
+  "details loaded" set, so the form rendered an empty grid for the draft and
+  the next save wiped the stored cells (reproduced: two saved cells, lock,
+  unlock, reload, empty inputs, no details request, one cell deleted by the
+  save). Submitted and locked reports were protected by the form's
+  empty-saved-cells verification; drafts were not, and before the fix a
+  locked draft always came back as `submitted`, which is why it never
+  showed. The merge now drops the id when the loaded record cannot be reused
+  (the rule the workspace merge already applied), so the form fetches the
+  details again. Verified by the probe (details request fires, inputs show
+  the saved values) and by `ui-clinical.spec.ts` D-27/D-28.
+- `tests/regression/action-items.spec.ts`: the committed file did not parse
+  (`const body` declared twice in K-07) so Playwright refused the whole
+  file; the second binding is now `text`. Harness only, no rule changed.
+
 # Remaining Concerns
 
-Pre-existing behaviours left unchanged (not regressions; owner decisions):
+Pre-existing behaviours confirmed as intended by the product owner on
+2026-09-10 (unchanged, now documented as rules):
 
-- Locking a report that is still a draft and unlocking it marks it
-  `submitted` without a submission (`ReportLockingService` restores
-  `submitted`/`edited_after_submission`). The UI offers Lock on drafts.
-  Recommended: restore the pre-lock status.
 - `GET /api/reports` answers 200 with zero rows to a student representative
-  instead of 403 (scoped list). No data is exposed.
+  instead of 403 (scoped list). Intended: a student representative may
+  receive an empty collection but never a clinical report or a clinical
+  report permission; `GET/PUT /api/reports/{id}`, submit, lock and unlock
+  stay denied (`auth.spec.ts` B4-list 200 total 0, B4-former-report
+  403/403/403/403; authorization matrix 0 unexpected 2xx).
 - An analytics export can be downloaded only by the administrator who
-  requested it; other administrators get 403.
+  requested it; other administrators get 403. Intended: owner-only
+  downloads (`action-items.spec.ts` K-07 owner 200, K-08 other admin 403).
+
+Pre-existing behaviours left unchanged (not regressions):
+
 - The action-item search escapes `_` in a way SQLite ignores (dev only;
   MariaDB unaffected).
 - This workstation's PHP limits uploads to 2 MB, so the 3 MB and 9 MB evidence
@@ -477,6 +547,31 @@ Pre-existing behaviours left unchanged (not regressions; owner decisions):
   and host use 10 MB.
 
 # Final Test Results
+
+## Draft unlock fix (2026-09-10, after the audit)
+
+Run from the working tree of the fix commit:
+
+| Gate | Result |
+|---|---|
+| Targeted backend (`ReportLockLifecycleTest`) | 8 passed, 0 failed, 109 assertions; against the old service 4 failed (`'draft'` expected, `'submitted'` actual) |
+| Neighbouring backend classes (`ReportWorkflowTest`, `AuditIntegrityTest`, `DataIntegrityInvariantsTest`, `AuthorizationTest`, `ReportCommentTest`, `RoleTransitionAuthorizationTest`) | 65 passed, 0 failed |
+| `npm run verify` (lint, 171 unit tests in 30 files, load-test contract, build, bundle budget) | PASS |
+| `php artisan test` (SQLite) | 453 tests: 452 passed, 1 skipped, 4,305 assertions |
+| `php composer.phar audit --no-dev`, `vendor/bin/pint --test` | no advisories; PASS |
+| MariaDB 11.4 lane (`docker compose --profile test run --build --rm test`) | OK, 453 tests, 4,426 assertions |
+| Regression harness `clinical.spec.ts` (incl. new E2 draft lock cycle) | 103 PASS, 0 FAIL |
+| Regression harness `ui-clinical.spec.ts` (incl. new D-3 draft lock cycle through the UI) | 47 PASS, 0 FAIL |
+| Regression harness `offline-rules.spec.ts` (AA-09 now asserts the pre-lock state) | 25 PASS, 0 FAIL |
+| Regression harness `auth.spec.ts` (student representative: list 200 with 0 rows, clinical routes 403) | 58 PASS, 0 FAIL |
+| Regression harness `action-items.spec.ts` (export owner 200, other admin 403) | 74 PASS, 0 FAIL |
+| Authorization matrix | 194 routes x 7 roles, 1,052 requests, 0 unexpected 2xx, 0 mismatches |
+| `npm run test:e2e` (isolated gate, 227 tests incl. new `report-lock-lifecycle.spec.ts` and the strengthened `offline-sync` B) | first run 222 passed, 2 skipped, 1 failed (the new spec's fixture picked a department already reported this week; fixture fixed, spec re-run alone 3 of 3); full re-run: see the line below |
+| Full `npm run test:e2e` re-runs after the fixture fix | second run 221 passed, 2 skipped, 2 failed while the parity smoke ran on the same machine (the new spec's history-trail assertion had no defined order for two transitions inside one second, now landed in separate seconds; `academic-evaluation-submit` timed out at 20 s, unrelated to the change); third run, nothing else running, 224 passed, 2 skipped, 1 failed (`performance.spec.ts` admin navigation p95 668 ms against the 650 ms budget on PHP's built-in server, an advisory budget on this host that passed in the two earlier runs of the same code); the failed specs re-run alone: `report-lock-lifecycle` 3 of 3, `academic-evaluation-submit` 4 of 4, `performance` 5 of 5. Every functional spec passed in at least one full run of the final tree; `report-lock-lifecycle.spec.ts` passed in the third full run. |
+| Parity stack rebuilt (`RELEASE_SHA=lockfix-<sha>`), `npm run test:smoke` | 14 of 14 |
+| Parity stack API + MariaDB row check (real requests, rows read with the `mariadb` client) | draft -> lock (`submitted_at` NULL) -> unlock -> draft; nurse PUT 403 while locked, 200 after; submit -> lock -> unlock -> submitted with `submitted_at` unchanged; trail `draft,locked,draft,submitted,locked,submitted` |
+
+## Hardening audit (2026-09-10)
 
 Run from the final working tree on 2026-09-10 (the same tree the commits
 below were made from):

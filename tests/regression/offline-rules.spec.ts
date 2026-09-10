@@ -176,6 +176,7 @@ test('AA-1 LOCK: an offline save never bypasses a lock applied while it waited',
     check(D, 'AA-03', 'Nothing reaches the server while offline (DB cell still 5)', '5', cellOf(reportId, seededCell, 'monday'), cellOf(reportId, seededCell, 'monday') === '5')
 
     const statusBeforeLock = row(seeded)?.status ?? 'draft'
+    const submittedAtBeforeLock = row(seeded)?.submitted_at ?? null
     const lock = await adminLock(reportId, true)
     let r = row(seeded)
     check(D, 'AA-04', 'Admin locks the report through the API while the save waits', 'locked', `${lock.status} ${r?.status}/${r?.locked_at}`, lock.status === 200 && r?.status === 'locked')
@@ -198,13 +199,15 @@ test('AA-1 LOCK: an offline save never bypasses a lock applied while it waited',
     await expect.poll(() => readQueue(page), { timeout: 20_000 }).toEqual([])
     await expect(desktopCell(page, seededCell, 'monday')).toHaveValue('5', { timeout: 20_000 })
     r = row(seeded)
-    // ReportLockingService::setLockState(false) does not remember the pre-lock
-    // status: it restores "edited_after_submission" when that history exists,
-    // otherwise "submitted", whatever the report was before the lock. The
-    // implemented rule is asserted; the pre-lock status is recorded alongside.
+    // A lock is an overlay, not a lifecycle step: ReportLockingService restores
+    // the pre-lock status on unlock (a draft stays a draft with no submitted_at;
+    // a submitted report returns to submitted / edited_after_submission with
+    // its submitted_at untouched). The seeded nurse's report may already have
+    // been submitted by an earlier run, so the rule is asserted against the
+    // state read just before the lock rather than against "draft".
     const unlockedStatus = r?.status ?? ''
-    info(D, 'AA-09i', 'Status before the lock vs after the unlock (ReportLockingService restores submitted/edited_after_submission, not the pre-lock status)', `${statusBeforeLock} -> ${unlockedStatus}`)
-    check(D, 'AA-09', 'After unlock, "Keep the server copy" drops the parked record, grid and DB show 5, the lock is cleared and the status is the one ReportLockingService restores (submitted or edited_after_submission)', 'queue empty, 5, unlocked, submitted|edited_after_submission', `${unlock.status}; queue=${(await readQueue(page)).length}; db=${cellOf(reportId, seededCell, 'monday')}; ${unlockedStatus}`, unlock.status === 200 && cellOf(reportId, seededCell, 'monday') === '5' && ['submitted', 'edited_after_submission'].includes(unlockedStatus) && r?.locked_at === null)
+    info(D, 'AA-09i', 'Status before the lock vs after the unlock (ReportLockingService::restoredStatus)', `${statusBeforeLock} -> ${unlockedStatus}`)
+    check(D, 'AA-09', 'After unlock, "Keep the server copy" drops the parked record, grid and DB show 5, the lock is cleared and the status and submitted_at are exactly their PRE-LOCK values (a locked draft comes back as a draft, never submitted)', `queue empty, 5, unlocked, ${statusBeforeLock}, submitted_at ${submittedAtBeforeLock}`, `${unlock.status}; queue=${(await readQueue(page)).length}; db=${cellOf(reportId, seededCell, 'monday')}; ${unlockedStatus}; submitted_at=${r?.submitted_at}`, unlock.status === 200 && cellOf(reportId, seededCell, 'monday') === '5' && unlockedStatus === statusBeforeLock && (r?.submitted_at ?? null) === submittedAtBeforeLock && r?.locked_at === null)
   } finally {
     await context.setOffline(false).catch(() => {})
     if (reportId && row(seeded)?.locked_at) await adminLock(reportId, false)

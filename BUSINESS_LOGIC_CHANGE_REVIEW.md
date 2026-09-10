@@ -43,6 +43,24 @@ non-colour changes.
 **Verification performed:** `ReportWorkflowTest` (20 tests: matching revision saves, stale refuses with the server copy, `none` with an existing report refuses, absent key keeps last-write-wins, lock check still answers 422 when the revision matches); Playwright `offline-sync.spec.ts` A to G; regression spec `clinical.spec.ts` (save, reload, re-save with the returned `updatedAt`, then a stale timestamp).
 **Result:** PASS, behaviour preserved; the new refusal only fires when the client opts in and is stale.
 
+**File:** `backend/app/Services/Reports/ReportLockingService.php` (business-rule correction after the audit, 2026-09-10)
+**Why it changed:** product-owner decision: locking is an overlay on the lifecycle, not a step in it. Locking must not submit a draft; unlocking must restore the pre-lock state.
+**Original behavior:** unlock restored `edited_after_submission` when that history row existed and otherwise `submitted`, whatever the report was before the lock, so `draft -> lock -> unlock` produced `submitted` with `submitted_at` null.
+**Current behavior:** unlock restores `draft` when `submitted_at` is null, otherwise `edited_after_submission` when the history carries it or `submitted` (`restoredStatus()`). The lock branch is unchanged and never touches `submitted_at`. No schema change: `submitted_at` is written only by the submission workflow and never cleared, the invariant `ReportSubmissionService::save` already relies on as `$hadSubmission`.
+**Intended business-rule impact:** `draft -> lock -> unlock -> draft`; `submitted -> lock -> unlock -> submitted`; `edited_after_submission` round-trips as before. Submission stays explicit (`ReportSubmissionService::save(..., submit: true)`); lock, unlock, view, list, comment and history never submit.
+**Regression risk:** a submitted report demoted to draft (guarded by `submitted_at`); a seeded or imported submitted report without `submitted_at` (none exists: every seeder and test that writes `submitted`/`locked`/`edited_after_submission` sets it).
+**Verification performed:** `ReportLockLifecycleTest` (8 tests; the four draft scenarios fail against the old service with `'submitted'` where `'draft'` is expected); `ReportWorkflowTest`, `AuditIntegrityTest`, `DataIntegrityInvariantsTest`, `AuthorizationTest` unchanged and green; regression `clinical.spec.ts` E and E2, `ui-clinical.spec.ts` D-2 and D-3, `offline-rules.spec.ts` AA-1; e2e `report-lock-lifecycle.spec.ts` and `offline-sync.spec.ts` B.
+**Result:** PASS.
+
+**File:** `src/context/app-data-context.tsx` (`loadReportSummaries` merge; pre-existing gap made reachable by the correction above)
+**Why it changed:** a report summary that arrives with a changed `updatedAt` (an admin unlock changes it) replaced the loaded record with a value-less summary while the id stayed in the "details loaded" set.
+**Original behavior:** after `draft -> lock -> unlock` and a reload, the form rendered an empty grid for the draft, fetched no details, and the next save deleted the stored cells (reproduced with a probe: two saved cells, one deleted by the save). Submitted and locked reports were protected by the form's empty-saved-cells verification, and a locked draft used to come back as `submitted`, so the gap never showed.
+**Current behavior:** the merge drops the id from the loaded set whenever the loaded record cannot be reused (same `updatedAt` rule the workspace merge applies), so the form fetches the details again before it renders the grid.
+**Intended business-rule impact:** none; data preservation. The stale offline conflict handling is untouched (server 409 rules unchanged).
+**Regression risk:** an extra details request after a summary refresh for reports that changed on the server (intended).
+**Verification performed:** probe (details request fires after the unlock reload, inputs show the saved values); `ui-clinical.spec.ts` D-27 (values unchanged by the lock cycle) and D-28 (save lands, cells intact); `offline-rules.spec.ts` AA-1 and AB; e2e `offline-sync.spec.ts`; `npm run verify` (171 unit tests, build).
+**Result:** PASS.
+
 **File:** `backend/app/Http/Controllers/Api/ReportWorkflowController.php`
 **Why it changed:** carry `expectedUpdatedAt` / `expected_updated_at` from the request into the service; share the value serializer with the conflict response.
 **Original behavior:** `store`, `update`, `submit` validated `values` and `submit` only; `serializeValues()` was a private method.

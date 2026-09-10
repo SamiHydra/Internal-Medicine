@@ -41,6 +41,7 @@ import {
   firstCell,
   createIsolatedAssignment,
   retireAssignment,
+  adminLock,
   templateCells,
   reportRow,
   reportCount,
@@ -316,6 +317,137 @@ test('D-2 admin locks through the UI; nurse form read-only; forced PUT refused; 
     check(D, 'D-17', 'After unlock the nurse form is editable again ("Editing live", Save enabled)', 'enabled', saveEnabled ? 'enabled' : 'disabled', saveEnabled)
   } finally {
     await nurse.page.screenshot({ path: path.join(SHOTS, 'ui-clinical-D2-nurse.png'), fullPage: true }).catch(() => {})
+    await nurse.context.close()
+    await admin.context.close()
+  }
+})
+
+/** The "Status" summary card's value ("Draft", "Submitted", "Locked", ...). */
+const statusCard = (page: Page) => page.locator('p:text-is("Status") + p').first()
+
+/** Submit through the real form; when the template wants more cells, fill the empty ones with 1 and submit again (D-1's fallback). */
+async function submitThroughForm(page: Page): Promise<void> {
+  await page.getByRole('button', { name: /^submit report$/i }).first().click()
+  const outcome = await Promise.race([
+    page.getByText(/report submitted/i).first().waitFor({ timeout: 40_000 }).then(() => 'submitted'),
+    statusLine(page).filter({ hasText: /required|missing|invalid|must|complete/i }).waitFor({ timeout: 40_000 }).then(() => 'validation'),
+  ]).catch(() => 'timeout')
+  if (outcome === 'validation') {
+    const empties = page.getByRole('spinbutton')
+    const n = await empties.count()
+    for (let i = 0; i < n; i++) {
+      const el = empties.nth(i)
+      if ((await el.inputValue()) === '' && (await el.isEditable())) await el.fill('1')
+    }
+    await page.getByRole('button', { name: /^submit report$/i }).first().click()
+    await expect(page.getByText(/report submitted/i).first()).toBeVisible({ timeout: 40_000 })
+  }
+  await expect(page.getByText(/^Submitted /).first()).toBeVisible({ timeout: 30_000 })
+  await sleep(1500)
+}
+
+test('D-3 draft lock cycle through the UI: a locked draft comes back as "Draft" (never Submitted) and the nurse resumes editing', async ({ browser }) => {
+  test.setTimeout(360_000)
+  // Business rule: a lock is an overlay, not a lifecycle step. D-1 submitted the
+  // first isolated report, so a second isolated assignment provides a report
+  // that is still a DRAFT when it is locked. The weekly deadline is moved to
+  // Sunday 23:59 for the scenario (restored in finally): after Monday 10:00 the
+  // form shows the derived "Overdue" state for an unsubmitted current-week
+  // draft, and the rule under test is the persisted lifecycle state ("Draft").
+  const adminApi = await apiAs(EXTRA_ACCOUNTS.superadmin)
+  const settings = await call(adminApi, 'GET', '/api/admin/settings')
+  const originalDay: string = settings.json?.settings?.weeklyDeadlineDay ?? 'monday'
+  const originalTime: string = settings.json?.settings?.weeklyDeadlineTime ?? '10:00'
+  const moved = await call(adminApi, 'PATCH', '/api/admin/settings', { data: { weeklyDeadlineDay: 'sunday', weeklyDeadlineTime: '23:59' } })
+  info(D, 'D-3-setup', 'Weekly deadline moved to Sunday 23:59 for the draft scenario', `${moved.status} (was ${originalDay} ${originalTime})`)
+  const iso2 = await createIsolatedAssignment(qaEmail, DEV_PASSWORD)
+  const cells2 = templateCells(iso2.templateDbId, 2)
+  info(D, 'D-3-iso', 'Second isolated assignment for the draft scenario', `${iso2.departmentSlug} period ${iso2.periodLabel} cells ${cells2.map((c) => c.fieldKey).join(',')}`)
+  const nurse = await nursePage(browser)
+  const admin = await adminPage(browser)
+  let draftId = ''
+  try {
+    // --- nurse saves a draft
+    await openReport(nurse.page, iso2.assignmentId, iso2.periodId)
+    await expect(firstCell(nurse.page)).toBeVisible({ timeout: 30_000 })
+    const values = ['5', '9']
+    for (const [i, c] of cells2.entries()) await desktopCell(nurse.page, c, 'monday').fill(values[i])
+    await nurse.page.getByRole('button', { name: /^save draft$/i }).first().click()
+    await expect(statusLine(nurse.page)).toHaveText(/draft saved/i, { timeout: 40_000 })
+    let r = row(iso2)
+    draftId = r?.id ?? ''
+    check(D, 'D-20', 'Nurse "Save draft" creates the report as a draft (status draft, submitted_at null)', 'draft / null', `${r?.status} / ${r?.submitted_at}`, r?.status === 'draft' && r?.submitted_at === null)
+    const badge0 = (await statusCard(nurse.page).textContent())?.trim() ?? ''
+    check(D, 'D-21', 'The Status card reads "Draft" before the lock', 'Draft', badge0, badge0 === 'Draft')
+
+    // --- admin locks through the UI
+    await openReport(admin.page, iso2.assignmentId, iso2.periodId)
+    const lockBtn = admin.page.getByRole('button', { name: /^lock report$/i })
+    await expect(lockBtn).toBeVisible({ timeout: 30_000 })
+    await lockBtn.click()
+    await expect(admin.page.getByRole('button', { name: /^unlock report$/i })).toBeVisible({ timeout: 40_000 })
+    await sleep(1000)
+    r = row(iso2)
+    check(D, 'D-22', 'Locking a DRAFT sets status locked with locked_at and leaves submitted_at null (no submission semantics)', 'locked / set / null', `${r?.status} / ${r?.locked_at} / ${r?.submitted_at}`, r?.status === 'locked' && !!r?.locked_at && r?.submitted_at === null)
+
+    // --- nurse: edit blocked
+    await nurse.page.reload({ waitUntil: 'domcontentloaded' })
+    await expect(nurse.page.getByText(/read only/i).first()).toBeVisible({ timeout: 30_000 })
+    const saveDisabledLocked = await nurse.page.getByRole('button', { name: /^save draft$/i }).first().isDisabled()
+    const badgeLocked = (await statusCard(nurse.page).textContent())?.trim() ?? ''
+    check(D, 'D-23', 'While the draft is locked the nurse sees "Read only", Save draft disabled and the Status card "Locked"', 'disabled / Locked', `${saveDisabledLocked ? 'disabled' : 'enabled'} / ${badgeLocked}`, saveDisabledLocked && badgeLocked === 'Locked')
+
+    // --- admin unlocks through the UI
+    await admin.page.getByRole('button', { name: /^unlock report$/i }).click()
+    await expect(admin.page.getByRole('button', { name: /^lock report$/i })).toBeVisible({ timeout: 40_000 })
+    await sleep(1000)
+    r = row(iso2)
+    const trail = q.all<{ status: string }>('select status from report_status_history where report_id = ? order by changed_at, rowid', [draftId]).map((h) => h.status)
+    check(D, 'D-24', 'Unlocking the draft restores status draft with locked_at null and submitted_at null (ReportLockingService::restoredStatus)', 'draft / null / null', `${r?.status} / ${r?.locked_at} / ${r?.submitted_at}`, r?.status === 'draft' && r?.locked_at === null && r?.submitted_at === null)
+    check(D, 'D-25', 'The audit trail reads draft -> locked -> draft; the lock cycle wrote no "submitted" row', 'draft,locked,draft', trail.join(','), trail.join(',') === 'draft,locked,draft')
+
+    // --- nurse reloads: still a Draft, editable, values unchanged, save works
+    await nurse.page.reload({ waitUntil: 'domcontentloaded' })
+    await expect(firstCell(nurse.page)).toBeVisible({ timeout: 30_000 })
+    await expect(nurse.page.getByText('Editing live').first()).toBeVisible({ timeout: 30_000 })
+    const badge = (await statusCard(nurse.page).textContent())?.trim() ?? ''
+    const submittedChips = await nurse.page.getByText(/^Submitted /).count()
+    const workingDraft = await nurse.page.getByText('Working draft').first().isVisible()
+    check(D, 'D-26', 'After the unlock the Status card says "Draft", no "Submitted <time>" label or submission timestamp appears, the last-update note reads "Working draft"', 'Draft / 0 / visible', `${badge} / ${submittedChips} / ${workingDraft ? 'visible' : 'absent'}`, badge === 'Draft' && submittedChips === 0 && workingDraft)
+    const shown = await Promise.all(cells2.map((c) => desktopCell(nurse.page, c, 'monday').inputValue()))
+    check(D, 'D-27', 'The draft values are unchanged by the lock cycle', values.join(','), shown.join(','), shown.join(',') === values.join(','))
+    const saveEnabled = await nurse.page.getByRole('button', { name: /^save draft$/i }).first().isEnabled()
+    await desktopCell(nurse.page, cells2[0], 'monday').fill('6')
+    await nurse.page.getByRole('button', { name: /^save draft$/i }).first().click()
+    await expect(statusLine(nurse.page)).toHaveText(/draft saved/i, { timeout: 40_000 })
+    r = row(iso2)
+    check(D, 'D-28', 'The nurse edit controls are back: Save draft enabled, the save lands (cell 6) and the report is still a draft with submitted_at null', 'enabled / 6 / draft / null', `${saveEnabled ? 'enabled' : 'disabled'} / ${cellOf(draftId, cells2[0], 'monday')} / ${r?.status} / ${r?.submitted_at}`, saveEnabled && cellOf(draftId, cells2[0], 'monday') === '6' && r?.status === 'draft' && r?.submitted_at === null)
+
+    // --- submitted -> locked -> unlocked stays Submitted
+    await submitThroughForm(nurse.page)
+    r = row(iso2)
+    check(D, 'D-29', 'Explicit Submit remains the only path to submitted (status submitted, submitted_at set)', 'submitted / set', `${r?.status} / ${r?.submitted_at}`, r?.status === 'submitted' && !!r?.submitted_at)
+    const submittedAt = r?.submitted_at ?? null
+    await admin.page.reload({ waitUntil: 'domcontentloaded' })
+    await expect(admin.page.getByRole('button', { name: /^lock report$/i })).toBeVisible({ timeout: 30_000 })
+    await admin.page.getByRole('button', { name: /^lock report$/i }).click()
+    await expect(admin.page.getByRole('button', { name: /^unlock report$/i })).toBeVisible({ timeout: 40_000 })
+    await admin.page.getByRole('button', { name: /^unlock report$/i }).click()
+    await expect(admin.page.getByRole('button', { name: /^lock report$/i })).toBeVisible({ timeout: 40_000 })
+    await sleep(1000)
+    r = row(iso2)
+    await nurse.page.reload({ waitUntil: 'domcontentloaded' })
+    await expect(firstCell(nurse.page)).toBeVisible({ timeout: 30_000 })
+    const badge2 = (await statusCard(nurse.page).textContent())?.trim() ?? ''
+    const chips2 = await nurse.page.getByText(/^Submitted /).count()
+    check(D, 'D-30', 'submitted -> lock -> unlock: DB status submitted with submitted_at unchanged and locked_at null; the UI Status card still says "Submitted" with the submission chip', 'submitted / same / null / Submitted / >=1', `${r?.status} / ${r?.submitted_at === submittedAt ? 'same' : r?.submitted_at} / ${r?.locked_at} / ${badge2} / ${chips2}`, r?.status === 'submitted' && r?.submitted_at === submittedAt && r?.locked_at === null && badge2 === 'Submitted' && chips2 >= 1)
+  } finally {
+    await nurse.page.screenshot({ path: path.join(SHOTS, 'ui-clinical-D3-draft-unlock.png'), fullPage: true }).catch(() => {})
+    if (draftId && row(iso2)?.locked_at) await adminLock(draftId, false)
+    const retired = await retireAssignment(iso2.assignmentId).catch(() => null)
+    const restored = await call(adminApi, 'PATCH', '/api/admin/settings', { data: { weeklyDeadlineDay: originalDay, weeklyDeadlineTime: originalTime } })
+    info(D, 'D-3-teardown', 'Second isolated assignment retired and the weekly deadline restored', `retire=${retired?.status} restore=${restored.status} ${originalDay} ${originalTime}`)
+    await adminApi.dispose()
     await nurse.context.close()
     await admin.context.close()
   }

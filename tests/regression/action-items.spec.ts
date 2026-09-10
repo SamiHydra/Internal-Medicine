@@ -449,8 +449,8 @@ test('K. analytics exports: queue, build, owner-only download, isolation', async
   const own = await admin.fetch(dl, { headers: dlHeaders })
   const body = await own.body()
   const head = body.subarray(0, 64).toString('utf8')
-  const body = head.replace(/^\uFEFF/, '')
-  const looksCsv = body.length > 0 && body.charCodeAt(0) > 8 && (head.includes(',') || head.includes('\n'))
+  const text = head.replace(/^\uFEFF/, '')
+  const looksCsv = text.length > 0 && text.charCodeAt(0) > 8 && (head.includes(',') || head.includes('\n'))
   check(D, 'K-07', 'download as owner -> 200, non-empty body that looks like CSV, size matches byte_size', `200/${ready?.byte_size}`, `${own.status()}/${body.length}/${own.headers()['content-type']}/head=${JSON.stringify(head.slice(0, 40))}`, own.status() === 200 && body.length > 0 && body.length === Number(ready?.byte_size) && looksCsv)
   info(D, 'K-07i', 'downloaded export size and header', `${body.length} bytes; ${own.headers()['content-disposition']}`)
 

@@ -300,7 +300,15 @@ test.describe('Offline synchronization and conflict safety', () => {
       await expect(conflictPanel(page)).toHaveCount(0, { timeout: 15_000 })
       await expect.poll(() => readQueue(page)).toEqual([])
       await expect(firstCell(page)).toHaveValue('5')
-      expect(cellValues(await serverReport(weeks[1]))).toContain('5')
+      const restored = await serverReport(weeks[1])
+      expect(cellValues(restored)).toContain('5')
+      // The lock cycle is an overlay on the lifecycle: the report was a draft
+      // when it was locked, so the unlock hands it back as a draft, with no
+      // submission stamped on it and the stale offline value not replayed.
+      expect(restored.status).toBe('draft')
+      expect(restored.submittedAt).toBeNull()
+      expect(restored.lockedAt).toBeNull()
+      expect(cellValues(restored)).not.toContain('6')
     } finally {
       await context.close()
     }

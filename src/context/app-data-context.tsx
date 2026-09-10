@@ -773,6 +773,32 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           needsAdminAssignments ? fetchReportAssignments(client) : Promise.resolve(null),
         ])
         const incomingReports = summaries.map(reportSummaryRecord)
+        // A summary carries no cell values. A record whose details were loaded
+        // but which has changed on the server since (an admin unlock, a save
+        // from another device) must not stay marked as loaded: the form would
+        // render an empty grid for the draft and the next save would wipe the
+        // stored cells. Dropping the id here makes the form fetch the details
+        // again, the same rule the workspace merge applies.
+        const existingReportsById = new Map(
+          currentStateRef.current.reports.map((report) => [report.id, report]),
+        )
+        const reusableDetailIds = new Set(
+          incomingReports
+            .filter((report) => {
+              const existing = existingReportsById.get(report.id)
+              return (
+                existing !== undefined &&
+                loadedReportDetailIdsRef.current.has(report.id) &&
+                existing.updatedAt === report.updatedAt
+              )
+            })
+            .map(({ id }) => id),
+        )
+        incomingReports.forEach(({ id }) => {
+          if (!reusableDetailIds.has(id)) {
+            loadedReportDetailIdsRef.current.delete(id)
+          }
+        })
 
         setState((currentState) => {
           const reportsById = new Map(currentState.reports.map((report) => [report.id, report]))
@@ -781,9 +807,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             const existing = reportsById.get(report.id)
             reportsById.set(
               report.id,
-              existing &&
-                loadedReportDetailIdsRef.current.has(report.id) &&
-                existing.updatedAt === report.updatedAt
+              existing && reusableDetailIds.has(report.id)
                 ? {
                     ...report,
                     values: existing.values,
