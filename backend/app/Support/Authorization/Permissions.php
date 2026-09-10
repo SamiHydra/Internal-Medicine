@@ -93,6 +93,9 @@ final class Permissions
     /** Review transfer requests; the policy narrows consultants to destination-section heads. */
     public const TRANSFERS_REVIEW = 'transfers.review';
 
+    /** The maintenance health snapshot (queue, scheduler, backups, release). Maintenance only. */
+    public const SYSTEM_HEALTH = 'system.health';
+
     private const ADMIN_ROLES = ['superadmin', 'admin'];
 
     private const ROLE_PERMISSIONS = [
@@ -130,6 +133,7 @@ final class Permissions
             self::STUDENT_ATTENDANCE_RECORD,
             self::STUDENTS_MANAGE,
             self::MORNING_ATTENDANCE_RECORD,
+            self::SYSTEM_HEALTH,
         ],
         'admin' => [
             self::AUTH_VIEW_SELF,

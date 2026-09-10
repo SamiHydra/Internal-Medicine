@@ -11,7 +11,9 @@ import { QA_ACCOUNT_PASSWORD, QA_MARKER } from './helpers/accounts'
  *
  * Ground truth (backend/app/Support/Authorization/Permissions.php):
  *   superadmin = admin + { admins.manage, templates.editStructure,
- *                          evaluationForms.editStructure }
+ *                          evaluationForms.editStructure, system.health }
+ * (system.health is the maintenance-only health view added by the pre-server
+ * hardening phase, docs/OBSERVABILITY.md)
  * and nothing else. Every assertion below is confirmed against the SERVER (the
  * API), not the SPA, per the brief.
  */
@@ -30,7 +32,7 @@ const ADMIN_B = {
 }
 
 /** The three permissions a superadmin has that a plain admin must not. */
-const SUPERADMIN_ONLY = ['admins.manage', 'evaluationForms.editStructure', 'templates.editStructure']
+const SUPERADMIN_ONLY = ['admins.manage', 'evaluationForms.editStructure', 'system.health', 'templates.editStructure']
 
 /**
  * Create a role_key='admin' user via the superadmin API and return its id. On a

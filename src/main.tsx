@@ -2,7 +2,12 @@ import { createRoot } from 'react-dom/client'
 
 import './index.css'
 import type { SessionPayload } from '@/lib/api/types'
+import { installGlobalErrorReporting } from '@/lib/observability/error-reporter'
 import { landingPathForRole } from '@/routes/landing'
+
+// Uncaught exceptions, rejected promises and API 5xx answers are reported to
+// the maintenance log (sanitised, capped, best-effort). See docs/OBSERVABILITY.md.
+installGlobalErrorReporting()
 
 function activateDeferredAppStyles() {
   const stylesheet = document.querySelector<HTMLLinkElement>(

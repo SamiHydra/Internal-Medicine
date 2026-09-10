@@ -116,6 +116,11 @@ const AnalyticsExportPage = lazy(() =>
     default: module.AnalyticsExportPage,
   })),
 )
+const SystemHealthPage = lazy(() =>
+  import('@/pages/admin/system-health-page').then((module) => ({
+    default: module.SystemHealthPage,
+  })),
+)
 const SettingsPage = lazy(() =>
   import('@/pages/admin/settings-page').then((module) => ({
     default: module.SettingsPage,
@@ -361,6 +366,14 @@ function App() {
               <Route
                 path="/nurse/activity"
                 element={renderLazyRoute(<NurseActivityPage />, 'inline')}
+              />
+            </Route>
+
+            {/* Maintenance only: the operational health snapshot (docs/OBSERVABILITY.md). */}
+            <Route element={<ProtectedRoute roles={['superadmin']} />}>
+              <Route
+                path="/admin/system-health"
+                element={renderLazyRoute(<SystemHealthPage />, 'inline')}
               />
             </Route>
 

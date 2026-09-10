@@ -20,12 +20,14 @@ use App\Http\Controllers\Api\Admin\ReportAssignmentController;
 use App\Http\Controllers\Api\Admin\ReportImportController;
 use App\Http\Controllers\Api\Admin\RotationController;
 use App\Http\Controllers\Api\Admin\SettingsController;
+use App\Http\Controllers\Api\Admin\SystemHealthController;
 use App\Http\Controllers\Api\Admin\TransferRequestController as AdminTransferRequestController;
 use App\Http\Controllers\Api\Admin\UndergraduateAdminController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\AdminRegistrationController;
 use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ClientErrorController;
 use App\Http\Controllers\Api\MorningSessionController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PasswordResetController;
@@ -72,6 +74,13 @@ Route::prefix('auth')->group(function (): void {
 Route::post('/access-requests', [AccessRequestSubmissionController::class, 'store'])->middleware('throttle:10,1,registration');
 Route::post('/academic-access-requests', [AcademicRegistrationController::class, 'store'])->middleware('throttle:10,1,registration');
 Route::post('/admin-access-requests', [AdminRegistrationController::class, 'store'])->middleware('throttle:10,1,registration');
+
+// Sanitised error reports from the SPA (docs/OBSERVABILITY.md). Public so the
+// sign-in page can report a broken bundle, rate limited per IP, and it stores
+// nothing: the report goes to the log, the hourly counters and the optional
+// webhook. Its own limiter key keeps it out of the auth buckets.
+Route::post('/client-errors', [ClientErrorController::class, 'store'])
+    ->middleware('throttle:'.max(1, (int) config('observability.client_errors.per_minute', 20)).',1,client-errors');
 
 // The workspace bootstrap issues a short-lived signed credential for this
 // read-only global ledger. Removing Sanctum's stateful wrapper here avoids a
@@ -231,6 +240,9 @@ Route::middleware(['auth:sanctum', 'active', 'password-changed', 'throttle:300,1
         Route::patch('/departments/{department}/active', [ReferenceDataController::class, 'setDepartmentActive'])->middleware('permission:departments.manage');
         Route::delete('/departments/{department}', [ReferenceDataController::class, 'destroyDepartment'])->middleware('permission:departments.manage');
         Route::get('/wards', [ReferenceDataController::class, 'wards'])->middleware('permission:departments.manage');
+
+        // Maintenance-only health snapshot (Maintenance = superadmin). Read-only.
+        Route::get('/system-health', [SystemHealthController::class, 'show'])->middleware('permission:system.health');
 
         Route::get('/settings', [SettingsController::class, 'show'])->middleware('permission:settings.manage');
         Route::put('/settings', [SettingsController::class, 'update'])->middleware('permission:settings.manage');

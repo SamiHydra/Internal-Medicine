@@ -44,9 +44,13 @@ use App\Policies\ResidentEvaluationPolicy;
 use App\Policies\RolePolicy;
 use App\Policies\UserPolicy;
 use App\Support\Authorization\Permissions;
+use App\Support\Observability\ErrorReporter;
+use App\Support\Observability\Release;
 use Illuminate\Contracts\Validation\UncompromisedVerifier;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\NotPwnedVerifier;
 use Illuminate\Validation\Rules\Password;
@@ -94,6 +98,14 @@ class AppServiceProvider extends ServiceProvider
             $app[HttpFactory::class],
             max(1, (int) config('operations.password_breach_check_timeout_seconds', 5)),
         ));
+
+        // Every log line names the running release (docs/OBSERVABILITY.md), so
+        // an operator reading laravel.log can tell which deploy produced it.
+        Log::shareContext(['release' => Release::short()]);
+
+        // Failed queue jobs (exports, deliveries, analytics warm-ups) are an
+        // operational signal: count them and mirror them to the webhook.
+        Queue::failing(fn ($event) => ErrorReporter::reportFailedJob($event));
 
         Gate::before(fn (User $user) => $user->active ? null : false);
 

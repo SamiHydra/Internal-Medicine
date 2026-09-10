@@ -21,6 +21,31 @@ const DEFAULT_MUTATION_TIMEOUT_MS = 30_000
 const CSRF_TIMEOUT_MS = 10_000
 const TRANSIENT_GET_STATUSES = new Set([502, 503, 504])
 
+type ApiFailureObserver = (status: number, path: string) => void
+
+let apiFailureObserver: ApiFailureObserver | null = null
+
+/**
+ * Observability hook (docs/OBSERVABILITY.md): called once per HTTP answer of
+ * 500 or above, with the status and the request path only (never the body or
+ * headers). Registered by the client error reporter; null disables it.
+ */
+export function setApiFailureObserver(observer: ApiFailureObserver | null) {
+  apiFailureObserver = observer
+}
+
+function notifyApiFailure(status: number, path: string) {
+  if (!apiFailureObserver || status < 500) {
+    return
+  }
+
+  try {
+    apiFailureObserver(status, path.split('?')[0])
+  } catch {
+    // An observer must never break the request it observes.
+  }
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly details?: unknown
@@ -257,6 +282,10 @@ export class LaravelApiClient {
             credentials: 'include',
             signal: abortState.signal,
           })
+
+          if (response.status >= 500) {
+            notifyApiFailure(response.status, path)
+          }
 
           if (TRANSIENT_GET_STATUSES.has(response.status) && attempt + 1 < maxAttempts) {
             await this.retryDelay(attempt)

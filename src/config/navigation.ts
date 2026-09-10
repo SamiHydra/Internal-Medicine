@@ -3,6 +3,7 @@ import {
   CalendarDays,
   CalendarRange,
   ClipboardCheck,
+  HeartPulse,
   ClipboardList,
   Download,
   FilePenLine,
@@ -93,12 +94,21 @@ export function isWorkspaceRole(role: UserRole): boolean {
   return role === 'admin' || role === 'superadmin'
 }
 
+/** Maintenance-only operational view; sits with the other system items. */
+const maintenanceSystemNav: NavigationItem[] = [
+  { label: 'System health', shortLabel: 'Health', href: '/admin/system-health', icon: HeartPulse },
+]
+
 export function getNavigationItems(
   role: UserRole,
   workspace: Workspace,
   extras?: { isMorningRecorder?: boolean },
 ): NavigationItem[] {
-  if (role === 'admin' || role === 'superadmin') {
+  if (role === 'superadmin') {
+    return [...adminWorkspaceNav[workspace], ...maintenanceSystemNav]
+  }
+
+  if (role === 'admin') {
     return adminWorkspaceNav[workspace]
   }
 
@@ -152,6 +162,7 @@ export function isSharedAdminPath(pathname: string): boolean {
     pathname.startsWith('/admin/users') ||
     pathname.startsWith('/admin/audit') ||
     pathname.startsWith('/admin/settings') ||
+    pathname.startsWith('/admin/system-health') ||
     pathname.startsWith('/admin/notifications') ||
     pathname.startsWith('/admin/manual-admin-setup')
   )

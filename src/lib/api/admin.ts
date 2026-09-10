@@ -18,6 +18,7 @@ import type {
   CreateAdminAccountPayload,
   DepartmentReferencePayload,
   SubmitAdminAccessRequestPayload,
+  SystemHealthSnapshot,
 } from '@/lib/api/types'
 import type { Department, ReportTemplateConfig } from '@/types/domain'
 import type { AuditLogEntry, ReportAssignment } from '@/types/domain'
@@ -371,6 +372,11 @@ export async function importReports(
 }
 
 /** Cross-cutting account & access actions (approvals, role/assignment changes) for the Audit Log. */
+/** Maintenance-only operational snapshot; read-only, never cached by the browser. */
+export async function fetchSystemHealth(client: LaravelApiClient): Promise<SystemHealthSnapshot> {
+  return client.get<SystemHealthSnapshot>('/api/admin/system-health', { timeoutMs: 20_000 })
+}
+
 export async function fetchAdminAuditTrail(client: LaravelApiClient): Promise<AdminAuditEntry[]> {
   const response = await client.get<{ data: AdminAuditEntry[] }>('/api/admin/admin-audit-logs')
 

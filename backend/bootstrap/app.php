@@ -4,8 +4,10 @@ use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsurePasswordChanged;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\EnsureRole;
+use App\Http\Middleware\RecordRequestTiming;
 use App\Http\Middleware\RequireWorkspaceRevisionToken;
 use App\Http\Middleware\SecurityHeaders;
+use App\Support\Observability\ErrorReporter;
 use App\Support\Uploads;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -48,6 +50,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->redirectGuestsTo(fn () => null);
 
         $middleware->append(SecurityHeaders::class);
+        // Counts 5xx answers and logs slow requests for the health view
+        // (docs/OBSERVABILITY.md). Global so every route is timed.
+        $middleware->append(RecordRequestTiming::class);
         $middleware->statefulApi();
         $middleware->api(prepend: [
             EnsureFrontendRequestsAreStateful::class,
@@ -61,6 +66,13 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // Mirror every reportable exception (Laravel has already excluded
+        // validation, authentication, authorization and 404s) to the optional
+        // webhook and the hourly counters, after the normal log write.
+        $exceptions->report(function (Throwable $throwable): void {
+            ErrorReporter::reportException($throwable, app()->bound('request') ? request() : null);
+        });
+
         // This is an API-only app with no web "login" route. Force JSON rendering
         // for /api/* so an unauthenticated request returns a clean 401 instead of
         // attempting a redirect to the non-existent login route (which 500s).
