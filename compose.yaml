@@ -24,6 +24,9 @@ x-php-image: &php-image
     args:
       PHP_VERSION: "8.3"
       VITE_API_BASE_URL: "https://localhost:8443"
+      # `RELEASE_SHA=$(git rev-parse --short=12 HEAD) docker compose up -d --build`
+      # stamps the images with the commit; the default names an unstamped build.
+      RELEASE_SHA: "${RELEASE_SHA:-local-parity}"
   image: imreport-parity/app:local
   env_file:
     - .env.docker
@@ -101,6 +104,7 @@ services:
       target: web
       args:
         VITE_API_BASE_URL: "https://localhost:8443"
+        RELEASE_SHA: "${RELEASE_SHA:-local-parity}"
     image: imreport-parity/web:local
     restart: unless-stopped
     depends_on:

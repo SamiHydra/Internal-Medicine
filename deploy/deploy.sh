@@ -105,7 +105,19 @@ git pull --ff-only
 REVISION="$(git rev-parse --short=12 HEAD)"
 RELEASE_ID="$(date -u +%Y%m%d%H%M%S)-${REVISION}"
 RELEASE_DIR="${RELEASES_DIR}/${RELEASE_ID}"
-PREVIOUS_RELEASE="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
+# Empty on a FIRST install. `readlink -f` canonicalises a path whose last
+# component does not exist and still exits 0, so without this guard the very
+# first deployment set PREVIOUS_RELEASE to the not-yet-created current link,
+# then tried to enter maintenance mode inside it and aborted (found by the
+# rollback rehearsal, docs/ROLLBACK_REHEARSAL.md).
+PREVIOUS_RELEASE=""
+if [ -L "${CURRENT_LINK}" ] || [ -e "${CURRENT_LINK}" ]; then
+  PREVIOUS_RELEASE="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
+  if [ ! -d "${PREVIOUS_RELEASE}/backend" ]; then
+    echo "Ignoring ${CURRENT_LINK}: it does not point at a usable release." >&2
+    PREVIOUS_RELEASE=""
+  fi
+fi
 ACTIVATED=0
 MAINTENANCE=0
 
@@ -140,6 +152,10 @@ trap rollback_on_error ERR
 echo "==> Creating immutable release ${RELEASE_ID}"
 mkdir -p "${RELEASE_DIR}"
 git archive --format=tar HEAD | tar -xf - -C "${RELEASE_DIR}"
+# Release identification (docs/OBSERVABILITY.md): the backend reads this file
+# for logs, the health snapshot and the maintenance page; the SPA gets the
+# same SHA through VITE_RELEASE_SHA below.
+printf '{"sha":"%s","builtAt":"%s"}\n' "${REVISION}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${RELEASE_DIR}/release.json"
 ln -s "${SHARED_DIR}/backend.env" "${RELEASE_DIR}/backend/.env"
 rm -rf "${RELEASE_DIR}/backend/storage"
 ln -s "${SHARED_DIR}/storage" "${RELEASE_DIR}/backend/storage"

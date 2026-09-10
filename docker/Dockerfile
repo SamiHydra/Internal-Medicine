@@ -42,6 +42,9 @@ COPY . .
 # stack has to be known when the image is built.
 ARG VITE_API_BASE_URL=https://localhost:8443
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+# Same release identifier the backend reports (docs/OBSERVABILITY.md).
+ARG RELEASE_SHA=local-parity
+ENV VITE_RELEASE_SHA=${RELEASE_SHA}
 
 RUN npm run build
 
@@ -103,11 +106,20 @@ FROM php-base AS app
 
 COPY --from=vendor-prod /opt/imreport/current/backend /opt/imreport/current/backend
 
+# release.json sits next to backend/, exactly where deploy.sh writes it, so the
+# health snapshot, the logs and the maintenance page name this build.
+ARG RELEASE_SHA=local-parity
+RUN printf '{"sha":"%s","builtAt":"%s"}\n' "${RELEASE_SHA}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /opt/imreport/current/release.json
+
 COPY docker/php/php.ini /usr/local/etc/php/conf.d/zz-imreport.ini
 COPY docker/php/www.conf /usr/local/etc/php-fpm.d/zz-imreport.conf
 COPY docker/entrypoint.sh /usr/local/bin/imreport-entrypoint
 
 RUN set -eux; \
+    # A Windows checkout with core.autocrlf=true can hand us a CRLF script and
+    # a CRLF shebang exits 127 ("bash\r: No such file"). .gitattributes pins
+    # LF; this keeps the image correct even without it.
+    sed -i 's/\r$//' /usr/local/bin/imreport-entrypoint; \
     chmod +x /usr/local/bin/imreport-entrypoint; \
     mkdir -p storage/framework/cache/data storage/framework/sessions \
              storage/framework/views storage/framework/testing storage/app/public \
@@ -150,7 +162,7 @@ RUN composer dump-autoload --no-scripts \
 
 COPY docker/php/php.ini /usr/local/etc/php/conf.d/zz-imreport.ini
 COPY docker/run-mariadb-tests.sh /usr/local/bin/run-mariadb-tests
-RUN chmod +x /usr/local/bin/run-mariadb-tests
+RUN sed -i 's/\r$//' /usr/local/bin/run-mariadb-tests && chmod +x /usr/local/bin/run-mariadb-tests
 
 # ENTRYPOINT, not CMD: the php base image ships `docker-php-entrypoint`, which
 # would otherwise exec php-fpm with any arguments passed to `compose run test`.
