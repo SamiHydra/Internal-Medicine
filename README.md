@@ -74,6 +74,7 @@ Real `.env` files are never committed - only `*.example` templates are tracked.
 - `backend/` - Laravel API (controllers, models, policies, services, migrations, seeders)
 - `deploy/` - atomic on-premises release, Nginx, queue, backup, firewall, and log configuration
 - `public/_redirects` and `wrangler.toml` - optional preview-hosting configuration, not production
+- `docs/README.md` - the documentation index: numbered guides (overview, business rules, architecture, database, API, security, installation, configuration, operations, backup, monitoring, testing, troubleshooting, developer guide, release), role manuals under `docs/manuals/`, end-to-end workflows under `docs/workflows/`, and reference tables under `docs/reference/`
 - `docs/migration/` - historical migration notes (the app was migrated from Supabase to Laravel)
 
 ## Local Commands
