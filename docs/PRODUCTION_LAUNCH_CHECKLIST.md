@@ -88,3 +88,30 @@ notifications update without someone visiting the SPA.
   habit before launch.
 - With `APP_DEBUG=false`, verify a deliberate test exception is captured or
   visible through the chosen review process.
+
+## Post-Deployment Smoke Suite
+
+Run `npm run test:smoke` from the repository checkout on the server (or any
+machine that can reach the host) immediately after `deploy.sh` reports
+`Deploy complete`. It is API-level only (no browser binary, no seeded
+fixture), read-only by default, about a dozen checks, and finishes in well
+under a minute. Every check that cannot run without its variables is reported
+as SKIPPED with the reason, never as a pass.
+
+| Variable | Required for | Notes |
+|---|---|---|
+| `SMOKE_BASE_URL` | all checks | the public origin, e.g. `https://im.hospital.internal` |
+| `SMOKE_ADMIN_IDENTIFIER`, `SMOKE_ADMIN_PASSWORD` | checks 5 to 7, 12, 13 | the Maintenance account (check 7, the health snapshot, and 12, queue and scheduler, need it; an ordinary administrator makes them SKIP) |
+| `SMOKE_NURSE_IDENTIFIER`, `SMOKE_NURSE_PASSWORD` | checks 8, 9, 14 | a dedicated `QA_SMOKE_` nurse with its own ward assignment, never a real nurse |
+| `SMOKE_ACADEMIC_IDENTIFIER`, `SMOKE_ACADEMIC_PASSWORD` | check 10 | a resident or consultant account |
+| `SMOKE_REP_IDENTIFIER`, `SMOKE_REP_PASSWORD` | check 11 | a student representative account |
+| `SMOKE_ALLOW_WRITE=1` | check 14 | opts into the draft-save check; it writes one cell of an unlocked report of the smoke nurse and restores the previous values afterwards |
+| `SMOKE_EXPECTED_RELEASE` | check 2 | optional; the short SHA `deploy.sh` printed, asserted against the served bundle |
+
+Checks: `/up` alive; the SPA shell names a build; anonymous API closed;
+security headers and a secure session cookie; maintenance sign-in and
+workspace; clinical and academic workspaces; health snapshot healthy; nurse
+sign-in and current week; nurse refused on admin endpoints; academic account
+reaches only its surfaces; student representative reaches only the teaching
+log; queue and scheduler moving; sign-out invalidates the session; draft save
+persists (opt-in). Results land in `test-results-smoke/results.json`.
