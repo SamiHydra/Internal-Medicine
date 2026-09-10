@@ -24,6 +24,56 @@ const mixes = {
     ['notifications', 0.05],
     ['auth-me', 0.05],
   ],
+  // Role-aware hospital day (docs/CAPACITY_TEST_REPORT.md): every VU plays the
+  // role its account holds, so the request mix follows the seeded headcount
+  // (nurses, administrators, residents/consultants, student representatives)
+  // and includes the writes and the heavy admin reads the other profiles omit.
+  mixed: [['role-aware', 1]],
+}
+
+export const roleMixes = {
+  nurse: [
+    ['workspace-revision', 0.3],
+    ['workspace', 0.15],
+    ['report-details', 0.15],
+    ['report-save', 0.1],
+    ['status-history', 0.1],
+    ['notifications', 0.15],
+    ['auth-me', 0.05],
+  ],
+  admin: [
+    ['analytics-dashboard', 0.2],
+    ['workspace', 0.15],
+    ['reports-window', 0.2],
+    ['action-items', 0.1],
+    ['users', 0.1],
+    ['admin-audit', 0.1],
+    ['notifications', 0.1],
+    ['workspace-revision', 0.045],
+    ['export-request', 0.005],
+  ],
+  academic: [
+    ['workspace', 0.15],
+    ['academic-form-options', 0.25],
+    ['academic-my-submissions', 0.2],
+    ['academic-my-performance', 0.1],
+    ['notifications', 0.15],
+    ['workspace-revision', 0.15],
+  ],
+  student_rep: [
+    ['teaching-my-sessions', 0.6],
+    ['notifications', 0.2],
+    ['workspace-revision', 0.2],
+  ],
+}
+
+export function roleGroup(role) {
+  if (role === 'nurse') return 'nurse'
+  if (role === 'admin' || role === 'superadmin') return 'admin'
+  if (role === 'resident' || role === 'consultant') return 'academic'
+  if (role === 'student_rep') return 'student_rep'
+
+  return 'academic'
 }
 
 export function loadConfig(environment = process.env) {
@@ -116,6 +166,9 @@ export class Session {
     this.reportIds = []
     this.revisionToken = null
     this.role = 'unknown'
+    // A nurse's own unlocked report and its current cell values: the mixed
+    // profile writes them back unchanged (the real save path, no data drift).
+    this.editableReport = null
     this.sourceIp = `10.250.${Math.floor(index / 250)}.${(index % 250) + 1}`
   }
 
@@ -167,6 +220,26 @@ export class Session {
     this.revisionToken = revisionTokenFromWorkspace(workspace)
     if (!this.revisionToken) {
       throw new Error('Workspace prime did not return a revision polling credential.')
+    }
+
+    if (this.config.profile === 'mixed' && roleGroup(this.role) === 'nurse') {
+      const candidate = (reportPage?.data ?? []).find(
+        (report) => report && report.status !== 'locked' && !report.lockedAt,
+      )
+      if (candidate) {
+        const detail = await request(
+          this,
+          metrics,
+          'GET',
+          `/api/reports/${candidate.id}`,
+          'report-prime',
+          { expectJson: true },
+          false,
+        )
+        if (detail && typeof detail.values === 'object') {
+          this.editableReport = { id: candidate.id, values: detail.values }
+        }
+      }
     }
   }
 }
@@ -430,6 +503,14 @@ export function summarize(metrics, config, startedAt, finishedAt) {
       },
     ]),
   )
+  const allDurations = [...metrics.byEndpoint.values()].flatMap((item) => item.durations)
+  const overall = {
+    p50Ms: Number(percentile(allDurations, 50).toFixed(1)),
+    p75Ms: Number(percentile(allDurations, 75).toFixed(1)),
+    p95Ms: Number(percentile(allDurations, 95).toFixed(1)),
+    p99Ms: Number(percentile(allDurations, 99).toFixed(1)),
+    maxMs: Number(Math.max(0, ...allDurations).toFixed(1)),
+  }
   const totalRequests = Object.values(endpoints).reduce((sum, item) => sum + item.count, 0)
   const totalOk = Object.values(endpoints).reduce((sum, item) => sum + item.ok, 0)
   const totalFailures = Object.values(endpoints).reduce((sum, item) => sum + item.failed, 0)
@@ -455,6 +536,10 @@ export function summarize(metrics, config, startedAt, finishedAt) {
     attemptedRps: Number((totalRequests / config.durationSeconds).toFixed(2)),
     successfulRps: Number((totalOk / config.durationSeconds).toFixed(2)),
     timeoutRps: Number((totalTimeouts / config.durationSeconds).toFixed(2)),
+    overall,
+    roles: Object.fromEntries(
+      [...(metrics.rolesBySession ?? new Map()).entries()].map(([role, count]) => [role, count]),
+    ),
     endpoints,
     failures: metrics.failures,
   }
@@ -487,9 +572,16 @@ function sampleReportIds(session) {
   return [...new Set(ids)]
 }
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10)
+}
+
 async function runMeasuredRequest(session, metrics) {
   const roll = Math.random()
-  const mix = mixes[session.config.profile]
+  const mix =
+    session.config.profile === 'mixed'
+      ? roleMixes[roleGroup(session.role)]
+      : mixes[session.config.profile]
   let cumulative = 0
   const endpoint =
     mix.find(([, weight]) => {
@@ -531,6 +623,62 @@ async function runMeasuredRequest(session, metrics) {
       }
     } else if (endpoint === 'notifications') {
       await request(session, metrics, 'GET', '/api/notifications?limit=20', endpoint)
+    } else if (endpoint === 'report-save') {
+      if (session.editableReport) {
+        await request(
+          session,
+          metrics,
+          'PUT',
+          `/api/reports/${session.editableReport.id}`,
+          endpoint,
+          { body: { values: session.editableReport.values } },
+        )
+      } else {
+        await request(session, metrics, 'GET', '/api/reports?per_page=10', 'reports-window')
+      }
+    } else if (endpoint === 'status-history') {
+      await request(session, metrics, 'GET', '/api/reports/status-history?perPage=50', endpoint)
+    } else if (endpoint === 'analytics-dashboard') {
+      // The nine-week window the admin dashboard opens on. An unfiltered call
+      // means the whole archive, which is a different (much heavier) question
+      // and is measured separately in docs/CAPACITY_TEST_REPORT.md.
+      const to = new Date()
+      const from = new Date(to.getTime() - 63 * 24 * 3600 * 1000)
+      await request(
+        session,
+        metrics,
+        'GET',
+        `/api/analytics/dashboard?dateFrom=${from.toISOString().slice(0, 10)}&dateTo=${to.toISOString().slice(0, 10)}`,
+        endpoint,
+      )
+    } else if (endpoint === 'analytics-dashboard-all') {
+      await request(session, metrics, 'GET', '/api/analytics/dashboard', endpoint)
+    } else if (endpoint === 'reports-window') {
+      await request(session, metrics, 'GET', '/api/reports?perPage=300', endpoint)
+    } else if (endpoint === 'action-items') {
+      await request(session, metrics, 'GET', '/api/admin/action-items', endpoint)
+    } else if (endpoint === 'users') {
+      await request(session, metrics, 'GET', '/api/admin/users', endpoint)
+    } else if (endpoint === 'admin-audit') {
+      await request(session, metrics, 'GET', '/api/admin/admin-audit-logs', endpoint)
+    } else if (endpoint === 'export-request') {
+      await request(session, metrics, 'POST', '/api/analytics/exports', endpoint, {
+        body: { format: 'csv' },
+      })
+    } else if (endpoint === 'academic-form-options') {
+      await request(
+        session,
+        metrics,
+        'GET',
+        `/api/academic/form-options?date=${todayIsoDate()}`,
+        endpoint,
+      )
+    } else if (endpoint === 'academic-my-submissions') {
+      await request(session, metrics, 'GET', '/api/academic/my-submissions', endpoint)
+    } else if (endpoint === 'academic-my-performance') {
+      await request(session, metrics, 'GET', '/api/academic/my-performance', endpoint)
+    } else if (endpoint === 'teaching-my-sessions') {
+      await request(session, metrics, 'GET', '/api/teaching/my-sessions', endpoint)
     } else {
       await request(session, metrics, 'GET', '/api/auth/me', endpoint)
     }
@@ -610,6 +758,12 @@ function printSummary(summary, output) {
   console.log(`Failures: ${summary.totalFailures}; timeouts: ${summary.totalTimeouts}`)
   console.log(`Attempted RPS: ${summary.attemptedRps}`)
   console.log(`Successful RPS: ${summary.successfulRps}`)
+  console.log(
+    `Overall latency: p50 ${summary.overall.p50Ms} ms, p95 ${summary.overall.p95Ms} ms, p99 ${summary.overall.p99Ms} ms, max ${summary.overall.maxMs} ms`,
+  )
+  if (Object.keys(summary.roles).length) {
+    console.log(`Sessions by role: ${JSON.stringify(summary.roles)}`)
+  }
   console.log(`Report: ${output}`)
 }
 
@@ -636,6 +790,10 @@ export async function main(environment = process.env) {
   console.log('Preparing login and workspace state (excluded from measured results)...')
 
   await prepareSessions(sessions, metrics, config.preparationConcurrency)
+  metrics.rolesBySession = new Map()
+  for (const session of sessions) {
+    metrics.rolesBySession.set(session.role, (metrics.rolesBySession.get(session.role) ?? 0) + 1)
+  }
   await sleep(2000)
 
   const startedAtMs = Date.now()

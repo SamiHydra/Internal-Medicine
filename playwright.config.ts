@@ -57,6 +57,16 @@ const RESPONSIVE_UI: RegExp[] = [
  */
 const allBrowsers = process.env.E2E_ALL_BROWSERS === '1'
 
+/**
+ * The accessibility audit specs (axe sweep over every route and role, the
+ * keyboard-only flows and the visual checks) take about 25 minutes and are
+ * an audit, not a merge gate. They run only when asked for:
+ *   E2E_A11Y=1 npm run test:e2e
+ * The gate keeps its own axe spec (accessibility.spec.ts) as before.
+ */
+const accessibilityAudit = process.env.E2E_A11Y === '1'
+const ACCESSIBILITY_AUDIT_SPECS = /a11y-(sweep|keyboard|visual)\.spec\.ts/
+
 const crossBrowserProjects = [
   {
     // Cross-engine confidence for critical UI workflows only (Gecko).
@@ -128,8 +138,11 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1920, height: 1080 } },
       dependencies: ['setup'],
-      // auth.setup runs in the 'setup' project; exclude it here.
-      testIgnore: /auth\.setup\.ts/,
+      // auth.setup runs in the 'setup' project; exclude it here. The
+      // accessibility audit specs are opt-in (see accessibilityAudit above).
+      ...(accessibilityAudit
+        ? { testMatch: ACCESSIBILITY_AUDIT_SPECS }
+        : { testIgnore: [/auth\.setup\.ts/, ACCESSIBILITY_AUDIT_SPECS] }),
     },
     // Firefox/WebKit/mobile/tablet only when E2E_ALL_BROWSERS=1 (see note above).
     ...(allBrowsers ? crossBrowserProjects : []),

@@ -75,6 +75,11 @@ function deferLoginRouteStyles() {
 }
 
 // https://vite.dev/config/
+// The Laravel API the dev/preview proxy forwards to. Overridable so a second,
+// throwaway stack (another `php artisan serve` port for an ad-hoc QA run) can
+// sit next to the default one without editing this file.
+const apiProxyTarget = process.env.VITE_DEV_API_TARGET ?? 'http://127.0.0.1:8000'
+
 export default defineConfig({
   plugins: [react(), tailwindcss(), deferLoginRouteStyles(), stampServiceWorker()],
   resolve: {
@@ -87,16 +92,16 @@ export default defineConfig({
     // SPA and API as same-origin. This keeps Sanctum's SameSite session/XSRF
     // cookies working (localhost vs 127.0.0.1 would otherwise be cross-site).
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8000', changeOrigin: false },
-      '/sanctum': { target: 'http://127.0.0.1:8000', changeOrigin: false },
+      '/api': { target: apiProxyTarget, changeOrigin: false },
+      '/sanctum': { target: apiProxyTarget, changeOrigin: false },
     },
   },
   // `vite preview` serves the production build; mirror the dev proxy so the
   // minified bundle can be exercised locally against the same Laravel API.
   preview: {
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8000', changeOrigin: false },
-      '/sanctum': { target: 'http://127.0.0.1:8000', changeOrigin: false },
+      '/api': { target: apiProxyTarget, changeOrigin: false },
+      '/sanctum': { target: apiProxyTarget, changeOrigin: false },
     },
   },
   build: {

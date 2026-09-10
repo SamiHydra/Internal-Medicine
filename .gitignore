@@ -76,3 +76,13 @@ artifacts/audit-2026-07-21/mobile/*.png
 # Generated performance/load-test output. This includes large runtime logs and
 # disposable benchmark credentials; keep the audit harness, not its run data.
 docker/audit/evidence/
+test-results-smoke/
+
+# business-logic regression harness (playwright.regression.config.ts)
+tests/regression/.auth/
+
+# measurement output from the pre-server hardening harnesses (docs/*_REPORT.md summarise them)
+artifacts/chaos/
+artifacts/large-data/
+artifacts/load-tests/capacity-parity*/
+artifacts/load-tests/parity-credentials.csv
