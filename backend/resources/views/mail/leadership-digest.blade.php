@@ -6,7 +6,7 @@
 </head>
 <body style="font-family: Arial, Helvetica, sans-serif; color: #1d3047; margin: 0; padding: 24px; background: #f4f6f9;">
     <div style="max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 8px; padding: 28px;">
-        <p style="font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: #005db6; margin: 0 0 6px;">St Paul Internal Medicine</p>
+        <p style="font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: #005db6; margin: 0 0 6px;">St Paul's Internal Medicine</p>
         <h1 style="font-size: 20px; margin: 0 0 4px;">Weekly leadership digest</h1>
         <p style="color: #5b6169; margin: 0 0 20px;">Reporting period: {{ $digest['periodLabel'] }}</p>
 
@@ -38,8 +38,12 @@
                 <td style="padding: 10px 0; border-bottom: 1px solid #eef2f6; text-align: right; font-weight: bold; color: #8a5a00;">{{ $digest['hai'] }}</td>
             </tr>
             <tr>
-                <td style="padding: 10px 0;">Open follow-up action items</td>
+                <td style="padding: 10px 0;">Outstanding follow-up action items</td>
                 <td style="padding: 10px 0; text-align: right; font-weight: bold;">{{ $digest['openActionItems'] }}</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px 0;">Overdue / high-severity follow-up</td>
+                <td style="padding: 10px 0; text-align: right; font-weight: bold; color: #ba1a1a;">{{ $digest['overdueActionItems'] ?? 0 }} overdue · {{ $digest['highSeverityActionItems'] ?? 0 }} high</td>
             </tr>
         </table>
 
@@ -76,7 +80,7 @@
         @endif
 
         <p style="color: #8c929b; font-size: 12px; margin: 24px 0 0;">
-            Generated automatically from the St Paul reporting platform.
+            Generated automatically from the St Paul's reporting platform.
         </p>
     </div>
 </body>

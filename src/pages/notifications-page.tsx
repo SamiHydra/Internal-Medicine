@@ -12,6 +12,7 @@ import {
   Bell,
   CheckCheck,
   CheckCircle2,
+  Download,
   FileLock2,
   PencilLine,
   RotateCcw,
@@ -165,6 +166,12 @@ const notificationMeta: Record<
     iconTone: 'bg-[#fceeee] text-[#ba1a1a]',
     chipTone: 'border-[#f3cccc] bg-[#fceeee] text-[#ba1a1a]',
   },
+  analytics_export_ready: {
+    label: 'Export ready',
+    icon: Download,
+    iconTone: 'bg-[#edf7f0] text-[#1f6b3b]',
+    chipTone: 'border-[#cfe7d9] bg-[#edf7f0] text-[#1f6b3b]',
+  },
   nurse_access_request: {
     label: 'Access request',
     icon: UserRoundPlus,
@@ -185,6 +192,24 @@ const notificationMeta: Record<
   },
   critical_value_alert: {
     label: 'Critical',
+    icon: Siren,
+    iconTone: 'bg-[#fceeee] text-[#ba1a1a]',
+    chipTone: 'border-[#f3cccc] bg-[#fceeee] text-[#ba1a1a]',
+  },
+  critical_value_corrected: {
+    label: 'Correction',
+    icon: ShieldAlert,
+    iconTone: 'bg-[#fbf4e6] text-[#8a5a00]',
+    chipTone: 'border-[#f0d9aa] bg-[#fbf4e6] text-[#8a5a00]',
+  },
+  action_item_assigned: {
+    label: 'Assigned',
+    icon: UserRoundPlus,
+    iconTone: 'bg-[#edf4fb] text-[#005db6]',
+    chipTone: 'border-[#cfe0f4] bg-[#edf4fb] text-[#005db6]',
+  },
+  action_item_overdue: {
+    label: 'Action overdue',
     icon: Siren,
     iconTone: 'bg-[#fceeee] text-[#ba1a1a]',
     chipTone: 'border-[#f3cccc] bg-[#fceeee] text-[#ba1a1a]',
@@ -241,7 +266,7 @@ function NotificationRow({
             {notification.title}
           </p>
           <span className="mt-0.5 flex shrink-0 items-center gap-1.5">
-            <span className="text-[11px] font-medium tabular-nums text-[#9aa7b8]">
+            <span className="text-[11px] font-medium tabular-nums text-[#69727d]">
               {relativeTime(notification.createdAt)}
             </span>
             {isUnread ? (
@@ -281,6 +306,10 @@ export function NotificationsPage() {
     () => readClearedNotificationsSnapshot(),
   )
   const [filter, setFilter] = useState<'all' | 'unread'>('all')
+  // The inbox action in flight. The three bulk actions only update local state
+  // once the server answers, so without this a second click (a double-click,
+  // or a click while a slow answer is pending) sent the same request again.
+  const [pendingAction, setPendingAction] = useState<'read' | 'clear' | 'restore' | null>(null)
   const currentUserId = currentUser?.id ?? ''
 
   const notifications = useMemo(
@@ -332,10 +361,28 @@ export function NotificationsPage() {
     }
   }, [isEmptyInbox])
 
+  const runInboxAction = async (
+    action: 'read' | 'clear' | 'restore',
+    run: () => Promise<void>,
+  ) => {
+    if (pendingAction) {
+      return
+    }
+
+    setPendingAction(action)
+    try {
+      await run()
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
   const markAllRead = () =>
-    void markNotificationsRead(
-      currentUserId,
-      unreadNotifications.map((notification) => notification.id),
+    void runInboxAction('read', () =>
+      markNotificationsRead(
+        currentUserId,
+        unreadNotifications.map((notification) => notification.id),
+      ),
     )
 
   const clearAll = () => {
@@ -343,19 +390,21 @@ export function NotificationsPage() {
       return
     }
 
-    setLastClearedNotifications(notifications)
-    writeClearedNotificationsSnapshot(notifications)
-    scrollNotificationsToTop()
+    return void runInboxAction('clear', () => {
+      setLastClearedNotifications(notifications)
+      writeClearedNotificationsSnapshot(notifications)
+      scrollNotificationsToTop()
 
-    return void clearNotifications(
-      currentUserId,
-      notifications.map((notification) => notification.id),
-    )
+      return clearNotifications(
+        currentUserId,
+        notifications.map((notification) => notification.id),
+      )
+    })
   }
 
   const restoreLastClear = () => {
     scrollNotificationsToTop()
-    return void restoreNotifications(effectiveRestoreSnapshot)
+    return void runInboxAction('restore', () => restoreNotifications(effectiveRestoreSnapshot))
   }
 
   if (!currentUser) {
@@ -376,12 +425,9 @@ export function NotificationsPage() {
         className="rounded-[0.35rem] bg-white px-4 py-5 outline outline-1 outline-[#d4dde8] shadow-[0_24px_60px_-42px_rgba(0,33,71,0.28)] sm:px-5 sm:py-6 md:px-6 md:py-7"
       >
         {/* Header */}
-        <div className="flex items-center gap-2">
-          <span aria-hidden="true" className="h-3 w-[3px] rounded-full bg-[#f0b429]" />
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
-            Inbox
-          </p>
-        </div>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+          Inbox
+        </p>
         <h2 className="mt-1 font-display text-[1.4rem] font-bold tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
           Recent activity
         </h2>
@@ -410,7 +456,7 @@ export function NotificationsPage() {
                       'rounded-[0.2rem] px-1.5 text-[10px] font-bold tabular-nums',
                       active
                         ? 'bg-white/15 text-white'
-                        : 'bg-[#e7edf4] text-[#74777f]',
+                        : 'bg-[#e7edf4] text-[#666970]',
                     )}
                   >
                     {segment.count}
@@ -422,7 +468,12 @@ export function NotificationsPage() {
 
           <div className="flex items-center gap-2">
             {unreadCount ? (
-              <Button variant="secondary" size="sm" onClick={markAllRead}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={markAllRead}
+                disabled={pendingAction !== null}
+              >
                 <CheckCheck className="h-4 w-4" />
                 Mark all read
               </Button>
@@ -432,7 +483,7 @@ export function NotificationsPage() {
               size="sm"
               className="text-[#ba1a1a] hover:bg-[#fceeee] hover:text-[#93000a]"
               onClick={clearAll}
-              disabled={!notifications.length}
+              disabled={!notifications.length || pendingAction !== null}
               aria-label="Clear inbox"
             >
               <Trash2 className="h-4 w-4" />
@@ -447,7 +498,13 @@ export function NotificationsPage() {
             <p className="min-w-0 text-[13px] text-[#1d3047]">
               Cleared notifications can still be restored.
             </p>
-            <Button variant="secondary" size="sm" className="shrink-0" onClick={restoreLastClear}>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="shrink-0"
+              onClick={restoreLastClear}
+              disabled={pendingAction !== null}
+            >
               <RotateCcw className="h-4 w-4" />
               Restore
             </Button>
@@ -460,10 +517,10 @@ export function NotificationsPage() {
             {groups.map((group) => (
               <div key={group.label} className="space-y-2">
                 <div className="flex items-center gap-2 px-0.5">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#74777f]">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#666970]">
                     {group.label}
                   </p>
-                  <span className="text-[11px] font-medium tabular-nums text-[#9aa7b8]">
+                  <span className="text-[11px] font-medium tabular-nums text-[#69727d]">
                     {group.items.length}
                   </span>
                 </div>

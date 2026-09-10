@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Bell, ClipboardList, PencilLine, Sparkles } from 'lucide-react'
+import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 
 import {
@@ -9,6 +10,7 @@ import {
   SectionHeader,
   panelClass,
 } from '@/components/dashboard/section-panel'
+import { OfflineSaveBanner } from '@/components/reports/offline-save-banner'
 import { ReportAssignmentCard } from '@/components/reports/report-assignment-card'
 import { Button } from '@/components/ui/button'
 import { getCurrentWeekAssignmentCards } from '@/data/selectors'
@@ -17,8 +19,14 @@ import { formatTimestamp } from '@/lib/dates'
 import { formatCompactNumber } from '@/lib/utils'
 
 export function NurseDashboardPage() {
-  const { state, currentUser } = useAppData()
+  const { state, currentUser, ensureReportSummaryData } = useAppData()
   const currentPeriod = useCurrentReportingPeriod()
+
+  useEffect(() => {
+    if (currentPeriod) {
+      void ensureReportSummaryData({ periodIds: [currentPeriod.id] })
+    }
+  }, [currentPeriod, ensureReportSummaryData])
 
   if (!currentUser) {
     return null
@@ -44,6 +52,7 @@ export function NurseDashboardPage() {
 
   return (
     <div className="space-y-6 px-4 py-6 md:px-6 md:py-8">
+      <OfflineSaveBanner />
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -86,7 +95,7 @@ export function NurseDashboardPage() {
           actions={<HeaderChip>{formatCompactNumber(cards.length)} forms</HeaderChip>}
         />
         {cards.length ? (
-          <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {cards.map((card, index) => (
               <motion.div
                 key={card.assignment.id}
@@ -117,12 +126,14 @@ export function NurseDashboardPage() {
         )}
       </motion.section>
 
-      <section className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
+      {/* minmax(0,…) tracks and min-w-0 panels: the single phone column must not
+          take the panels' min-content width (QA-012). */}
+      <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: 'easeOut', delay: 0.08 }}
-          className={panelClass}
+          className={`${panelClass} min-w-0`}
         >
           <SectionHeader
             eyebrow="Updates"
@@ -150,7 +161,7 @@ export function NurseDashboardPage() {
                     <div className="min-w-0 space-y-1">
                       <p className="text-sm font-semibold text-[#000a1e]">{notification.title}</p>
                       <p className="text-sm leading-6 text-[#5b6169]">{notification.message}</p>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9aa7b8]">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#69727d]">
                         {formatTimestamp(notification.createdAt)}
                       </p>
                     </div>
@@ -182,13 +193,13 @@ export function NurseDashboardPage() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: 'easeOut', delay: 0.12 }}
-          className={panelClass}
+          className={`${panelClass} min-w-0`}
         >
           <SectionEyebrow label="Access" />
           <h2 className="mt-1.5 font-display text-[1.4rem] font-bold leading-tight tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
             Need another service?
           </h2>
-          <p className="mt-1.5 text-sm leading-6 text-[#74777f]">
+          <p className="mt-1.5 text-sm leading-6 text-[#666970]">
             Request access to an additional reporting assignment or service line.
           </p>
           <Button asChild size="sm" variant="secondary" className="mt-4">

@@ -149,10 +149,19 @@ class AuthorizationTest extends TestCase
 
         $report->forceFill(['locked_at' => now()])->save();
 
+        // QA-027: one rule at every layer. A locked report is read-only for
+        // everyone, administrators included; they unlock first, then edit.
         $this->assertFalse(Gate::forUser($nurse)->allows('update', $report->refresh()));
-        $this->assertTrue(Gate::forUser($admin)->allows('update', $report));
+        $this->assertFalse(Gate::forUser($admin)->allows('update', $report));
+        $this->assertFalse(Gate::forUser($admin)->allows('submit', $report));
         $this->assertTrue(Gate::forUser($admin)->allows('lock', $report));
+        $this->assertTrue(Gate::forUser($admin)->allows('unlock', $report));
         $this->assertFalse(Gate::forUser($nurse)->allows('lock', $report));
+
+        $report->forceFill(['locked_at' => null])->save();
+
+        $this->assertTrue(Gate::forUser($admin)->allows('update', $report->refresh()));
+        $this->assertTrue(Gate::forUser($nurse)->allows('update', $report));
     }
 
     public function test_request_and_notification_policies_preserve_owner_or_admin_visibility(): void

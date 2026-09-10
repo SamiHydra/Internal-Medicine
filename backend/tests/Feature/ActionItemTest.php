@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\ActionItem;
 use App\Models\Department;
+use App\Models\Notification;
 use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportingPeriod;
@@ -14,7 +15,10 @@ use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportFieldDefinitionSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class ActionItemTest extends TestCase
@@ -58,6 +62,55 @@ class ActionItemTest extends TestCase
             'quarter_label' => 'Q2 2026',
             'year_num' => 2026,
         ]);
+    }
+
+    /**
+     * QA-005: when PHP itself refuses a file (upload_max_filesize below the
+     * 10 MB the application allows) the user must learn what happened and who
+     * can fix it, instead of the validator's bare "The file failed to upload."
+     */
+    public function test_evidence_refused_by_the_php_upload_limit_gets_an_actionable_message(): void
+    {
+        $this->submitCriticalReport();
+        $item = ActionItem::query()->firstOrFail();
+
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'qa');
+        file_put_contents($temporaryPath, 'not really uploaded');
+        $refusedByPhp = new UploadedFile($temporaryPath, 'evidence.pdf', 'application/pdf', UPLOAD_ERR_INI_SIZE, true);
+
+        $response = $this->actingAs($this->admin)
+            ->post("/api/admin/action-items/{$item->id}/evidence", ['file' => $refusedByPhp], ['Accept' => 'application/json'])
+            ->assertStatus(422);
+
+        $message = (string) $response->json('errors.file.0');
+        $this->assertStringContainsString('larger than this server currently accepts', $message);
+        $this->assertStringContainsString('upload_max_filesize', $message);
+        $this->assertStringContainsString('10 MB', $message);
+        $this->assertDatabaseCount('action_item_evidence', 0);
+
+        @unlink($temporaryPath);
+    }
+
+    public function test_evidence_upload_refuses_and_records_nothing_when_storage_cannot_write(): void
+    {
+        $this->submitCriticalReport();
+        $item = ActionItem::query()->firstOrFail();
+
+        // The local disk reports a failed write as `false` (throw => false).
+        $disk = \Mockery::mock(Filesystem::class);
+        $disk->shouldReceive('putFileAs')->once()->andReturn(false);
+        $disk->shouldNotReceive('delete');
+        Storage::shouldReceive('disk')->with('local')->andReturn($disk);
+
+        $response = $this->actingAs($this->admin)
+            ->post("/api/admin/action-items/{$item->id}/evidence", [
+                'file' => UploadedFile::fake()->createWithContent('evidence.txt', 'storage failure probe'),
+            ], ['Accept' => 'application/json'])
+            ->assertStatus(500);
+
+        $this->assertStringContainsString('could not be written', (string) $response->json('message'));
+        $this->assertDatabaseCount('action_item_evidence', 0);
+        $this->assertDatabaseMissing('admin_audit_logs', ['action' => 'upload_evidence']);
     }
 
     private function submitCriticalReport(int $deaths = 2): Report
@@ -112,7 +165,13 @@ class ActionItemTest extends TestCase
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.status', 'open')
             ->assertJsonPath('data.0.source', 'critical_event')
+            ->assertJsonPath('meta.perPage', 50)
             ->assertJsonPath('meta.openCount', 1);
+
+        $this->actingAs($this->admin)
+            ->getJson('/api/admin/action-items?perPage=101')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('perPage');
     }
 
     public function test_admin_can_resolve_an_action_item(): void
@@ -134,10 +193,57 @@ class ActionItemTest extends TestCase
         $this->assertNotNull($item->resolved_at);
         $this->assertSame($this->admin->id, $item->resolved_by);
 
-        // A later re-fire must not reopen a resolved item.
+        // A later critical edit is a new occurrence. The previous resolution
+        // remains immutable instead of being silently reopened or overwritten.
         $this->submitCriticalReport(4);
         $this->assertSame('resolved', $item->refresh()->status);
-        $this->assertSame(1, ActionItem::query()->count());
+        $this->assertSame(2, ActionItem::query()->count());
+        $this->assertSame(1, ActionItem::query()->where('status', 'open')->count());
+    }
+
+    /**
+     * Every notification about an action must open that action. Pointing at the
+     * bare queue left the recipient on a list of every open item with no way to
+     * tell which one they had just been told about.
+     */
+    public function test_action_item_notifications_deep_link_to_the_item(): void
+    {
+        $this->submitCriticalReport();
+        $item = ActionItem::query()->firstOrFail();
+        $expectedRoute = "/admin/action-items?item={$item->id}";
+
+        // Raised by the alert rule, before anyone touches it.
+        $this->assertSame(
+            $expectedRoute,
+            Notification::query()->where('type', 'critical_value_alert')->value('related_route'),
+        );
+
+        $owner = User::factory()->role('admin', 'Administrator')->create([
+            'full_name' => 'Almaz Sahle',
+            'username' => 'almaz.sahle',
+        ]);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/action-items/{$item->id}", ['assigned_to' => $owner->id])
+            ->assertOk()
+            ->assertJsonPath('status', 'assigned');
+
+        $assignment = Notification::query()
+            ->where('type', 'action_item_assigned')
+            ->where('recipient_id', $owner->id)
+            ->firstOrFail();
+        $this->assertSame($expectedRoute, $assignment->related_route);
+        $this->assertSame($item->id, $assignment->related_id);
+
+        // And the overdue escalation, which reaches people who never opened it.
+        $item->forceFill(['due_at' => now()->subDay(), 'overdue_notified_at' => null])->save();
+        $this->artisan('action-items:escalate-overdue')->assertExitCode(0);
+
+        $overdue = Notification::query()->where('type', 'action_item_overdue')->get();
+        $this->assertNotEmpty($overdue);
+        foreach ($overdue as $notification) {
+            $this->assertSame($expectedRoute, $notification->related_route);
+        }
     }
 
     public function test_admin_can_create_a_manual_action_item(): void
@@ -150,10 +256,38 @@ class ActionItemTest extends TestCase
             ])
             ->assertCreated()
             ->assertJsonPath('source', 'manual')
-            ->assertJsonPath('status', 'open')
+            ->assertJsonPath('status', 'assigned')
             ->assertJsonPath('createdByName', 'Admin One');
 
         $this->assertSame(1, ActionItem::query()->where('source', 'manual')->count());
+    }
+
+    /**
+     * Starting work needs an owner. Clearing the assignee in the same request
+     * that moves the item to in_progress used to pass the guard (the null was
+     * read as "field absent") and left an in-progress item nobody owned.
+     */
+    public function test_starting_work_while_clearing_the_assignee_is_refused(): void
+    {
+        $item = $this->actingAs($this->admin)
+            ->postJson('/api/admin/action-items', [
+                'title' => 'Escalate the pending pharmacy audit',
+                'severity' => 'high',
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/action-items/{$item['id']}", [
+                'status' => 'in_progress',
+                'assigned_to' => null,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['assigned_to']);
+
+        $row = ActionItem::query()->findOrFail($item['id']);
+        $this->assertSame('assigned', $row->status);
+        $this->assertSame($this->admin->id, $row->assigned_to);
     }
 
     public function test_nurses_cannot_access_action_items(): void

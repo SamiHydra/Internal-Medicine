@@ -11,6 +11,15 @@ use App\Support\Authorization\Permissions;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Locking is an overlay on the report lifecycle, not a step in it. A lock
+ * makes the report read-only for everyone until an administrator unlocks it;
+ * it never submits a draft and never demotes a submitted report. Unlocking
+ * restores the lifecycle state the report was in before the lock: a draft
+ * becomes a draft again, a submitted report stays submitted (keeping its
+ * "edited after submission" mark when it has one). Submission happens only
+ * through ReportSubmissionService::save(..., submit: true).
+ */
 class ReportLockingService
 {
     public function __construct(
@@ -44,6 +53,9 @@ class ReportLockingService
             $now = now();
 
             if ($locked) {
+                // Only the status string and the lock timestamp change:
+                // submitted_at is left exactly as it is, so the pre-lock
+                // lifecycle state survives the lock and can be restored.
                 $lockedReport->forceFill([
                     'status' => 'locked',
                     'locked_at' => $now,
@@ -64,9 +76,7 @@ class ReportLockingService
                 return $lockedReport->refresh();
             }
 
-            $nextStatus = $lockedReport->statusHistory()
-                ->where('status', 'edited_after_submission')
-                ->exists() ? 'edited_after_submission' : 'submitted';
+            $nextStatus = $this->restoredStatus($lockedReport);
 
             $lockedReport->forceFill([
                 'status' => $nextStatus,
@@ -91,6 +101,29 @@ class ReportLockingService
         $this->dashboardAnalytics->invalidate();
 
         return $lockedReport;
+    }
+
+    /**
+     * The lifecycle state a locked report returns to when the lock is released.
+     *
+     * The pre-lock state is read from the same invariant the submission
+     * workflow relies on ($hadSubmission in ReportSubmissionService::save):
+     * submitted_at is written exactly once, by a real submission, and is never
+     * cleared afterwards. A null submitted_at therefore means the report was
+     * still a draft when it was locked, and unlocking must hand it back as a
+     * draft rather than inventing a submission. A submitted report returns to
+     * submitted, or to edited_after_submission when its history carries that
+     * mark (ReportSubmissionService::nextStatus never drops it either).
+     */
+    private function restoredStatus(Report $report): string
+    {
+        if ($report->submitted_at === null) {
+            return 'draft';
+        }
+
+        return $report->statusHistory()
+            ->where('status', 'edited_after_submission')
+            ->exists() ? 'edited_after_submission' : 'submitted';
     }
 
     private function recordStatus(Report $report, string $status, User $actor, string $note, mixed $changedAt): void

@@ -395,7 +395,7 @@ export function RotationPlannerPage() {
         ) : null}
 
         {isLoading ? (
-          <div className="flex min-h-[260px] items-center justify-center text-[#74777f]">
+          <div className="flex min-h-[260px] items-center justify-center text-[#666970]">
             <Loader2
               className="h-5 w-5 animate-spin"
               aria-label="Loading plan"
@@ -428,15 +428,18 @@ export function RotationPlannerPage() {
         ) : (
           <div className="mt-5 max-h-[62vh] overflow-auto rounded-[0.4rem] border border-[#e6ecf3]">
             <table className="w-full border-collapse text-sm">
+              <caption className="sr-only">
+                Rotation plan: placement per {groupMode ? 'group' : 'resident'} for each block
+              </caption>
               <thead className="sticky top-0 z-10 bg-[#f8fafc]">
-                <tr className="border-b border-[#e6ecf3] text-left text-xs font-semibold uppercase tracking-[0.12em] text-[#74777f]">
-                  <th className="sticky left-0 z-20 bg-[#f8fafc] px-4 py-3">
+                <tr className="border-b border-[#e6ecf3] text-left text-xs font-semibold uppercase tracking-[0.12em] text-[#666970]">
+                  <th scope="col" className="sticky left-0 z-20 bg-[#f8fafc] px-4 py-3">
                     {groupMode ? 'Group' : 'Resident'}
                   </th>
                   {plan.calendar.blocks.map((block) => (
-                    <th key={block.id} className="min-w-[190px] px-3 py-3">
+                    <th key={block.id} scope="col" className="min-w-[190px] px-3 py-3">
                       <span className="block">Block {block.blockIndex}</span>
-                      <span className="block font-medium normal-case tracking-normal text-[#9aa7b8]">
+                      <span className="block font-medium normal-case tracking-normal text-[#69727d]">
                         {blockLabel(block)}
                       </span>
                     </th>
@@ -454,7 +457,7 @@ export function RotationPlannerPage() {
                         {row.label}
                       </p>
                       {row.sublabel ? (
-                        <p className="text-[13px] text-[#74777f]">{row.sublabel}</p>
+                        <p className="text-[13px] text-[#666970]">{row.sublabel}</p>
                       ) : null}
                     </td>
                     {plan.calendar.blocks.map((block) => {
@@ -495,7 +498,7 @@ export function RotationPlannerPage() {
                                       'border-[#005db6] bg-[#f4f9ff]',
                                     value === CLEARED &&
                                       stagedValue === undefined &&
-                                      'text-[#9aa7b8]',
+                                      'text-[#69727d]',
                                     value === MIXED &&
                                       'border-[#f0b429] bg-[#fff8e8] text-[#8a5a00]',
                                   )}

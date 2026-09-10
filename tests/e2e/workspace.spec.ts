@@ -12,7 +12,7 @@ test.describe('Workspace switcher (superadmin)', () => {
 
   test('switches clinical -> academic, updates nav, and persists across reload', async ({ page }) => {
     await page.goto('/admin')
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible()
 
     const group = page.getByRole('group', { name: 'Workspace' }).first()
     const clinicalBtn = group.getByRole('button').nth(0)
@@ -36,7 +36,7 @@ test.describe('Workspace switcher (superadmin)', () => {
 
     // Reload keeps the academic workspace.
     await page.reload()
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible()
     const academicAfterReload = page.getByRole('group', { name: 'Workspace' }).first().getByRole('button').nth(1)
     await expect(academicAfterReload).toHaveAttribute('aria-pressed', 'true')
 
@@ -49,7 +49,7 @@ test.describe('Workspace switcher (superadmin)', () => {
     const ctx = await browser.newContext({ storageState: authFile('nurse') })
     const page = await ctx.newPage()
     await page.goto('/nurse')
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible()
     await expect(page.getByRole('group', { name: 'Workspace' })).toHaveCount(0)
     await ctx.close()
   })

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Concerns;
 
 use App\Models\AccessRequest;
 use App\Models\ActionItem;
+use App\Models\ActionItemComment;
 use App\Models\AdminAccessRequest;
 use App\Models\AdminAuditLog;
 use App\Models\AppSetting;
@@ -229,6 +230,7 @@ trait SerializesAdminResources
             'roundDelayed' => (bool) $evaluation->answer('round_delayed'),
             'mdtParticipants' => $evaluation->answer('mdt_participants') ?? [],
             'systemIssues' => $evaluation->answer('system_issues') ?? [],
+            'overallRating' => $evaluation->answer('overall_rating'),
             'comment' => $evaluation->comment,
             'qualityScore' => round(EvaluationScoring::score($evaluation, 'consultant'), 1),
             'extraAnswers' => $this->extraEvaluationAnswers($evaluation, [
@@ -236,6 +238,7 @@ trait SerializesAdminResources
                 'all_patients_reviewed', 'mgmt_plan_documented', 'vte_assessed',
                 'discharge_discussed', 'med_review_done', 'critical_labs_reviewed',
                 'pct_patients_seen', 'round_delayed', 'mdt_participants', 'system_issues',
+                'overall_rating',
             ]),
             'createdAt' => $evaluation->created_at?->toJSON(),
             'updatedAt' => $evaluation->updated_at?->toJSON(),
@@ -464,30 +467,85 @@ trait SerializesAdminResources
     /**
      * @return array<string, mixed>
      */
-    protected function serializeActionItem(ActionItem $item): array
+    protected function serializeActionItem(ActionItem $item, bool $withActivity = false): array
     {
-        $item->loadMissing(['department', 'assignee', 'creator', 'resolver']);
+        $item->loadMissing(['department', 'assignee', 'creator', 'resolver', 'verifier', 'report']);
 
-        return [
+        $payload = [
             'id' => $item->id,
             'reportId' => $item->report_id,
+            'reportAssignmentId' => $item->report?->assignment_id,
+            'reportingPeriodId' => $item->report?->reporting_period_id,
             'departmentId' => $item->department_id,
             'departmentName' => $item->department?->name,
+            'clinicalAlertRuleId' => $item->clinical_alert_rule_id,
+            'ruleVersion' => $item->rule_version,
             'source' => $item->source,
+            'fieldKey' => $item->field_key,
+            'observedValue' => $item->observed_value,
+            'triggerThreshold' => $item->trigger_threshold,
+            'triggerOperator' => $item->trigger_operator,
             'title' => $item->title,
             'description' => $item->description,
             'severity' => $item->severity,
             'status' => $item->status,
+            'conditionState' => $item->condition_state,
             'assignedTo' => $item->assigned_to,
             'assignedToName' => $item->assignee?->full_name,
+            'responsibleRole' => $item->responsible_role,
+            'dueAt' => $item->due_at?->toJSON(),
+            'isOverdue' => $item->isOverdue(),
             'createdBy' => $item->created_by,
             'createdByName' => $item->creator?->full_name,
             'resolvedBy' => $item->resolved_by,
             'resolvedByName' => $item->resolver?->full_name,
+            'verifiedBy' => $item->verified_by,
+            'verifiedByName' => $item->verifier?->full_name,
             'resolutionNote' => $item->resolution_note,
             'resolvedAt' => $item->resolved_at?->toJSON(),
+            'verifiedAt' => $item->verified_at?->toJSON(),
             'createdAt' => $item->created_at?->toJSON(),
             'updatedAt' => $item->updated_at?->toJSON(),
+        ];
+
+        if ($withActivity) {
+            $payload['history'] = $item->history->map(fn ($entry): array => [
+                'id' => $entry->id,
+                'event' => $entry->event,
+                'fromStatus' => $entry->from_status,
+                'toStatus' => $entry->to_status,
+                'note' => $entry->note,
+                'changedBy' => $entry->changed_by,
+                'changedByName' => $entry->actor?->full_name ?? 'System',
+                'createdAt' => $entry->created_at?->toJSON(),
+            ])->values();
+            $payload['comments'] = $item->comments->map(fn ($comment) => $this->serializeActionItemComment($comment))->values();
+            $payload['evidence'] = $item->evidence->map(fn ($evidence): array => [
+                'id' => $evidence->id,
+                'originalName' => $evidence->original_name,
+                'mimeType' => $evidence->mime_type,
+                'sizeBytes' => $evidence->size_bytes,
+                'uploadedByName' => $evidence->uploader?->full_name ?? 'System',
+                'createdAt' => $evidence->created_at?->toJSON(),
+                'downloadUrl' => "/api/admin/action-items/{$item->id}/evidence/{$evidence->id}/download",
+            ])->values();
+        }
+
+        return $payload;
+    }
+
+    /** @return array<string, mixed> */
+    protected function serializeActionItemComment(ActionItemComment $comment): array
+    {
+        $comment->loadMissing('author');
+
+        return [
+            'id' => $comment->id,
+            'body' => $comment->body,
+            'authorId' => $comment->author_id,
+            'authorName' => $comment->author?->full_name ?? 'System',
+            'createdAt' => $comment->created_at?->toJSON(),
+            'updatedAt' => $comment->updated_at?->toJSON(),
         ];
     }
 

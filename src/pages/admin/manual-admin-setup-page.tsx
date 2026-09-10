@@ -125,9 +125,6 @@ export function ManualAdminSetupPage() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
             Maintenance tools
           </p>
-          <h1 className="font-display text-[2rem] leading-[0.96] tracking-[-0.03em] text-[#000a1e] md:text-[2.35rem]">
-            Admin account setup
-          </h1>
           <p className="max-w-3xl text-sm leading-6 text-[#44474e]">
             This route is intentionally not shown in the navigation. Create admin users directly, or
             deactivate them, without waiting on the approval queue. The maintenance owner is created
@@ -136,8 +133,10 @@ export function ManualAdminSetupPage() {
         </div>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-        <section className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-6">
+      {/* minmax(0,…) tracks and min-w-0 panels keep the single phone column from
+          taking the panels' min-content width and overflowing the viewport (QA-012). */}
+      <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+        <section className="min-w-0 rounded-[0.35rem] bg-[#eef2f6] px-5 py-6">
           <div className="space-y-5">
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#005db6]">
@@ -225,7 +224,7 @@ export function ManualAdminSetupPage() {
           </div>
         </section>
 
-        <section className="rounded-[0.35rem] bg-[#eef2f6] px-5 py-6">
+        <section className="min-w-0 rounded-[0.35rem] bg-[#eef2f6] px-5 py-6">
           <div className="space-y-5">
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#005db6]">
@@ -249,9 +248,11 @@ export function ManualAdminSetupPage() {
                     className="rounded-[0.35rem] border border-[#d4dde8] bg-[#ffffff] p-4"
                   >
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="space-y-2">
+                      {/* min-w-0 and overflow-wrap: a long name or email must wrap
+                          instead of widening the page on a 320px phone (QA-012 sweep). */}
+                      <div className="min-w-0 space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-base font-semibold text-[#000a1e]">
+                          <p className="text-base font-semibold text-[#000a1e] [overflow-wrap:anywhere]">
                             {profile.fullName}
                           </p>
                           <span
@@ -273,7 +274,7 @@ export function ManualAdminSetupPage() {
                             </span>
                           ) : null}
                         </div>
-                        <div className="space-y-1 text-sm text-[#44474e]">
+                        <div className="space-y-1 text-sm text-[#44474e] [overflow-wrap:anywhere]">
                           <p>{profile.email}</p>
                           <p>
                             Username:{' '}

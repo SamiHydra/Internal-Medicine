@@ -1,6 +1,6 @@
 # Academic module — Claude Code handoff package
 
-A complete, ready-to-run package for adding the **Academic** evaluations section (residents and consultants evaluating each other after MDT rounds, with admin trend dashboards) to the St Paul Internal Medicine app.
+A complete, ready-to-run package for adding the **Academic** evaluations section (residents and consultants evaluating each other after MDT rounds, with admin trend dashboards) to the St Paul's Internal Medicine app.
 
 ## What's in the package
 

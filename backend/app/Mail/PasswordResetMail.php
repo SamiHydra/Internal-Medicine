@@ -18,11 +18,14 @@ class PasswordResetMail extends Mailable implements ShouldQueue
     use Queueable;
     use SerializesModels;
 
-    public function __construct(public readonly string $resetUrl) {}
+    public function __construct(public readonly string $resetUrl)
+    {
+        $this->onQueue('notifications');
+    }
 
     public function envelope(): Envelope
     {
-        return new Envelope(subject: 'St Paul reporting password reset');
+        return new Envelope(subject: 'St Paul\'s reporting password reset');
     }
 
     public function content(): Content

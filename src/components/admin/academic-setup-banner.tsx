@@ -30,16 +30,16 @@ export function AcademicSetupBanner() {
   if (setup.consultantsWithoutSection > 0) {
     issues.push({
       text: `${setup.consultantsWithoutSection} consultant${setup.consultantsWithoutSection === 1 ? ' has' : 's have'} no section`,
-      href: '/admin/academic/structure',
-      action: 'Open structure',
+      href: '/admin/academic/structure?tab=sections&issue=consultants-without-section#section-gaps',
+      action: 'Assign section',
     })
   }
 
   if (setup.peopleWithoutAssignment > 0) {
     issues.push({
       text: `${setup.peopleWithoutAssignment} ${setup.peopleWithoutAssignment === 1 ? 'person has' : 'people have'} no monthly assignment covering today`,
-      href: '/admin/academic/roster',
-      action: 'Open coverage',
+      href: '/admin/academic/roster?issue=missing-monthly-coverage#coverage-gaps',
+      action: 'Assign coverage',
     })
   }
 
@@ -82,7 +82,7 @@ export function AcademicSetupBanner() {
         <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0 text-[#b07d10]" aria-hidden="true" />
         <div className="min-w-0">
           <p className="text-sm font-semibold text-[#1d3047]">Scheduling health needs attention</p>
-          <p className="mt-0.5 text-sm leading-6 text-[#74777f]">
+          <p className="mt-0.5 text-sm leading-6 text-[#666970]">
             {issues.map((issue) => issue.text).join('; ')}. Evaluation pairing and morning attendance use this effective coverage.
           </p>
         </div>

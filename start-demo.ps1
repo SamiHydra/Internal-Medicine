@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# St. Paul — DEMO launcher (serves the PRODUCTION build locally)
+# St Paul's — DEMO launcher (serves the PRODUCTION build locally)
 #
 # The production build is ~4x lighter on the main thread than `npm run dev`
 # (no unminified module parsing), so it presents much faster. This script

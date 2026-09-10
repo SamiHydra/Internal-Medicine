@@ -1,6 +1,6 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { apiContextFromState, apiLoginRaw, ajaxHeaders, xsrfToken, flushRateLimits } from './helpers/api'
-import { DEV_PASSWORD, QA_MARKER } from './helpers/accounts'
+import { QA_ACCOUNT_PASSWORD, QA_MARKER } from './helpers/accounts'
 
 /**
  * Gap A.1 / risk-area #3: the true-admin (role_key='admin') vs superadmin
@@ -11,7 +11,9 @@ import { DEV_PASSWORD, QA_MARKER } from './helpers/accounts'
  *
  * Ground truth (backend/app/Support/Authorization/Permissions.php):
  *   superadmin = admin + { admins.manage, templates.editStructure,
- *                          evaluationForms.editStructure }
+ *                          evaluationForms.editStructure, system.health }
+ * (system.health is the maintenance-only health view added by the pre-server
+ * hardening phase, docs/OBSERVABILITY.md)
  * and nothing else. Every assertion below is confirmed against the SERVER (the
  * API), not the SPA, per the brief.
  */
@@ -30,7 +32,7 @@ const ADMIN_B = {
 }
 
 /** The three permissions a superadmin has that a plain admin must not. */
-const SUPERADMIN_ONLY = ['admins.manage', 'evaluationForms.editStructure', 'templates.editStructure']
+const SUPERADMIN_ONLY = ['admins.manage', 'evaluationForms.editStructure', 'system.health', 'templates.editStructure']
 
 /**
  * Create a role_key='admin' user via the superadmin API and return its id. On a
@@ -48,7 +50,7 @@ async function ensureAdmin(
       fullName: spec.fullName,
       email: spec.email,
       username: spec.username,
-      password: DEV_PASSWORD,
+      password: QA_ACCOUNT_PASSWORD,
       role_key: 'admin',
       // The account must be usable at once: no forced password change.
       password_change_required: false,
@@ -67,7 +69,7 @@ async function ensureAdmin(
   expect(row, `expected an existing admin row for ${spec.email}`).toBeTruthy()
   await superadmin.post(`/api/admin/users/${row!.id}/reset-password`, {
     headers: ajaxHeaders(token),
-    data: { password: DEV_PASSWORD, password_change_required: false },
+    data: { password: QA_ACCOUNT_PASSWORD, password_change_required: false },
   })
   await superadmin.patch(`/api/admin/users/${row!.id}/active`, {
     headers: ajaxHeaders(token),
@@ -90,7 +92,7 @@ test.describe('True admin vs superadmin boundary', () => {
     await flushRateLimits()
     // Proves the created admin can authenticate IMMEDIATELY (no force-password
     // flow); apiLoginRaw throws if the login is rejected.
-    admin = await apiLoginRaw(ADMIN_A.email, DEV_PASSWORD)
+    admin = await apiLoginRaw(ADMIN_A.email, QA_ACCOUNT_PASSWORD)
   })
 
   test.afterAll(async () => {
@@ -187,7 +189,7 @@ test.describe('True admin vs superadmin boundary', () => {
       data: {
         fullName: `${QA_MARKER} Illegal Admin`,
         email: 'qa.admin.illegal.donotdeploy@stpaul.local',
-        password: DEV_PASSWORD,
+        password: QA_ACCOUNT_PASSWORD,
         role_key: 'admin',
         password_change_required: false,
       },
@@ -202,7 +204,7 @@ test.describe('True admin vs superadmin boundary', () => {
       data: {
         fullName: `${QA_MARKER} Managed Nurse`,
         email: nurseEmail,
-        password: DEV_PASSWORD,
+        password: QA_ACCOUNT_PASSWORD,
         role_key: 'nurse',
         password_change_required: false,
       },

@@ -3,10 +3,12 @@
 namespace App\Services\Admin;
 
 use App\Models\AppSetting;
+use App\Models\ClinicalAlertRule;
 use App\Models\ReportingPeriod;
 use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 class AppSettingsService
 {
@@ -44,7 +46,7 @@ class AppSettingsService
                 'autoLockHoursAfterDeadline' => (int) ($rows->get('locking_rules')?->value_json['auto_lock_hours_after_deadline'] ?? 36),
                 'notableRiseThresholdPercent' => (int) ($rows->get('insight_thresholds')?->value_json['rise_percent'] ?? 10),
                 'notableDropThresholdPercent' => (int) ($rows->get('insight_thresholds')?->value_json['drop_percent'] ?? 10),
-                'criticalNonZeroFields' => array_values($rows->get('critical_non_zero_fields')?->value_json ?? []),
+                'criticalNonZeroFields' => $this->criticalFieldKeys($rows->get('critical_non_zero_fields')?->value_json ?? []),
                 'metricTargets' => $this->normalizeMetricTargets($rows->get('metric_targets')?->value_json ?? self::DEFAULT_METRIC_TARGETS),
                 'reportReminderThresholds' => [
                     'inAppHoursBeforeDeadline' => (int) ($rows->get('report_reminders')?->value_json['in_app_hours_before_deadline'] ?? 24),
@@ -136,6 +138,11 @@ class AppSettingsService
         return $this->structured();
     }
 
+    public function forgetCache(): void
+    {
+        Cache::forget(self::CACHE_KEY);
+    }
+
     private function upsert(string $key, mixed $value, User $actor): void
     {
         AppSetting::query()->updateOrCreate(
@@ -146,6 +153,22 @@ class AppSettingsService
                 'updated_at' => now(),
             ],
         );
+    }
+
+    /** @param mixed $legacy @return list<string> */
+    private function criticalFieldKeys(mixed $legacy): array
+    {
+        if (Schema::hasTable('clinical_alert_rules') && ClinicalAlertRule::query()->exists()) {
+            return ClinicalAlertRule::query()
+                ->where('active', true)
+                ->distinct()
+                ->orderBy('field_key')
+                ->pluck('field_key')
+                ->values()
+                ->all();
+        }
+
+        return array_values(is_array($legacy) ? $legacy : []);
     }
 
     /**

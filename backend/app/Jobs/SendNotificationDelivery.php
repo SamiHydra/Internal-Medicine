@@ -31,7 +31,9 @@ class SendNotificationDelivery implements ShouldQueue
         public readonly string $message,
         public readonly array $channels,
         public readonly ?string $actionUrl = null,
-    ) {}
+    ) {
+        $this->onQueue('notifications');
+    }
 
     public function handle(SmsService $sms): void
     {

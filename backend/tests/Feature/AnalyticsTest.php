@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\WarmDashboardAnalytics;
 use App\Models\Department;
 use App\Models\Report;
 use App\Models\ReportAssignment;
@@ -16,6 +17,7 @@ use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class AnalyticsTest extends TestCase
@@ -184,6 +186,18 @@ class AnalyticsTest extends TestCase
         $this->assertSame([], $sourceQueries, 'A dashboard cache hit must not fingerprint source tables.');
     }
 
+    public function test_invalidation_queues_one_unique_warm_instead_of_running_it_in_the_request(): void
+    {
+        config()->set('queue.default', 'database');
+        Queue::fake();
+
+        $service = app(DashboardAnalyticsService::class);
+        $service->invalidate();
+        $service->invalidate();
+
+        Queue::assertPushed(WarmDashboardAnalytics::class, 1);
+    }
+
     public function test_assignment_changes_invalidate_cached_dashboard_expectations(): void
     {
         $assignments = $this->createSampleReports();
@@ -237,6 +251,64 @@ class AnalyticsTest extends TestCase
 
         $this->assertEquals(4, $dialysisMix->firstWhere('key', 'acuteHd')['value']);
         $this->assertEquals(6, $dialysisMix->firstWhere('key', 'chronicHd')['value']);
+    }
+
+    public function test_eight_week_dashboard_payload_stays_under_100_kilobytes(): void
+    {
+        $assignments = $this->createSampleReports();
+
+        foreach (range(1, 7) as $weeksAgo) {
+            $period = $this->createReportingPeriod(
+                Carbon::parse($this->period->week_start)->subWeeks($weeksAgo)->toDateString(),
+            );
+
+            $this->submitReportForAssignment($assignments['inpatient'], $period, [
+                'total_admitted_patients' => $this->dailyValue('total_admitted_patients', 5),
+                'total_patient_days' => $this->dailyValue('total_patient_days', 30),
+            ]);
+            $this->submitReportForAssignment($assignments['outpatient'], $period, [
+                'total_patients_seen' => $this->dailyValue('total_patients_seen', 40),
+            ]);
+            $this->submitReportForAssignment($assignments['procedure'], $period, [
+                'dialysis_acute' => $this->dailyValue('dialysis_acute', 4),
+                'dialysis_chronic' => $this->dailyValue('dialysis_chronic', 6),
+            ]);
+        }
+
+        $response = $this->actingAs($this->admin)
+            ->getJson('/api/analytics/dashboard?date_from=2026-04-06&date_to=2026-05-31')
+            ->assertOk()
+            ->assertJsonCount(8, 'families.inpatient.weekly')
+            ->assertJsonCount(8, 'families.outpatient.weekly')
+            ->assertJsonCount(8, 'families.procedure.weekly');
+        $bytes = strlen((string) $response->getContent());
+
+        $this->assertLessThan(
+            100 * 1024,
+            $bytes,
+            "Eight-week dashboard payload is {$bytes} bytes; contract maximum is 102400.",
+        );
+    }
+
+    public function test_interactive_clinical_analytics_clamps_oversized_and_unbounded_windows(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-14 09:00:00'));
+
+        try {
+            $this->actingAs($this->admin)
+                ->getJson('/api/analytics/dashboard')
+                ->assertOk()
+                ->assertJsonPath('scope.dateFrom', '2025-09-14')
+                ->assertJsonPath('scope.dateTo', '2026-09-14');
+
+            $this->actingAs($this->admin)
+                ->getJson('/api/analytics/dashboard?date_from=2020-01-01&date_to=2026-09-14')
+                ->assertOk()
+                ->assertJsonPath('scope.dateFrom', '2025-09-14')
+                ->assertJsonPath('scope.dateTo', '2026-09-14');
+        } finally {
+            $this->travelBack();
+        }
     }
 
     public function test_nurses_cannot_read_analytics(): void

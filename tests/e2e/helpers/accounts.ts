@@ -4,6 +4,12 @@
  * no-ops outside the local environment), so using them here is safe.
  */
 export const DEV_PASSWORD = 'StPaul2026!'
+/**
+ * Password for accounts the suite creates itself (registrations, minted admins).
+ * Production raises the policy to 12 characters, so this stays valid when the
+ * suite runs against a production-shaped target (playwright.external.config.ts).
+ */
+export const QA_ACCOUNT_PASSWORD = 'StPaul2026!qa'
 
 export type Role = 'superadmin' | 'nurse' | 'resident' | 'consultant'
 export type AccountKey = Role | 'non_recorder' | 'group_rep' | 'subgroup_a_rep' | 'subgroup_b_rep'
@@ -22,7 +28,7 @@ export const ACCOUNTS: Record<AccountKey, Account> = {
     role: 'superadmin',
     identifier: 'admin@stpaulos.local',
     username: 'admin1',
-    fullName: 'St Paul Admin',
+    fullName: "St Paul's Admin",
     landing: '/admin',
   },
   nurse: {

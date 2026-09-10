@@ -154,7 +154,7 @@ export function TransferRequestCard() {
             Request transfer
           </Button>
           {hasPending ? (
-            <p className="w-full text-[13px] text-[#74777f]">
+            <p className="w-full text-[13px] text-[#666970]">
               You already have a pending request. Cancel it below to file a new one.
             </p>
           ) : null}
@@ -169,12 +169,12 @@ export function TransferRequestCard() {
               className="flex items-center justify-between gap-3 border-b border-[#eef2f6] py-3 last:border-b-0"
             >
               <div className="flex min-w-0 items-center gap-2.5">
-                <ArrowRightLeft className="h-4 w-4 shrink-0 text-[#9aa7b8]" aria-hidden="true" />
+                <ArrowRightLeft className="h-4 w-4 shrink-0 text-[#69727d]" aria-hidden="true" />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-[#000a1e]">
                     {request.fromSectionName ?? '-'} → {request.toSectionName ?? '-'}
                   </p>
-                  <p className="text-[13px] text-[#74777f]">
+                  <p className="text-[13px] text-[#666970]">
                     {request.status === 'approved' && request.effectiveOn
                       ? `Effective ${request.effectiveOn}`
                       : (request.reason ?? '')}

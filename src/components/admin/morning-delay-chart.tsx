@@ -174,7 +174,7 @@ export function MorningDelayChart({ trend }: { trend: MorningAnalytics['trend'] 
       }
     >
       {points.length === 0 ? (
-        <div className="flex h-[260px] items-center justify-center text-sm text-[#74777f]">
+        <div className="flex h-[260px] items-center justify-center text-sm text-[#666970]">
           A trend appears once a session is recorded.
         </div>
       ) : (
@@ -207,6 +207,7 @@ export function MorningDelayChart({ trend }: { trend: MorningAnalytics['trend'] 
               initialDimension={{ width: 1, height: 260 }}
             >
               <BarChart
+                title="Morning round delay"
                 data={points}
                 margin={{ top: 24, right: 12, bottom: 8, left: -16 }}
                 barCategoryGap="18%"

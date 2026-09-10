@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Support\Uploads;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -61,6 +62,8 @@ class LaunchReadinessCheck extends Command
     {
         $this->checkProductionEnvironment();
         $this->checkDatabase();
+        $this->checkReferenceData();
+        $this->checkUploadLimits();
         $this->checkQueue();
         $this->checkMailAndSms();
         $this->checkPerformance();
@@ -117,6 +120,113 @@ class LaunchReadinessCheck extends Command
             'Database schema has been initialized.',
             'Run php artisan migrate --force.',
         );
+    }
+
+    /**
+     * A migrated database is not a usable one: roles, templates, departments,
+     * field definitions and settings come from the reference seeders, and the
+     * maintenance account cannot even be created before the roles exist
+     * (users.role_key is a foreign key). deploy.sh runs the seeding command on
+     * every deploy; it is idempotent, so this only fails on a broken install.
+     */
+    private function checkReferenceData(): void
+    {
+        $counts = [];
+        foreach (['roles', 'report_templates', 'departments', 'report_field_definitions', 'app_settings'] as $table) {
+            try {
+                $counts[$table] = Schema::hasTable($table) ? (int) DB::table($table)->count() : 0;
+            } catch (\Throwable) {
+                $counts[$table] = 0;
+            }
+        }
+
+        $this->record(
+            $counts['roles'] >= 5
+                && $counts['report_templates'] > 0
+                && $counts['departments'] > 0
+                && $counts['report_field_definitions'] > 0
+                && $counts['app_settings'] > 0,
+            'Reference data seeded',
+            sprintf(
+                '%d roles, %d templates, %d departments, %d field definitions, %d settings.',
+                $counts['roles'],
+                $counts['report_templates'],
+                $counts['departments'],
+                $counts['report_field_definitions'],
+                $counts['app_settings'],
+            ),
+            'Run php artisan app:seed-reference-data (safe in production; skips when data exists).',
+        );
+    }
+
+    /**
+     * PHP's own upload limits must cover the 10 MB the application promises
+     * (QA-005). The CLI that runs this command does not share the FPM pool's
+     * php_admin_value overrides, so the pool file is read directly when it
+     * exists; otherwise the running SAPI's values are reported with a manual
+     * instruction.
+     */
+    private function checkUploadLimits(): void
+    {
+        $poolFile = (string) config('operations.php_fpm_pool_file');
+        $limits = $this->poolUploadLimits($poolFile);
+        $source = 'PHP-FPM pool '.$poolFile;
+
+        if ($limits === null) {
+            $limits = [
+                'upload_max_filesize' => (string) ini_get('upload_max_filesize'),
+                'post_max_size' => (string) ini_get('post_max_size'),
+            ];
+            $source = PHP_SAPI === 'cli' ? 'the CLI php.ini (pool file not found)' : 'the running PHP SAPI';
+        }
+
+        $uploadBytes = Uploads::iniSizeToBytes($limits['upload_max_filesize']);
+        $postBytes = Uploads::iniSizeToBytes($limits['post_max_size']);
+        $sufficient = $uploadBytes >= Uploads::REQUIRED_UPLOAD_MAX_FILESIZE_BYTES
+            && $postBytes >= Uploads::REQUIRED_POST_MAX_SIZE_BYTES;
+
+        $detail = sprintf(
+            'upload_max_filesize=%s, post_max_size=%s (from %s).',
+            $limits['upload_max_filesize'] === '' ? 'unset' : $limits['upload_max_filesize'],
+            $limits['post_max_size'] === '' ? 'unset' : $limits['post_max_size'],
+            $source,
+        );
+
+        $this->record(
+            $sufficient,
+            sprintf('PHP upload limits cover the %s file rule', Uploads::maxFileLabel()),
+            $detail,
+            $detail.sprintf(
+                ' Set php_admin_value[upload_max_filesize] >= %dM and php_admin_value[post_max_size] >= %dM in the FPM pool (deploy/php-fpm.conf), then reload PHP-FPM.',
+                intdiv(Uploads::REQUIRED_UPLOAD_MAX_FILESIZE_BYTES, 1024 ** 2),
+                intdiv(Uploads::REQUIRED_POST_MAX_SIZE_BYTES, 1024 ** 2),
+            ),
+            // Without the pool file the CLI values are only indicative; do not
+            // hard-fail a host whose pool lives elsewhere, but strict mode (used
+            // by deploy.sh) still refuses to proceed on the warning.
+            warn: $this->poolUploadLimits($poolFile) === null,
+        );
+    }
+
+    /**
+     * @return array{upload_max_filesize: string, post_max_size: string}|null
+     */
+    private function poolUploadLimits(string $poolFile): ?array
+    {
+        if ($poolFile === '' || ! is_readable($poolFile)) {
+            return null;
+        }
+
+        $contents = (string) file_get_contents($poolFile);
+        $limits = ['upload_max_filesize' => '', 'post_max_size' => ''];
+
+        if (preg_match_all('/^\s*php_(?:admin_)?value\[(upload_max_filesize|post_max_size)\]\s*=\s*([^\s;]+)/m', $contents, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $match) {
+                $limits[$match[1]] = $match[2];
+            }
+        }
+
+        return $limits;
     }
 
     private function checkQueue(): void
@@ -289,6 +399,28 @@ class LaunchReadinessCheck extends Command
             );
         }
 
+        // Uploaded files (evidence, import files) are backed up as a tar.gz next
+        // to the dump by the same script (QA-015); a fresh dump with a stale
+        // archive means backup.sh is an old version or the archive step failed.
+        $newestArchive = collect(is_dir($backupDir) ? (glob($backupDir.'/*-storage-*.tar.gz') ?: []) : [])
+            ->map(fn (string $path) => filemtime($path))
+            ->max();
+
+        if ($newestArchive === null) {
+            $this->recordWarning(
+                'Storage backup fresher than 26h',
+                sprintf('No *-storage-*.tar.gz found in %s. Run the current deploy/backup.sh once; it archives shared/storage/app next to the dump.', $backupDir),
+            );
+        } else {
+            $ageHours = (now()->getTimestamp() - $newestArchive) / 3600;
+            $this->record(
+                $ageHours <= 26,
+                'Storage backup fresher than 26h',
+                sprintf('Newest storage archive is %.1f hours old.', $ageHours),
+                sprintf('Newest storage archive is %.1f hours old. Check the deploy/backup.sh cron and its log.', $ageHours),
+            );
+        }
+
         $secondaryDir = (string) config('operations.secondary_backup_dir', '/mnt/backup/imreport');
         $newestSecondary = collect(is_dir($secondaryDir) ? (glob($secondaryDir.'/*.sql.gz') ?: []) : [])
             ->map(fn (string $path) => filemtime($path))
@@ -309,27 +441,33 @@ class LaunchReadinessCheck extends Command
             );
         }
 
-        // The persistent queue worker unit (replaces the cron-tick worker).
-        $unit = (string) config('operations.queue_worker_service', 'imreport-queue.service');
+        // The persistent named-queue workers replace the cron-tick worker.
+        $units = (array) config('operations.queue_worker_services', [
+            'imreport-queue.service',
+            'imreport-queue-notifications.service',
+        ]);
 
         if (config('queue.worker_mode') !== 'daemon') {
             $this->recordWarning(
-                'Persistent queue worker active',
-                'QUEUE_WORKER_MODE is not "daemon": the cron-tick worker is in use. On the department server set QUEUE_WORKER_MODE=daemon and install deploy/queue-worker.service.',
+                'Persistent queue workers active',
+                'QUEUE_WORKER_MODE is not "daemon": the cron-tick worker is in use. On the department server set QUEUE_WORKER_MODE=daemon and install both deploy queue-worker units.',
             );
         } elseif (PHP_OS_FAMILY !== 'Linux' || ! function_exists('shell_exec')) {
             $this->recordWarning(
-                'Persistent queue worker active',
-                sprintf('Manual check: systemctl is-active %s.', $unit),
+                'Persistent queue workers active',
+                sprintf('Manual check: systemctl is-active %s.', implode(' ', $units)),
             );
         } else {
-            $state = trim((string) shell_exec(sprintf('systemctl is-active %s 2>/dev/null', escapeshellarg($unit))));
-            $this->record(
-                $state === 'active',
-                'Persistent queue worker active',
-                sprintf('%s is active.', $unit),
-                sprintf('%s reports "%s". systemctl start %s and check journalctl -u %s.', $unit, $state === '' ? 'unknown' : $state, $unit, $unit),
-            );
+            foreach ($units as $unit) {
+                $unit = (string) $unit;
+                $state = trim((string) shell_exec(sprintf('systemctl is-active %s 2>/dev/null', escapeshellarg($unit))));
+                $this->record(
+                    $state === 'active',
+                    "Persistent queue worker active: {$unit}",
+                    sprintf('%s is active.', $unit),
+                    sprintf('%s reports "%s". systemctl start %s and check journalctl -u %s.', $unit, $state === '' ? 'unknown' : $state, $unit, $unit),
+                );
+            }
         }
 
         // The scheduler heartbeat: routes/console.php touches this cache key

@@ -4,10 +4,15 @@ use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsurePasswordChanged;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\EnsureRole;
+use App\Http\Middleware\RecordRequestTiming;
+use App\Http\Middleware\RequireWorkspaceRevisionToken;
 use App\Http\Middleware\SecurityHeaders;
+use App\Support\Observability\ErrorReporter;
+use App\Support\Uploads;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Exceptions\PostTooLargeException;
 use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -45,6 +50,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->redirectGuestsTo(fn () => null);
 
         $middleware->append(SecurityHeaders::class);
+        // Counts 5xx answers and logs slow requests for the health view
+        // (docs/OBSERVABILITY.md). Global so every route is timed.
+        $middleware->append(RecordRequestTiming::class);
         $middleware->statefulApi();
         $middleware->api(prepend: [
             EnsureFrontendRequestsAreStateful::class,
@@ -53,14 +61,38 @@ return Application::configure(basePath: dirname(__DIR__))
             'active' => EnsureActiveUser::class,
             'password-changed' => EnsurePasswordChanged::class,
             'permission' => EnsurePermission::class,
+            'revision-token' => RequireWorkspaceRevisionToken::class,
             'role' => EnsureRole::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // Mirror every reportable exception (Laravel has already excluded
+        // validation, authentication, authorization and 404s) to the optional
+        // webhook and the hourly counters, after the normal log write.
+        $exceptions->report(function (Throwable $throwable): void {
+            ErrorReporter::reportException($throwable, app()->bound('request') ? request() : null);
+        });
+
         // This is an API-only app with no web "login" route. Force JSON rendering
         // for /api/* so an unauthenticated request returns a clean 401 instead of
         // attempting a redirect to the non-existent login route (which 500s).
         $exceptions->shouldRenderJsonWhen(
             fn ($request, $throwable): bool => $request->is('api/*') || $request->expectsJson(),
         );
+
+        // A body PHP rejected outright (post_max_size) never reaches a controller,
+        // so explain the limit here instead of the bare framework message (QA-005).
+        $exceptions->render(function (PostTooLargeException $exception, $request) {
+            if (! $request->is('api/*') && ! $request->expectsJson()) {
+                return null;
+            }
+
+            return response()->json([
+                'message' => sprintf(
+                    'The upload is larger than this server accepts in one request (post_max_size %s). Files up to %s are allowed; ask an administrator to raise the PHP-FPM pool limits.',
+                    ini_get('post_max_size') ?: 'unknown',
+                    Uploads::maxFileLabel(),
+                ),
+            ], 413);
+        });
     })->create();

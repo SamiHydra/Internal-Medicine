@@ -24,6 +24,13 @@ class AcademicAnalyticsController extends Controller
         return response()->json($this->analytics->summary($this->filters($request)));
     }
 
+    public function snapshot(Request $request): JsonResponse
+    {
+        Gate::authorize('viewAny', ConsultantEvaluation::class);
+
+        return response()->json($this->analytics->snapshot($this->filters($request)));
+    }
+
     public function trend(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', ConsultantEvaluation::class);

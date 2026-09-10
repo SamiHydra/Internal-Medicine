@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { formatAuditFieldValue, formatRelativeTimestamp } from '@/lib/dates'
+import {
+  formatAuditFieldValue,
+  formatRelativeTimestamp,
+  humanizeAuditKey,
+} from '@/lib/dates'
 
 describe('formatRelativeTimestamp', () => {
   beforeEach(() => {
@@ -52,6 +56,22 @@ describe('formatAuditFieldValue', () => {
     expect(formatAuditFieldValue('10:00')).toBe('10:00')
   })
 
+  it('reads snake_case tokens back as words', () => {
+    expect(formatAuditFieldValue('critical_event')).toBe('Critical event')
+    expect(formatAuditFieldValue('not_started')).toBe('Not started')
+  })
+
+  it('records human-entered values verbatim', () => {
+    expect(formatAuditFieldValue('Dr. Almaz Sahle')).toBe('Dr. Almaz Sahle')
+    expect(formatAuditFieldValue('admin@stpaulos.local')).toBe(
+      'admin@stpaulos.local',
+    )
+    expect(formatAuditFieldValue('hana.abera')).toBe('hana.abera')
+    expect(formatAuditFieldValue('Cardiac reported 4 new deaths')).toBe(
+      'Cardiac reported 4 new deaths',
+    )
+  })
+
   it('spells out booleans and empty values', () => {
     expect(formatAuditFieldValue(true)).toBe('Yes')
     expect(formatAuditFieldValue(false)).toBe('No')
@@ -59,7 +79,34 @@ describe('formatAuditFieldValue', () => {
     expect(formatAuditFieldValue('')).toBe('-')
   })
 
-  it('serializes objects rather than rendering [object Object]', () => {
-    expect(formatAuditFieldValue({ a: 1 })).toBe('{"a":1}')
+  it('renders objects as readable label/value pairs, not JSON', () => {
+    expect(formatAuditFieldValue({ weeklyDeadlineDay: 'monday' })).toBe(
+      'Weekly deadline day: monday',
+    )
+    expect(formatAuditFieldValue({})).toBe('None')
+  })
+
+  it('renders lists as prose and humanizes identifier-like entries', () => {
+    expect(formatAuditFieldValue(['new_deaths', 'hai_clabsi'])).toBe(
+      'New deaths, Hai clabsi',
+    )
+    expect(formatAuditFieldValue([1, 3, 5])).toBe('1, 3, 5')
+    expect(formatAuditFieldValue([])).toBe('None')
+  })
+
+  it('renders a token the same way in a list as on its own', () => {
+    expect(formatAuditFieldValue(['critical_event'])).toBe(
+      formatAuditFieldValue('critical_event'),
+    )
+  })
+})
+
+describe('humanizeAuditKey', () => {
+  it('reads snake_case and camelCase as a sentence', () => {
+    expect(humanizeAuditKey('new_pressure_ulcer')).toBe('New pressure ulcer')
+    expect(humanizeAuditKey('weeklyDeadlineDay')).toBe('Weekly deadline day')
+    expect(humanizeAuditKey('autoLockHoursAfterDeadline')).toBe(
+      'Auto lock hours after deadline',
+    )
   })
 })

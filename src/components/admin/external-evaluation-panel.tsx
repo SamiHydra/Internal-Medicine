@@ -3,7 +3,9 @@ import { FileInput, Loader2, Send, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -11,7 +13,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { SectionHeader, panelClass } from '@/components/dashboard/section-panel'
 import { useAppData } from '@/context/app-data-context'
@@ -130,13 +131,14 @@ export function ExternalEvaluationPanel({ onRecorded }: { onRecorded: () => void
   }
 
   const canSubmit = Boolean(subjectId && placement && evaluatorName.trim() && overallRating)
+  const metCount = Object.values(indicators).filter(Boolean).length
+  const indicatorCount = Object.keys(indicators).length
 
   return (
     <section className={panelClass}>
       <SectionHeader
         eyebrow="External evaluation"
         title="Record a paper evaluation"
-        description="For residents rotating in ICU, Emergency, the external hospitals, Dermatology, Radiology, or Psychiatry: the host department evaluated on paper, and you are recording that sheet. The evaluator has no account here."
         actions={
           <Button variant="ghost" size="icon" aria-label="Close" onClick={() => setIsOpen(false)}>
             <X className="h-4 w-4" />
@@ -144,105 +146,151 @@ export function ExternalEvaluationPanel({ onRecorded }: { onRecorded: () => void
         }
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Select value={subjectId} onValueChange={setSubjectId}>
-          <SelectTrigger aria-label="Resident evaluated">
-            <SelectValue placeholder="Resident evaluated" />
-          </SelectTrigger>
-          <SelectContent>
-            {residents.map((resident) => (
-              <SelectItem key={resident.id} value={resident.id}>
-                {resident.fullName}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Input
-          type="date"
-          max={today}
-          value={evaluationDate}
-          aria-label="Evaluation date"
-          onChange={(event) => setEvaluationDate(event.target.value || today)}
-        />
-        <Select value={placement} onValueChange={setPlacement}>
-          <SelectTrigger aria-label="External rotation">
-            <SelectValue placeholder="External rotation" />
-          </SelectTrigger>
-          <SelectContent>
-            {EXTERNAL_PLACEMENT_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Input
-          value={evaluatorName}
-          aria-label="Evaluator name"
-          placeholder="Evaluator name (required)"
-          onChange={(event) => setEvaluatorName(event.target.value)}
-        />
-        <Input
-          value={evaluatorDepartment}
-          aria-label="Evaluator department"
-          placeholder="Evaluator department (optional)"
-          onChange={(event) => setEvaluatorDepartment(event.target.value)}
-        />
-        <Select value={overallRating} onValueChange={setOverallRating}>
-          <SelectTrigger aria-label="Overall rating">
-            <SelectValue placeholder="Overall rating" />
-          </SelectTrigger>
-          <SelectContent>
-            {OVERALL_RATING_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {/* Every field is labelled. A placeholder disappears the moment a value
+          is chosen, which left this form unreadable exactly when it was full. */}
+      <div className="mt-5 grid gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+        <label className="space-y-1.5">
+          <Label>Resident</Label>
+          <Select value={subjectId} onValueChange={setSubjectId}>
+            <SelectTrigger aria-label="Resident evaluated">
+              <SelectValue placeholder="Choose a resident" />
+            </SelectTrigger>
+            <SelectContent>
+              {residents.map((resident) => (
+                <SelectItem key={resident.id} value={resident.id}>
+                  {resident.fullName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+        <label className="space-y-1.5">
+          <Label>Rotation</Label>
+          <Select value={placement} onValueChange={setPlacement}>
+            <SelectTrigger aria-label="External rotation">
+              <SelectValue placeholder="Choose a rotation" />
+            </SelectTrigger>
+            <SelectContent>
+              {EXTERNAL_PLACEMENT_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+        <label className="space-y-1.5">
+          <Label>Date on the form</Label>
+          <Input
+            type="date"
+            max={today}
+            value={evaluationDate}
+            aria-label="Evaluation date"
+            onChange={(event) => setEvaluationDate(event.target.value || today)}
+          />
+        </label>
+        <label className="space-y-1.5">
+          <Label>Evaluator</Label>
+          <Input
+            value={evaluatorName}
+            aria-label="Evaluator name"
+            placeholder="Name on the sheet"
+            onChange={(event) => setEvaluatorName(event.target.value)}
+          />
+        </label>
+        <label className="space-y-1.5">
+          <Label>
+            Their department <span className="font-normal text-[#9aa6b5]">optional</span>
+          </Label>
+          <Input
+            value={evaluatorDepartment}
+            aria-label="Evaluator department"
+            placeholder="e.g. ICU"
+            onChange={(event) => setEvaluatorDepartment(event.target.value)}
+          />
+        </label>
+        <label className="space-y-1.5">
+          <Label>Overall rating</Label>
+          <Select value={overallRating} onValueChange={setOverallRating}>
+            <SelectTrigger aria-label="Overall rating">
+              <SelectValue placeholder="Choose a rating" />
+            </SelectTrigger>
+            <SelectContent>
+              {OVERALL_RATING_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
       </div>
 
-      <div className="mt-6 space-y-5">
-        {RESIDENT_COMPETENCIES.map((group) => (
-          <div key={group.group} className="space-y-2.5">
-            <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#74777f]">
-              {group.group}
-            </p>
-            <div className="grid gap-2.5 sm:grid-cols-2">
-              {group.items.map((item) => {
-                const checked = indicators[item.name]
-                return (
-                  <label
-                    key={item.name}
-                    className={cn(
-                      'flex cursor-pointer items-center justify-between gap-4 rounded-[0.25rem] border bg-white px-4 py-2.5 transition',
-                      checked ? 'border-[#005db6] bg-[#eef5ff]' : 'border-[#d4dde8] hover:bg-[#f6f8fa]',
-                    )}
-                  >
-                    <span className="text-sm font-medium text-[#000a1e]">{item.label}</span>
-                    <Switch
-                      checked={checked}
-                      onCheckedChange={(value) =>
-                        setIndicators((prev) => ({ ...prev, [item.name]: value }))
-                      }
-                    />
-                  </label>
-                )
-              })}
+      {/* Eleven bordered boxes each holding one switch was more chrome than
+          content. A switch also reads as a setting; these are ticks copied off
+          a sheet, so they are checkboxes in one quiet card. */}
+      <div className="mt-6">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#526171]">
+            Indicators met
+          </p>
+          <p className="text-[13px] font-semibold tabular-nums text-[#005db6]">
+            {metCount} of {indicatorCount}
+          </p>
+        </div>
+        <div className="mt-2 divide-y divide-[#eef2f6] rounded-[0.35rem] border border-[#e6ecf3]">
+          {RESIDENT_COMPETENCIES.map((group) => (
+            <div key={group.group} className="px-3 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#6c7177]">
+                {group.group}
+              </p>
+              <div className="mt-1 grid sm:grid-cols-2">
+                {group.items.map((item) => {
+                  const checked = indicators[item.name]
+
+                  return (
+                    <label
+                      key={item.name}
+                      className={cn(
+                        'flex cursor-pointer items-center gap-2.5 rounded-[0.25rem] px-2 py-1.5 transition-colors hover:bg-[#f7f9fc]',
+                        checked && 'text-[#000a1e]',
+                      )}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(value) =>
+                          setIndicators((prev) => ({ ...prev, [item.name]: value === true }))
+                        }
+                      />
+                      <span
+                        className={cn(
+                          'text-[13px] leading-5',
+                          checked ? 'font-medium text-[#000a1e]' : 'text-[#52606d]',
+                        )}
+                      >
+                        {item.label}
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
-      <div className="mt-5">
+      <label className="mt-5 block space-y-1.5">
+        <Label>
+          Comment <span className="font-normal text-[#9aa6b5]">optional</span>
+        </Label>
         <Textarea
           value={comment}
           aria-label="Comment"
-          placeholder="Comment from the paper form (optional)"
+          placeholder="Anything written on the sheet"
           className="min-h-20"
           onChange={(event) => setComment(event.target.value)}
         />
-      </div>
+      </label>
 
       <div className="mt-5 flex justify-end gap-2">
         <Button variant="secondary" onClick={() => setIsOpen(false)} disabled={isBusy}>

@@ -2,6 +2,7 @@
 
 namespace App\Services\Reports;
 
+use App\Exceptions\ReportConflictException;
 use App\Models\AuditLog;
 use App\Models\Notification;
 use App\Models\Report;
@@ -13,6 +14,7 @@ use App\Models\ReportStatusHistory;
 use App\Models\User;
 use App\Services\Analytics\DashboardAnalyticsService;
 use App\Support\Authorization\Permissions;
+use App\Support\HospitalClock;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -35,14 +37,29 @@ class ReportSubmissionService
     ) {}
 
     /**
+     * Sentinel for $expectedRevision: the caller believes no report exists yet
+     * for this assignment and week, so finding one is a conflict.
+     */
+    public const EXPECT_NO_REPORT = 'none';
+
+    /**
      * @param  array<string, mixed>  $values
+     * @param  string|null  $expectedRevision  null skips the check (last write
+     *                                         wins, the historical behaviour);
+     *                                         EXPECT_NO_REPORT refuses when a
+     *                                         report already exists; any other
+     *                                         value is the updatedAt the client
+     *                                         loaded and must still match.
      *
      * @throws AuthorizationException
      * @throws ValidationException
+     * @throws ReportConflictException
      */
-    public function save(User $actor, ReportAssignment $assignment, ReportingPeriod $period, array $values, bool $submit = false, bool $invalidateAnalytics = true): Report
+    public function save(User $actor, ReportAssignment $assignment, ReportingPeriod $period, array $values, bool $submit = false, bool $invalidateAnalytics = true, ?string $expectedRevision = null): Report
     {
-        $report = DB::transaction(function () use ($actor, $assignment, $period, $values, $submit): Report {
+        $this->assertPeriodHasStarted($period);
+
+        $report = DB::transaction(function () use ($actor, $assignment, $period, $values, $submit, $expectedRevision): Report {
             $assignment->loadMissing(['department', 'template.fieldDefinitions']);
 
             $this->authorizeAssignmentEdit($actor, $assignment);
@@ -53,6 +70,11 @@ class ReportSubmissionService
                 ->where('reporting_period_id', $period->id)
                 ->lockForUpdate()
                 ->first();
+
+            // Stale-write detection runs under the same row lock as the write,
+            // so two devices saving the same week are serialised and the second
+            // one is told about the first instead of overwriting it.
+            $this->assertRevisionMatches($report, $expectedRevision);
 
             if ($report?->locked_at !== null) {
                 throw ValidationException::withMessages([
@@ -77,10 +99,17 @@ class ReportSubmissionService
                 $createdReport = true;
             }
 
-            $report->loadMissing(['assignment', 'template', 'department']);
+            // These are the same records already loaded for authorization and
+            // validation. Attach them directly instead of selecting each
+            // relation again for a newly-created report.
+            $report->setRelation('assignment', $assignment);
+            $report->setRelation('template', $assignment->template);
+            $report->setRelation('department', $assignment->department);
 
             $hasChanges = $this->persistValues($actor, $assignment, $report, $values, $hadSubmission, $now);
-            $this->qualityService->assertValid($report->refresh());
+            $report->unsetRelation('fieldValues');
+            $report->load('fieldValues.fieldDefinition');
+            $this->qualityService->assertValid($report);
             $nextStatus = $this->nextStatus($report, $hadSubmission, $hasChanges, $submit);
 
             $report->forceFill([
@@ -123,14 +152,14 @@ class ReportSubmissionService
             }
 
             if ((! $hadSubmission && $submit) || ($hadSubmission && $hasChanges)) {
-                $this->criticalEventAlertService->notify($report, $this->relatedRoute($assignment, $period), $now);
-                $quality = $this->qualityService->analyze($report->refresh(), true);
+                $this->criticalEventAlertService->notify($report, $now);
+                $quality = $this->qualityService->analyze($report, true);
                 $this->trendAlertService->notify($report, $quality['warnings'] ?? [], $this->relatedRoute($assignment, $period), $now);
             }
 
-            $this->calculationService->upsertForReport($report->refresh());
+            $report->setRelation('calculatedMetric', $this->calculationService->upsertForReport($report));
 
-            return $report->load([
+            return $report->loadMissing([
                 'assignment.department',
                 'assignment.template',
                 'department',
@@ -160,6 +189,16 @@ class ReportSubmissionService
         $hasChanges = false;
         $activeDays = $assignment->template->active_days ?? [];
         $fieldDefinitions = $assignment->template->fieldDefinitions->keyBy('field_key');
+        $existingValues = ReportFieldValue::query()
+            ->where('report_id', $report->id)
+            ->get()
+            ->keyBy(fn (ReportFieldValue $value): string => $this->valueKey(
+                $value->field_definition_id,
+                $value->day_name,
+            ));
+        $upserts = [];
+        $deleteIds = [];
+        $auditRows = [];
 
         foreach ($values as $fieldKey => $fieldPayload) {
             $fieldDefinition = $fieldDefinitions->get($fieldKey);
@@ -187,11 +226,7 @@ class ReportSubmissionService
                     ]);
                 }
 
-                $existingValue = ReportFieldValue::query()
-                    ->where('report_id', $report->id)
-                    ->where('field_definition_id', $fieldDefinition->id)
-                    ->where('day_name', $dayName)
-                    ->first();
+                $existingValue = $existingValues->get($this->valueKey($fieldDefinition->id, $dayName));
                 $oldValueText = $this->valueToText($existingValue);
                 $coercedValue = $this->coerceValue($fieldDefinition, $rawValue, $fieldKey);
                 $newValueText = $this->valueArrayToText($coercedValue);
@@ -200,7 +235,8 @@ class ReportSubmissionService
                     $hasChanges = true;
 
                     if ($hadSubmission) {
-                        AuditLog::query()->create([
+                        $auditRows[] = [
+                            'id' => (new AuditLog)->newUniqueId(),
                             'report_id' => $report->id,
                             'field_definition_id' => $fieldDefinition->id,
                             'field_key' => $fieldDefinition->field_key,
@@ -212,28 +248,70 @@ class ReportSubmissionService
                             'changed_at' => $changedAt,
                             'department_id' => $assignment->department_id,
                             'template_id' => $assignment->template_id,
-                        ]);
+                        ];
                     }
                 }
 
                 if ($newValueText === null) {
-                    $existingValue?->delete();
+                    if ($existingValue) {
+                        $deleteIds[] = $existingValue->id;
+                    }
 
                     continue;
                 }
 
-                ReportFieldValue::query()->updateOrCreate(
-                    [
-                        'report_id' => $report->id,
-                        'field_definition_id' => $fieldDefinition->id,
-                        'day_name' => $dayName,
-                    ],
-                    $coercedValue,
-                );
+                // Do not rewrite unchanged rows. Apart from avoiding needless
+                // database work, this preserves the prior updateOrCreate()
+                // behaviour where an unchanged model is not marked dirty and
+                // its updated_at timestamp remains stable.
+                if ($oldValueText === $newValueText) {
+                    continue;
+                }
+
+                $upserts[] = [
+                    'id' => $existingValue?->id ?? (new ReportFieldValue)->newUniqueId(),
+                    'report_id' => $report->id,
+                    'field_definition_id' => $fieldDefinition->id,
+                    'day_name' => $dayName,
+                    ...$coercedValue,
+                    'created_at' => $existingValue?->created_at ?? $changedAt,
+                    'updated_at' => $changedAt,
+                ];
             }
         }
 
+        if ($deleteIds !== []) {
+            ReportFieldValue::query()->whereKey($deleteIds)->delete();
+        }
+
+        if ($upserts !== []) {
+            ReportFieldValue::query()->upsert(
+                $upserts,
+                [
+                    'report_id',
+                    'field_definition_id',
+                    'day_name',
+                ],
+                [
+                    'value_number',
+                    'value_text',
+                    'value_time',
+                    'value_json',
+                    'updated_at',
+                ],
+            );
+        }
+
+        if ($auditRows !== []) {
+            AuditLog::query()->insert($auditRows);
+        }
+
         return $hasChanges;
+    }
+
+    private function valueKey(string $fieldDefinitionId, string $dayName): string
+    {
+        return $fieldDefinitionId.'|'.$dayName;
     }
 
     /**
@@ -385,6 +463,67 @@ class ReportSubmissionService
         return $submit ? 'submitted' : 'draft';
     }
 
+    /**
+     * Reporting periods are generated six months ahead so upcoming weeks are
+     * ready when they arrive, but a report can only describe a week that has
+     * started. A future-week report was accepted and then invisible in every
+     * listing, which only shows weeks up to the current one (QA-009). The rule
+     * uses the hospital calendar (Africa/Nairobi), like every other date-only
+     * decision, so a Monday just after midnight in Nairobi is already open.
+     *
+     * @throws ValidationException
+     */
+    private function assertPeriodHasStarted(ReportingPeriod $period): void
+    {
+        $weekStart = $period->week_start?->toDateString();
+
+        if ($weekStart !== null && $weekStart > HospitalClock::today()->toDateString()) {
+            throw ValidationException::withMessages([
+                'reportingPeriodId' => ['This reporting week has not started yet; reports can only be filed for the current or an earlier week.'],
+            ]);
+        }
+    }
+
+    /**
+     * @throws ReportConflictException
+     */
+    private function assertRevisionMatches(?Report $report, ?string $expectedRevision): void
+    {
+        if ($expectedRevision === null) {
+            return;
+        }
+
+        if ($expectedRevision === self::EXPECT_NO_REPORT) {
+            if ($report !== null) {
+                throw new ReportConflictException($report, ReportConflictException::REASON_EXISTS);
+            }
+
+            return;
+        }
+
+        if ($report === null) {
+            // The client loaded a report that has since disappeared; nothing to
+            // overwrite, so the save proceeds and recreates it.
+            return;
+        }
+
+        try {
+            $expected = Carbon::parse($expectedRevision)->utc()->format('Y-m-d H:i:s');
+        } catch (\Throwable) {
+            throw ValidationException::withMessages([
+                'expectedUpdatedAt' => 'The expected revision must be a valid timestamp.',
+            ]);
+        }
+
+        // Stored timestamps carry second precision; the JSON the client echoes
+        // back carries microseconds, so both sides are compared at the second.
+        $stored = $report->updated_at?->copy()->utc()->format('Y-m-d H:i:s');
+
+        if ($stored !== $expected) {
+            throw new ReportConflictException($report, ReportConflictException::REASON_STALE);
+        }
+    }
+
     private function authorizeAssignmentEdit(User $actor, ReportAssignment $assignment): void
     {
         if (! $actor->active) {
@@ -393,6 +532,12 @@ class ReportSubmissionService
 
         if (Permissions::isAdminRole($actor->role_key)) {
             return;
+        }
+
+        // The assignment row alone is not enough: the account must still hold
+        // the reporting permission (an account moved off the nurse role does not).
+        if (! Permissions::userCan($actor, Permissions::REPORTS_SUBMIT)) {
+            throw new AuthorizationException('You are not allowed to edit this assignment.');
         }
 
         if ($assignment->nurse_id !== $actor->id || ! $assignment->active) {

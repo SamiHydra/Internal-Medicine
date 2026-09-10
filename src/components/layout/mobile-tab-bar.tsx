@@ -65,7 +65,7 @@ export function MobileTabBar({
                 onPointerDown={() => prefetchRoute(item.href)}
                 onFocus={() => prefetchRoute(item.href)}
                 className={({ isActive }) =>
-                  cn(tabClass, isActive ? 'text-[#005db6]' : 'text-[#74777f]')
+                  cn(tabClass, isActive ? 'text-[#005db6]' : 'text-[#666970]')
                 }
               >
                 {({ isActive }) => (
@@ -94,7 +94,7 @@ export function MobileTabBar({
               type="button"
               onClick={onMore}
               aria-haspopup="dialog"
-              className={cn(tabClass, moreActive ? 'text-[#005db6]' : 'text-[#74777f]')}
+              className={cn(tabClass, moreActive ? 'text-[#005db6]' : 'text-[#666970]')}
             >
               <ActiveTick active={moreActive} />
               <MoreHorizontal className="h-[1.35rem] w-[1.35rem] shrink-0" strokeWidth={2} />

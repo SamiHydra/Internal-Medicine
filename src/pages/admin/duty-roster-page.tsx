@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays,
   ChevronDown,
@@ -81,8 +81,11 @@ function sourceLabel(source: string, isRotationOverride: boolean) {
  */
 export function DutyRosterPage() {
   const client = getApiBrowserClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const showCoverageGaps =
+    searchParams.get('issue') === 'missing-monthly-coverage';
 
-  const today = new Date();
+  const today = useMemo(() => new Date(), []);
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [data, setData] = useState<RosterMonth | null>(null);
@@ -171,6 +174,23 @@ export function DutyRosterPage() {
       return [];
     }
 
+    if (showCoverageGaps) {
+      const todayKey = [
+        today.getFullYear(),
+        String(today.getMonth() + 1).padStart(2, '0'),
+        String(today.getDate()).padStart(2, '0'),
+      ].join('-');
+
+      return data.people.filter(
+        (person) =>
+          !person.monthly.some(
+            (assignment) =>
+              assignment.startsOn <= todayKey &&
+              assignment.endsOn >= todayKey,
+          ),
+      );
+    }
+
     return data.people.filter((person) => {
       if (!matchesRosterRoleFilter(person, roleFilter)) {
         return false;
@@ -182,7 +202,19 @@ export function DutyRosterPage() {
 
       return true;
     });
-  }, [data, roleFilter, sectionFilter]);
+  }, [data, roleFilter, sectionFilter, showCoverageGaps, today]);
+
+  useEffect(() => {
+    if (!showCoverageGaps || isLoading || !data) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById('coverage-gaps')
+        ?.scrollIntoView({ block: 'start' });
+    });
+  }, [data, isLoading, showCoverageGaps]);
 
   const dirtyCount = Object.keys(staged).length;
 
@@ -328,13 +360,52 @@ export function DutyRosterPage() {
         }
       />
 
-      <section className={panelClass}>
+      <section
+        id={showCoverageGaps ? 'coverage-gaps' : undefined}
+        className={cn(panelClass, showCoverageGaps && 'scroll-mt-24')}
+      >
+        {showCoverageGaps ? (
+          <div className="mb-4 flex flex-col gap-3 border-l-[3px] border-[#d69e13] bg-[#fff8e8] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-2.5">
+              <ShieldAlert
+                className="mt-0.5 h-4 w-4 shrink-0 text-[#9a6b00]"
+                aria-hidden="true"
+              />
+              <div>
+                <p className="text-sm font-semibold text-[#1d3047]">
+                  Missing coverage today
+                </p>
+                <p className="mt-0.5 text-[13px] leading-5 text-[#657180]">
+                  Showing {people.length}{' '}
+                  {people.length === 1 ? 'person' : 'people'} with no monthly
+                  assignment covering today. Choose a duty—or create an
+                  override for a rotation-managed resident—then save the month.
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="self-start text-[#005db6] sm:self-auto"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.delete('issue');
+                setSearchParams(next, { replace: true });
+              }}
+            >
+              Show full roster
+            </Button>
+          </div>
+        ) : null}
+
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1.5">
             <Button
               variant="secondary"
               size="icon"
               aria-label="Previous month"
+              disabled={showCoverageGaps}
               onClick={() => stepMonth(-1)}
             >
               <ChevronLeft className="h-4 w-4" />
@@ -346,34 +417,44 @@ export function DutyRosterPage() {
               variant="secondary"
               size="icon"
               aria-label="Next month"
+              disabled={showCoverageGaps}
               onClick={() => stepMonth(1)}
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
 
-          <Select
-            value={roleFilter}
-            onValueChange={(value) => setRoleFilter(value as typeof roleFilter)}
-          >
-            <SelectTrigger className="w-[190px]" aria-label="People filter">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent
-              style={{
-                maxHeight:
-                  'min(var(--radix-select-content-available-height), 24rem)',
-              }}
+          {showCoverageGaps ? (
+            <span className="inline-flex h-10 items-center border border-[#dce6f0] bg-[#f7faff] px-3 text-sm font-semibold text-[#526171]">
+              Residents &amp; consultants
+            </span>
+          ) : (
+            <Select
+              value={roleFilter}
+              onValueChange={(value) =>
+                setRoleFilter(value as typeof roleFilter)
+              }
             >
-              {rosterRoleFilters.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              <SelectTrigger className="w-[190px]" aria-label="People filter">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent
+                style={{
+                  maxHeight:
+                    'min(var(--radix-select-content-available-height), 24rem)',
+                }}
+              >
+                {rosterRoleFilters.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
 
-          {roleFilter === 'consultant' || roleFilter === 'internist' ? (
+          {!showCoverageGaps &&
+          (roleFilter === 'consultant' || roleFilter === 'internist') ? (
             <Select value={sectionFilter} onValueChange={setSectionFilter}>
               <SelectTrigger className="w-[190px]" aria-label="Section filter">
                 <SelectValue />
@@ -411,7 +492,7 @@ export function DutyRosterPage() {
         </div>
 
         {isLoading ? (
-          <div className="flex min-h-[260px] items-center justify-center text-[#74777f]">
+          <div className="flex min-h-[260px] items-center justify-center text-[#666970]">
             <Loader2
               className="h-5 w-5 animate-spin"
               aria-label="Loading roster"
@@ -444,17 +525,20 @@ export function DutyRosterPage() {
         ) : (
           <div className="mt-5 max-h-[62vh] overflow-auto rounded-[0.4rem] border border-[#e6ecf3]">
             <table className="w-full border-collapse text-sm">
+              <caption className="sr-only">Duty roster: monthly and day duties per person</caption>
               <thead className="sticky top-0 z-10 bg-[#f8fafc]">
                 <tr className="border-b border-[#e6ecf3] text-left text-xs font-bold uppercase tracking-[0.1em] text-[#526171]">
-                  <th className="px-4 py-3">Person</th>
-                  <th className="px-4 py-3">
+                  <th scope="col" className="px-4 py-3">Person</th>
+                  <th scope="col" className="px-4 py-3">
                     {roleFilter === 'consultant' || roleFilter === 'internist'
                       ? 'Section'
                       : 'Group'}
                   </th>
-                  <th className="px-4 py-3">Monthly duty</th>
-                  <th className="px-4 py-3">Day duties</th>
-                  <th className="w-10 px-2 py-3" aria-label="Expand" />
+                  <th scope="col" className="px-4 py-3">Monthly duty</th>
+                  <th scope="col" className="px-4 py-3">Day duties</th>
+                  <th scope="col" className="w-10 px-2 py-3">
+                    <span className="sr-only">Expand</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -486,10 +570,18 @@ export function DutyRosterPage() {
                         className={cn(
                           'border-b border-[#eef2f6] last:border-b-0',
                           stagedValue !== undefined && 'bg-[#f4f9ff]',
+                          showCoverageGaps &&
+                            stagedValue === undefined &&
+                            'bg-[#fffaf0]',
                         )}
                       >
                         <td className="px-4 py-2.5 font-semibold text-[#000a1e]">
-                          {person.fullName}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span>{person.fullName}</span>
+                            {showCoverageGaps ? (
+                              <Badge variant="warning">Missing today</Badge>
+                            ) : null}
+                          </div>
                         </td>
                         <td className="px-4 py-2.5 text-[#5f6670]">
                           {person.role === 'consultant'

@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { performance } from 'node:perf_hooks'
 
 const defaultCredentials = [
@@ -8,43 +9,137 @@ const defaultCredentials = [
   { identifier: 'hana.abera@stpaulhospital.demo', password: 'StPaul2026!' },
 ]
 
-const config = {
-  baseUrl: envString('LOAD_BASE_URL', 'http://127.0.0.1:8000').replace(/\/+$/, ''),
-  frontendOrigin: envString('LOAD_FRONTEND_ORIGIN', 'http://localhost:5173').replace(/\/+$/, ''),
-  users: envInt('LOAD_USERS', 200),
-  durationSeconds: envInt('LOAD_DURATION_SECONDS', 60),
-  rampSeconds: envInt('LOAD_RAMP_SECONDS', 20),
-  thinkMinMs: envInt('LOAD_THINK_MIN_MS', 250),
-  thinkMaxMs: envInt('LOAD_THINK_MAX_MS', 1200),
-  requestTimeoutMs: envInt('LOAD_REQUEST_TIMEOUT_MS', 15000),
-  detailBatchSize: envInt('LOAD_DETAIL_BATCH_SIZE', 20),
-  progressSeconds: envInt('LOAD_PROGRESS_SECONDS', 5),
-  output:
-    envString(
+const mixes = {
+  standard: [
+    ['workspace-revision', 0.45],
+    ['workspace', 0.15],
+    ['report-details', 0.22],
+    ['notifications', 0.1],
+    ['auth-me', 0.08],
+  ],
+  spike: [
+    ['workspace-revision', 0.15],
+    ['workspace', 0.35],
+    ['report-details', 0.4],
+    ['notifications', 0.05],
+    ['auth-me', 0.05],
+  ],
+  // Role-aware hospital day (docs/CAPACITY_TEST_REPORT.md): every VU plays the
+  // role its account holds, so the request mix follows the seeded headcount
+  // (nurses, administrators, residents/consultants, student representatives)
+  // and includes the writes and the heavy admin reads the other profiles omit.
+  mixed: [['role-aware', 1]],
+}
+
+export const roleMixes = {
+  nurse: [
+    ['workspace-revision', 0.3],
+    ['workspace', 0.15],
+    ['report-details', 0.15],
+    ['report-save', 0.1],
+    ['status-history', 0.1],
+    ['notifications', 0.15],
+    ['auth-me', 0.05],
+  ],
+  admin: [
+    ['analytics-dashboard', 0.2],
+    ['workspace', 0.15],
+    ['reports-window', 0.2],
+    ['action-items', 0.1],
+    ['users', 0.1],
+    ['admin-audit', 0.1],
+    ['notifications', 0.1],
+    ['workspace-revision', 0.045],
+    ['export-request', 0.005],
+  ],
+  academic: [
+    ['workspace', 0.15],
+    ['academic-form-options', 0.25],
+    ['academic-my-submissions', 0.2],
+    ['academic-my-performance', 0.1],
+    ['notifications', 0.15],
+    ['workspace-revision', 0.15],
+  ],
+  student_rep: [
+    ['teaching-my-sessions', 0.6],
+    ['notifications', 0.2],
+    ['workspace-revision', 0.2],
+  ],
+}
+
+export function roleGroup(role) {
+  if (role === 'nurse') return 'nurse'
+  if (role === 'admin' || role === 'superadmin') return 'admin'
+  if (role === 'resident' || role === 'consultant') return 'academic'
+  if (role === 'student_rep') return 'student_rep'
+
+  return 'academic'
+}
+
+export function loadConfig(environment = process.env) {
+  const profile = envString(environment, 'LOAD_PROFILE', 'standard')
+  if (!(profile in mixes)) {
+    throw new Error(`LOAD_PROFILE must be one of: ${Object.keys(mixes).join(', ')}.`)
+  }
+
+  return {
+    baseUrl: envString(environment, 'LOAD_BASE_URL', 'http://127.0.0.1:8000').replace(
+      /\/+$/,
+      '',
+    ),
+    frontendOrigin: envString(
+      environment,
+      'LOAD_FRONTEND_ORIGIN',
+      'http://localhost:5173',
+    ).replace(/\/+$/, ''),
+    users: envInt(environment, 'LOAD_USERS', 200),
+    durationSeconds: envInt(environment, 'LOAD_DURATION_SECONDS', 60),
+    rampSeconds: envInt(environment, 'LOAD_RAMP_SECONDS', 20),
+    thinkMinMs: envInt(environment, 'LOAD_THINK_MIN_MS', 250),
+    thinkMaxMs: envInt(environment, 'LOAD_THINK_MAX_MS', 1200),
+    requestTimeoutMs: envInt(environment, 'LOAD_REQUEST_TIMEOUT_MS', 15000),
+    detailBatchSize: envInt(environment, 'LOAD_DETAIL_BATCH_SIZE', 20),
+    preparationConcurrency: envInt(environment, 'LOAD_PREPARATION_CONCURRENCY', 10),
+    progressSeconds: envInt(environment, 'LOAD_PROGRESS_SECONDS', 5),
+    profile,
+    output: envString(
+      environment,
       'LOAD_OUTPUT',
       `artifacts/load-tests/${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
     ),
+    credentialsFile: environment.LOAD_CREDENTIALS_FILE?.trim(),
+    inlineCredentials: environment.LOAD_CREDENTIALS?.trim(),
+    allowHighConcurrency: environment.LOAD_ALLOW_HIGH_CONCURRENCY === 'I_UNDERSTAND',
+    syntheticSourceIps: environment.LOAD_SYNTHETIC_SOURCE_IPS === '1',
+  }
 }
 
-class CookieJar {
+export class CookieJar {
   cookies = new Map()
 
-  store(response) {
-    for (const cookie of setCookieHeaders(response.headers)) {
-      const [pair] = cookie.split(';')
-      const separatorIndex = pair.indexOf('=')
+  store(headers) {
+    const values =
+      typeof headers.getSetCookie === 'function'
+        ? headers.getSetCookie()
+        : [headers.get('set-cookie')].filter(Boolean)
 
-      if (separatorIndex <= 0) {
-        continue
-      }
+    for (const header of values) {
+      for (const cookie of header.split(/,(?=\s*[^;,]+=)/g)) {
+        const [pair] = cookie.split(';')
+        const separatorIndex = pair.indexOf('=')
 
-      const name = pair.slice(0, separatorIndex).trim()
-      const value = pair.slice(separatorIndex + 1).trim()
+        if (separatorIndex <= 0) {
+          continue
+        }
 
-      if (value === '') {
-        this.cookies.delete(name)
-      } else {
-        this.cookies.set(name, value)
+        const name = pair.slice(0, separatorIndex).trim()
+        const value = pair.slice(separatorIndex + 1).trim()
+
+        if (value === '') {
+          this.cookies.delete(name)
+        } else {
+          this.cookies.set(name, value)
+        }
       }
     }
   }
@@ -62,74 +157,136 @@ class CookieJar {
   }
 }
 
-class Session {
-  constructor(credential) {
+export class Session {
+  constructor(credential, index, config) {
     this.credential = credential
+    this.index = index
+    this.config = config
     this.jar = new CookieJar()
     this.reportIds = []
+    this.revisionToken = null
     this.role = 'unknown'
+    // A nurse's own unlocked report and its current cell values: the mixed
+    // profile writes them back unchanged (the real save path, no data drift).
+    this.editableReport = null
+    this.sourceIp = `10.250.${Math.floor(index / 250)}.${(index % 250) + 1}`
   }
 
-  async login() {
-    await request(this, 'GET', '/sanctum/csrf-cookie', 'csrf')
+  async login(metrics) {
+    await request(this, metrics, 'GET', '/sanctum/csrf-cookie', 'csrf', {}, false)
 
-    const payload = await request(this, 'POST', '/api/auth/login', 'login', {
-      body: {
-        identifier: this.credential.identifier,
-        password: this.credential.password,
+    const payload = await request(
+      this,
+      metrics,
+      'POST',
+      '/api/auth/login',
+      'login',
+      {
+        body: {
+          identifier: this.credential.identifier,
+          password: this.credential.password,
+        },
+        expectJson: true,
       },
-      expectJson: true,
-    })
+      false,
+    )
 
     this.role = payload?.user?.role ?? 'unknown'
   }
 
-  async primeWorkspace() {
-    const payload = await request(this, 'GET', workspacePath(), 'workspace-prime', {
-      expectJson: true,
-    })
+  async primeWorkspace(metrics) {
+    const [workspace, reportPage] = await Promise.all([
+      request(
+        this,
+        metrics,
+        'GET',
+        workspacePath(),
+        'workspace-prime',
+        { expectJson: true },
+        false,
+      ),
+      request(
+        this,
+        metrics,
+        'GET',
+        '/api/reports?per_page=20',
+        'reports-prime',
+        { expectJson: true },
+        false,
+      ),
+    ])
 
-    this.reportIds = Array.isArray(payload?.state?.reports)
-      ? payload.state.reports
-          .map((report) => report?.id)
-          .filter((id) => typeof id === 'string' && id.length > 0)
-      : []
+    this.reportIds = reportIdsFromPage(reportPage)
+    this.revisionToken = revisionTokenFromWorkspace(workspace)
+    if (!this.revisionToken) {
+      throw new Error('Workspace prime did not return a revision polling credential.')
+    }
+
+    if (this.config.profile === 'mixed' && roleGroup(this.role) === 'nurse') {
+      const candidate = (reportPage?.data ?? []).find(
+        (report) => report && report.status !== 'locked' && !report.lockedAt,
+      )
+      if (candidate) {
+        const detail = await request(
+          this,
+          metrics,
+          'GET',
+          `/api/reports/${candidate.id}`,
+          'report-prime',
+          { expectJson: true },
+          false,
+        )
+        if (detail && typeof detail.values === 'object') {
+          this.editableReport = { id: candidate.id, values: detail.values }
+        }
+      }
+    }
   }
 }
 
-const metrics = {
-  startedAt: new Date().toISOString(),
-  config: {
-    ...config,
-    credentials: undefined,
-  },
-  byEndpoint: new Map(),
-  failures: [],
+export function reportIdsFromPage(payload) {
+  return Array.isArray(payload?.data)
+    ? payload.data
+        .map((report) => report?.id)
+        .filter((id) => typeof id === 'string' && id.length > 0)
+    : []
 }
 
-function envString(key, fallback) {
-  const value = process.env[key]?.trim()
-
-  return value || fallback
+export function revisionTokenFromWorkspace(payload) {
+  return typeof payload?.revisionToken === 'string' && payload.revisionToken.length > 0
+    ? payload.revisionToken
+    : null
 }
 
-function envInt(key, fallback) {
-  const value = Number.parseInt(process.env[key] ?? '', 10)
+export function buildSessions(credentials, config) {
+  if (credentials.length < config.users) {
+    throw new Error(
+      `LOAD_USERS=${config.users} requires at least ${config.users} distinct credentials; ` +
+        `only ${credentials.length} were provided. Sessions are never shared between VUs.`,
+    )
+  }
+
+  return credentials
+    .slice(0, config.users)
+    .map((credential, index) => new Session(credential, index, config))
+}
+
+export function createMetrics() {
+  return {
+    byEndpoint: new Map(),
+    failures: [],
+    loadStartedAt: 0,
+  }
+}
+
+function envString(environment, key, fallback) {
+  return environment[key]?.trim() || fallback
+}
+
+function envInt(environment, key, fallback) {
+  const value = Number.parseInt(environment[key] ?? '', 10)
 
   return Number.isFinite(value) && value > 0 ? value : fallback
-}
-
-function setCookieHeaders(headers) {
-  if (typeof headers.getSetCookie === 'function') {
-    return headers.getSetCookie()
-  }
-
-  const header = headers.get('set-cookie')
-  if (!header) {
-    return []
-  }
-
-  return header.split(/,(?=\s*[^;,]+=)/g).map((value) => value.trim())
 }
 
 function workspacePath() {
@@ -142,12 +299,10 @@ function workspacePath() {
   return `/api/workspace?${params.toString()}`
 }
 
-async function loadCredentials() {
-  const file = process.env.LOAD_CREDENTIALS_FILE?.trim()
-
-  if (file) {
-    const raw = await readFile(file, 'utf8')
-    if (file.endsWith('.json')) {
+async function loadCredentials(config) {
+  if (config.credentialsFile) {
+    const raw = await readFile(config.credentialsFile, 'utf8')
+    if (config.credentialsFile.endsWith('.json')) {
       const parsed = JSON.parse(raw)
       if (!Array.isArray(parsed)) {
         throw new Error('LOAD_CREDENTIALS_FILE JSON must be an array.')
@@ -170,9 +325,8 @@ async function loadCredentials() {
       })
   }
 
-  const inline = process.env.LOAD_CREDENTIALS?.trim()
-  if (inline) {
-    return inline.split(';').map((pair) => {
+  if (config.inlineCredentials) {
+    return config.inlineCredentials.split(';').map((pair) => {
       const separatorIndex = pair.indexOf('=')
       if (separatorIndex < 0) {
         throw new Error('LOAD_CREDENTIALS entries must look like identifier=password.')
@@ -205,21 +359,25 @@ function validateCredential(value) {
   }
 }
 
-async function request(session, method, targetPath, endpoint, options = {}) {
-  const url = `${config.baseUrl}${targetPath}`
+async function request(session, metrics, method, targetPath, endpoint, options = {}, record = true) {
+  const url = `${session.config.baseUrl}${targetPath}`
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs)
+  const timeout = setTimeout(() => controller.abort(), session.config.requestTimeoutMs)
   const headers = {
     Accept: 'application/json',
     'X-Requested-With': 'XMLHttpRequest',
-    Origin: config.frontendOrigin,
-    Referer: `${config.frontendOrigin}/`,
+    Origin: session.config.frontendOrigin,
+    Referer: `${session.config.frontendOrigin}/`,
     ...(options.headers ?? {}),
   }
   const cookieHeader = session.jar.header()
 
   if (cookieHeader) {
     headers.Cookie = cookieHeader
+  }
+
+  if (session.config.syntheticSourceIps) {
+    headers['X-Forwarded-For'] = session.sourceIp
   }
 
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -236,6 +394,7 @@ async function request(session, method, targetPath, endpoint, options = {}) {
   }
 
   const started = performance.now()
+  let status = 0
 
   try {
     const response = await fetch(url, {
@@ -245,13 +404,16 @@ async function request(session, method, targetPath, endpoint, options = {}) {
       signal: controller.signal,
       redirect: 'manual',
     })
-    session.jar.store(response)
+    status = response.status
+    session.jar.store(response.headers)
 
     const text = await response.text()
     const durationMs = performance.now() - started
     const ok = response.status >= 200 && response.status < 400
 
-    record(endpoint, response.status, durationMs, text.length, ok)
+    if (record) {
+      recordResult(metrics, endpoint, response.status, durationMs, text.length, ok, false)
+    }
 
     if (!ok) {
       const message = text.slice(0, 240).replace(/\s+/g, ' ')
@@ -265,25 +427,35 @@ async function request(session, method, targetPath, endpoint, options = {}) {
     return text
   } catch (error) {
     const durationMs = performance.now() - started
-    const message = error instanceof Error ? error.message : String(error)
+    const timedOut = error instanceof Error && error.name === 'AbortError'
 
-    record(endpoint, 0, durationMs, 0, false)
-    if (metrics.failures.length < 20) {
-      metrics.failures.push({ endpoint, message })
+    if (record && status === 0) {
+      recordResult(metrics, endpoint, 0, durationMs, 0, false, timedOut)
     }
+
+    if (record && metrics.failures.length < 20) {
+      metrics.failures.push({
+        endpoint,
+        status,
+        timedOut,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+
     throw error
   } finally {
     clearTimeout(timeout)
   }
 }
 
-function record(endpoint, status, durationMs, bytes, ok) {
+function recordResult(metrics, endpoint, status, durationMs, bytes, ok, timedOut) {
   const current =
     metrics.byEndpoint.get(endpoint) ??
     {
       count: 0,
       ok: 0,
       failed: 0,
+      timeouts: 0,
       bytes: 0,
       durations: [],
       statuses: {},
@@ -292,6 +464,7 @@ function record(endpoint, status, durationMs, bytes, ok) {
   current.count += 1
   current.ok += ok ? 1 : 0
   current.failed += ok ? 0 : 1
+  current.timeouts += timedOut ? 1 : 0
   current.bytes += bytes
   current.durations.push(durationMs)
   current.statuses[status] = (current.statuses[status] ?? 0) + 1
@@ -309,17 +482,19 @@ function percentile(values, pct) {
   return sorted[index]
 }
 
-function endpointSummary() {
-  return Object.fromEntries(
+export function summarize(metrics, config, startedAt, finishedAt) {
+  const endpoints = Object.fromEntries(
     [...metrics.byEndpoint.entries()].map(([endpoint, data]) => [
       endpoint,
       {
         count: data.count,
         ok: data.ok,
         failed: data.failed,
+        timeouts: data.timeouts,
         errorRate: Number((data.failed / Math.max(1, data.count)).toFixed(4)),
         bytes: data.bytes,
-        rps: Number((data.count / config.durationSeconds).toFixed(2)),
+        attemptedRps: Number((data.count / config.durationSeconds).toFixed(2)),
+        successfulRps: Number((data.ok / config.durationSeconds).toFixed(2)),
         p50Ms: Number(percentile(data.durations, 50).toFixed(1)),
         p95Ms: Number(percentile(data.durations, 95).toFixed(1)),
         p99Ms: Number(percentile(data.durations, 99).toFixed(1)),
@@ -328,6 +503,46 @@ function endpointSummary() {
       },
     ]),
   )
+  const allDurations = [...metrics.byEndpoint.values()].flatMap((item) => item.durations)
+  const overall = {
+    p50Ms: Number(percentile(allDurations, 50).toFixed(1)),
+    p75Ms: Number(percentile(allDurations, 75).toFixed(1)),
+    p95Ms: Number(percentile(allDurations, 95).toFixed(1)),
+    p99Ms: Number(percentile(allDurations, 99).toFixed(1)),
+    maxMs: Number(Math.max(0, ...allDurations).toFixed(1)),
+  }
+  const totalRequests = Object.values(endpoints).reduce((sum, item) => sum + item.count, 0)
+  const totalOk = Object.values(endpoints).reduce((sum, item) => sum + item.ok, 0)
+  const totalFailures = Object.values(endpoints).reduce((sum, item) => sum + item.failed, 0)
+  const totalTimeouts = Object.values(endpoints).reduce((sum, item) => sum + item.timeouts, 0)
+
+  return {
+    startedAt,
+    finishedAt,
+    baseUrl: config.baseUrl,
+    users: config.users,
+    distinctSessions: config.users,
+    durationSeconds: config.durationSeconds,
+    rampSeconds: config.rampSeconds,
+    thinkMinMs: config.thinkMinMs,
+    thinkMaxMs: config.thinkMaxMs,
+    profile: config.profile,
+    mix: Object.fromEntries(mixes[config.profile]),
+    totalRequests,
+    totalOk,
+    totalFailures,
+    totalTimeouts,
+    errorRate: Number((totalFailures / Math.max(1, totalRequests)).toFixed(4)),
+    attemptedRps: Number((totalRequests / config.durationSeconds).toFixed(2)),
+    successfulRps: Number((totalOk / config.durationSeconds).toFixed(2)),
+    timeoutRps: Number((totalTimeouts / config.durationSeconds).toFixed(2)),
+    overall,
+    roles: Object.fromEntries(
+      [...(metrics.rolesBySession ?? new Map()).entries()].map(([role, count]) => [role, count]),
+    ),
+    endpoints,
+    failures: metrics.failures,
+  }
 }
 
 function sleep(ms) {
@@ -348,7 +563,7 @@ function sampleReportIds(session) {
   }
 
   const ids = []
-  const count = Math.min(config.detailBatchSize, session.reportIds.length)
+  const count = Math.min(session.config.detailBatchSize, session.reportIds.length)
 
   for (let index = 0; index < count; index += 1) {
     ids.push(sample(session.reportIds))
@@ -357,43 +572,164 @@ function sampleReportIds(session) {
   return [...new Set(ids)]
 }
 
-async function runVirtualUser(index, sessions, endAt) {
-  const startDelay = Math.floor((index / Math.max(1, config.users)) * config.rampSeconds * 1000)
-  await sleep(startDelay)
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10)
+}
 
-  while (Date.now() < endAt) {
-    const session = sessions[index % sessions.length]
-    const roll = Math.random()
+async function runMeasuredRequest(session, metrics) {
+  const roll = Math.random()
+  const mix =
+    session.config.profile === 'mixed'
+      ? roleMixes[roleGroup(session.role)]
+      : mixes[session.config.profile]
+  let cumulative = 0
+  const endpoint =
+    mix.find(([, weight]) => {
+      cumulative += weight
 
-    try {
-      if (roll < 0.6) {
-        await request(session, 'GET', workspacePath(), 'workspace')
-      } else if (roll < 0.82) {
-        const ids = sampleReportIds(session)
-        if (ids.length) {
-          await request(
-            session,
-            'GET',
-            `/api/reports/details?ids=${encodeURIComponent(ids.join(','))}`,
-            'report-details',
-          )
-        } else {
-          await request(session, 'GET', workspacePath(), 'workspace')
-        }
-      } else if (roll < 0.92) {
-        await request(session, 'GET', '/api/notifications?limit=20', 'notifications')
+      return roll < cumulative
+    })?.[0] ?? 'auth-me'
+
+  try {
+    if (endpoint === 'workspace-revision') {
+      const payload = await request(
+        session,
+        metrics,
+        'GET',
+        '/api/workspace/revision',
+        endpoint,
+        {
+          expectJson: true,
+          headers: {
+            'X-Workspace-Revision-Token': session.revisionToken,
+          },
+        },
+      )
+      session.revisionToken = revisionTokenFromWorkspace(payload) ?? session.revisionToken
+    } else if (endpoint === 'workspace') {
+      await request(session, metrics, 'GET', workspacePath(), endpoint)
+    } else if (endpoint === 'report-details') {
+      const ids = sampleReportIds(session)
+      if (ids.length) {
+        await request(
+          session,
+          metrics,
+          'GET',
+          `/api/reports/details?ids=${encodeURIComponent(ids.join(','))}`,
+          endpoint,
+        )
       } else {
-        await request(session, 'GET', '/api/auth/me', 'auth-me')
+        await request(session, metrics, 'GET', workspacePath(), 'workspace')
       }
-    } catch {
-      // Per-request failure is recorded; keep the virtual user alive.
+    } else if (endpoint === 'notifications') {
+      await request(session, metrics, 'GET', '/api/notifications?limit=20', endpoint)
+    } else if (endpoint === 'report-save') {
+      if (session.editableReport) {
+        await request(
+          session,
+          metrics,
+          'PUT',
+          `/api/reports/${session.editableReport.id}`,
+          endpoint,
+          { body: { values: session.editableReport.values } },
+        )
+      } else {
+        await request(session, metrics, 'GET', '/api/reports?per_page=10', 'reports-window')
+      }
+    } else if (endpoint === 'status-history') {
+      await request(session, metrics, 'GET', '/api/reports/status-history?perPage=50', endpoint)
+    } else if (endpoint === 'analytics-dashboard') {
+      // The nine-week window the admin dashboard opens on. An unfiltered call
+      // means the whole archive, which is a different (much heavier) question
+      // and is measured separately in docs/CAPACITY_TEST_REPORT.md.
+      const to = new Date()
+      const from = new Date(to.getTime() - 63 * 24 * 3600 * 1000)
+      await request(
+        session,
+        metrics,
+        'GET',
+        `/api/analytics/dashboard?dateFrom=${from.toISOString().slice(0, 10)}&dateTo=${to.toISOString().slice(0, 10)}`,
+        endpoint,
+      )
+    } else if (endpoint === 'analytics-dashboard-all') {
+      await request(session, metrics, 'GET', '/api/analytics/dashboard', endpoint)
+    } else if (endpoint === 'reports-window') {
+      await request(session, metrics, 'GET', '/api/reports?perPage=300', endpoint)
+    } else if (endpoint === 'action-items') {
+      await request(session, metrics, 'GET', '/api/admin/action-items', endpoint)
+    } else if (endpoint === 'users') {
+      await request(session, metrics, 'GET', '/api/admin/users', endpoint)
+    } else if (endpoint === 'admin-audit') {
+      await request(session, metrics, 'GET', '/api/admin/admin-audit-logs', endpoint)
+    } else if (endpoint === 'export-request') {
+      await request(session, metrics, 'POST', '/api/analytics/exports', endpoint, {
+        body: { format: 'csv' },
+      })
+    } else if (endpoint === 'academic-form-options') {
+      await request(
+        session,
+        metrics,
+        'GET',
+        `/api/academic/form-options?date=${todayIsoDate()}`,
+        endpoint,
+      )
+    } else if (endpoint === 'academic-my-submissions') {
+      await request(session, metrics, 'GET', '/api/academic/my-submissions', endpoint)
+    } else if (endpoint === 'academic-my-performance') {
+      await request(session, metrics, 'GET', '/api/academic/my-performance', endpoint)
+    } else if (endpoint === 'teaching-my-sessions') {
+      await request(session, metrics, 'GET', '/api/teaching/my-sessions', endpoint)
+    } else {
+      await request(session, metrics, 'GET', '/api/auth/me', endpoint)
     }
-
-    await sleep(randomInt(config.thinkMinMs, config.thinkMaxMs))
+  } catch {
+    // The request helper records the failure once; keep this VU alive.
   }
 }
 
-async function writeReport(summary) {
+async function runVirtualUser(session, index, metrics, endAt) {
+  const startDelay = Math.floor(
+    (index / Math.max(1, session.config.users)) * session.config.rampSeconds * 1000,
+  )
+  await sleep(startDelay)
+
+  while (Date.now() < endAt) {
+    await runMeasuredRequest(session, metrics)
+    await sleep(randomInt(session.config.thinkMinMs, session.config.thinkMaxMs))
+  }
+}
+
+async function prepareSession(session, metrics) {
+  const maximumAttempts = 3
+
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      await session.login(metrics)
+      await session.primeWorkspace(metrics)
+
+      return
+    } catch (error) {
+      if (attempt === maximumAttempts) {
+        throw error
+      }
+
+      session.jar = new CookieJar()
+      session.reportIds = []
+      session.revisionToken = null
+      await sleep(500 * attempt)
+    }
+  }
+}
+
+async function prepareSessions(sessions, metrics, concurrency) {
+  for (let start = 0; start < sessions.length; start += concurrency) {
+    const batch = sessions.slice(start, start + concurrency)
+    await Promise.all(batch.map((session) => prepareSession(session, metrics)))
+    console.log(`Prepared ${Math.min(start + batch.length, sessions.length)}/${sessions.length}`)
+  }
+}
+
+async function writeReport(config, summary) {
   const outputPath = path.resolve(config.output)
   await mkdir(path.dirname(outputPath), { recursive: true })
   await writeFile(outputPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8')
@@ -401,14 +737,15 @@ async function writeReport(summary) {
   return outputPath
 }
 
-function printSummary(summary) {
+function printSummary(summary, output) {
   const rows = Object.entries(summary.endpoints).map(([endpoint, item]) => ({
     endpoint,
     count: item.count,
     ok: item.ok,
     failed: item.failed,
+    timeouts: item.timeouts,
     errorRate: `${(item.errorRate * 100).toFixed(2)}%`,
-    rps: item.rps,
+    successfulRps: item.successfulRps,
     p50Ms: item.p50Ms,
     p95Ms: item.p95Ms,
     p99Ms: item.p99Ms,
@@ -416,73 +753,88 @@ function printSummary(summary) {
   }))
 
   console.table(rows)
-  console.log(`Total requests: ${summary.totalRequests}`)
-  console.log(`Total failures: ${summary.totalFailures}`)
-  console.log(`Overall RPS: ${summary.rps}`)
-  console.log(`Report: ${summary.output}`)
+  console.log(`Attempted requests: ${summary.totalRequests}`)
+  console.log(`Successful requests: ${summary.totalOk}`)
+  console.log(`Failures: ${summary.totalFailures}; timeouts: ${summary.totalTimeouts}`)
+  console.log(`Attempted RPS: ${summary.attemptedRps}`)
+  console.log(`Successful RPS: ${summary.successfulRps}`)
+  console.log(
+    `Overall latency: p50 ${summary.overall.p50Ms} ms, p95 ${summary.overall.p95Ms} ms, p99 ${summary.overall.p99Ms} ms, max ${summary.overall.maxMs} ms`,
+  )
+  if (Object.keys(summary.roles).length) {
+    console.log(`Sessions by role: ${JSON.stringify(summary.roles)}`)
+  }
+  console.log(`Report: ${output}`)
 }
 
-async function main() {
-  const credentials = await loadCredentials()
-  if (!credentials.length) {
-    throw new Error('No credentials configured.')
-  }
+export async function main(environment = process.env) {
+  const config = loadConfig(environment)
+  const targetHostname = new URL(config.baseUrl).hostname
+  const isLoopback = ['127.0.0.1', 'localhost', '::1'].includes(targetHostname)
 
-  console.log(`Base URL: ${config.baseUrl}`)
-  console.log(`Virtual users: ${config.users}`)
-  console.log(`Duration: ${config.durationSeconds}s; ramp: ${config.rampSeconds}s`)
-  console.log(`Credential sessions: ${credentials.length}`)
-
-  const sessions = credentials.map((credential) => new Session(credential))
-
-  for (const session of sessions) {
-    await session.login()
-    await session.primeWorkspace()
-    console.log(
-      `Authenticated ${session.credential.identifier} (${session.role}), reports visible: ${session.reportIds.length}`,
+  if (!isLoopback && config.users > 25 && !config.allowHighConcurrency) {
+    throw new Error(
+      'Refusing more than 25 virtual users against a non-local target. ' +
+        'Set LOAD_ALLOW_HIGH_CONCURRENCY=I_UNDERSTAND only after confirming a safe test environment.',
     )
   }
 
-  const endAt = Date.now() + config.durationSeconds * 1000
+  const credentials = await loadCredentials(config)
+  const sessions = buildSessions(credentials, config)
+  const metrics = createMetrics()
+
+  console.log(`Base URL: ${config.baseUrl}`)
+  console.log(`Virtual users/distinct sessions: ${config.users}`)
+  console.log(`Duration: ${config.durationSeconds}s; ramp: ${config.rampSeconds}s`)
+  console.log(`Profile: ${config.profile}`)
+  console.log('Preparing login and workspace state (excluded from measured results)...')
+
+  await prepareSessions(sessions, metrics, config.preparationConcurrency)
+  metrics.rolesBySession = new Map()
+  for (const session of sessions) {
+    metrics.rolesBySession.set(session.role, (metrics.rolesBySession.get(session.role) ?? 0) + 1)
+  }
+  await sleep(2000)
+
+  const startedAtMs = Date.now()
+  metrics.loadStartedAt = startedAtMs
+  const endAt = startedAtMs + config.durationSeconds * 1000
   const progressTimer = setInterval(() => {
-    const total = [...metrics.byEndpoint.values()].reduce((sum, item) => sum + item.count, 0)
+    const attempted = [...metrics.byEndpoint.values()].reduce(
+      (sum, item) => sum + item.count,
+      0,
+    )
     const failed = [...metrics.byEndpoint.values()].reduce((sum, item) => sum + item.failed, 0)
-    console.log(`progress: ${total} requests, ${failed} failures`)
+    console.log(`progress: ${attempted} attempted, ${failed} failed`)
   }, config.progressSeconds * 1000)
 
   await Promise.all(
-    Array.from({ length: config.users }, (_, index) => runVirtualUser(index, sessions, endAt)),
+    sessions.map((session, index) => runVirtualUser(session, index, metrics, endAt)),
   )
   clearInterval(progressTimer)
 
-  const endpoints = endpointSummary()
-  const totalRequests = Object.values(endpoints).reduce((sum, item) => sum + item.count, 0)
-  const totalFailures = Object.values(endpoints).reduce((sum, item) => sum + item.failed, 0)
-  const summary = {
-    startedAt: metrics.startedAt,
-    finishedAt: new Date().toISOString(),
-    baseUrl: config.baseUrl,
-    users: config.users,
-    durationSeconds: config.durationSeconds,
-    rampSeconds: config.rampSeconds,
-    sessionCount: sessions.length,
-    totalRequests,
-    totalFailures,
-    errorRate: Number((totalFailures / Math.max(1, totalRequests)).toFixed(4)),
-    rps: Number((totalRequests / config.durationSeconds).toFixed(2)),
-    endpoints,
-    failures: metrics.failures,
-  }
-  summary.output = await writeReport(summary)
-
-  printSummary(summary)
+  const summary = summarize(
+    metrics,
+    config,
+    new Date(startedAtMs).toISOString(),
+    new Date().toISOString(),
+  )
+  const output = await writeReport(config, summary)
+  printSummary(summary, output)
 
   if (summary.errorRate > 0.01) {
     process.exitCode = 1
   }
+
+  return summary
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error)
-  process.exitCode = 1
-})
+const isEntryPoint =
+  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
+
+if (isEntryPoint) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exitCode = 1
+  })
+}

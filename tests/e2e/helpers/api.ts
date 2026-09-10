@@ -2,7 +2,14 @@ import { request as pwRequest, type APIRequestContext } from '@playwright/test'
 import { ACCOUNTS, DEV_PASSWORD, type AccountKey } from './accounts'
 import { authFile } from './auth'
 
-export const BASE_URL = 'http://localhost:5173'
+/**
+ * Origin the suite talks to. The isolated gate serves the SPA from Vite on
+ * :5173 (playwright.config.ts starts it). E2E_BASE_URL lets the same specs run
+ * against another origin, such as the production preview bundle on :4173 used
+ * by the Lighthouse job or the Docker parity stack on https://localhost:8443,
+ * via playwright.external.config.ts.
+ */
+export const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173'
 
 /**
  * Build an authenticated API context from a role's saved storageState (written

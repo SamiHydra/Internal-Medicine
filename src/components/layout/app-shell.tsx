@@ -8,6 +8,7 @@ import { getNavigationItems, isSharedAdminPath, isWorkspaceRole, type Workspace 
 import { getUnreadNotificationCount } from '@/data/selectors'
 import { useAppData, useAppSync, useCurrentReportingPeriod } from '@/context/app-data-context'
 import { useWorkspace } from '@/context/workspace-context'
+import { resolvePageTitle } from '@/lib/page-title'
 import { formatWeekLabel } from '@/lib/dates'
 import { prefetchRoute } from '@/routes/route-prefetch'
 import { cn } from '@/lib/utils'
@@ -28,7 +29,7 @@ function BrandLockup({
     <div className={cn('flex items-center', collapsed ? 'justify-center' : compact ? 'gap-3' : 'gap-3.5')}>
       <img
         src={stPaulosLogo}
-        alt="St. Paul Hospital logo"
+        alt="St Paul's Hospital logo"
         className={cn(
           'shrink-0 rounded-[0.4rem] object-cover',
           compact ? 'h-10 w-10' : collapsed ? 'h-11 w-11' : 'h-12 w-12',
@@ -39,16 +40,19 @@ function BrandLockup({
         <div className="min-w-0">
           <p
             className={cn(
-              'whitespace-nowrap font-bold uppercase tracking-[0.08em]',
+              // truncate, not nowrap: on hosts without the design fonts (Ubuntu
+              // fallbacks are wider) the lockup must clip inside its column
+              // instead of widening the page (found by the CI sweep at 320px).
+              'truncate font-bold uppercase tracking-[0.08em]',
               inverted ? 'text-[#f0b429]' : 'text-[#005db6]',
               compact ? 'text-[0.62rem]' : 'text-[0.78rem]',
             )}
           >
-            St. Paul Hospital
+            St Paul's Hospital
           </p>
           <p
             className={cn(
-              'whitespace-nowrap font-display leading-tight',
+              'truncate font-display leading-tight',
               inverted ? 'text-white' : 'text-[#000a1e]',
               compact ? 'text-base' : 'text-[1.15rem]',
             )}
@@ -197,7 +201,7 @@ function WorkspaceSwitcher({
             title={collapsed ? option.label : undefined}
             className={cn(
               'flex items-center justify-center font-semibold transition-colors duration-200',
-              collapsed ? 'h-10 w-10 rounded-[0.4rem]' : 'gap-2 rounded-[0.35rem] px-2.5 py-2 text-[13px]',
+              collapsed ? 'h-10 w-10 rounded-[0.4rem]' : 'min-h-11 gap-2 rounded-[0.35rem] px-2.5 py-2 text-[13px]',
               active
                 ? 'bg-[#f0b429] text-[#04162f]'
                 : 'text-[#92a3ba] hover:bg-white/[0.06] hover:text-white',
@@ -228,6 +232,26 @@ export function AppShell({ children }: PropsWithChildren) {
     return window.localStorage.getItem('stpaul:sidebar-collapsed') === '1'
   })
   const mainContentRef = useRef<HTMLDivElement>(null)
+  // The account sheet is opened by two different controls (the avatar button
+  // and the phone tab bar's More tab), neither a Radix trigger, so focus is
+  // put back on whichever one opened it when the sheet closes.
+  const menuTriggerRef = useRef<HTMLElement | null>(null)
+  const openMenu = () => {
+    menuTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setMenuOpen(true)
+  }
+  const restoreMenuFocus = (event: Event) => {
+    event.preventDefault()
+    const remembered = menuTriggerRef.current
+    if (remembered?.isConnected && remembered.offsetParent !== null) {
+      remembered.focus()
+      return
+    }
+    const fallback = Array.from(document.querySelectorAll<HTMLElement>('button[aria-haspopup="dialog"]')).find(
+      (element) => element.offsetParent !== null,
+    )
+    fallback?.focus()
+  }
   const previousSidebarWidthRef = useRef(collapsed ? 84 : 292)
 
   useEffect(() => {
@@ -273,20 +297,10 @@ export function AppShell({ children }: PropsWithChildren) {
   const navItems = getNavigationItems(currentUser.role, workspace, {
     isMorningRecorder: academic?.isMorningRecorder,
   })
-  const activeNavItem = [...navItems]
-    .sort((left, right) => right.href.length - left.href.length)
-    .find(
-      (item) =>
-        location.pathname === item.href || location.pathname.startsWith(`${item.href}/`),
-    )
-  // The Dashboard nav item (href '/admin') matches any /admin/* route via startsWith,
-  // so routes without their own nav entry (e.g. notifications) would mis-title as
-  // "Dashboard". Resolve those known auxiliary routes explicitly.
-  const pageTitle = location.pathname.endsWith('/notifications')
-    ? 'Notifications'
-    : location.pathname.startsWith('/reports/') || location.pathname === '/reports'
-      ? 'Weekly report'
-      : activeNavItem?.label ?? 'Workspace'
+  // Routes without their own nav entry (notifications, the report editor, the
+  // manual admin setup page, department and people details) get explicit
+  // titles; otherwise the Dashboard entry would match them by prefix (QA-026).
+  const pageTitle = resolvePageTitle(location.pathname, navItems)
   const sectionEyebrow =
     currentUser.role === 'nurse'
       ? 'Weekly reporting'
@@ -305,8 +319,9 @@ export function AppShell({ children }: PropsWithChildren) {
     <div className="min-h-screen bg-[#f8f9fa]">
       <aside
         id="desktop-sidebar"
+        aria-label="Sidebar"
         className={cn(
-          'fixed inset-y-0 left-0 z-40 hidden border-r border-[#0c2747] bg-[#04162f] transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] sm:block',
+          'fixed inset-y-0 left-0 z-40 hidden border-r border-[#0c2747] bg-[#04162f] transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] sm:block',
           collapsed ? 'w-[84px]' : 'w-[292px]',
         )}
       >
@@ -341,7 +356,7 @@ export function AppShell({ children }: PropsWithChildren) {
           aria-controls="desktop-sidebar"
           aria-expanded={!collapsed}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="group absolute -right-5 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-[#315476] bg-[#04162f] text-[#f0b429] shadow-[0_4px_14px_rgba(4,22,47,0.2)] transition-[transform,background-color,border-color,box-shadow] duration-150 ease-out hover:scale-105 hover:border-[#f0b429]/70 hover:bg-[#0a2342] hover:shadow-[0_5px_18px_rgba(4,22,47,0.26)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f0b429] focus-visible:ring-offset-2 active:scale-90 motion-reduce:transition-none"
+          className="group absolute -right-5 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-[#315476] bg-[#04162f] text-[#f0b429] shadow-[0_4px_14px_rgba(4,22,47,0.2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f0b429] focus-visible:ring-offset-2 focus-visible:ring-offset-white transition-[transform,background-color,border-color,box-shadow] duration-150 ease-out hover:scale-105 hover:border-[#f0b429]/70 hover:bg-[#0a2342] hover:shadow-[0_5px_18px_rgba(4,22,47,0.26)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f0b429] focus-visible:ring-offset-2 active:scale-90 motion-reduce:transition-none"
         >
           <ChevronLeft
             aria-hidden="true"
@@ -360,44 +375,44 @@ export function AppShell({ children }: PropsWithChildren) {
           collapsed ? 'sm:pl-[84px]' : 'sm:pl-[292px]',
         )}
       >
-        <div ref={mainContentRef} className="flex min-h-screen min-w-0 flex-col will-change-transform">
+        <div ref={mainContentRef} className="flex min-h-screen min-w-0 flex-col">
           <header className="sticky top-0 z-30 border-b border-[#e7ecf1] bg-white">
             <div className="flex items-center justify-between gap-4 px-4 py-3 md:px-6 lg:px-8">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="h-3.5 w-[3px] rounded-full bg-[#f0b429]" />
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
-                      {sectionEyebrow}
-                    </p>
-                  </div>
+                  <p className="truncate text-[11px] font-semibold uppercase tracking-[0.2em] text-[#005db6]">
+                    {sectionEyebrow}
+                  </p>
                   <h1 className="mt-1 truncate pb-0.5 font-display text-[1.3rem] font-bold leading-tight tracking-[-0.03em] text-[#000a1e] md:text-[1.5rem]">
                     {pageTitle}
                   </h1>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2.5 md:gap-3">
-                <div className="hidden items-center gap-2.5 rounded-[0.4rem] border border-[#e1e6ec] bg-white px-3.5 py-2 lg:flex">
-                  <span className="relative flex h-2 w-2 items-center justify-center">
+              <div className="flex shrink-0 items-center gap-2.5 md:gap-3">
+                {/* Ambient status reads as text, not as a control: no border, no
+                    display face. The dot still carries the syncing state. */}
+                <div className="hidden items-center gap-2 pr-1 text-[13px] text-[#5b6169] lg:flex">
+                  <span className="relative flex h-1.5 w-1.5 items-center justify-center">
                     {isSyncing ? (
-                      <span className="absolute inset-0 animate-ping rounded-full bg-[#63a1ff]/55" />
+                      <span className="absolute inset-0 motion-safe:animate-ping rounded-full bg-[#63a1ff]/55" />
                     ) : null}
-                    <span className="relative h-2 w-2 rounded-full bg-[#f0b429]" />
+                    <span className="relative h-1.5 w-1.5 rounded-full bg-[#f0b429]" />
                   </span>
-                  <div className="leading-tight">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#74777f]">
-                      {isSyncing ? 'Syncing' : 'Reporting period'}
-                    </p>
-                    <p className="font-display text-[0.92rem] font-semibold leading-none tracking-[-0.02em] text-[#000a1e]">
-                      {currentPeriodLabel}
-                    </p>
-                  </div>
+                  <span className="sr-only">
+                    {isSyncing ? 'Syncing. ' : ''}Reporting period:{' '}
+                  </span>
+                  {isSyncing ? 'Syncing' : currentPeriodLabel}
                 </div>
+
+                <span
+                  aria-hidden
+                  className="mx-1.5 hidden h-5 w-px bg-[#e7ecf1] lg:block"
+                />
 
                 <button
                   type="button"
-                  className="relative inline-flex h-10 w-10 items-center justify-center rounded-[0.4rem] border border-[#e1e6ec] bg-white text-[#44474e] transition-[transform,background-color,border-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#c8d5e6] hover:bg-[#f6f8fa] hover:text-[#000a1e] active:scale-[0.95]"
+                  className="relative inline-flex h-10 w-10 items-center justify-center rounded-[0.35rem] text-[#5b6169] transition-[transform,background-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[#f1f4f8] hover:text-[#000a1e] active:scale-[0.95] pointer-coarse:h-11 pointer-coarse:w-11"
                   aria-label="Notifications"
                   onClick={() =>
                     navigate(
@@ -405,46 +420,50 @@ export function AppShell({ children }: PropsWithChildren) {
                     )
                   }
                 >
-                  <Bell className="h-4 w-4" />
+                  <Bell className="h-[18px] w-[18px]" />
                   {unreadCount ? (
-                    <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ba1a1a] px-1 text-[10px] font-bold text-white ring-2 ring-white">
+                    <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ba1a1a] px-1 text-[10px] font-bold text-white ring-2 ring-white">
                       {unreadCount}
                     </span>
                   ) : null}
                 </button>
 
-                <div className="hidden items-center gap-2.5 rounded-[0.4rem] border border-[#e1e6ec] bg-white py-1.5 pl-2.5 pr-1.5 sm:flex">
-                  <Avatar className="h-9 w-9 rounded-[0.35rem] bg-[#04162f] shadow-none">
-                    <AvatarFallback className="rounded-[0.35rem] bg-[#04162f] text-[0.78rem] font-bold text-[#f0b429]">
+                {/* Identity and sign out stay on the bar (no menu to open), but
+                    without the box that used to enclose them. */}
+                <div className="hidden items-center gap-2.5 pl-1 sm:flex">
+                  <Avatar className="h-8 w-8 rounded-[0.3rem] bg-[#04162f] shadow-none">
+                    <AvatarFallback className="rounded-[0.3rem] bg-[#04162f] text-[0.72rem] font-bold text-[#f0b429]">
                       {initials}
                     </AvatarFallback>
                   </Avatar>
-                  <div className="text-left">
-                    <p className="text-sm font-semibold leading-tight tracking-[-0.01em] text-[#000a1e]">
+                  <div className="hidden max-w-[12rem] text-left md:block">
+                    <p className="truncate text-[13.5px] font-semibold leading-tight tracking-[-0.01em] text-[#000a1e]">
                       {currentUser.fullName}
                     </p>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
+                    <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-[#68727f]">
                       {currentUser.title}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    aria-label="Sign out"
-                    className="ml-0.5 inline-flex h-9 w-9 items-center justify-center rounded-[0.3rem] border-l border-[#e1e6ec] pl-2 text-[#74777f] transition-[transform,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:text-[#ba1a1a] active:scale-[0.95]"
-                    onClick={() => {
-                      void logout()
-                    }}
-                  >
-                    <LogOut className="h-4 w-4" />
-                  </button>
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => setMenuOpen(true)}
+                  aria-label="Sign out"
+                  title="Sign out"
+                  className="hidden h-10 w-10 items-center justify-center rounded-[0.35rem] text-[#68727f] transition-[transform,background-color,color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-[#fbecec] hover:text-[#ba1a1a] active:scale-[0.95] sm:inline-flex pointer-coarse:h-11 pointer-coarse:w-11"
+                  onClick={() => {
+                    void logout()
+                  }}
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={openMenu}
                   aria-label="Open account menu"
                   aria-haspopup="dialog"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-[0.4rem] border border-[#e1e6ec] bg-white transition-[transform,border-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#c8d5e6] active:scale-[0.95] sm:hidden"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-[0.4rem] border border-[#e1e6ec] bg-white transition-[transform,border-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-[#c8d5e6] active:scale-[0.95] sm:hidden pointer-coarse:h-11 pointer-coarse:w-11"
                 >
                   <Avatar className="h-8 w-8 rounded-[0.3rem] bg-[#04162f] shadow-none">
                     <AvatarFallback className="rounded-[0.3rem] bg-[#04162f] text-[0.7rem] font-bold text-[#f0b429]">
@@ -462,14 +481,13 @@ export function AppShell({ children }: PropsWithChildren) {
         </div>
       </div>
 
-      <MobileTabBar items={navItems} onMore={() => setMenuOpen(true)} />
+      <MobileTabBar items={navItems} onMore={openMenu} />
 
       <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
         <SheetContent
           side="left"
-          className="flex w-full max-w-[20rem] flex-col gap-0 border-r border-[#0c2747] p-0"
-        >
-          <div className="flex h-full flex-col overflow-y-auto px-6 pt-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
+          className="flex w-full max-w-[20rem] flex-col gap-0 border-r border-[#0c2747] p-0" onCloseAutoFocus={restoreMenuFocus}>
+          <div className="scrollbar-on-dark flex h-full flex-col overflow-y-auto px-6 pt-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
             <SheetTitle className="sr-only">Account and navigation menu</SheetTitle>
             <BrandLockup compact inverted />
 

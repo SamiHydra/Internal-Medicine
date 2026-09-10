@@ -12,12 +12,15 @@ use App\Models\ReportingPeriod;
 use App\Models\ReportStatusHistory;
 use App\Models\ReportTemplate;
 use App\Models\User;
+use App\Services\Reports\ReportSubmissionService;
 use Database\Seeders\DepartmentSeeder;
 use Database\Seeders\ReportFieldDefinitionSeeder;
 use Database\Seeders\ReportTemplateSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class ReportWorkflowTest extends TestCase
@@ -105,6 +108,55 @@ class ReportWorkflowTest extends TestCase
         ]);
         $this->assertEqualsWithDelta(3.846, (float) CalculatedMetric::query()->firstOrFail()->bor_percent, 0.001);
         $this->assertEquals(0, AuditLog::query()->count());
+    }
+
+    public function test_full_report_save_uses_a_bounded_number_of_queries(): void
+    {
+        $template = $this->assignment->template()
+            ->with('fieldDefinitions')
+            ->firstOrFail();
+        $activeDays = $template->active_days;
+        $values = [];
+
+        foreach ($template->fieldDefinitions as $definition) {
+            $value = match ($definition->field_kind) {
+                'integer', 'decimal' => 0,
+                'time' => '08:00',
+                'choice' => $definition->metadata['options'][0],
+                default => 'performance test',
+            };
+            $values[$definition->field_key] = [
+                'fieldId' => $definition->field_key,
+                'dailyValues' => array_fill_keys($activeDays, $value),
+            ];
+        }
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'values' => $values,
+        ])->assertCreated();
+
+        $queries = collect(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $fieldValueQueries = $queries->filter(
+            fn (array $query): bool => str_contains(strtolower($query['query']), 'report_field_values'),
+        );
+
+        $this->assertLessThanOrEqual(
+            6,
+            $fieldValueQueries->count(),
+            'A full report must preload, validate, calculate, and persist field values with a bounded number of queries.',
+        );
+        $this->assertLessThanOrEqual(
+            30,
+            $queries->count(),
+            sprintf('A full report save issued %d queries; the performance budget is 30.', $queries->count()),
+        );
     }
 
     public function test_submit_creates_history_and_admin_notifications(): void
@@ -214,13 +266,41 @@ class ReportWorkflowTest extends TestCase
     {
         $report = $this->submitReport();
         $this->actingAs($this->admin)->postJson("/api/reports/{$report->id}/lock")->assertOk();
+        $values = $this->inpatientValues(totalPatientDays: 99, dischargedHome: 2, dischargedAma: 1);
+
+        // QA-027: locked means read-only for everyone. The policy refuses the
+        // administrator too (403, not the service's 422); unlocking is the
+        // only way back into edit mode.
+        $this->actingAs($this->admin)
+            ->putJson("/api/reports/{$report->id}", ['values' => $values])
+            ->assertForbidden();
+        $this->actingAs($this->admin)
+            ->postJson("/api/reports/{$report->id}/submit", ['values' => $values])
+            ->assertForbidden();
+        $this->actingAs($this->nurse)
+            ->putJson("/api/reports/{$report->id}", ['values' => $values])
+            ->assertForbidden();
+
+        // Defense in depth: the submission service keeps its own guard for any
+        // caller that reaches it without the policy (imports, console paths).
+        try {
+            app(ReportSubmissionService::class)->save(
+                $this->admin,
+                $this->assignment,
+                $this->period,
+                $values,
+            );
+            $this->fail('the service must refuse to write a locked report');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('report', $exception->errors());
+        }
+
+        $this->actingAs($this->admin)->postJson("/api/reports/{$report->id}/unlock")->assertOk();
 
         $this->actingAs($this->admin)
-            ->putJson("/api/reports/{$report->id}", [
-                'values' => $this->inpatientValues(totalPatientDays: 99, dischargedHome: 2, dischargedAma: 1),
-            ])
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('report');
+            ->putJson("/api/reports/{$report->id}", ['values' => $values])
+            ->assertOk()
+            ->assertJsonPath('values.total_patient_days.dailyValues.monday', 99);
     }
 
     public function test_other_nurses_cannot_save_for_unassigned_reports(): void
@@ -459,7 +539,11 @@ class ReportWorkflowTest extends TestCase
                 ->getJson('/api/reports')
                 ->assertOk()
                 ->assertJsonCount(9, 'data')
-                ->assertJsonPath('meta.total', 9);
+                ->assertJsonPath('meta.total', 9)
+                ->assertJsonPath('meta.perPage', 100)
+                ->assertJsonMissingPath('data.0.values')
+                ->assertJsonMissingPath('data.0.calculatedMetrics')
+                ->assertJsonMissingPath('data.0.quality');
             $defaultReportIds = collect($defaultResponse->json('data'))->pluck('id')->all();
 
             $this->assertEmpty(array_intersect($reports->take(2)->pluck('id')->all(), $defaultReportIds));
@@ -472,9 +556,178 @@ class ReportWorkflowTest extends TestCase
                 ->assertJsonPath('meta.total', 11)
                 ->assertJsonPath('meta.perPage', 5)
                 ->assertJsonPath('meta.lastPage', 3);
+
+            // Summaries page up to 300 (one reporting window per round trip); beyond
+            // that the request is refused rather than silently capped.
+            $this->actingAs($this->admin)
+                ->getJson('/api/reports?perPage=300')
+                ->assertOk()
+                ->assertJsonPath('meta.perPage', 300);
+            $this->actingAs($this->admin)
+                ->getJson('/api/reports?perPage=301')
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors('perPage');
         } finally {
             Carbon::setTestNow();
         }
+    }
+
+    public function test_saves_carrying_the_loaded_revision_succeed_and_return_the_next_revision(): void
+    {
+        $first = $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            // The client loaded no report for this week yet.
+            'expectedUpdatedAt' => null,
+            'values' => $this->inpatientValues(totalPatientDays: 30),
+        ])->assertCreated();
+
+        $loadedRevision = $first->json('updatedAt');
+        $this->assertNotNull($loadedRevision);
+
+        Carbon::setTestNow(now()->addMinute());
+
+        $second = $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'expectedUpdatedAt' => $loadedRevision,
+            'values' => $this->inpatientValues(totalPatientDays: 31),
+        ])->assertCreated()
+            ->assertJsonPath('values.total_patient_days.dailyValues.monday', 31);
+
+        $this->assertNotSame($loadedRevision, $second->json('updatedAt'));
+
+        Carbon::setTestNow();
+    }
+
+    public function test_a_stale_revision_is_refused_with_409_and_the_current_server_values(): void
+    {
+        $loaded = $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'values' => $this->inpatientValues(totalPatientDays: 30),
+        ])->assertCreated();
+        $loadedRevision = $loaded->json('updatedAt');
+
+        // Another device (or the administrator) saves first.
+        Carbon::setTestNow(now()->addMinute());
+        $this->actingAs($this->admin)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'values' => $this->inpatientValues(totalPatientDays: 42),
+        ])->assertCreated();
+
+        Carbon::setTestNow(now()->addMinute());
+        $conflict = $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'expectedUpdatedAt' => $loadedRevision,
+            'values' => $this->inpatientValues(totalPatientDays: 35),
+        ]);
+
+        $conflict->assertStatus(409)
+            ->assertJsonPath('conflict.reason', 'stale')
+            ->assertJsonPath('conflict.report.updatedById', $this->admin->id)
+            ->assertJsonPath('conflict.report.updatedByName', 'Admin One')
+            ->assertJsonPath('conflict.report.values.total_patient_days.dailyValues.monday', 42);
+        $this->assertNotNull($conflict->json('conflict.report.updatedAt'));
+
+        // Nothing was overwritten and the refusal produced no audit rows.
+        $storedValue = Report::query()->firstOrFail()->fieldValues()
+            ->whereHas('fieldDefinition', fn ($query) => $query->where('field_key', 'total_patient_days'))
+            ->value('value_number');
+        $this->assertSame(42, (int) $storedValue);
+        $this->assertSame(0, AuditLog::query()->count());
+
+        // Re-applying with the revision the server reported proceeds: an explicit overwrite.
+        $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'expectedUpdatedAt' => $conflict->json('conflict.report.updatedAt'),
+            'values' => $this->inpatientValues(totalPatientDays: 35),
+        ])->assertCreated()
+            ->assertJsonPath('values.total_patient_days.dailyValues.monday', 35);
+
+        Carbon::setTestNow();
+    }
+
+    public function test_expecting_no_report_is_refused_once_a_report_exists(): void
+    {
+        $this->actingAs($this->admin)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'values' => $this->inpatientValues(totalPatientDays: 12),
+        ])->assertCreated();
+
+        $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'expectedUpdatedAt' => null,
+            'values' => $this->inpatientValues(totalPatientDays: 13),
+        ])->assertStatus(409)
+            ->assertJsonPath('conflict.reason', 'exists')
+            ->assertJsonPath('conflict.report.values.total_patient_days.dailyValues.monday', 12);
+
+        $this->assertSame(1, Report::query()->count());
+    }
+
+    public function test_a_stale_revision_against_a_locked_report_reports_the_lock(): void
+    {
+        $loaded = $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'submit' => true,
+            'values' => $this->inpatientValues(totalPatientDays: 30),
+        ])->assertCreated();
+
+        Carbon::setTestNow(now()->addMinute());
+        $report = Report::query()->firstOrFail();
+        $this->actingAs($this->admin)->postJson("/api/reports/{$report->id}/lock")->assertOk();
+
+        $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'expectedUpdatedAt' => $loaded->json('updatedAt'),
+            'values' => $this->inpatientValues(totalPatientDays: 31),
+        ])->assertStatus(409)
+            ->assertJsonPath('conflict.reason', 'stale')
+            ->assertJsonPath('conflict.report.status', 'locked');
+        $this->assertNotNull(Report::query()->firstOrFail()->locked_at);
+
+        Carbon::setTestNow();
+    }
+
+    public function test_saves_without_a_revision_keep_last_write_wins(): void
+    {
+        $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'values' => $this->inpatientValues(totalPatientDays: 30),
+        ])->assertCreated();
+
+        Carbon::setTestNow(now()->addMinute());
+        $this->actingAs($this->admin)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'values' => $this->inpatientValues(totalPatientDays: 42),
+        ])->assertCreated();
+
+        // Callers that send no revision (imports, older clients) still win.
+        $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'values' => $this->inpatientValues(totalPatientDays: 35),
+        ])->assertCreated()
+            ->assertJsonPath('values.total_patient_days.dailyValues.monday', 35);
+
+        $this->actingAs($this->nurse)->postJson('/api/reports', [
+            'assignmentId' => $this->assignment->id,
+            'reportingPeriodId' => $this->period->id,
+            'expectedUpdatedAt' => 'not-a-date',
+            'values' => $this->inpatientValues(totalPatientDays: 36),
+        ])->assertStatus(422);
+
+        Carbon::setTestNow();
     }
 
     private function submitReport(): Report
@@ -539,5 +792,47 @@ class ReportWorkflowTest extends TestCase
                 'dailyValues' => ['monday' => '08:30'],
             ],
         ];
+    }
+
+    public function test_reports_cannot_be_filed_for_a_week_that_has_not_started(): void
+    {
+        // Wednesday 2026-09-09 in Africa/Nairobi: the current week began on 2026-09-07 (QA-009).
+        Carbon::setTestNow(Carbon::parse('2026-09-09 10:00:00', 'Africa/Nairobi'));
+
+        try {
+            $cases = [
+                ['2026-08-31', true],
+                ['2026-09-07', true],
+                ['2026-09-14', false],
+                ['2026-11-02', false],
+            ];
+
+            foreach ($cases as [$weekStart, $allowed]) {
+                $period = $this->createReportingPeriod($weekStart);
+                $response = $this->actingAs($this->nurse)->postJson('/api/reports', [
+                    'assignmentId' => $this->assignment->id,
+                    'reportingPeriodId' => $period->id,
+                    'values' => $this->inpatientValues(),
+                ]);
+
+                if ($allowed) {
+                    $response->assertCreated();
+                    $this->assertDatabaseHas('reports', ['reporting_period_id' => $period->id]);
+                } else {
+                    $response->assertUnprocessable()->assertJsonValidationErrors('reportingPeriodId');
+                    $this->assertDatabaseMissing('reports', ['reporting_period_id' => $period->id]);
+                }
+            }
+
+            // Administrators are held to the same calendar.
+            $nextWeek = ReportingPeriod::query()->whereDate('week_start', '2026-09-14')->firstOrFail();
+            $this->actingAs($this->admin)->postJson('/api/reports', [
+                'assignmentId' => $this->assignment->id,
+                'reportingPeriodId' => $nextWeek->id,
+                'values' => $this->inpatientValues(),
+            ])->assertUnprocessable()->assertJsonValidationErrors('reportingPeriodId');
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 }

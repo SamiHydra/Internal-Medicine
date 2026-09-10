@@ -9,15 +9,22 @@ use Illuminate\Database\Seeder;
 
 class ReportingPeriodSeeder extends Seeder
 {
+    /** Weeks of future periods kept ahead of today, so upcoming weeks are fileable. */
+    private const LOOKAHEAD_WEEKS = 26;
+
     public function run(): void
     {
+        // Match whatever history the clinical fixture is configured to fill, so
+        // raising SEED_HISTORY_WEEKS never leaves it short of periods to use.
+        $historyWeeks = (int) config('reports.dev_seed.history_weeks', 52);
+
         $firstWeek = CarbonImmutable::now('UTC')
             ->startOfWeek(CarbonInterface::MONDAY)
-            ->subWeeks(52);
+            ->subWeeks($historyWeeks);
 
-        // Keep one full year of history for realistic analytics/load testing and
-        // six months ahead so upcoming reporting periods are already available.
-        for ($offset = 0; $offset <= 78; $offset++) {
+        // A full history window, plus six months ahead so upcoming reporting
+        // periods are already available.
+        for ($offset = 0; $offset <= $historyWeeks + self::LOOKAHEAD_WEEKS; $offset++) {
             $weekStart = $firstWeek->addWeeks($offset);
             $weekStartDate = $weekStart->toDateString();
             $period = ReportingPeriod::query()

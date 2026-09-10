@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Role;
 use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Validator;
@@ -21,6 +22,14 @@ class CreateSuperadmin extends Command
 
     public function handle(): int
     {
+        // users.role_key references roles: on a migrated but unseeded database
+        // the insert below fails with a bare foreign-key error (QA-007).
+        if (! Role::query()->where('role_key', 'superadmin')->exists()) {
+            $this->error('Reference data is missing (no superadmin role). Run php artisan app:seed-reference-data first, then retry.');
+
+            return self::FAILURE;
+        }
+
         if (User::query()->where('role_key', 'superadmin')->exists()) {
             $existing = User::query()->where('role_key', 'superadmin')->value('username');
             $this->error("A superadmin already exists (username: {$existing}). Use the admin UI or reset its password instead.");

@@ -96,4 +96,33 @@ class AuthThrottleTest extends TestCase
 
         $this->fail("Route $method /$uri is not registered.");
     }
+
+    public function test_login_password_reset_and_registration_limiters_are_separate_buckets(): void
+    {
+        // QA-024: the public auth routes used to share one unnamed bucket, so a
+        // burst of failed logins also locked colleagues out of the reset flow.
+        $this->assertContains('throttle:10,1,login', $this->middlewareFor('POST', 'api/auth/login'));
+        $this->assertContains('throttle:5,1,forgot-password', $this->middlewareFor('POST', 'api/auth/forgot-password'));
+        $this->assertContains('throttle:5,1,reset-password', $this->middlewareFor('POST', 'api/auth/reset-password'));
+        foreach (['api/access-requests', 'api/academic-access-requests', 'api/admin-access-requests'] as $uri) {
+            $this->assertContains('throttle:10,1,registration', $this->middlewareFor('POST', $uri));
+        }
+
+        $credentials = ['identifier' => 'nobody@example.test', 'password' => 'Wrong1234!'];
+        for ($attempt = 1; $attempt <= 10; $attempt++) {
+            $this->assertNotSame(429, $this->postJson('/api/auth/login', $credentials)->getStatusCode());
+        }
+        $this->postJson('/api/auth/login', $credentials)->assertStatus(429);
+
+        $this->assertNotSame(
+            429,
+            $this->postJson('/api/auth/forgot-password', ['email' => 'nobody@example.test'])->getStatusCode(),
+            'exhausting the login limiter must not block the password reset flow',
+        );
+        $this->assertNotSame(
+            429,
+            $this->postJson('/api/access-requests', [])->getStatusCode(),
+            'exhausting the login limiter must not block registration',
+        );
+    }
 }

@@ -1,5 +1,7 @@
 <?php
 
+use App\Jobs\SendNotificationDelivery;
+
 return [
 
     /*
@@ -21,6 +23,23 @@ return [
     | Read via config() so it survives config:cache (env() would not).
     */
     'worker_mode' => env('QUEUE_WORKER_MODE', 'cron'),
+
+    'transient_retry' => [
+        'limit' => (int) env('QUEUE_TRANSIENT_RETRY_LIMIT', 20),
+        'max_age_hours' => (int) env('QUEUE_TRANSIENT_RETRY_MAX_AGE_HOURS', 24),
+        'allowed_jobs' => [
+            SendNotificationDelivery::class,
+        ],
+        'exception_patterns' => [
+            'all notification channels failed',
+            'connection timed out',
+            'connection refused',
+            'could not connect',
+            'temporarily unavailable',
+            'too many requests',
+            'service unavailable',
+        ],
+    ],
 
     /*
     |--------------------------------------------------------------------------
@@ -47,7 +66,9 @@ return [
             'connection' => env('DB_QUEUE_CONNECTION'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            // Must remain above BuildAnalyticsExport::$timeout (300s) so a
+            // legitimate long export is never reserved by a second worker.
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 360),
             'after_commit' => false,
         ],
 
@@ -75,7 +96,7 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 90),
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 360),
             'block_for' => null,
             'after_commit' => false,
         ],

@@ -3,7 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\ReportingPeriod;
+use App\Jobs\BuildAnalyticsExport;
+use App\Models\AnalyticsExport;
 use App\Services\Analytics\AnalyticsExportService;
 use App\Services\Analytics\AnalyticsFilters;
 use App\Services\Analytics\AnalyticsService;
@@ -11,12 +12,12 @@ use App\Services\Analytics\DashboardAnalyticsService;
 use App\Services\Analytics\InpatientAnalyticsService;
 use App\Services\Analytics\OutpatientAnalyticsService;
 use App\Services\Analytics\ProcedureAnalyticsService;
-use App\Support\Export\XlsxWriter;
-use App\Support\HospitalClock;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
 
 class AnalyticsController extends Controller
@@ -27,7 +28,6 @@ class AnalyticsController extends Controller
         private readonly InpatientAnalyticsService $inpatientAnalytics,
         private readonly OutpatientAnalyticsService $outpatientAnalytics,
         private readonly ProcedureAnalyticsService $procedureAnalytics,
-        private readonly AnalyticsExportService $exportService,
     ) {}
 
     public function overview(Request $request): JsonResponse
@@ -115,71 +115,118 @@ class AnalyticsController extends Controller
         ]);
     }
 
-    public function export(Request $request): Response
+    /**
+     * How many reports a given ward/date selection covers, so the export screen
+     * can show the size before anyone commits to building it.
+     */
+    public function exportScope(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'period' => ['sometimes', 'uuid', 'exists:reporting_periods,id'],
-            'periodId' => ['sometimes', 'uuid', 'exists:reporting_periods,id'],
-            'month' => ['sometimes', 'date_format:Y-m'],
-            'format' => ['sometimes', 'in:csv,xlsx'],
+        $filters = $this->exportFilters($request);
+
+        return response()->json([
+            'data' => [
+                'reports' => app(AnalyticsExportService::class)->withFilters($filters)->reportCount(),
+                'limit' => AnalyticsExportService::maxReports(),
+            ],
         ]);
-
-        $periods = $this->resolveExportPeriods($validated);
-
-        if ($periods->isEmpty()) {
-            abort(404, 'No reporting period matched the export request.');
-        }
-
-        $label = $periods->count() === 1
-            ? ($periods->first()->week_start?->toDateString() ?? 'period')
-            : ($validated['month'] ?? 'periods');
-
-        if (($validated['format'] ?? 'csv') === 'xlsx') {
-            $path = (new XlsxWriter)->toTempFile(
-                $this->exportService->header(),
-                $this->exportService->lazyRows($periods),
-            );
-
-            return response()->download(
-                $path,
-                'st-paul-report-'.$label.'.xlsx',
-                ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-            )->deleteFileAfterSend();
-        }
-
-        return response()->streamDownload(
-            $this->exportService->streamCallback($periods),
-            'st-paul-report-'.$label.'.csv',
-            ['Content-Type' => 'text/csv; charset=UTF-8'],
-        );
     }
 
     /**
-     * @param  array<string, mixed>  $validated
-     * @return Collection<int, ReportingPeriod>
+     * Shared by the preview and the queue call so the count someone sees is the
+     * count the ceiling is applied to.
+     *
+     * @return array{departmentIds?: list<string>, dateFrom?: string, dateTo?: string}
      */
-    private function resolveExportPeriods(array $validated): Collection
+    private function exportFilters(Request $request): array
     {
-        $periodId = $validated['period'] ?? $validated['periodId'] ?? null;
-        if ($periodId !== null) {
-            return ReportingPeriod::query()->whereKey($periodId)->get();
+        $validated = $request->validate([
+            'departments' => ['sometimes', 'array'],
+            'departments.*' => ['string', 'exists:departments,slug'],
+            'dateFrom' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+            'dateTo' => ['sometimes', 'nullable', 'date_format:Y-m-d', 'after_or_equal:dateFrom'],
+        ]);
+
+        // Clients address wards by slug; the stored filter keeps ids so a later
+        // rename cannot change what an already-built export covered.
+        $departmentIds = $validated['departments'] ?? []
+            ? DB::table('departments')->whereIn('slug', $validated['departments'])->pluck('id')->all()
+            : [];
+
+        return array_filter([
+            'departmentIds' => $departmentIds,
+            'dateFrom' => $validated['dateFrom'] ?? null,
+            'dateTo' => $validated['dateTo'] ?? null,
+        ], static fn ($value): bool => $value !== null && $value !== []);
+    }
+
+    public function queueExport(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'format' => ['sometimes', 'in:csv,xlsx'],
+        ]);
+
+        $filters = $this->exportFilters($request);
+
+        // Checked before anything is queued: refusing a request costs nothing,
+        // whereas abandoning a half-built workbook has already cost the memory.
+        $reportCount = app(AnalyticsExportService::class)->withFilters($filters)->reportCount();
+
+        if ($reportCount > AnalyticsExportService::maxReports()) {
+            throw ValidationException::withMessages([
+                'dateFrom' => sprintf(
+                    'That range covers %s reports, over the %s limit. Narrow the wards or dates.',
+                    number_format($reportCount),
+                    number_format(AnalyticsExportService::maxReports()),
+                ),
+            ]);
         }
 
-        if (isset($validated['month'])) {
-            [$year, $month] = explode('-', $validated['month']);
+        $export = AnalyticsExport::query()->create([
+            'user_id' => $request->user()->id,
+            'status' => AnalyticsExport::STATUS_PENDING,
+            'format' => $validated['format'] ?? 'xlsx',
+            'filters' => $filters ?: null,
+        ]);
 
-            return ReportingPeriod::query()
-                ->whereYear('week_start', (int) $year)
-                ->whereMonth('week_start', (int) $month)
-                ->orderBy('week_start')
-                ->get();
-        }
+        BuildAnalyticsExport::dispatch($export->id)->afterCommit();
 
-        return ReportingPeriod::query()
-            ->whereDate('week_start', '<=', HospitalClock::today()->toDateString())
-            ->orderByDesc('week_start')
-            ->limit(1)
-            ->get();
+        return response()->json(['data' => $this->exportPayload($export)], 202);
+    }
+
+    public function exports(Request $request): JsonResponse
+    {
+        $exports = AnalyticsExport::query()
+            ->where('user_id', $request->user()->id)
+            ->latest()
+            ->limit(20)
+            ->get()
+            ->map($this->exportPayload(...));
+
+        return response()->json(['data' => $exports]);
+    }
+
+    public function download(Request $request, AnalyticsExport $analyticsExport): Response
+    {
+        abort_unless($analyticsExport->user_id === $request->user()->id, 403);
+        abort_unless($analyticsExport->status === AnalyticsExport::STATUS_READY, 409, 'The export is not ready.');
+        abort_if($analyticsExport->expires_at?->isPast(), 410, 'The export has expired.');
+        abort_unless($analyticsExport->file_path && Storage::disk('local')->exists($analyticsExport->file_path), 404);
+
+        $isExcel = $analyticsExport->format === 'xlsx';
+
+        return Storage::disk('local')->download(
+            $analyticsExport->file_path,
+            $analyticsExport->file_name ?? (
+                $isExcel
+                    ? 'clinical-submissions-full-history.xlsx'
+                    : 'clinical-submissions-full-history.csv'
+            ),
+            [
+                'Content-Type' => $isExcel
+                    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                    : 'text/csv; charset=UTF-8',
+            ],
+        );
     }
 
     private function filters(Request $request): AnalyticsFilters
@@ -206,6 +253,28 @@ class AnalyticsController extends Controller
             'procedureCategory' => ['sometimes', 'string', 'max:80'],
         ]);
 
-        return AnalyticsFilters::fromArray($validated);
+        return AnalyticsFilters::fromArray($validated)->boundedInteractive();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function exportPayload(AnalyticsExport $export): array
+    {
+        return [
+            'id' => $export->id,
+            'status' => $export->status,
+            'format' => $export->format,
+            'fileName' => $export->file_name,
+            'rowCount' => $export->row_count,
+            'byteSize' => $export->byte_size,
+            'error' => $export->error,
+            'createdAt' => $export->created_at?->toIso8601String(),
+            'completedAt' => $export->completed_at?->toIso8601String(),
+            'expiresAt' => $export->expires_at?->toIso8601String(),
+            'downloadUrl' => $export->status === AnalyticsExport::STATUS_READY
+                ? "/api/analytics/exports/{$export->id}/download"
+                : null,
+        ];
     }
 }

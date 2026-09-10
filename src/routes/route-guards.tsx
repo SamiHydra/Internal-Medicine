@@ -2,6 +2,7 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom'
 
 import { AppStateScreen } from '@/components/layout/app-state-screen'
 import { AppShell } from '@/components/layout/app-shell'
+import { RouteErrorBoundary } from '@/components/layout/route-error-boundary'
 import { useAppData } from '@/context/app-data-context'
 import { apiEnvSetupHint } from '@/lib/api/env'
 import { landingPathForRole } from '@/routes/landing'
@@ -64,9 +65,15 @@ export function ProtectedRoute({ roles }: { roles?: UserRole[] }) {
 }
 
 export function ProtectedShell() {
+  const location = useLocation()
+
   return (
     <AppShell>
-      <Outlet />
+      {/* One broken page must not blank the shell; the boundary resets on
+          navigation so the next route starts clean (docs/OBSERVABILITY.md). */}
+      <RouteErrorBoundary resetKey={location.pathname}>
+        <Outlet />
+      </RouteErrorBoundary>
     </AppShell>
   )
 }

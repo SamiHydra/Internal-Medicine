@@ -4,7 +4,9 @@ export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      retry: 1,
+      // LaravelApiClient owns the single transient GET retry. Retrying here too
+      // multiplied one slow request into a minute-long loading state.
+      retry: false,
       staleTime: 30_000,
     },
     mutations: {

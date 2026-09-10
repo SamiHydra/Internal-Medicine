@@ -56,6 +56,17 @@ export function TeachingAttendancePage() {
   const [formKey, setFormKey] = useState<'student_weekly' | 'student_final'>('student_weekly')
   const [evaluationDate, setEvaluationDate] = useState(todayString)
 
+  /**
+   * Sessions only. Saving attendance cannot change the student directory or
+   * the evaluation form definitions, so those are fetched once on mount and
+   * never again (see INTERACTION_LATENCY_AUDIT.md).
+   */
+  const reloadSessions = useCallback(async () => {
+    if (client) {
+      setSessions(await fetchTodayTeachingSessions(client))
+    }
+  }, [client])
+
   const load = useCallback(async () => {
     if (!client) {
       setSessions([])
@@ -102,7 +113,7 @@ export function TeachingAttendancePage() {
         delete next[session.id]
         return next
       })
-      await load()
+      await reloadSessions()
     } catch (error) {
       toast.error(getErrorMessage(error, 'Unable to save attendance.'))
     } finally {
@@ -129,7 +140,7 @@ export function TeachingAttendancePage() {
           {/* ---- Attendance ---- */}
           <TabsContent value="attendance" className="mt-5">
             {sessions === null ? (
-              <div className="flex min-h-[200px] items-center justify-center text-[#74777f]">
+              <div className="flex min-h-[200px] items-center justify-center text-[#666970]">
                 <Loader2 className="h-5 w-5 animate-spin" aria-label="Loading sessions" />
               </div>
             ) : sessions.length === 0 ? (
@@ -152,9 +163,9 @@ export function TeachingAttendancePage() {
                           <p className="text-sm font-semibold text-[#000a1e]">
                             {ACTIVITY_LABELS[session.activityType]}
                             {session.subgroup ? ` · Subgroup ${session.subgroup}` : ''}
-                            <span className="font-normal text-[#74777f]"> · {session.batchLabel}</span>
+                            <span className="font-normal text-[#666970]"> · {session.batchLabel}</span>
                           </p>
-                          <p className="mt-0.5 text-xs text-[#74777f]">
+                          <p className="mt-0.5 text-xs text-[#666970]">
                             {session.wardName ?? 'No ward assigned'} · {session.roster.length} students
                           </p>
                         </div>
@@ -201,7 +212,7 @@ export function TeachingAttendancePage() {
                             })}
                           </div>
                           <div className="mt-3 flex items-center justify-between">
-                            <p className="text-xs text-[#74777f]">
+                            <p className="text-xs text-[#666970]">
                               {presentCount} of {session.roster.length} present
                             </p>
                             <Button

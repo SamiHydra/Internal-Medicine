@@ -298,7 +298,7 @@ export function EvaluationFormsPage() {
 
       <section className={panelClass}>
         {forms === null ? (
-          <div className="flex min-h-[240px] items-center justify-center text-[#74777f]">
+          <div className="flex min-h-[240px] items-center justify-center text-[#666970]">
             <Loader2
               className="h-5 w-5 animate-spin"
               aria-label="Loading forms"
@@ -365,7 +365,9 @@ export function EvaluationFormsPage() {
                             <div
                               key={field.id}
                               className={cn(
-                                'grid gap-2.5 rounded-[0.3rem] border border-[#eef2f6] px-3.5 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]',
+                                // Three columns only from lg: at tablet width the sidebar leaves too little
+                                // room for two inputs plus the badge/switch column (QA-012 sweep).
+                                'grid gap-2.5 rounded-[0.3rem] border border-[#eef2f6] px-3.5 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]',
                                 staged && 'border-[#005db6] bg-[#f4f9ff]',
                                 !field.active && 'opacity-60',
                               )}
@@ -399,7 +401,7 @@ export function EvaluationFormsPage() {
                                   })
                                 }
                               />
-                              <div className="flex items-center gap-2.5 justify-self-end">
+                              <div className="flex flex-wrap items-center gap-2.5 lg:justify-self-end">
                                 {field.isCore ? (
                                   <Badge variant="warning">
                                     <Lock className="mr-1 h-3 w-3" /> Core
@@ -449,7 +451,9 @@ export function EvaluationFormsPage() {
                         (field, index) => (
                           <div
                             key={`${group.draft!.id}-${index}`}
-                            className="grid gap-2 sm:grid-cols-[110px_minmax(0,1fr)_minmax(0,1fr)_130px_auto_auto]"
+                            // Six columns only from lg: beside the sidebar a tablet leaves ~350px, which
+                            // the fixed key/type columns plus two switches cannot share (QA-012 sweep).
+                            className="grid gap-2 lg:grid-cols-[110px_minmax(0,1fr)_minmax(0,1fr)_130px_auto_auto]"
                           >
                             <Input
                               value={field.key}
@@ -580,7 +584,7 @@ export function EvaluationFormsPage() {
                               }
                             >
                               {field.isCore ? (
-                                <Lock className="h-4 w-4 text-[#9aa7b8]" />
+                                <Lock className="h-4 w-4 text-[#69727d]" />
                               ) : (
                                 <Trash2 className="h-4 w-4 text-[#ba1a1a]" />
                               )}
@@ -618,7 +622,7 @@ export function EvaluationFormsPage() {
                       >
                         <Plus className="mr-1.5 h-4 w-4" /> Add field
                       </Button>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
                           variant="secondary"

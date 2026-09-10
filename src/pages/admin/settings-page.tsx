@@ -23,7 +23,7 @@ import { useAppData } from '@/context/app-data-context'
 import { getCurrentPeriod } from '@/data/selectors'
 import { getDeadlineForPeriod } from '@/lib/dates'
 import { performanceTargetDefinitions } from '@/lib/performance-targets'
-import { cn, formatCompactNumber } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import type { Weekday } from '@/types/domain'
 
 const countChipClass =
@@ -94,7 +94,6 @@ export function SettingsPage() {
     ? getDeadlineForPeriod(currentPeriod, deadlineDay, deadlineTime)
     : null
   const previewLockAt = previewDeadline ? addHours(previewDeadline, autoLockHours) : null
-  const criticalFieldCount = state.settings.criticalNonZeroFields.length
 
   const onSubmit = form.handleSubmit(async (values) => {
     await updateSettings(values)
@@ -132,7 +131,7 @@ export function SettingsPage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="space-y-1">
                     <Label htmlFor="deadline-enforced">Enforce weekly deadlines</Label>
-                    <p className="text-sm text-[#74777f]">
+                    <p className="text-sm text-[#666970]">
                       When off, reports stay open until an admin locks them.
                     </p>
                   </div>
@@ -304,7 +303,7 @@ export function SettingsPage() {
                   deadlineEnforced ? 'bg-[#edf4fb] outline-[#cfe0f4]' : 'bg-[#f7f9fc] outline-[#e6ecf3]',
                 )}
               >
-                <Clock3 className={cn('h-4 w-4', deadlineEnforced ? 'text-[#005db6]' : 'text-[#74777f]')} />
+                <Clock3 className={cn('h-4 w-4', deadlineEnforced ? 'text-[#005db6]' : 'text-[#666970]')} />
               </span>
               <div className="min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">Deadline</p>
@@ -335,13 +334,13 @@ export function SettingsPage() {
                   deadlineEnforced ? 'bg-[#fcf5e8] outline-[#edd9b0]' : 'bg-[#f7f9fc] outline-[#e6ecf3]',
                 )}
               >
-                <Lock className={cn('h-4 w-4', deadlineEnforced ? 'text-[#8a5a00]' : 'text-[#74777f]')} />
+                <Lock className={cn('h-4 w-4', deadlineEnforced ? 'text-[#8a5a00]' : 'text-[#666970]')} />
               </span>
               <div className="min-w-0">
                 <p
                   className={cn(
                     'text-[11px] font-semibold uppercase tracking-[0.18em]',
-                    deadlineEnforced ? 'text-[#8a5a00]' : 'text-[#74777f]',
+                    deadlineEnforced ? 'text-[#8a5a00]' : 'text-[#666970]',
                   )}
                 >
                   Auto-lock
@@ -358,10 +357,8 @@ export function SettingsPage() {
 
           <div className="mt-6 space-y-4">
             <div className="flex items-center justify-between border-t border-[#eef2f6] pt-4">
-              <p className="text-sm text-[#74777f]">Coverage</p>
-              <p className="text-sm font-semibold tabular-nums text-[#000a1e]">
-                {formatCompactNumber(criticalFieldCount)} critical fields
-              </p>
+              <p className="text-sm text-[#666970]">Clinical alert rules</p>
+              <p className="text-sm font-semibold text-[#000a1e]">Managed under Action items</p>
             </div>
 
             <div className="flex items-center gap-3 border-t border-[#eef2f6] pt-4">
@@ -369,7 +366,7 @@ export function SettingsPage() {
                 <PhoneCall className="h-4 w-4 text-[#005db6]" />
               </span>
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#74777f]">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#666970]">
                   Technical support
                 </p>
                 <p className="text-sm font-medium text-[#000a1e]">

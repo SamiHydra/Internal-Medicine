@@ -62,6 +62,11 @@ describe('academic operations response contracts', () => {
     }
 
     const payload = await fetchTeachingAnalytics(clientReturning({
+      window: {
+        fromDate: '2025-09-14',
+        toDate: '2026-09-14',
+        maxDays: 366,
+      },
       byActivity: [{ activityType: 'lecture', ...occurrence }],
       byBatch: [{ batchId: 'block-1', batchLabel: 'C1 Block 2', ...occurrence }],
       blocks: [{
@@ -82,6 +87,7 @@ describe('academic operations response contracts', () => {
       pendingBacklog: 1,
     }))
 
+    expect(payload.window.maxDays).toBe(366)
     expect(payload.blocks[0]?.batchLabel).toBe('C1 Block 2')
     expect(payload.missedSessions[0]?.batchId).toBe('block-1')
   })

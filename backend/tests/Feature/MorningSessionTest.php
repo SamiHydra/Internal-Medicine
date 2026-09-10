@@ -2,9 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\AdminAuditLog;
 use App\Models\AppSetting;
 use App\Models\DutyAssignment;
 use App\Models\DutyType;
+use App\Models\MorningAttendance;
 use App\Models\MorningRosterOverride;
 use App\Models\MorningSession;
 use App\Models\User;
@@ -530,5 +532,67 @@ class MorningSessionTest extends TestCase
             'user_id' => $onWard->id,
             'present' => true,
         ]);
+    }
+
+    public function test_cancelling_a_recorded_session_discards_its_attendance_and_audits_the_reversal(): void
+    {
+        // Attendance rows are a snapshot of the expected roster, so two people
+        // on ward duty give two rows (the recorder is not rostered here).
+        $onWard = User::factory()->role('resident', 'Resident')->create();
+        $alsoOnWard = User::factory()->role('resident', 'Resident')->create();
+        $this->assign($onWard, 'nephrology_ward_service', '2026-09-01', '2026-09-30');
+        $this->assign($alsoOnWard, 'nephrology_ward_service', '2026-09-01', '2026-09-30');
+
+        $today = $this->actingAs($this->recorder)
+            ->getJson('/api/academic/morning-sessions/today')
+            ->assertOk()
+            ->json('session');
+        $this->actingAs($this->recorder)
+            ->postJson("/api/academic/morning-sessions/{$today['id']}/record", [
+                'startedOnTime' => true,
+                'presence' => [$onWard->id => true, $alsoOnWard->id => false],
+            ])
+            ->assertOk()
+            ->assertJsonPath('status', 'recorded');
+        $this->assertSame(2, MorningAttendance::query()->where('morning_session_id', $today['id'])->count());
+
+        // Two days later the administrator learns the day was a public holiday.
+        // The attendance recorded by mistake must not linger: the operations
+        // analytics count attendance rows for every session on file (QA-018).
+        $this->travelTo(Carbon::parse('2026-09-16 09:00:00'));
+        $this->actingAs($this->admin)
+            ->postJson("/api/admin/morning-sessions/{$today['id']}/cancel", ['reason' => 'Public holiday'])
+            ->assertOk()
+            ->assertJsonPath('status', 'cancelled');
+
+        $this->assertSame(0, MorningAttendance::query()->where('morning_session_id', $today['id'])->count());
+        $session = MorningSession::query()->findOrFail($today['id']);
+        $this->assertSame('cancelled', $session->status);
+        $this->assertNull($session->started_on_time);
+
+        $audit = AdminAuditLog::query()
+            ->where('entity_type', 'morning_session')
+            ->where('entity_id', $today['id'])
+            ->where('action', 'cancel')
+            ->firstOrFail();
+        $this->assertSame('recorded', $audit->old_values['status']);
+        $this->assertSame(2, $audit->old_values['attendanceRows']);
+        $this->assertSame('Public holiday', $audit->new_values['reason']);
+        $this->assertSame(0, $audit->new_values['attendanceRows']);
+    }
+
+    public function test_the_first_read_after_a_lazy_open_reports_the_pending_status(): void
+    {
+        // No session row exists for today yet; the recorder's visit opens it.
+        $this->assertSame(0, MorningSession::query()->count());
+
+        $this->actingAs($this->recorder)
+            ->getJson('/api/academic/morning-sessions/today')
+            ->assertOk()
+            ->assertJsonPath('isSessionDay', true)
+            ->assertJsonPath('canRecord', true)
+            ->assertJsonPath('session.status', 'pending');
+
+        $this->assertSame('pending', MorningSession::query()->firstOrFail()->status);
     }
 }

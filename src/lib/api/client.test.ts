@@ -93,6 +93,36 @@ describe('LaravelApiClient query serialization', () => {
     expect(String(fetchMock.mock.calls[1][0])).toContain('/api/reports')
   })
 
+  it('deduplicates concurrent CSRF setup requests', async () => {
+    const client = new LaravelApiClient('http://127.0.0.1:8000')
+
+    await Promise.all([client.primeCsrfCookie(), client.primeCsrfCookie()])
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/sanctum/csrf-cookie')
+  })
+
+  it('honors caller cancellation without retrying the GET', async () => {
+    fetchMock.mockReset().mockImplementation(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+            { once: true },
+          )
+        }),
+    )
+
+    const client = new LaravelApiClient('http://127.0.0.1:8000')
+    const controller = new AbortController()
+    const request = client.get('/api/workspace', { signal: controller.signal })
+    controller.abort()
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('treats an inactive account during session restore as signed out', async () => {
     fetchMock.mockReset().mockResolvedValue({
       status: 403,

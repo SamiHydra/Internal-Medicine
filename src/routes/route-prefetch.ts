@@ -17,6 +17,7 @@ const routeLoaders: Record<string, () => Promise<unknown>> = {
   '/admin/action-items': () => import('@/pages/admin/action-items-page'),
   '/admin/templates': () => import('@/pages/admin/template-management-page'),
   '/admin/import': () => import('@/pages/admin/data-import-page'),
+  '/admin/export': () => import('@/pages/admin/analytics-export-page'),
   // Academic admin
   '/admin/academic': () => import('@/pages/admin/academic-dashboard-page'),
   '/admin/academic/submissions': () => import('@/pages/admin/academic-submissions-page'),

@@ -23,7 +23,7 @@ import {
 } from '@/lib/api/academic'
 import type { LaravelApiClient } from '@/lib/api/client'
 import { cn } from '@/lib/utils'
-import { panelClass } from '@/components/dashboard/section-panel'
+import { SectionEyebrow, panelClass } from '@/components/dashboard/section-panel'
 
 type AnswerValue = boolean | string | string[] | null
 
@@ -123,7 +123,7 @@ function FieldShell({
         {field.label}
       </label>
       {children}
-      {field.helpText && !error ? <p className="text-xs text-[#74777f]">{field.helpText}</p> : null}
+      {field.helpText && !error ? <p className="text-xs text-[#666970]">{field.helpText}</p> : null}
       {error ? <p className="text-sm text-[#ba1a1a]">{error}</p> : null}
     </div>
   )
@@ -144,6 +144,7 @@ export function EvaluationFormRenderer({
   subjectLabel,
   onSubmitted,
   submit: submitOverride,
+  presentation = 'stacked',
 }: {
   client: LaravelApiClient
   form: EvaluationFormDefinition
@@ -154,6 +155,8 @@ export function EvaluationFormRenderer({
   onSubmitted: () => void
   /** Replace the default peer-evaluation endpoints (e.g. student evaluations). */
   submit?: (payload: Record<string, unknown>) => Promise<unknown>
+  /** A continuous workspace keeps long peer-evaluation forms in one calm surface. */
+  presentation?: 'stacked' | 'continuous'
 }) {
   const activeFields = useMemo(
     () =>
@@ -267,18 +270,33 @@ export function EvaluationFormRenderer({
         const ratings = Array.from({ length: max - min + 1 }, (_, index) => String(min + index))
         return (
           <FieldShell key={field.key} field={field} error={error}>
-            <Select value={(value as string) || ''} onValueChange={(next) => setAnswer(field.key, next)}>
-              <SelectTrigger aria-label={field.label}>
-                <SelectValue placeholder={`Select ${field.label.toLowerCase()}`} />
-              </SelectTrigger>
-              <SelectContent>
-                {ratings.map((rating) => (
-                  <SelectItem key={rating} value={rating}>
+            <div
+              className="grid gap-2"
+              style={{ gridTemplateColumns: `repeat(${ratings.length}, minmax(0, 1fr))` }}
+              role="radiogroup"
+              aria-label={field.label}
+            >
+              {ratings.map((rating) => {
+                const selected = value === rating
+                return (
+                  <button
+                    key={rating}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => setAnswer(field.key, rating)}
+                    className={cn(
+                      'h-11 rounded-[0.35rem] border text-sm font-bold tabular-nums outline-none transition-[transform,border-color,background-color,color,box-shadow] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:ring-2 focus-visible:ring-[#005db6]/35 motion-safe:active:scale-[0.97]',
+                      selected
+                        ? 'border-[#04162f] bg-[#04162f] text-white shadow-[0_10px_22px_-16px_rgba(4,22,47,0.8)]'
+                        : 'border-[#d4dde8] bg-white text-[#44474e] hover:border-[#9fb3c9] hover:bg-[#f7f9fc] hover:text-[#000a1e]',
+                    )}
+                  >
                     {rating}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                  </button>
+                )
+              })}
+            </div>
           </FieldShell>
         )
       }
@@ -378,68 +396,123 @@ export function EvaluationFormRenderer({
     }
   }
 
+  const subjectPicker = (
+    <div className={presentation === 'continuous' ? 'border-b border-[#eef2f6] pb-7' : undefined}>
+      {presentation === 'continuous' ? (
+        <>
+          <SectionEyebrow label={subjectLabel} />
+          <h2 className="mt-1.5 font-display text-[1.4rem] font-bold leading-tight tracking-[-0.02em] text-[#000a1e] md:text-[1.6rem]">
+            Who are you evaluating?
+          </h2>
+          <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[#666970]">
+            Select one eligible colleague before completing the evaluation.
+          </p>
+        </>
+      ) : (
+        <h2 className="font-display text-[1.25rem] font-bold tracking-[-0.02em] text-[#000a1e]">
+          {subjectLabel}
+        </h2>
+      )}
+      <div className="mt-5 max-w-xl space-y-2">
+        <Select value={subjectId} onValueChange={(next) => setSubjectId(next)}>
+          <SelectTrigger aria-label={subjectLabel}>
+            <SelectValue placeholder={`Select ${subjectLabel.toLowerCase()}`} />
+          </SelectTrigger>
+          <SelectContent>
+            {subjects.map((subject) => (
+              <SelectItem key={subject.id} value={subject.id}>
+                {subject.fullName}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {errors.subjectId ? <p className="text-sm text-[#ba1a1a]">{errors.subjectId}</p> : null}
+      </div>
+    </div>
+  )
+
+  const renderSection = (
+    section: { section: string; fields: EvaluationFormField[] },
+    index: number,
+  ) => {
+    const booleanFields = section.fields.filter((field) => field.type === 'boolean')
+    const otherFields = section.fields.filter((field) => field.type !== 'boolean')
+    const isContinuous = presentation === 'continuous'
+
+    return (
+      <section
+        key={section.section}
+        className={isContinuous ? 'border-b border-[#eef2f6] py-7' : panelClass}
+      >
+        {isContinuous ? (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#005db6]">
+                Section {String(index + 1).padStart(2, '0')}
+              </p>
+              <h2 className="mt-1.5 font-display text-[1.3rem] font-bold leading-tight tracking-[-0.02em] text-[#000a1e] md:text-[1.45rem]">
+                {section.section}
+              </h2>
+            </div>
+            <p className="text-xs font-medium text-[#68727f]">
+              {section.fields.length} {section.fields.length === 1 ? 'item' : 'items'}
+            </p>
+          </div>
+        ) : (
+          <h2 className="font-display text-[1.25rem] font-bold tracking-[-0.02em] text-[#000a1e]">
+            {section.section}
+          </h2>
+        )}
+        <div className={isContinuous ? 'mt-6 space-y-5' : 'mt-5 space-y-5'}>
+          {otherFields.length ? (
+            <div className="grid gap-5 md:grid-cols-2">{otherFields.map(renderField)}</div>
+          ) : null}
+          {booleanFields.length ? (
+            <div className="grid gap-3 sm:grid-cols-2">{booleanFields.map(renderField)}</div>
+          ) : null}
+        </div>
+      </section>
+    )
+  }
+
+  const submitButton = (
+    <Button type="submit" disabled={isSubmitting} className="gap-2">
+      {isSubmitting ? 'Submitting…' : 'Submit evaluation'}
+      <Send className="h-4 w-4" />
+    </Button>
+  )
+
   return (
     <form
-      className="space-y-8"
+      className={presentation === 'continuous' ? undefined : 'space-y-8'}
       onSubmit={(event) => {
         event.preventDefault()
         void submit()
       }}
     >
-      <section className={panelClass}>
-        <div className="flex items-center gap-2">
-          <span aria-hidden="true" className="h-3.5 w-[3px] rounded-full bg-[#f0b429]" />
-          <h2 className="font-display text-[1.25rem] font-bold tracking-[-0.02em] text-[#000a1e]">
-            {subjectLabel}
-          </h2>
-        </div>
-        <div className="mt-5 max-w-md space-y-2">
-          <Select value={subjectId} onValueChange={(next) => setSubjectId(next)}>
-            <SelectTrigger aria-label={subjectLabel}>
-              <SelectValue placeholder={`Select ${subjectLabel.toLowerCase()}`} />
-            </SelectTrigger>
-            <SelectContent>
-              {subjects.map((subject) => (
-                <SelectItem key={subject.id} value={subject.id}>
-                  {subject.fullName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {errors.subjectId ? <p className="text-sm text-[#ba1a1a]">{errors.subjectId}</p> : null}
-        </div>
-      </section>
-
-      {sections.map((section) => {
-        const booleanFields = section.fields.filter((field) => field.type === 'boolean')
-        const otherFields = section.fields.filter((field) => field.type !== 'boolean')
-
-        return (
-          <section key={section.section} className={panelClass}>
-            <div className="flex items-center gap-2">
-              <span aria-hidden="true" className="h-3.5 w-[3px] rounded-full bg-[#f0b429]" />
-              <h2 className="font-display text-[1.25rem] font-bold tracking-[-0.02em] text-[#000a1e]">
-                {section.section}
-              </h2>
+      {presentation === 'continuous' ? (
+        <section className={panelClass}>
+          {subjectPicker}
+          {sections.map(renderSection)}
+          <div className="flex flex-col gap-4 pt-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#000a1e]">
+                Ready to submit?
+              </p>
+              <p className="mt-1 text-sm leading-6 text-[#666970]">
+                Review each section before filing this evaluation.
+              </p>
             </div>
-            <div className="mt-5 space-y-5">
-              {otherFields.length ? (
-                <div className="grid gap-5 md:grid-cols-2">{otherFields.map(renderField)}</div>
-              ) : null}
-              {booleanFields.length ? (
-                <div className="grid gap-3 sm:grid-cols-2">{booleanFields.map(renderField)}</div>
-              ) : null}
-            </div>
-          </section>
-        )
-      })}
-
-      <div className="flex justify-end">
-        <Button type="submit" disabled={isSubmitting} className="gap-2">
-          {isSubmitting ? 'Submitting…' : 'Submit evaluation'}
-          <Send className="h-4 w-4" />
-        </Button>
-      </div>
+            {submitButton}
+          </div>
+        </section>
+      ) : (
+        <>
+          <section className={panelClass}>{subjectPicker}</section>
+          {sections.map(renderSection)}
+          <div className="flex justify-end">{submitButton}</div>
+        </>
+      )}
     </form>
   )
 }

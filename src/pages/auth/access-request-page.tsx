@@ -115,7 +115,7 @@ const ACADEMIC_ROLES = [
 const panelClass =
   'relative overflow-hidden rounded-[0.5rem] bg-[linear-gradient(180deg,#ffffff_0%,#f2f5f8_100%)] p-5 shadow-[0_20px_40px_rgba(0,33,71,0.08)] outline outline-1 outline-[#c9d5e4]/30 md:p-6'
 const inputClass =
-  'h-12 w-full rounded-[4px] border border-transparent border-b-[#d4dde8] bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 text-sm text-[#191c1d] outline-none transition placeholder:text-[#9aa0a8] focus:border-[#005db6] focus:bg-[#fbfdff] disabled:cursor-not-allowed disabled:border-[#e1e3e4] disabled:bg-[#edeeef] disabled:text-[#74777f]'
+  'h-12 w-full rounded-[4px] border border-transparent border-b-[#d4dde8] bg-[linear-gradient(180deg,#edf3fa_0%,#f7f9fb_100%)] px-4 text-sm text-[#191c1d] outline-none transition placeholder:text-[#9aa0a8] focus:border-[#005db6] focus:bg-[#fbfdff] disabled:cursor-not-allowed disabled:border-[#e1e3e4] disabled:bg-[#edeeef] disabled:text-[#666970]'
 const iconInputClass = `${inputClass} pl-11 pr-11`
 const labelClass = 'text-[11px] font-bold uppercase tracking-[0.18em] text-[#000a1e]'
 const textareaClass =
@@ -456,7 +456,6 @@ export function AccessRequestPage() {
             transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.23, 1, 0.32, 1] }}
             className="relative rounded-[0.35rem] border border-white/10 bg-white/[0.03] py-3.5 pl-4 pr-3.5"
           >
-            <span className="absolute inset-y-2.5 left-0 w-[3px] rounded-r-[2px] bg-[#f0b429]" />
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#9fb4d0]">
@@ -594,6 +593,17 @@ export function AccessRequestPage() {
         ? 'Request reporting access'
         : 'Request additional access'
 
+  // The hero heading names the track being requested. "Request Access" used to
+  // sit above it, which repeated the panel title on the right and the submit
+  // button below, so the track name now stands on its own.
+  const heroAccent = showAdmin
+    ? 'Administration'
+    : showAcademic
+      ? 'Academic Review'
+      : isNewAccountFlow
+        ? 'Clinical Reporting'
+        : 'Additional Reporting Access'
+
   return (
     <div className="relative min-h-screen overflow-x-clip bg-[#f8f9fa] px-3 py-3 sm:px-4 sm:py-4 md:px-5 md:py-5 xl:px-6 xl:py-6">
       <main className="relative mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[1460px] items-start">
@@ -604,18 +614,18 @@ export function AccessRequestPage() {
             <div className="absolute inset-y-0 right-0 w-px bg-white/8" />
 
             <div className="relative z-10 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
-                  <img src={stPaulosLogo} alt="St Paul logo" className="h-full w-full object-cover" />
+              <div className="flex items-center gap-4">
+                <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[8px] bg-white shadow-[0_16px_30px_rgba(0,0,0,0.16)]">
+                  <img src={stPaulosLogo} alt="St Paul's logo" className="h-full w-full object-cover" />
                 </div>
                 <div>
                   <p
-                    className="text-[1.55rem] font-extrabold leading-none tracking-[-0.03em] text-white"
+                    className="text-[2.15rem] font-extrabold leading-none tracking-[-0.03em] text-white"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
-                    St Paul
+                    St Paul's
                   </p>
-                  <p className="mt-1 text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
+                  <p className="mt-1.5 text-[0.82rem] font-semibold uppercase tracking-[0.24em] text-[#f0b429]">
                     Internal Medicine
                   </p>
                 </div>
@@ -639,17 +649,12 @@ export function AccessRequestPage() {
                 <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#f0b429]">
                   {isNewAccountFlow ? 'Platform enrollment' : 'Access extension'}
                 </p>
-                <h1
-                  className="text-[2.9rem] font-extrabold leading-[0.95] tracking-[-0.05em] text-white lg:text-[3.2rem] xl:text-[3.5rem]"
+                <p
+                  className="text-[2.35rem] font-extrabold leading-[0.98] tracking-[-0.045em] text-white lg:text-[2.6rem] xl:text-[2.85rem]"
                   style={{ fontFamily: 'Manrope, sans-serif' }}
                 >
-                  {isNewAccountFlow ? 'Request Access' : 'Request Additional'}
-                  <br />
-                  <span className="text-[#63a1ff]">
-                    {isNewAccountFlow ? '& Academic Review' : 'Reporting Access'}
-                  </span>
-                </h1>
-                <div className="h-1 w-12 bg-[#f0b429]" />
+                  {heroAccent}
+                </p>
               </div>
 
               {isNewAccountFlow ? (
@@ -681,7 +686,7 @@ export function AccessRequestPage() {
                       <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-[6px] bg-white shadow-[0_12px_24px_rgba(0,33,71,0.14)] ring-1 ring-[#d7dbe0]">
                         <img
                           src={stPaulosLogo}
-                          alt="St Paul logo"
+                          alt="St Paul's logo"
                           className="h-full w-full object-cover"
                         />
                       </div>
@@ -690,7 +695,7 @@ export function AccessRequestPage() {
                           className="text-base font-extrabold leading-none tracking-[-0.03em] text-[#000a1e]"
                           style={{ fontFamily: 'Manrope, sans-serif' }}
                         >
-                          St Paul
+                          St Paul's
                         </p>
                         <p className="mt-1 text-[0.6rem] font-semibold uppercase tracking-[0.22em] text-[#005db6]">
                           Internal Medicine
@@ -720,12 +725,12 @@ export function AccessRequestPage() {
                   <p className="mb-2.5 text-[11px] font-bold uppercase tracking-[0.18em] text-[#005db6]">
                     {headerEyebrow}
                   </p>
-                  <h2
+                  <h1
                     className="text-[2rem] font-extrabold tracking-[-0.035em] text-[#000a1e]"
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
                     {headerTitle}
-                  </h2>
+                  </h1>
                 </header>
 
                 <AnimatePresence mode="wait" initial={false}>
@@ -762,7 +767,7 @@ export function AccessRequestPage() {
                                     Full name
                                   </label>
                                   <div className="relative">
-                                    <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                     <input
                                       id="adminFullName"
                                       type="text"
@@ -783,7 +788,7 @@ export function AccessRequestPage() {
                                     Institutional email
                                   </label>
                                   <div className="relative">
-                                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                     <input
                                       id="adminEmail"
                                       type="email"
@@ -806,7 +811,7 @@ export function AccessRequestPage() {
                                     Create password
                                   </label>
                                   <div className="relative">
-                                    <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                     <input
                                       id="adminPassword"
                                       type={showPassword ? 'text' : 'password'}
@@ -817,7 +822,7 @@ export function AccessRequestPage() {
                                     />
                                     <button
                                       type="button"
-                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#666970] transition hover:text-[#000a1e]"
                                       onClick={() => setShowPassword((current) => !current)}
                                       aria-label={showPassword ? 'Hide password' : 'Show password'}
                                     >
@@ -839,7 +844,7 @@ export function AccessRequestPage() {
                                     Confirm password
                                   </label>
                                   <div className="relative">
-                                    <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                     <input
                                       id="adminConfirm"
                                       type={showConfirmPassword ? 'text' : 'password'}
@@ -850,7 +855,7 @@ export function AccessRequestPage() {
                                     />
                                     <button
                                       type="button"
-                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#666970] transition hover:text-[#000a1e]"
                                       onClick={() => setShowConfirmPassword((current) => !current)}
                                       aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
                                     >
@@ -935,7 +940,7 @@ export function AccessRequestPage() {
                                     Full name
                                   </label>
                                   <div className="relative">
-                                    <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                     <input
                                       id="academicFullName"
                                       type="text"
@@ -956,7 +961,7 @@ export function AccessRequestPage() {
                                     Institutional email
                                   </label>
                                   <div className="relative">
-                                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                     <input
                                       id="academicEmail"
                                       type="email"
@@ -979,7 +984,7 @@ export function AccessRequestPage() {
                                     Create password
                                   </label>
                                   <div className="relative">
-                                    <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                     <input
                                       id="academicPassword"
                                       type={showPassword ? 'text' : 'password'}
@@ -990,7 +995,7 @@ export function AccessRequestPage() {
                                     />
                                     <button
                                       type="button"
-                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#666970] transition hover:text-[#000a1e]"
                                       onClick={() => setShowPassword((current) => !current)}
                                       aria-label={showPassword ? 'Hide password' : 'Show password'}
                                     >
@@ -1012,7 +1017,7 @@ export function AccessRequestPage() {
                                     Confirm password
                                   </label>
                                   <div className="relative">
-                                    <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                     <input
                                       id="academicConfirm"
                                       type={showConfirmPassword ? 'text' : 'password'}
@@ -1023,7 +1028,7 @@ export function AccessRequestPage() {
                                     />
                                     <button
                                       type="button"
-                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#666970] transition hover:text-[#000a1e]"
                                       onClick={() => setShowConfirmPassword((current) => !current)}
                                       aria-label={
                                         showConfirmPassword
@@ -1127,7 +1132,7 @@ export function AccessRequestPage() {
                                     <div className="space-y-2 border-l-[3px] border-[#f0b429] bg-[#fffaf0] px-4 py-3.5">
                                       <div className="flex flex-wrap items-baseline justify-between gap-2">
                                         <label className={labelClass}>Current training year</label>
-                                        <span className="text-xs text-[#74777f]">
+                                        <span className="text-xs text-[#666970]">
                                           Required · confirmed by an administrator
                                         </span>
                                       </div>
@@ -1175,10 +1180,10 @@ export function AccessRequestPage() {
                                 <div className="space-y-2">
                                   <label className={labelClass} htmlFor="academicHomeWard">
                                     Home ward{' '}
-                                    <span className="font-semibold text-[#74777f]">(optional)</span>
+                                    <span className="font-semibold text-[#666970]">(optional)</span>
                                   </label>
                                   <div className="relative">
-                                    <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                     <select
                                       id="academicHomeWard"
                                       className={iconInputClass}
@@ -1196,7 +1201,7 @@ export function AccessRequestPage() {
                                 <div className="space-y-2">
                                   <label className={labelClass} htmlFor="academicNotes">
                                     Note{' '}
-                                    <span className="font-semibold text-[#74777f]">(optional)</span>
+                                    <span className="font-semibold text-[#666970]">(optional)</span>
                                   </label>
                                   <textarea
                                     id="academicNotes"
@@ -1204,7 +1209,7 @@ export function AccessRequestPage() {
                                     className={cn(textareaClass, 'min-h-[60px]')}
                                     {...academicForm.register('notes')}
                                   />
-                                  <div className="flex items-center justify-end text-xs text-[#74777f]">
+                                  <div className="flex items-center justify-end text-xs text-[#666970]">
                                     <span>{academicNotes.length}/240</span>
                                   </div>
                                 </div>
@@ -1256,7 +1261,7 @@ export function AccessRequestPage() {
                                     Full name
                                   </label>
                                   <div className="relative">
-                                    <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                     <input
                                       id="fullName"
                                       type="text"
@@ -1278,7 +1283,7 @@ export function AccessRequestPage() {
                                     Institutional email
                                   </label>
                                   <div className="relative">
-                                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                     <input
                                       id="email"
                                       type="email"
@@ -1303,7 +1308,7 @@ export function AccessRequestPage() {
                                       Create password
                                     </label>
                                     <div className="relative">
-                                      <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                      <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                       <input
                                         id="password"
                                         type={showPassword ? 'text' : 'password'}
@@ -1314,7 +1319,7 @@ export function AccessRequestPage() {
                                       />
                                       <button
                                         type="button"
-                                        className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                        className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#666970] transition hover:text-[#000a1e]"
                                         onClick={() => setShowPassword((current) => !current)}
                                         aria-label={showPassword ? 'Hide password' : 'Show password'}
                                       >
@@ -1336,7 +1341,7 @@ export function AccessRequestPage() {
                                       Confirm password
                                     </label>
                                     <div className="relative">
-                                      <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#74777f]" />
+                                      <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#666970]" />
                                       <input
                                         id="confirmPassword"
                                         type={showConfirmPassword ? 'text' : 'password'}
@@ -1347,7 +1352,7 @@ export function AccessRequestPage() {
                                       />
                                       <button
                                         type="button"
-                                        className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#74777f] transition hover:text-[#000a1e]"
+                                        className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-[#666970] transition hover:text-[#000a1e]"
                                         onClick={() => setShowConfirmPassword((current) => !current)}
                                         aria-label={
                                           showConfirmPassword
@@ -1474,7 +1479,7 @@ export function AccessRequestPage() {
                                 className={cn(textareaClass, 'min-h-[88px]')}
                                 {...clinicalForm.register('notes')}
                               />
-                              <div className="flex items-center justify-end text-xs text-[#74777f]">
+                              <div className="flex items-center justify-end text-xs text-[#666970]">
                                 <span>{clinicalNotes.length}/240</span>
                               </div>
                               {clinicalForm.formState.errors.notes ? (
@@ -1496,7 +1501,7 @@ export function AccessRequestPage() {
                                   >
                                     Previous submissions
                                   </h2>
-                                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#74777f]">
+                                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#666970]">
                                     {formatCompactNumber(currentUserRequests.length)} total
                                   </p>
                                 </div>

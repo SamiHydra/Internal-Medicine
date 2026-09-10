@@ -1,0 +1,18 @@
+{
+  "required_status_checks": {
+    "strict": false,
+    "contexts": [
+      "Frontend",
+      "Backend SQLite",
+      "Backend MariaDB",
+      "Deployment shell scripts",
+      "Isolated Playwright gate"
+    ]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": null,
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "required_conversation_resolution": false
+}

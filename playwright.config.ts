@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 /**
- * Pre-deployment QA suite for the St Paul reporting app.
+ * Pre-deployment QA suite for the St Paul's reporting app.
  *
  * The SPA (Vite, :5173) proxies /api and /sanctum to the Laravel API (:8000),
  * so the browser treats them as same-origin - required for Sanctum's SameSite
@@ -56,6 +56,16 @@ const RESPONSIVE_UI: RegExp[] = [
  * never downloaded. Locally: `E2E_ALL_BROWSERS=1 npm run test:e2e`.
  */
 const allBrowsers = process.env.E2E_ALL_BROWSERS === '1'
+
+/**
+ * The accessibility audit specs (axe sweep over every route and role, the
+ * keyboard-only flows and the visual checks) take about 25 minutes and are
+ * an audit, not a merge gate. They run only when asked for:
+ *   E2E_A11Y=1 npm run test:e2e
+ * The gate keeps its own axe spec (accessibility.spec.ts) as before.
+ */
+const accessibilityAudit = process.env.E2E_A11Y === '1'
+const ACCESSIBILITY_AUDIT_SPECS = /a11y-(sweep|keyboard|visual)\.spec\.ts/
 
 const crossBrowserProjects = [
   {
@@ -128,18 +138,25 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1920, height: 1080 } },
       dependencies: ['setup'],
-      // auth.setup runs in the 'setup' project; exclude it here.
-      testIgnore: /auth\.setup\.ts/,
+      // auth.setup runs in the 'setup' project; exclude it here. The
+      // accessibility audit specs are opt-in (see accessibilityAudit above).
+      ...(accessibilityAudit
+        ? { testMatch: ACCESSIBILITY_AUDIT_SPECS }
+        : { testIgnore: [/auth\.setup\.ts/, ACCESSIBILITY_AUDIT_SPECS] }),
     },
     // Firefox/WebKit/mobile/tablet only when E2E_ALL_BROWSERS=1 (see note above).
     ...(allBrowsers ? crossBrowserProjects : []),
   ],
   webServer: [
     {
+      // Generous because this command seeds the whole fixture before it serves,
+      // and a perf run may ask for a much deeper archive than the gate's default
+      // (SEED_HISTORY_WEEKS). A timeout only caps the wait; a fast seed still
+      // starts testing immediately.
       command: 'node scripts/start-e2e-backend.mjs',
       url: 'http://127.0.0.1:8000/up',
       reuseExistingServer: false,
-      timeout: 120_000,
+      timeout: 600_000,
     },
     {
       command: 'npm run dev -- --host 127.0.0.1 --port 5173 --strictPort',

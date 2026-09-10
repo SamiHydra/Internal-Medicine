@@ -1,6 +1,6 @@
 # Pre-Deployment QA — Test Plan
 
-**Project:** St Paul Internal Medicine — Clinical Operations & Academic Review platform
+**Project:** St Paul's Internal Medicine — Clinical Operations & Academic Review platform
 **Location:** `C:\Users\Hasse\OneDrive\Desktop\Mesay`
 **Environment:** Local development (NOT deployed). Date: 2026-06-13.
 **Prepared by:** QA / Playwright automation + multi-agent static analysis pass.

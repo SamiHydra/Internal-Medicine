@@ -8,10 +8,15 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Collection;
 
 /**
- * Creates known, reproducible login accounts for LOCAL development so a fresh
- * database (migrate:fresh --seed, a clean clone, or a wiped sqlite file) always
- * yields working credentials. Without this, the seeders provision all reference
- * data but no users, leaving a fully-seeded app that nobody can log into.
+ * Creates the LOCAL development workforce so a fresh database (migrate:fresh
+ * --seed, a clean clone, or a wiped sqlite file) always yields working
+ * credentials AND enough people for the dashboards to be exercised at a
+ * realistic hospital scale.
+ *
+ * Headcount targets (see the TARGET_* constants): 30 nurses, 10 admins, plus
+ * the named walkthrough identities. Residents and consultants are counted
+ * here too but created by DevAcademicDataSeeder, which is the only place that
+ * knows how to place them into a section roster.
  *
  * SAFETY: this never runs in production or testing. Production must create its
  * real superadmin via `php artisan app:create-superadmin` (no default password
@@ -25,6 +30,40 @@ class DevUserSeeder extends Seeder
     /** Shared password for every local dev account. */
     private const DEV_PASSWORD = 'StPaul2026!';
 
+    /** Total active nurses, including the two named walkthrough nurses below. */
+    private const TARGET_NURSES = 30;
+
+    /** Total admins. The superadmin ("Maintenance") is separate and not counted. */
+    private const TARGET_ADMINS = 10;
+
+    /**
+     * Extra nurses filled in behind the two named walkthrough accounts, up to
+     * TARGET_NURSES. Each yields <first>.<last>@stpaulhospital.demo.
+     *
+     * @var list<string>
+     */
+    private const NURSE_NAMES = [
+        'Sara Tadesse', 'Yonas Kebede', 'Marta Hailu', 'Bethlehem Tesfaye',
+        'Dawit Mekonnen', 'Selamawit Girma', 'Kalkidan Wolde', 'Eyob Assefa',
+        'Liya Bekele', 'Naod Fikru', 'Tigist Alemu', 'Robel Desta',
+        'Meron Tsegaye', 'Hewan Negash', 'Biruk Lemma', 'Saron Habte',
+        'Nahom Getachew', 'Rahel Solomon', 'Fitsum Ayele', 'Genet Worku',
+        'Helen Tamiru', 'Amanuel Birhanu', 'Lydia Demissie', 'Tewodros Kassa',
+        'Eden Mulugeta', 'Kidist Bogale', 'Yeshi Terefe', 'Mikiyas Shiferaw',
+    ];
+
+    /**
+     * Administrative doctors. Each yields admin.<first>.<last>@stpaulos.local
+     * so an admin login can never be confused with a clinical one.
+     *
+     * @var list<string>
+     */
+    private const ADMIN_NAMES = [
+        'Alem Woldemariam', 'Tsehay Getahun', 'Bekele Terefe', 'Almaz Sahle',
+        'Girma Woldu', 'Meseret Aklilu', 'Tadesse Belete', 'Hirut Zewde',
+        'Mulugeta Shiferaw', 'Aster Fantahun',
+    ];
+
     public function run(): void
     {
         if (app()->environment('production', 'testing')) {
@@ -35,7 +74,7 @@ class DevUserSeeder extends Seeder
             [
                 'email' => 'admin@stpaulos.local',
                 'username' => 'admin1',
-                'full_name' => 'St Paul Admin',
+                'full_name' => 'St Paul\'s Admin',
                 'title' => 'Maintenance',
                 'role_key' => 'superadmin',
             ],
@@ -56,33 +95,69 @@ class DevUserSeeder extends Seeder
         ];
 
         foreach ($accounts as $account) {
-            $user = User::firstOrCreate(
-                ['email' => $account['email']],
-                [
-                    'username' => $account['username'],
-                    'full_name' => $account['full_name'],
-                    'title' => $account['title'],
-                    'role_key' => $account['role_key'],
-                    'password' => self::DEV_PASSWORD,
-                    'active' => true,
-                    'password_change_required' => false,
-                ],
-            );
-
-            if ($user->wasRecentlyCreated && $user->email_verified_at === null) {
-                $user->forceFill(['email_verified_at' => now()])->save();
-            }
+            $this->ensureUser($account);
         }
 
+        $this->seedNurseWorkforce();
+        $this->seedAdminWorkforce();
         $this->seedAcademicAccounts();
 
-        $this->command?->info('Dev users ready - login: admin@stpaulos.local / '.self::DEV_PASSWORD.' (superadmin), plus nurses, residents and consultants.');
+        $this->command?->info(sprintf(
+            'Dev users ready - login: admin@stpaulos.local / %s (superadmin), plus %d nurses and %d admins.',
+            self::DEV_PASSWORD,
+            User::query()->where('role_key', 'nurse')->where('active', true)->count(),
+            User::query()->where('role_key', 'admin')->where('active', true)->count(),
+        ));
     }
 
     /**
-     * Seed the documented academic walkthrough identities. Operational academic
-     * history belongs exclusively to DevAcademicDataSeeder so every account is
-     * placed through the same coherent roster and rotation plan.
+     * Top the ward-reporting workforce up to TARGET_NURSES. The two named
+     * walkthrough nurses already exist, so only the shortfall is generated.
+     */
+    private function seedNurseWorkforce(): void
+    {
+        $existing = User::query()->where('role_key', 'nurse')->count();
+        $shortfall = self::TARGET_NURSES - $existing;
+
+        for ($i = 0; $i < $shortfall && $i < count(self::NURSE_NAMES); $i++) {
+            $name = self::NURSE_NAMES[$i];
+            $handle = $this->handle($name);
+
+            $this->ensureUser([
+                'email' => $handle.'@stpaulhospital.demo',
+                'username' => $handle,
+                'full_name' => $name,
+                'title' => 'Registered Nurse',
+                'role_key' => 'nurse',
+            ]);
+        }
+    }
+
+    /** Ten administrative doctors, so admin-scoped screens have real breadth. */
+    private function seedAdminWorkforce(): void
+    {
+        $existing = User::query()->where('role_key', 'admin')->count();
+        $shortfall = self::TARGET_ADMINS - $existing;
+
+        for ($i = 0; $i < $shortfall && $i < count(self::ADMIN_NAMES); $i++) {
+            $name = self::ADMIN_NAMES[$i];
+            $handle = 'admin.'.$this->handle($name);
+
+            $this->ensureUser([
+                'email' => $handle.'@stpaulos.local',
+                'username' => $handle,
+                'full_name' => 'Dr. '.$name,
+                'title' => 'Admin',
+                'role_key' => 'admin',
+            ]);
+        }
+    }
+
+    /**
+     * Seed the documented academic walkthrough identities. The rest of the
+     * academic workforce, and all operational academic history, belongs
+     * exclusively to DevAcademicDataSeeder so every account is placed through
+     * the same coherent roster and rotation plan.
      */
     private function seedAcademicAccounts(): void
     {
@@ -111,24 +186,29 @@ class DevUserSeeder extends Seeder
         }
     }
 
+    /** first.last, lowercased - the login handle convention used throughout. */
+    private function handle(string $fullName): string
+    {
+        return strtolower(str_replace(' ', '.', $fullName));
+    }
+
     /**
-     * @param  array{email: string, username: string, full_name: string, home: string}  $account
-     * @param  Collection<string, Department>  $wards
+     * @param  array{email: string, username: string, full_name: string, title: string, role_key: string}  $account
+     * @param  array<string, mixed>  $extra
      */
-    private function ensureAcademicUser(array $account, string $roleKey, string $title, Collection $wards): User
+    private function ensureUser(array $account, array $extra = []): User
     {
         $user = User::firstOrCreate(
             ['email' => $account['email']],
-            [
+            array_merge([
                 'username' => $account['username'],
                 'full_name' => $account['full_name'],
-                'title' => $title,
-                'role_key' => $roleKey,
-                'home_ward_id' => $wards[$account['home']]?->id,
+                'title' => $account['title'],
+                'role_key' => $account['role_key'],
                 'password' => self::DEV_PASSWORD,
                 'active' => true,
                 'password_change_required' => false,
-            ],
+            ], $extra),
         );
 
         if ($user->wasRecentlyCreated && $user->email_verified_at === null) {
@@ -136,5 +216,23 @@ class DevUserSeeder extends Seeder
         }
 
         return $user;
+    }
+
+    /**
+     * @param  array{email: string, username: string, full_name: string, home: string}  $account
+     * @param  Collection<string, Department>  $wards
+     */
+    private function ensureAcademicUser(array $account, string $roleKey, string $title, Collection $wards): User
+    {
+        return $this->ensureUser(
+            [
+                'email' => $account['email'],
+                'username' => $account['username'],
+                'full_name' => $account['full_name'],
+                'title' => $title,
+                'role_key' => $roleKey,
+            ],
+            ['home_ward_id' => $wards[$account['home']]?->id],
+        );
     }
 }

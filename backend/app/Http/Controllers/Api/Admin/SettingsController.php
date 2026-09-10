@@ -43,8 +43,10 @@ class SettingsController extends Controller
             'deadlineEnforced' => ['sometimes', 'boolean'],
             'weekly_deadline_day' => ['sometimes', Rule::in(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'])],
             'weeklyDeadlineDay' => ['sometimes', Rule::in(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'])],
-            'weekly_deadline_time' => ['sometimes', 'regex:/^\d{2}:\d{2}$/'],
-            'weeklyDeadlineTime' => ['sometimes', 'regex:/^\d{2}:\d{2}$/'],
+            // A real 24-hour clock time, not merely the NN:NN shape: "25:99" used
+            // to pass and then rewrote every reporting-period deadline (QA-006).
+            'weekly_deadline_time' => ['sometimes', 'string', 'date_format:H:i'],
+            'weeklyDeadlineTime' => ['sometimes', 'string', 'date_format:H:i'],
             'auto_lock_hours_after_deadline' => ['sometimes', 'integer', 'min:1'],
             'autoLockHoursAfterDeadline' => ['sometimes', 'integer', 'min:1'],
             'notable_rise_threshold_percent' => ['sometimes', 'integer', 'min:1'],

@@ -18,7 +18,7 @@ import {
   type RepScopeInfo,
   type TeachingSessionRecord,
 } from '@/lib/api/teaching'
-import { getApiBrowserClient } from '@/lib/api/client'
+import { ApiError, getApiBrowserClient } from '@/lib/api/client'
 import { cn } from '@/lib/utils'
 import { getErrorMessage } from '@/lib/api/helpers'
 
@@ -44,6 +44,7 @@ export function RepLogPage() {
 
   const [scope, setScope] = useState<RepScopeInfo | null>(null)
   const [sessions, setSessions] = useState<TeachingSessionRecord[] | null>(null)
+  const [loadError, setLoadError] = useState<'unassigned' | 'generic' | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   // The session currently collecting a not-held reason.
   const [reasonFor, setReasonFor] = useState<string | null>(null)
@@ -59,9 +60,16 @@ export function RepLogPage() {
       const response = await fetchMyTeachingSessions(client)
       setScope(response.scope)
       setSessions(response.data)
-    } catch {
+      setLoadError(null)
+    } catch (error) {
+      setScope(null)
       setSessions([])
-      toast.error('Unable to load your activity log.')
+      if (error instanceof ApiError && error.status === 403) {
+        setLoadError('unassigned')
+      } else {
+        setLoadError('generic')
+        toast.error('Unable to load your activity log.')
+      }
     }
   }, [client])
 
@@ -115,8 +123,20 @@ export function RepLogPage() {
         />
 
         {sessions === null ? (
-          <div className="flex min-h-[200px] items-center justify-center text-[#74777f]">
+          <div className="flex min-h-[200px] items-center justify-center text-[#666970]">
             <Loader2 className="h-5 w-5 animate-spin" aria-label="Loading sessions" />
+          </div>
+        ) : loadError ? (
+          <div className="mt-5">
+            <SectionEmptyState
+              icon={<ClipboardCheck className="h-6 w-6" />}
+              title={loadError === 'unassigned' ? 'Representative assignment needed' : 'Activity log unavailable'}
+              description={
+                loadError === 'unassigned'
+                  ? 'Your account is active, but an administrator still needs to assign your batch and representative scope.'
+                  : 'The activity log could not be loaded. Refresh the page or try again shortly.'
+              }
+            />
           </div>
         ) : sessions.length === 0 ? (
           <div className="mt-5">

@@ -2,6 +2,7 @@
 
 namespace App\Services\Analytics;
 
+use App\Jobs\WarmDashboardAnalytics;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
@@ -31,9 +32,8 @@ class DashboardAnalyticsService
 
     private const WARM_MAX = 3;
 
-    // Dedupe terminating callbacks within one request: many mutations call
-    // invalidate() more than once (e.g. save + status change), but one warm pass
-    // after the response is enough.
+    // Dedupe dispatches within one request. The queue job itself is also unique,
+    // collapsing writes from concurrent requests into one pending warm.
     private bool $warmScheduled = false;
 
     public function __construct(
@@ -95,7 +95,7 @@ class DashboardAnalyticsService
         Cache::forget(self::CACHE_VERSION_KEY);
         Cache::forever(self::CACHE_VERSION_KEY, (string) Str::uuid());
 
-        $this->scheduleWarmAfterResponse();
+        $this->scheduleWarm();
     }
 
     /**
@@ -142,25 +142,16 @@ class DashboardAnalyticsService
         }
     }
 
-    private function scheduleWarmAfterResponse(): void
+    private function scheduleWarm(): void
     {
-        // Warming is a latency optimisation, not a correctness mechanism: the
-        // cold-build-on-miss path already returns fresh data. Skipping it under
-        // the test runner keeps feature tests deterministic (they assert the
-        // fresh-after-write contract directly); warm() is covered on its own.
-        if ($this->warmScheduled || app()->runningUnitTests()) {
+        // Never run this expensive optional optimisation inline. A sync queue
+        // would put the multi-second rebuild back on the mutation request.
+        if ($this->warmScheduled || config('queue.default') === 'sync') {
             return;
         }
 
         $this->warmScheduled = true;
-
-        app()->terminating(function (): void {
-            try {
-                $this->warm();
-            } catch (\Throwable $exception) {
-                report($exception);
-            }
-        });
+        WarmDashboardAnalytics::dispatch()->afterCommit();
     }
 
     /**
@@ -257,15 +248,15 @@ class DashboardAnalyticsService
         return [
             'generatedAt' => now()->toJSON(),
             'scope' => $this->analytics->scope($filters),
-            'overview' => $this->analytics->overview($filters, $reports),
+            'overview' => $this->analytics->dashboardOverview($filters, $reports),
             'families' => [
-                'inpatient' => $this->analytics->familySummary('inpatient', $filters, $inpatientReports),
+                'inpatient' => $this->analytics->dashboardFamilySummary('inpatient', $filters, $inpatientReports),
                 'outpatient' => [
-                    ...$this->analytics->familySummary('outpatient', $filters, $outpatientReports),
+                    ...$this->analytics->dashboardFamilySummary('outpatient', $filters, $outpatientReports),
                     'outpatient' => $this->analytics->outpatientExtras($outpatientReports),
                 ],
                 'procedure' => [
-                    ...$this->analytics->familySummary('procedure', $filters, $procedureReports),
+                    ...$this->analytics->dashboardFamilySummary('procedure', $filters, $procedureReports),
                     'procedures' => $this->analytics->procedureExtras($procedureReports),
                 ],
             ],

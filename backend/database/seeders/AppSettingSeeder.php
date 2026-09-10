@@ -3,7 +3,10 @@
 namespace Database\Seeders;
 
 use App\Models\AppSetting;
+use App\Models\ClinicalAlertRule;
+use App\Models\ReportFieldDefinition;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Schema;
 
 class AppSettingSeeder extends Seeder
 {
@@ -44,6 +47,35 @@ class AppSettingSeeder extends Seeder
                     'updated_at' => now(),
                 ],
             );
+        }
+
+        // Keep the legacy setting for compatibility, while making the governed
+        // rule table the runtime source of truth. firstOrCreate deliberately
+        // preserves thresholds and deadlines edited by clinical leadership.
+        if (Schema::hasTable('clinical_alert_rules')) {
+            ReportFieldDefinition::query()
+                ->whereIn('field_key', $settings['critical_non_zero_fields'])
+                ->each(function (ReportFieldDefinition $definition): void {
+                    ClinicalAlertRule::query()->firstOrCreate(
+                        [
+                            'template_id' => $definition->template_id,
+                            'field_key' => $definition->field_key,
+                        ],
+                        [
+                            'field_definition_id' => $definition->id,
+                            'name' => $definition->label,
+                            'operator' => 'gt',
+                            'threshold' => 0,
+                            'severity' => 'high',
+                            'deadline_hours' => 24,
+                            'responsible_role' => 'admin',
+                            'notification_roles' => ['superadmin', 'admin'],
+                            'active' => true,
+                            'version' => 1,
+                            'effective_from' => now(),
+                        ],
+                    );
+                });
         }
     }
 }

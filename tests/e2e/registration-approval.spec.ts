@@ -1,7 +1,7 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { anonContext, apiContextFromState, apiLoginRaw, ajaxHeaders, xsrfToken, flushRateLimits } from './helpers/api'
 import { authFile } from './helpers/auth'
-import { DEV_PASSWORD, QA_MARKER } from './helpers/accounts'
+import { QA_ACCOUNT_PASSWORD, QA_MARKER } from './helpers/accounts'
 
 // Each self-registration flow signs up and logs in against the shared per-IP
 // throttle bucket; reset it before every test so accumulated count from earlier
@@ -90,8 +90,8 @@ test.describe('Nurse self-registration and approval', () => {
     // The clinical track is the default. Fill the new-account fields.
     await page.locator('#fullName').fill(`${QA_MARKER} SelfReg Nurse`)
     await page.locator('#email').fill(email)
-    await page.locator('#password').fill(DEV_PASSWORD)
-    await page.locator('#confirmPassword').fill(DEV_PASSWORD)
+    await page.locator('#password').fill(QA_ACCOUNT_PASSWORD)
+    await page.locator('#confirmPassword').fill(QA_ACCOUNT_PASSWORD)
     // At least one reporting assignment is required; GI/Neurology is an
     // inpatient-only department so its label is unambiguous.
     await page.getByRole('checkbox', { name: 'GI/Neurology' }).check()
@@ -126,7 +126,7 @@ test.describe('Nurse self-registration and approval', () => {
     // The password MATCHES (the applicant chose it a request ago). The account is
     // simply not yet activated, so the reply must stay generic.
     await page.locator('#identifier').fill(email)
-    await page.locator('#password').fill(DEV_PASSWORD)
+    await page.locator('#password').fill(QA_ACCOUNT_PASSWORD)
     await page.getByRole('button', { name: /sign in to reporting portal/i }).click()
 
     // Stays on /login, not authenticated.
@@ -167,7 +167,7 @@ test.describe('Nurse self-registration and approval', () => {
     }
 
     // The account can now authenticate with the password chosen at registration.
-    const applicant = await apiLoginRaw(email, DEV_PASSWORD)
+    const applicant = await apiLoginRaw(email, QA_ACCOUNT_PASSWORD)
     try {
       const me = await applicant.get('/api/auth/me', { headers: ajaxHeaders() })
       expect(me.status()).toBe(200)
@@ -195,8 +195,8 @@ test.describe('Academic self-signup and approval', () => {
     await page.getByRole('button', { name: 'Academic' }).first().click()
     await page.locator('#academicFullName').fill(`${QA_MARKER} SelfReg Resident`)
     await page.locator('#academicEmail').fill(email)
-    await page.locator('#academicPassword').fill(DEV_PASSWORD)
-    await page.locator('#academicConfirm').fill(DEV_PASSWORD)
+    await page.locator('#academicPassword').fill(QA_ACCOUNT_PASSWORD)
+    await page.locator('#academicConfirm').fill(QA_ACCOUNT_PASSWORD)
     // Pick the Resident role card (scoped so "Consultant / Evaluate residents." does
     // not also match).
     await page.getByRole('button').filter({ has: page.getByText('Resident', { exact: true }) }).click()
@@ -226,7 +226,7 @@ test.describe('Academic self-signup and approval', () => {
       const token = await xsrfToken(anon)
       const res = await anon.post('/api/auth/login', {
         headers: ajaxHeaders(token),
-        data: { identifier: email, password: DEV_PASSWORD },
+        data: { identifier: email, password: QA_ACCOUNT_PASSWORD },
       })
       expect(res.status(), 'a pre-approval academic login must be rejected').toBe(422)
     } finally {
@@ -264,7 +264,7 @@ test.describe('Academic self-signup and approval', () => {
       await admin.dispose()
     }
 
-    const resident = await apiLoginRaw(email, DEV_PASSWORD)
+    const resident = await apiLoginRaw(email, QA_ACCOUNT_PASSWORD)
     try {
       const me = await resident.get('/api/auth/me', { headers: ajaxHeaders() })
       expect(me.status()).toBe(200)

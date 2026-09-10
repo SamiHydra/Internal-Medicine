@@ -14,9 +14,51 @@ import type {
   ReportingPeriod,
 } from '@/types/domain'
 
-const liveReportingStartDate = parseISO('2026-03-02T00:00:00.000Z')
+/**
+ * The week this system went live. Reporting periods before it are hidden
+ * everywhere, because nothing was ever filed against them and they would read
+ * as a wall of missing reports.
+ *
+ * Configurable so a local fixture seeded with a deeper archive is actually
+ * browsable - otherwise years of seeded history sit in the database while every
+ * chart still starts at the go-live week. The backend has the matching knob
+ * (reports.window.live_start); set BOTH or the two disagree about what exists.
+ */
+const DEFAULT_LIVE_REPORTING_START = '2026-03-02T00:00:00.000Z'
 
-export type ReportingTimeRange = 'current' | 'last4' | 'last8' | 'all'
+function resolveLiveReportingStart(): Date {
+  const configured = import.meta.env.VITE_LIVE_REPORTING_START
+
+  if (typeof configured === 'string' && configured.trim() !== '') {
+    const parsed = parseISO(
+      configured.includes('T') ? configured : `${configured.trim()}T00:00:00.000Z`,
+    )
+
+    // A malformed override must not silently blank every chart.
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed
+    }
+  }
+
+  return parseISO(DEFAULT_LIVE_REPORTING_START)
+}
+
+const liveReportingStartDate = resolveLiveReportingStart()
+
+/**
+ * Ranges are counts of weekly reporting periods. `quarter` is 13 of them, the
+ * standard clinical quarter, added because the clinic reports quarterly.
+ */
+export type ReportingTimeRange =
+  | 'current'
+  | 'last4'
+  | 'last8'
+  | 'quarter'
+  | 'last26'
+  | 'all'
+
+/** Weeks in a quarter. */
+export const QUARTER_WEEKS = 13
 export type DashboardTrendScale = 'weekly' | 'monthly'
 
 export const ALL_INPATIENT_AVERAGE = 'all_inpatient_average'
@@ -266,7 +308,16 @@ export function getReportingPeriodsForRange(
     return periodsThroughAnchor
   }
 
-  const periodCount = range === 'last8' ? 8 : range === 'last4' ? 4 : 1
+  const periodCount =
+    range === 'last26'
+      ? 26
+      : range === 'quarter'
+      ? QUARTER_WEEKS
+      : range === 'last8'
+        ? 8
+        : range === 'last4'
+          ? 4
+          : 1
   return periodsThroughAnchor.slice(-periodCount)
 }
 
@@ -390,6 +441,36 @@ function getRangeStatusEntries(
       }
     }),
   )
+}
+
+/**
+ * The same shape getReportingRangeSummary returns, with nothing in it.
+ *
+ * Callers that must keep rendering while the first workspace payload is still
+ * in flight use this instead of unmounting their page: an empty summary lets
+ * the frame paint immediately, and the caller shows its own loading state for
+ * the data regions. Reserved for that transient window - a range that has
+ * genuinely finished loading with no periods still returns null.
+ */
+export function emptyReportingRangeSummary(): NonNullable<
+  ReturnType<typeof getReportingRangeSummary>
+> {
+  return {
+    periods: [],
+    entries: [],
+    statusCounts: { ...emptyStatusCounts },
+    metrics: {
+      totalExpected: 0,
+      submitted: 0,
+      missing: 0,
+      editedAfterSubmission: 0,
+      locked: 0,
+      unlocked: 0,
+      draft: 0,
+      notStarted: 0,
+      overdue: 0,
+    },
+  }
 }
 
 export function getReportingRangeSummary(
@@ -1133,6 +1214,20 @@ function getCapacityEligibleInpatientDepartments() {
   )
 }
 
+/**
+ * Departments whose reports the monthly occupancy series reads, for the given
+ * scope. Callers use this to load only the report details that series needs
+ * instead of every report in range - occupancy is the one monthly chart that
+ * spans the whole range, and it only looks at wards that have beds.
+ */
+export function getOccupancyRelevantDepartmentIds(scope: string): string[] {
+  if (scope !== ALL_INPATIENT_POOLED) {
+    return [scope]
+  }
+
+  return getCapacityEligibleInpatientDepartments().map((department) => department.id)
+}
+
 function calculateInpatientOccupancyPoint(
   label: string,
   reports: ReportRecord[],
@@ -1569,37 +1664,24 @@ export function getWhatChangedThisWeek(
     }
 
     const department = departmentMap[assignment.departmentId]
-    const template = templateStore.map[assignment.templateId]
     const currentReport = getReportForAssignmentPeriod(state, assignment.id, currentPeriod.id)
     const previousReport = getReportForAssignmentPeriod(state, assignment.id, previousPeriod.id)
 
-    template.changeRules.forEach((rule) => {
-      if (!rule.fieldId || !currentReport || !previousReport) {
-        return
-      }
+    // New critical events are surfaced straight from the configured critical
+    // fields. This check previously lived inside the week-on-week change rules,
+    // so it only ran for fields that happened to also carry a percentage rule.
+    if (currentReport && previousReport) {
+      state.settings.criticalNonZeroFields.forEach((fieldId) => {
+        const currentValue = sumField(currentReport, fieldId)
+        const previousValue = sumField(previousReport, fieldId)
 
-      const currentValue = sumField(currentReport, rule.fieldId)
-      const previousValue = sumField(previousReport, rule.fieldId)
-      const delta = formatDelta(currentValue, previousValue)
-
-      if (delta !== null && Math.abs(delta) >= rule.percentThreshold) {
-        insights.push(
-          rule.messageTemplate
-            .replace('{department}', department.name)
-            .replace('{deltaPercent}', Math.round(delta).toString())
-            .replace('{currentValue}', String(currentValue))
-            .replace('{previousValue}', String(previousValue)),
-        )
-      }
-
-      if (
-        state.settings.criticalNonZeroFields.includes(rule.fieldId) &&
-        currentValue > 0 &&
-        previousValue === 0
-      ) {
-        insights.push(`${department.name} reported a new non-zero critical event for ${rule.fieldId.replaceAll('_', ' ')}.`)
-      }
-    })
+        if (currentValue > 0 && previousValue === 0) {
+          insights.push(
+            `${department.name} reported a new non-zero critical event for ${fieldId.replaceAll('_', ' ')}.`,
+          )
+        }
+      })
+    }
 
     const currentStatus = deriveReportStatus(state, currentPeriod.id, currentReport)
     if (currentStatus === 'edited_after_submission') {

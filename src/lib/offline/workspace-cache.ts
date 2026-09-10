@@ -2,6 +2,8 @@ import type { AppState } from '@/types/domain'
 
 const workspaceCacheStorageKey = 'stpaul:workspace-state:v4'
 const legacySessionStorageKey = 'stpaul:workspace-state:v3'
+const MAX_CACHED_USERS = 2
+const MAX_CACHE_AGE_MS = 90 * 24 * 60 * 60 * 1000
 
 export type WorkspaceCacheRecord = {
   version: 4
@@ -50,13 +52,18 @@ export function writeWorkspaceCache(cacheRecord: WorkspaceCacheRecord) {
 
   try {
     const envelope = readWorkspaceCacheEnvelope() ?? createEmptyWorkspaceCacheEnvelope()
+    const records = Object.values({
+      ...envelope.recordsByUserId,
+      [cacheRecord.userId]: cacheRecord,
+    })
+      .filter((record) => cacheAge(record) <= MAX_CACHE_AGE_MS)
+      .sort((left, right) => Date.parse(right.cachedAt) - Date.parse(left.cachedAt))
+      .slice(0, MAX_CACHED_USERS)
+
     const nextEnvelope: WorkspaceCacheEnvelope = {
       version: 4,
       lastUserId: cacheRecord.userId,
-      recordsByUserId: {
-        ...envelope.recordsByUserId,
-        [cacheRecord.userId]: cacheRecord,
-      },
+      recordsByUserId: Object.fromEntries(records.map((record) => [record.userId, record])),
     }
 
     storage.setItem(workspaceCacheStorageKey, JSON.stringify(nextEnvelope))
@@ -156,8 +163,14 @@ function isValidWorkspaceCacheRecord(
       cacheRecord.version === 4 &&
       cacheRecord.userId === userId &&
       cacheRecord.state &&
-      cacheRecord.state.currentUserId === userId,
+      cacheRecord.state.currentUserId === userId &&
+      cacheAge(cacheRecord) <= MAX_CACHE_AGE_MS,
   )
+}
+
+function cacheAge(cacheRecord: WorkspaceCacheRecord) {
+  const cachedAt = Date.parse(cacheRecord.cachedAt)
+  return Number.isFinite(cachedAt) ? Date.now() - cachedAt : Number.POSITIVE_INFINITY
 }
 
 function getLocalStorage() {

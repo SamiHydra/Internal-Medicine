@@ -72,7 +72,7 @@ export function ReportingScopePanel({
           type="button"
           onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
-          className="flex w-full items-center justify-between gap-3 text-left transition-transform duration-200 motion-safe:active:scale-[0.99] sm:hidden"
+          className="flex w-full items-center justify-between gap-3 text-left transition-transform duration-200 motion-safe:active:scale-[0.99] sm:hidden pointer-coarse:min-h-11"
         >
           <span className="flex items-center gap-2 text-[13px] font-semibold text-[#1d3047]">
             <SlidersHorizontal className="h-4 w-4 text-[#005db6]" />
@@ -80,11 +80,11 @@ export function ReportingScopePanel({
           </span>
           <span className="flex min-w-0 items-center gap-2">
             {summary ? (
-              <span className="max-w-[12rem] truncate text-[13px] text-[#74777f]">{summary}</span>
+              <span className="max-w-[12rem] truncate text-[13px] text-[#666970]">{summary}</span>
             ) : null}
             <ChevronDown
               className={cn(
-                'h-4 w-4 shrink-0 text-[#74777f] transition-transform duration-200',
+                'h-4 w-4 shrink-0 text-[#666970] transition-transform duration-200',
                 open && 'rotate-180',
               )}
             />
@@ -110,14 +110,14 @@ export function ReportingScopePanel({
       >
         {fields.map((field) => (
           <div key={field.label} className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#74777f]">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#666970]">
               {field.label}
             </p>
             <Select value={field.value} onValueChange={field.onValueChange}>
               <SelectTrigger
                 aria-label={field.label}
                 className={cn(
-                  'mt-2 h-10 min-w-0 rounded-[0.25rem] border-[#d9e0e7] bg-[#ffffff] px-3.5 text-left text-[#000a1e] shadow-none focus:ring-0 hover:border-[#c9d4e2]',
+                  'mt-2 h-10 min-w-0 rounded-[0.25rem] border-[#d9e0e7] bg-[#ffffff] px-3.5 text-left text-[#000a1e] shadow-none focus:ring-0 focus-visible:ring-2 focus-visible:ring-[#005db6]/35 hover:border-[#c9d4e2]',
                   field.triggerClassName,
                 )}
               >

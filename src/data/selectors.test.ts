@@ -182,6 +182,46 @@ describe('getDashboardSummary', () => {
 })
 
 describe('reporting time ranges', () => {
+  it('returns the 13 weeks of a quarter, ending on the anchor', () => {
+    // 20 consecutive live weeks (periods before liveReportingStartDate are
+    // filtered out) so a 13-week window is a real slice, not the whole set.
+    const periods = Array.from({ length: 20 }, (_, index) => {
+      const start = new Date(Date.UTC(2026, 2, 2 + index * 7))
+      const end = new Date(Date.UTC(2026, 2, 8 + index * 7))
+      return createPeriod({
+        id: `period_${index + 1}`,
+        weekStart: start.toISOString(),
+        weekEnd: end.toISOString(),
+        deadlineAt: end.toISOString(),
+        label: `Week ${index + 1}`,
+      })
+    })
+    const state = createState({ reportingPeriods: periods })
+
+    const anchor = periods[17]
+    const quarter = getReportingPeriodsForRange(state, 'quarter', anchor.id)
+
+    expect(quarter).toHaveLength(13)
+    // Inclusive of the anchor, reaching back twelve further weeks.
+    expect(quarter.at(-1)).toEqual(anchor)
+    expect(quarter[0]).toEqual(periods[5])
+  })
+
+  it('caps the quarter at the data available when history is shorter', () => {
+    const periods = Array.from({ length: 4 }, (_, index) =>
+      createPeriod({
+        id: `period_${index + 1}`,
+        weekStart: new Date(Date.UTC(2026, 2, 2 + index * 7)).toISOString(),
+        weekEnd: new Date(Date.UTC(2026, 2, 8 + index * 7)).toISOString(),
+        deadlineAt: new Date(Date.UTC(2026, 2, 8 + index * 7)).toISOString(),
+        label: `Week ${index + 1}`,
+      }),
+    )
+    const state = createState({ reportingPeriods: periods })
+
+    expect(getReportingPeriodsForRange(state, 'quarter', periods[3].id)).toHaveLength(4)
+  })
+
   it('limits periods by the selected anchor and summarizes statuses across the range', () => {
     const periods = [
       createPeriod({
@@ -275,6 +315,7 @@ describe('reporting time ranges', () => {
     })
 
     expect(getReportingPeriodsForRange(state, 'current', periods[2].id)).toEqual([periods[2]])
+    expect(getReportingPeriodsForRange(state, 'last26', periods[2].id)).toEqual(periods)
     expect(getReportingPeriodsForRange(state, 'all', periods[1].id)).toEqual([
       periods[0],
       periods[1],

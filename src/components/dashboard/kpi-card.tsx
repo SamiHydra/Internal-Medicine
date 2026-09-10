@@ -5,14 +5,6 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { cn } from '@/lib/utils'
 import type { RagStatus } from '@/lib/performance-targets'
 
-type Accent = 'navy' | 'gold' | 'steel'
-
-const accentBarClass: Record<Accent, string> = {
-  navy: 'bg-[#002147]',
-  gold: 'bg-[#f0b429]',
-  steel: 'bg-[#6c7f95]',
-}
-
 const ragStatusClass: Record<RagStatus, string> = {
   green: 'border-emerald-200 bg-emerald-50 text-emerald-800',
   amber: 'border-amber-200 bg-amber-50 text-amber-800',
@@ -54,7 +46,6 @@ export function KpiCard({
   delta,
   deltaSuffix = '%',
   hint,
-  accent = 'navy',
   status,
 }: {
   label: string
@@ -63,18 +54,13 @@ export function KpiCard({
   delta?: number
   deltaSuffix?: string
   hint?: string
-  accent?: Accent
   status?: {
     tone: RagStatus
     label: string
   }
 }) {
   return (
-    <Card className="gap-0 rounded-none border-0 pl-1 outline-none">
-      <span
-        aria-hidden="true"
-        className={cn('absolute inset-y-0 left-0 w-[3px]', accentBarClass[accent])}
-      />
+    <Card className="gap-0 rounded-none border-0 outline-none">
       <CardHeader className="p-4 pb-0 md:p-5 md:pb-0">
         <CardTitle className="font-sans text-[10px] font-semibold uppercase tracking-[0.18em] text-[#44474e] md:text-[11px] md:tracking-[0.2em]">
           {label}

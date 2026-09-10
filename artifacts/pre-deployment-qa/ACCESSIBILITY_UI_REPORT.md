@@ -62,7 +62,7 @@ axe rule **`color-contrast`, impact: serious**, on every authenticated scan (e.g
 ## 6. Labels, alt text, buttons (positives)
 
 - 🟢 Login inputs have associated `<label htmlFor>`; the password show/hide and the shell sign-out are icon buttons **with** `aria-label`.
-- 🟢 The St Paul logo `<img>` has descriptive `alt` text.
+- 🟢 The St Paul's logo `<img>` has descriptive `alt` text.
 - 🟢 The workspace switcher is a labeled `role="group"` with `aria-pressed` toggle buttons.
 
 ## 7. Prioritized fixes

@@ -1,7 +1,7 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
 
 import { apiContextFromState, anonContext, ajaxHeaders, xsrfToken, flushRateLimits } from './helpers/api'
-import { ACCOUNTS, DEV_PASSWORD, QA_MARKER } from './helpers/accounts'
+import { ACCOUNTS, QA_ACCOUNT_PASSWORD, QA_MARKER } from './helpers/accounts'
 
 /**
  * Regression guard for C-SEC-004 (account-enumeration oracle).
@@ -82,7 +82,7 @@ function clinicalPayload(email: string): Record<string, unknown> {
   return {
     fullName: `${QA_MARKER} Enum Probe`,
     email,
-    password: DEV_PASSWORD,
+    password: QA_ACCOUNT_PASSWORD,
     requestedAssignments: [assignment],
     notes: QA_MARKER,
   }
@@ -92,7 +92,7 @@ function academicPayload(email: string): Record<string, unknown> {
   return {
     fullName: `${QA_MARKER} Enum Probe`,
     email,
-    password: DEV_PASSWORD,
+    password: QA_ACCOUNT_PASSWORD,
     role: 'resident',
     // Residents must carry a training year (required_if:role,resident); without
     // it the payload 422s on validation before the email-state branch under test.
@@ -105,7 +105,7 @@ function adminPayload(email: string): Record<string, unknown> {
   return {
     fullName: `${QA_MARKER} Enum Probe`,
     email,
-    password: DEV_PASSWORD,
+    password: QA_ACCOUNT_PASSWORD,
     notes: QA_MARKER,
   }
 }

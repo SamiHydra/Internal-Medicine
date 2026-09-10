@@ -96,7 +96,7 @@ export function DataImportPage() {
         <StepHeading step={1} label="Download template" />
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold uppercase tracking-[0.12em] text-[#74777f]">
+            <label className="text-xs font-semibold uppercase tracking-[0.12em] text-[#666970]">
               Reporting period
             </label>
             <Select value={periodId} onValueChange={setPeriodId}>
@@ -135,6 +135,7 @@ export function DataImportPage() {
               <input
                 ref={fileInputRef}
                 type="file"
+                aria-label="Filled import file (CSV or XLSX)"
                 accept=".csv,.xlsx"
                 onChange={(event) => setFile(event.target.files?.[0] ?? null)}
                 className="block w-full text-sm text-[#44474e] file:mr-3 file:rounded-[0.3rem] file:border-0 file:bg-[#edf1f5] file:px-3.5 file:py-2 file:text-sm file:font-semibold file:text-[#1d3047] hover:file:bg-[#e2e8f0] sm:w-auto"
@@ -171,7 +172,7 @@ export function DataImportPage() {
               <CheckCircle2 className="h-4 w-4" />
               {result.imported} imported
             </span>
-            <span className="text-sm text-[#74777f]">{result.skipped} skipped</span>
+            <span className="text-sm text-[#666970]">{result.skipped} skipped</span>
           </div>
 
           {result.errors.length > 0 ? (

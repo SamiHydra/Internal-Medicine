@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Services\Admin\AdminAuditService;
+use App\Services\Workspace\WorkspaceRevisionToken;
 use App\Support\Authorization\Permissions;
 use App\Support\RoleTitles;
 use Illuminate\Http\JsonResponse;
@@ -23,6 +25,10 @@ class AuthController extends Controller
      * default BCRYPT_ROUNDS; regenerate it if that config changes.
      */
     private const NO_USER_PASSWORD_HASH = '$2y$12$FX6Hs3lmAm3ZXzMcBAWq0.CetT/jNh2m76HgshAKTJF6bm8hTYARO';
+
+    public function __construct(
+        private readonly AdminAuditService $auditService,
+    ) {}
 
     public function login(Request $request): JsonResponse
     {
@@ -107,12 +113,26 @@ class AuthController extends Controller
             ]);
         }
 
+        $oldValues = $user->only(['password_change_required']);
+
         // The 'password' cast hashes the value; clearing the flag releases the user
         // from the EnsurePasswordChanged gate on the next request.
         $user->forceFill([
             'password' => $validated['password'],
             'password_change_required' => false,
         ])->save();
+
+        // Record the fact of the change, never the password or its hash, so a
+        // credential change from a hijacked session still leaves a trail.
+        $this->auditService->record(
+            $user,
+            'change_password',
+            'user',
+            $user->id,
+            $oldValues,
+            ['password_change_required' => false, 'method' => 'self_service'],
+            $request,
+        );
 
         return response()->json($this->sessionPayload($user->refresh()));
     }
@@ -122,6 +142,10 @@ class AuthController extends Controller
         Auth::guard('web')->logout();
 
         if ($request->hasSession()) {
+            // The revision-poll credential is bound to this session; drop its
+            // registration before the id is rotated away (QA-016).
+            app(WorkspaceRevisionToken::class)->revoke($request->session()->getId());
+
             $request->session()->invalidate();
             $request->session()->regenerateToken();
         }
@@ -133,12 +157,11 @@ class AuthController extends Controller
 
     private function findUserForIdentifier(string $identifier): ?User
     {
-        return User::query()
-            ->whereRaw('lower(email) = ?', [$identifier])
-            ->orWhereRaw("lower(coalesce(username, '')) = ?", [$identifier])
-            ->orderByRaw('case when lower(email) = ? then 0 else 1 end', [$identifier])
-            ->orderBy('created_at')
-            ->first();
+        // Email has precedence when an identifier could match both fields.
+        // Both columns are normalized on write, so these are two cheap indexed
+        // point lookups instead of one lower()/coalesce()/CASE table scan.
+        return User::query()->where('email', $identifier)->first()
+            ?? User::query()->where('username', $identifier)->oldest('created_at')->first();
     }
 
     /**
@@ -146,10 +169,15 @@ class AuthController extends Controller
      */
     private function sessionPayload(User $user): array
     {
+        // Assignments are reporting scope, so they are only part of the session
+        // for accounts that currently hold the reporting permission.
+        $canReport = Permissions::userCan($user, Permissions::REPORTS_VIEW_ASSIGNED);
+
         $user->load([
             'role',
             'assignments' => fn ($query) => $query
                 ->where('active', true)
+                ->when(! $canReport, fn ($scoped) => $scoped->whereRaw('1 = 0'))
                 ->with(['department', 'template'])
                 ->orderBy('approved_at'),
         ]);

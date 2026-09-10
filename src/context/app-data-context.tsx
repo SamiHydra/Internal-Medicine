@@ -11,10 +11,12 @@ import {
 } from 'react'
 import { toast } from 'sonner'
 
+import { forgetSessionHint, hasSessionHint, rememberSessionHint } from '@/lib/session-hint'
 import { createEmptyAppState } from '@/lib/app-state'
 import { clearAuthenticatedQueryCache } from '@/lib/query-client'
 import { departmentMap, templateMap } from '@/config/templates'
 import type {
+  ReportConflictSnapshot,
   AcademicWorkspaceState,
   AccessRequestPayload,
   AdminAccessRequest,
@@ -22,8 +24,11 @@ import type {
   LiveAppStateLoadOptions,
   ApiReferenceState,
   ReportDetailRecord,
+  ReportResponse,
+  ReportSummaryResponse,
   SaveReportPayload,
   SubmitAdminAccessRequestPayload,
+  AssignableRole,
 } from '@/lib/api'
 import {
   assignUserToDepartment as assignUserToDepartmentMutation,
@@ -31,10 +36,17 @@ import {
   createEmptyReferenceState,
   ensureDepartmentReferenceData,
   fetchAdminAccessRequests as fetchAdminAccessRequestsQuery,
+  fetchAccessRequests,
   fetchCurrentUserProfile,
+  fetchCellAuditLogs,
+  fetchReportAssignments,
   fetchReportDetails,
+  fetchReportStatusHistory,
   changePassword as changePasswordMutation,
   fetchLiveAppState,
+  listAllReportSummaries,
+  fetchProfileDirectory,
+  fetchWorkspaceRevision,
   isAdminRole,
   loginWithPassword,
   reviewAccessRequest as reviewAccessRequestMutation,
@@ -50,11 +62,13 @@ import {
   submitAccessRequest as submitAccessRequestMutation,
   updateAppSettings as updateAppSettingsMutation,
   updateAssignmentActiveState,
+  updateUserRole as updateUserRoleMutation,
   clearNotifications as clearNotificationsMutation,
   updateNotificationReadState,
   updateUserActiveState,
 } from '@/lib/api'
 import {
+  ApiError,
   getApiBrowserClient,
   isApiConfigured,
 } from '@/lib/api/client'
@@ -63,22 +77,28 @@ import {
   missingApiEnvKeys,
 } from '@/lib/api/env'
 import {
+  classifyQueuedSaveFailure,
   getReportSaveQueueId,
   isBrowserOffline,
   isLikelyOfflineError,
   listQueuedReportSaves,
+  markQueuedReportSaveConflict,
   MAX_QUEUED_SAVE_ATTEMPTS,
   queueReportSave,
   recordQueuedReportSaveFailure,
   removeQueuedReportSave,
+  retryQueuedReportSave,
+  type QueuedReportSave,
+  type QueuedSaveConflictReason,
 } from '@/lib/offline/report-save-queue'
 import {
   clearWorkspaceCache,
   readLastWorkspaceCache,
-  readWorkspaceCache,
   writeWorkspaceCache,
   type WorkspaceCacheRecord,
 } from '@/lib/offline/workspace-cache'
+import { reportClientError } from '@/lib/observability/error-reporter'
+import { workspacePollDelay } from '@/lib/workspace-poll'
 import {
   getCurrentPeriod,
   getCurrentUser,
@@ -87,8 +107,8 @@ import type {
   AppSettings,
   AppState,
   NotificationItem,
+  ReportRecord,
   UserProfile,
-  UserRole,
 } from '@/types/domain'
 
 type AppDataContextValue = {
@@ -100,7 +120,7 @@ type AppDataContextValue = {
   isConfigured: boolean
   missingEnvVars: string[]
   error: string | null
-  login: (email: string, password: string) => Promise<UserRole | null>
+  login: (email: string, password: string) => Promise<UserProfile | null>
   logout: () => Promise<void>
   markNotificationsRead: (userId: string, notificationIds: string[]) => Promise<void>
   clearNotifications: (userId: string, notificationIds: string[]) => Promise<void>
@@ -120,24 +140,42 @@ type AppDataContextValue = {
   ) => Promise<void>
   rejectAdminAccessRequest: (requestId: string) => Promise<void>
   saveReport: (payload: SaveReportPayload) => Promise<SaveReportResult>
+  /** Offline saves still waiting for the network (docs/OFFLINE_SYNC_MODEL.md). */
   queuedReportSaveCount: number
+  /** Offline saves the server refused; they wait for the user's decision. */
+  conflictedReportSaveCount: number
+  /** Every queued or parked save for the signed-in user, oldest first. */
+  queuedReportSaves: QueuedReportSave[]
   hasQueuedReportSave: (assignmentId: string, reportingPeriodId: string) => boolean
+  getQueuedReportSave: (assignmentId: string, reportingPeriodId: string) => QueuedReportSave | null
+  /** Drop a parked or pending offline save; the server copy stands. */
+  discardQueuedReportSave: (queuedSaveId: string) => Promise<void>
+  /**
+   * Replay a parked save now, re-based on the revision the server reported so
+   * the replay is an explicit overwrite. Resolves true when it was applied.
+   */
+  applyQueuedReportSave: (
+    queuedSaveId: string,
+    options?: { expectedUpdatedAt?: string | null },
+  ) => Promise<boolean>
   lockReport: (reportId: string, actorId: string) => Promise<void>
   unlockReport: (reportId: string, actorId: string) => Promise<void>
   isReportDetailLoaded: (reportId: string) => boolean
   getReportDetailLoadState: (reportId: string) => ReportDetailLoadState
   updateSettings: (settings: Partial<AppSettings>) => Promise<void>
   toggleUserActive: (userId: string) => Promise<void>
+  changeUserRole: (userId: string, role: AssignableRole) => Promise<boolean>
   toggleAssignmentActive: (assignmentId: string) => Promise<void>
   assignUserToDepartment: (
     userId: string,
     departmentId: string,
     templateId: string,
   ) => Promise<void>
-  ensureProfileDirectoryData: () => Promise<void>
+  ensureProfileDirectoryData: (options?: { force?: boolean }) => Promise<void>
   ensureAccessRequestData: () => Promise<void>
   ensureUserManagementData: () => Promise<void>
   ensureHistoryData: () => Promise<void>
+  ensureReportSummaryData: (options?: EnsureReportSummaryOptions) => Promise<void>
   ensureReportDetails: (
     reportIds: string[],
     options?: EnsureReportDetailsOptions,
@@ -149,6 +187,30 @@ type AppDataContextValue = {
 }
 
 const AppDataContext = createContext<AppDataContextValue | null>(null)
+
+const QUEUE_SYNC_LOCK = 'stpaul:offline-report-sync'
+
+/**
+ * Run the queue replay under a browser-wide lock so only one tab of this
+ * origin replays at a time; a tab that finds the lock taken simply skips this
+ * round (the holder drains the whole queue) and refreshes its view later.
+ */
+async function withQueueSyncLock(task: () => Promise<void>) {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
+
+  if (!locks) {
+    await task()
+    return
+  }
+
+  await locks.request(QUEUE_SYNC_LOCK, { ifAvailable: true }, async (lock) => {
+    if (!lock) {
+      return
+    }
+
+    await task()
+  })
+}
 
 // isSyncing/isDataRefreshing live in a separate context so the frequent
 // background-sync flag flips (20s poll, sync indicator) do not re-render every
@@ -170,14 +232,38 @@ type EnsureReportDetailsOptions = {
   silent?: boolean
 }
 
+type EnsureReportSummaryOptions = {
+  periodIds?: string[]
+  assignmentId?: string
+  reportingPeriodId?: string
+  force?: boolean
+}
+
+export type SaveReportConflict = {
+  reason: QueuedSaveConflictReason
+  message: string
+  serverReport: ReportConflictSnapshot | null
+}
+
 type SaveReportResult = {
   saved: boolean
   queued: boolean
+  /** Set when the server refused the save because the loaded copy was stale. */
+  conflict?: SaveReportConflict
 }
 
 const idleReportDetailLoadState: ReportDetailLoadState = {
   status: 'idle',
   error: null,
+}
+
+function isPublicAuthPath(pathname: string) {
+  return (
+    pathname === '/login' ||
+    pathname === '/register' ||
+    pathname === '/forgot-password' ||
+    pathname.startsWith('/reset-password')
+  )
 }
 
 function getMessage(error: unknown, fallback: string) {
@@ -207,12 +293,44 @@ function hasReportDetailData(report: AppState['reports'][number]) {
   )
 }
 
+function reportSummaryRecord(report: ReportSummaryResponse): ReportRecord {
+  return {
+    id: report.id,
+    assignmentId: report.assignmentId,
+    departmentId: report.departmentSlug ?? report.departmentId,
+    templateId: report.templateSlug ?? report.templateId,
+    reportingPeriodId: report.reportingPeriodId,
+    createdById: report.createdById,
+    updatedById: report.updatedById,
+    createdAt: report.createdAt,
+    updatedAt: report.updatedAt,
+    submittedAt: report.submittedAt,
+    lockedAt: report.lockedAt,
+    status: report.status,
+    values: {},
+    calculatedMetrics: {
+      borPercent: null,
+      btr: null,
+      alos: null,
+    },
+  }
+}
+
 function hasAssignmentReference(
   references: ApiReferenceState,
   departmentId: string,
   templateId: string,
 ) {
   return Boolean(resolveAssignmentReference(references, departmentId, templateId))
+}
+
+function isInvalidSessionError(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError &&
+    (error.status === 401 ||
+      error.status === 419 ||
+      (error.status === 403 && error.message.toLowerCase().includes('account is inactive')))
+  )
 }
 
 function getAdminDashboardWarmReportIds(state: AppState): string[] {
@@ -235,8 +353,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [error, setError] = useState<string | null>(null)
   const [academic, setAcademic] = useState<AcademicWorkspaceState | null>(null)
   const [adminAccessRequests, setAdminAccessRequests] = useState<AdminAccessRequest[]>([])
-  const [queuedReportSaveIds, setQueuedReportSaveIds] = useState<Set<string>>(
-    () => new Set(),
+  const [queuedReportSaves, setQueuedReportSaves] = useState<Record<string, QueuedReportSave>>(
+    () => ({}),
   )
   const [reportDetailLoadStates, setReportDetailLoadStates] = useState<
     Record<string, ReportDetailLoadState>
@@ -253,13 +371,20 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const isSigningOutRef = useRef(false)
   const profileDirectoryLoadedRef = useRef(false)
   const accessRequestDataLoadedRef = useRef(false)
+  const profileDirectoryRequestRef = useRef<Promise<void> | null>(null)
+  const accessRequestDataRequestRef = useRef<Promise<void> | null>(null)
   const historyDataLoadedRef = useRef(false)
+  const loadedReportPeriodIdsRef = useRef<Set<string>>(new Set())
+  const reportSummaryRequestsRef = useRef<Map<string, Promise<void>>>(new Map())
+  const adminAssignmentsLoadedRef = useRef(false)
   const loadedReportDetailIdsRef = useRef<Set<string>>(new Set())
   const pendingReportDetailIdsRef = useRef<Set<string>>(new Set())
   const reportPeriodWindowRef = useRef<NonNullable<LiveAppStateLoadOptions['reportPeriodWindow']>>('default')
   // Signature of the last applied background-poll payload. Lets an unchanged
   // poll skip the state replacement (and its full-tree re-render) entirely.
   const lastPolledStateSignatureRef = useRef<string | null>(null)
+  const workspaceRevisionRef = useRef<string | null>(null)
+  const workspaceRevisionTokenRef = useRef<string | null>(null)
   const overdueSyncInFlightRef = useRef(false)
   const lastOverdueSyncAtRef = useRef(0)
   const syncPendingCountRef = useRef(0)
@@ -304,26 +429,34 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const refreshQueuedReportSaveState = useCallback(async (userId?: string | null) => {
     if (!userId) {
-      setQueuedReportSaveIds(new Set())
+      setQueuedReportSaves({})
       return
     }
 
     const queuedSaves = await listQueuedReportSaves(userId)
-    setQueuedReportSaveIds(new Set(queuedSaves.map((queuedSave) => queuedSave.id)))
+    setQueuedReportSaves(
+      Object.fromEntries(queuedSaves.map((queuedSave) => [queuedSave.id, queuedSave])),
+    )
   }, [])
 
-  const hasQueuedReportSave = useCallback(
-    (assignmentId: string, reportingPeriodId: string) => {
+  const getQueuedReportSave = useCallback(
+    (assignmentId: string, reportingPeriodId: string): QueuedReportSave | null => {
       const userId = currentUserIdRef.current
       if (!userId) {
-        return false
+        return null
       }
 
-      return queuedReportSaveIds.has(
-        getReportSaveQueueId(userId, assignmentId, reportingPeriodId),
+      return (
+        queuedReportSaves[getReportSaveQueueId(userId, assignmentId, reportingPeriodId)] ?? null
       )
     },
-    [queuedReportSaveIds],
+    [queuedReportSaves],
+  )
+
+  const hasQueuedReportSave = useCallback(
+    (assignmentId: string, reportingPeriodId: string) =>
+      getQueuedReportSave(assignmentId, reportingPeriodId)?.status === 'pending',
+    [getQueuedReportSave],
   )
 
   useEffect(() => {
@@ -375,7 +508,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const resetDeferredDataState = useCallback(() => {
     profileDirectoryLoadedRef.current = false
     accessRequestDataLoadedRef.current = false
+    profileDirectoryRequestRef.current = null
+    accessRequestDataRequestRef.current = null
     historyDataLoadedRef.current = false
+    loadedReportPeriodIdsRef.current = new Set()
+    reportSummaryRequestsRef.current = new Map()
+    adminAssignmentsLoadedRef.current = false
     loadedReportDetailIdsRef.current = new Set()
     pendingReportDetailIdsRef.current = new Set()
     reportPeriodWindowRef.current = 'default'
@@ -538,6 +676,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     pendingExplicitAuthUserIdRef.current = null
     referencesRef.current = createEmptyReferenceState()
     academicSignatureRef.current = null
+    workspaceRevisionRef.current = null
+    workspaceRevisionTokenRef.current = null
+    lastPolledStateSignatureRef.current = null
     currentUserIdRef.current = null
     currentStateRef.current = createEmptyAppState()
     syncPendingCountRef.current = 0
@@ -546,12 +687,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     setAcademic(null)
     resetDeferredDataState()
     clearWorkspaceCache()
+    forgetSessionHint()
     clearAuthenticatedQueryCache()
     setError(null)
     setIsBootstrapping(false)
     setIsSyncing(false)
     setIsDataRefreshing(false)
-    setQueuedReportSaveIds(new Set())
+    // The offline queue itself is NOT cleared here: it lives in IndexedDB keyed
+    // by user, and unsynced work must survive a sign-out or an expired session.
+    setQueuedReportSaves({})
   }, [resetDeferredDataState])
 
   const applyAuthenticatedProfile = useCallback(
@@ -578,6 +722,134 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       setIsBootstrapping(false)
     },
     [resetDeferredDataState],
+  )
+
+  const ensureReportSummaryData = useCallback(
+    async (options: EnsureReportSummaryOptions = {}): Promise<void> => {
+      if (!client || !currentUserIdRef.current) {
+        return
+      }
+
+      const periodIds = [
+        ...new Set(
+          options.periodIds?.filter(Boolean) ??
+            (options.reportingPeriodId ? [options.reportingPeriodId] : []),
+        ),
+      ].sort()
+      const currentProfile = currentStateRef.current.profiles.find(
+        ({ id }) => id === currentUserIdRef.current,
+      )
+      const needsAdminAssignments =
+        Boolean(currentProfile && isAdminRole(currentProfile.role)) &&
+        !adminAssignmentsLoadedRef.current
+      const periodsAlreadyLoaded =
+        periodIds.length > 0 &&
+        periodIds.every((periodId) => loadedReportPeriodIdsRef.current.has(periodId))
+
+      if (!options.force && periodsAlreadyLoaded && !needsAdminAssignments) {
+        return
+      }
+
+      const requestKey = JSON.stringify({
+        periodIds,
+        assignmentId: options.assignmentId ?? null,
+        reportingPeriodId: options.reportingPeriodId ?? null,
+        assignments: needsAdminAssignments,
+      })
+      const existingRequest = reportSummaryRequestsRef.current.get(requestKey)
+
+      if (existingRequest) {
+        return existingRequest
+      }
+
+      beginBackgroundSync()
+      const request = (async () => {
+        const [summaries, assignments] = await Promise.all([
+          listAllReportSummaries(client, {
+            periodIds: periodIds.length ? periodIds : undefined,
+            assignmentId: options.assignmentId,
+            reportingPeriodId: options.reportingPeriodId,
+          }),
+          needsAdminAssignments ? fetchReportAssignments(client) : Promise.resolve(null),
+        ])
+        const incomingReports = summaries.map(reportSummaryRecord)
+        // A summary carries no cell values. A record whose details were loaded
+        // but which has changed on the server since (an admin unlock, a save
+        // from another device) must not stay marked as loaded: the form would
+        // render an empty grid for the draft and the next save would wipe the
+        // stored cells. Dropping the id here makes the form fetch the details
+        // again, the same rule the workspace merge applies.
+        const existingReportsById = new Map(
+          currentStateRef.current.reports.map((report) => [report.id, report]),
+        )
+        const reusableDetailIds = new Set(
+          incomingReports
+            .filter((report) => {
+              const existing = existingReportsById.get(report.id)
+              return (
+                existing !== undefined &&
+                loadedReportDetailIdsRef.current.has(report.id) &&
+                existing.updatedAt === report.updatedAt
+              )
+            })
+            .map(({ id }) => id),
+        )
+        incomingReports.forEach(({ id }) => {
+          if (!reusableDetailIds.has(id)) {
+            loadedReportDetailIdsRef.current.delete(id)
+          }
+        })
+
+        setState((currentState) => {
+          const reportsById = new Map(currentState.reports.map((report) => [report.id, report]))
+
+          incomingReports.forEach((report) => {
+            const existing = reportsById.get(report.id)
+            reportsById.set(
+              report.id,
+              existing && reusableDetailIds.has(report.id)
+                ? {
+                    ...report,
+                    values: existing.values,
+                    calculatedMetrics: existing.calculatedMetrics,
+                    quality: existing.quality,
+                  }
+                : report,
+            )
+          })
+
+          const nextState = {
+            ...currentState,
+            reports: [...reportsById.values()],
+            assignments: assignments ?? currentState.assignments,
+          }
+
+          currentStateRef.current = nextState
+          persistWorkspaceCache(nextState)
+          return nextState
+        })
+
+        periodIds.forEach((periodId) => loadedReportPeriodIdsRef.current.add(periodId))
+        if (assignments) {
+          adminAssignmentsLoadedRef.current = true
+        }
+        syncReportDetailLoadStates(incomingReports.map(({ id }) => id))
+      })()
+        .finally(() => {
+          reportSummaryRequestsRef.current.delete(requestKey)
+          endBackgroundSync()
+        })
+
+      reportSummaryRequestsRef.current.set(requestKey, request)
+      return request
+    },
+    [
+      beginBackgroundSync,
+      client,
+      endBackgroundSync,
+      persistWorkspaceCache,
+      syncReportDetailLoadStates,
+    ],
   )
 
   const loadUserState = useCallback(
@@ -616,7 +888,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           return result
         }
 
+        // The workspace answered: this device holds a live session.
+        rememberSessionHint()
         referencesRef.current = result.references
+        workspaceRevisionRef.current = result.revision
+        workspaceRevisionTokenRef.current = result.revisionToken
         reportPeriodWindowRef.current = reportPeriodWindow
 
         // Applied before the poll-skip below: a placement or setup-signal change
@@ -653,7 +929,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         const existingReportsById = Object.fromEntries(
           currentStateRef.current.reports.map((report) => [report.id, report]),
         ) as Record<string, AppState['reports'][number]>
-        const mergedReports = result.state.reports.map((report) => {
+        const workspaceReports =
+          result.state.reports.length > 0
+            ? result.state.reports
+            : currentStateRef.current.reports
+        const mergedReports = workspaceReports.map((report) => {
           const existingReport = existingReportsById[report.id]
           const canReuseLoadedDetails =
             existingReport &&
@@ -689,7 +969,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             )
             .map((report) => report.id),
         )
-        syncReportDetailLoadStates(result.state.reports.map((report) => report.id))
+        syncReportDetailLoadStates(mergedReports.map((report) => report.id))
         const mergedProfiles = includeProfiles
           ? result.state.profiles
           : [
@@ -704,6 +984,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           profiles: mergedProfiles,
           roles: result.state.roles ?? currentStateRef.current.roles,
           reports: mergedReports,
+          assignments:
+            result.state.assignments.length > 0
+              ? result.state.assignments
+              : currentStateRef.current.assignments,
           accessRequests: includeAccessRequests
             ? result.state.accessRequests
             : currentStateRef.current.accessRequests,
@@ -743,6 +1027,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           if (isSigningOutRef.current) {
             throw loadError
           }
+          if (isInvalidSessionError(loadError)) {
+            clearSignedOutState()
+            throw loadError
+          }
           if (!currentStateRef.current.currentUserId) {
             setState(createEmptyAppState())
             resetDeferredDataState()
@@ -763,6 +1051,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       client,
       endBackgroundSync,
       persistWorkspaceCache,
+      clearSignedOutState,
       resetDeferredDataState,
       scheduleOverdueSync,
       syncReportDetailLoadStates,
@@ -902,47 +1191,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     let active = true
 
     void (async () => {
-      const {
-        data: { session },
-        error: sessionError,
-      } = await client.auth.getSession()
-
-      if (!active) {
-        return
-      }
-
-      if (sessionError) {
-        if (isLikelyOfflineError(sessionError)) {
-          const cachedWorkspace = readLastWorkspaceCache()
-
-          if (cachedWorkspace) {
-            applyWorkspaceCache(cachedWorkspace)
-            setError('Offline mode: showing the last saved workspace snapshot.')
-            toast.info('Offline workspace restored', {
-              description: 'You can keep working from the last synced data.',
-            })
-            return
-          }
-        }
-
-        setError(getMessage(sessionError, 'Unable to read the current session.'))
-        setIsBootstrapping(false)
-        setIsSyncing(false)
-        return
-      }
-
-      const userId = sessionUserId(session)
-      if (!userId) {
-        clearSignedOutState()
-        return
-      }
-
       try {
-        const cachedWorkspace = readWorkspaceCache(userId)
+        // /api/workspace is already authenticated and includes currentUser, so
+        // asking /api/auth/me first adds a strictly sequential request to every
+        // cold start. Restore the most recent cache optimistically, then let the
+        // workspace request confirm the active session and authoritative user.
+        const cachedWorkspace = readLastWorkspaceCache()
 
         if (cachedWorkspace) {
           applyWorkspaceCache(cachedWorkspace)
-          void loadUserState(userId, 'Unable to load the signed-in workspace.', {
+          void loadUserState(cachedWorkspace.userId, 'Unable to load the signed-in workspace.', {
             showBootstrapping: false,
           })
             .then((result) => {
@@ -953,15 +1211,58 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               warmAdminReportDetails(result.state)
             })
             .catch((loadError) => {
-              if (!isSigningOutRef.current && !isLikelyOfflineError(loadError)) {
+              if (
+                !isSigningOutRef.current &&
+                !isInvalidSessionError(loadError) &&
+                !isLikelyOfflineError(loadError)
+              ) {
                 toast.error(getMessage(loadError, 'Unable to load the signed-in workspace.'))
               }
             })
           return
         }
 
+        // Public auth screens only need the small session probe to decide
+        // whether an existing session should be redirected. An anonymous login
+        // visit must not issue a knowingly unauthorized workspace request, and
+        // a device that never signed in (or signed out) skips even the probe:
+        // it would only answer 401 and log a console error on every cold
+        // visit (QA-025).
+        if (isPublicAuthPath(window.location.pathname)) {
+          if (!hasSessionHint()) {
+            clearSignedOutState()
+            return
+          }
+
+          const {
+            data: { session },
+            error: sessionError,
+          } = await client.auth.getSession()
+
+          if (sessionError) {
+            throw sessionError
+          }
+
+          const sessionId = sessionUserId(session)
+          if (!sessionId) {
+            clearSignedOutState()
+            return
+          }
+
+          const result = await loadUserState(
+            sessionId,
+            'Unable to load the signed-in workspace.',
+            { showBootstrapping: true },
+          )
+
+          if (result && isAdminRole(result.currentUser.role)) {
+            warmAdminReportDetails(result.state)
+          }
+          return
+        }
+
         const result = await loadUserState(
-          userId,
+          'authenticated-session',
           'Unable to load the signed-in workspace.',
           {
             showBootstrapping: true,
@@ -975,7 +1276,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         warmAdminReportDetails(result.state)
       } catch (loadError) {
         clearSignedOutState()
-        if (!isSigningOutRef.current) {
+        if (!isSigningOutRef.current && !isInvalidSessionError(loadError)) {
           setError(getMessage(loadError, 'Unable to load the signed-in workspace.'))
           toast.error(getMessage(loadError, 'Unable to load the signed-in workspace.'))
         }
@@ -1076,17 +1377,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return
     }
 
-    const {
-      data: { session },
-      error: sessionError,
-    } = await client.auth.getSession()
-
-    if (sessionError) {
-      setError(getMessage(sessionError, 'Unable to refresh the current session.'))
-      return
-    }
-
-    const userId = sessionUserId(session)
+    const userId = currentUserIdRef.current
     if (!userId) {
       clearSignedOutState()
       return
@@ -1101,6 +1392,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         reportPeriodWindow: options?.reportPeriodWindow ?? reportPeriodWindowRef.current,
       })
 
+      const loadedPeriodIds = [...loadedReportPeriodIdsRef.current]
+      if (result && loadedPeriodIds.length > 0) {
+        await ensureReportSummaryData({
+          periodIds: loadedPeriodIds,
+          force: true,
+        })
+      }
+
       if (result && isAdminRole(result.currentUser.role)) {
         warmAdminReportDetails(currentStateRef.current)
       }
@@ -1109,10 +1408,21 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         toast.error(getMessage(refreshError, 'Unable to refresh the live dashboard data.'))
       }
     }
-  }, [client, clearSignedOutState, loadUserState, warmAdminReportDetails])
+  }, [
+    client,
+    clearSignedOutState,
+    ensureReportSummaryData,
+    loadUserState,
+    warmAdminReportDetails,
+  ])
 
   const scheduleAdminLiveRefresh = useCallback(
     (delayMs = 700) => {
+      if (!client) {
+        return
+      }
+      const activeClient = client
+
       if (adminLiveRefreshTimerRef.current !== null) {
         window.clearTimeout(adminLiveRefreshTimerRef.current)
       }
@@ -1126,22 +1436,56 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         adminLiveRefreshInFlightRef.current = true
 
-        void refreshDataWithOptions({
-          // Keep the 60-second live pulse lightweight. Once an admin has opened
-          // Users or Audit, carrying those large optional collections on every
-          // dashboard poll makes the cost grow with the lifetime of the browser
-          // session. Dedicated screens/actions explicitly refresh them when
-          // needed; loadUserState preserves already-loaded deferred data here.
-          includeProfiles: false,
-          includeAccessRequests: false,
-          includeHistory: false,
-          reportPeriodWindow: reportPeriodWindowRef.current,
-        }).finally(() => {
+        const revisionToken = workspaceRevisionTokenRef.current
+        if (!revisionToken) {
           adminLiveRefreshInFlightRef.current = false
-        })
+          return
+        }
+
+        void fetchWorkspaceRevision(activeClient, revisionToken)
+          .then(({ revision, revisionToken: refreshedToken }) => {
+            workspaceRevisionTokenRef.current = refreshedToken
+            if (
+              workspaceRevisionRef.current !== null &&
+              revision === workspaceRevisionRef.current
+            ) {
+              return
+            }
+
+            return refreshDataWithOptions({
+              // Optional admin collections stay route-scoped. The lightweight
+              // revision endpoint prevents an unchanged tab from rebuilding
+              // and downloading the full workspace on every focus/poll.
+              includeProfiles: false,
+              includeAccessRequests: false,
+              includeHistory: false,
+              reportPeriodWindow: reportPeriodWindowRef.current,
+            })
+          })
+          .catch((error: unknown) => {
+            if (error instanceof ApiError && error.status === 428) {
+              // The credential is bound to the sign-in that issued it: it stops
+              // working after a sign-out elsewhere, a session expiry or its own
+              // age limit. A full workspace load either issues a fresh one or,
+              // if the session really is gone, ends with the usual sign-out.
+              workspaceRevisionTokenRef.current = null
+              return refreshDataWithOptions({
+                includeProfiles: false,
+                includeAccessRequests: false,
+                includeHistory: false,
+                reportPeriodWindow: reportPeriodWindowRef.current,
+              }).catch(() => {})
+            }
+            // Any other failed freshness check should not disrupt the current
+            // screen. The next focus/poll retries it and explicit refreshes
+            // still fetch the workspace directly.
+          })
+          .finally(() => {
+            adminLiveRefreshInFlightRef.current = false
+          })
       }, delayMs)
     },
-    [refreshDataWithOptions],
+    [client, refreshDataWithOptions],
   )
 
   useEffect(() => {
@@ -1151,31 +1495,46 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
     // Reverb is disabled on shared hosting and the data client's realtime
     // channel is a no-op shim, so live updates come from refreshing on focus /
-    // tab visibility. Every role gets that; admins additionally poll on a 60s
-    // fallback interval because they drive the live submission board. (Reduced
-    // from 20s: each poll rebuilds + re-transfers the full workspace payload, so
-    // the tighter cadence multiplied admin DB/transfer load for little UX gain;
-    // focus/visibilitychange refreshes still update near-instantly on tab return.)
+    // tab visibility. Admin fallback polls are randomized to avoid synchronized
+    // tabs and back off while hidden; focus still checks freshness immediately.
     const isAdmin = isAdminRole(signedInUserRole)
+    let fallbackPollId: number | null = null
+
+    const scheduleFallbackPoll = () => {
+      if (!isAdmin) {
+        return
+      }
+
+      if (fallbackPollId !== null) {
+        window.clearTimeout(fallbackPollId)
+      }
+
+      fallbackPollId = window.setTimeout(() => {
+        fallbackPollId = null
+        if (document.visibilityState === 'visible') {
+          scheduleAdminLiveRefresh(0)
+        }
+        scheduleFallbackPoll()
+      }, workspacePollDelay(document.visibilityState))
+    }
 
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') {
         scheduleAdminLiveRefresh(150)
       }
+      scheduleFallbackPoll()
     }
 
     window.addEventListener('focus', refreshWhenVisible)
     document.addEventListener('visibilitychange', refreshWhenVisible)
-    const fallbackPollId = isAdmin
-      ? window.setInterval(refreshWhenVisible, 60_000)
-      : null
+    scheduleFallbackPoll()
 
     return () => {
       window.removeEventListener('focus', refreshWhenVisible)
       document.removeEventListener('visibilitychange', refreshWhenVisible)
 
       if (fallbackPollId !== null) {
-        window.clearInterval(fallbackPollId)
+        window.clearTimeout(fallbackPollId)
       }
 
       if (adminLiveRefreshTimerRef.current !== null) {
@@ -1208,6 +1567,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       values: SaveReportPayload['values'],
       calculatedMetrics?: AppState['reports'][number]['calculatedMetrics'],
       quality?: AppState['reports'][number]['quality'],
+      serverReport?: ReportResponse,
     ) => {
       loadedReportDetailIdsRef.current.add(reportId)
 
@@ -1226,6 +1586,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           matchedReport = true
           return {
             ...report,
+            ...(serverReport ?? {}),
+            departmentId:
+              serverReport?.departmentSlug ?? serverReport?.departmentId ?? report.departmentId,
+            templateId:
+              serverReport?.templateSlug ?? serverReport?.templateId ?? report.templateId,
             values,
             calculatedMetrics: calculatedMetrics ?? report.calculatedMetrics,
             quality: quality ?? report.quality,
@@ -1233,7 +1598,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         })
 
         if (!matchedReport) {
-          return currentState
+          if (!serverReport) {
+            return currentState
+          }
+
+          nextReports.unshift({
+            ...serverReport,
+            departmentId: serverReport.departmentSlug ?? serverReport.departmentId,
+            templateId: serverReport.templateSlug ?? serverReport.templateId,
+            values,
+            calculatedMetrics: calculatedMetrics ?? serverReport.calculatedMetrics,
+            quality: quality ?? serverReport.quality,
+          })
         }
 
         const nextState = {
@@ -1250,130 +1626,185 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   )
 
   const applyServerSavedReport = useCallback(
-    async (payload: SaveReportPayload, reportId: string | null) => {
+    (payload: SaveReportPayload, savedReport: ReportResponse) => {
+      historyDataLoadedRef.current = false
+
+      applySavedReportDetails(
+        savedReport.id,
+        payload,
+        Object.keys(savedReport.values ?? {}).length ? savedReport.values : payload.values,
+        savedReport.calculatedMetrics,
+        savedReport.quality,
+        savedReport,
+      )
+    },
+    [applySavedReportDetails],
+  )
+
+  // Batched variant for flushing the offline queue. The save response already
+  // contains the canonical row, values, metrics, and quality, so applying it
+  // directly avoids an O(N) refresh/detail-fetch cascade after reconnect.
+  const applyServerSavedReports = useCallback(
+    (saves: Array<{ payload: SaveReportPayload; report: ReportResponse }>) => {
+      if (!saves.length) {
+        return
+      }
+
+      historyDataLoadedRef.current = false
+
+      for (const { payload, report } of saves) {
+        applySavedReportDetails(
+          report.id,
+          payload,
+          Object.keys(report.values ?? {}).length ? report.values : payload.values,
+          report.calculatedMetrics,
+          report.quality,
+          report,
+        )
+      }
+    },
+    [applySavedReportDetails],
+  )
+
+  const replayQueuedReportSaves = useCallback(
+    async (userId: string, options?: { silent?: boolean }) => {
       if (!client) {
         return
       }
 
-      historyDataLoadedRef.current = false
-      await refreshDataWithOptions()
-
-      const savedReport =
-        (reportId
-          ? currentStateRef.current.reports.find((report) => report.id === reportId)
-          : null) ??
-        currentStateRef.current.reports.find(
-          (report) =>
-            report.assignmentId === payload.assignmentId &&
-            report.reportingPeriodId === payload.reportingPeriodId,
-        )
-      const savedReportId = reportId ?? savedReport?.id
-
-      if (!savedReportId) {
-        return
-      }
-
-      let savedValues = payload.values
-      let savedCalculatedMetrics = savedReport?.calculatedMetrics
-      let savedQuality = savedReport?.quality
+      let shouldEndBackgroundSync = false
+      let syncedCount = 0
+      let conflictCount = 0
+      let authInterrupted = false
 
       try {
-        const reportDetailsById = await fetchReportDetails(client, [savedReportId])
-        const reportDetails = reportDetailsById[savedReportId]
-
-        if (reportDetails) {
-          savedValues = Object.keys(reportDetails.values).length
-            ? reportDetails.values
-            : payload.values
-          savedCalculatedMetrics = reportDetails.calculatedMetrics
-          savedQuality = reportDetails.quality
+        const queuedSaves = await listQueuedReportSaves(userId)
+        if (!queuedSaves.length) {
+          setQueuedReportSaves({})
+          return
         }
-      } catch (detailError) {
-        toast.error(
-          getMessage(
-            detailError,
-            'Report saved, but the saved cell values could not be refreshed.',
-          ),
-        )
-      }
 
-      applySavedReportDetails(
-        savedReportId,
-        payload,
-        savedValues,
-        savedCalculatedMetrics,
-        savedQuality,
-      )
+        // Parked saves wait for the user's decision; only pending ones replay,
+        // oldest first, so the order the nurse saved in is the order applied.
+        const pendingSaves = queuedSaves.filter((queuedSave) => queuedSave.status === 'pending')
+        if (!pendingSaves.length) {
+          await refreshQueuedReportSaveState(userId)
+          return
+        }
+
+        beginBackgroundSync()
+        shouldEndBackgroundSync = true
+
+        const syncedSaves: Array<{ payload: SaveReportPayload; report: ReportResponse }> = []
+
+        for (const queuedSave of pendingSaves) {
+          try {
+            const report = await saveReportMutation(client, queuedSave.payload)
+            await removeQueuedReportSave(queuedSave.id)
+            syncedCount += 1
+            syncedSaves.push({ payload: queuedSave.payload, report })
+          } catch (syncError) {
+            const failure = classifyQueuedSaveFailure(syncError)
+
+            if (failure.kind === 'offline') {
+              // The network dropped again: keep everything, try later.
+              await recordQueuedReportSaveFailure(queuedSave.id, failure.message, {
+                countAttempt: false,
+              })
+              break
+            }
+
+            if (failure.kind === 'auth') {
+              // The session expired while the save waited. The API client has
+              // already signed the app out; the queue stays intact and replays
+              // after the next sign-in. Nothing is counted against the save.
+              await recordQueuedReportSaveFailure(queuedSave.id, failure.message, {
+                countAttempt: false,
+              })
+              authInterrupted = true
+              break
+            }
+
+            if (failure.kind === 'conflict') {
+              // The server refused the save for a reason a retry cannot fix
+              // (stale copy, lock, validation, lost assignment). Park it with
+              // the server's answer so the user can compare and decide.
+              await markQueuedReportSaveConflict(queuedSave.id, {
+                reason: failure.reason,
+                message: failure.message,
+                httpStatus: failure.httpStatus,
+                serverReport: failure.serverReport,
+              })
+              conflictCount += 1
+              continue
+            }
+
+            // Transient (timeout, 5xx, rate limit): count the attempt and keep
+            // retrying; after the cap the save is parked, never deleted.
+            const updated = await recordQueuedReportSaveFailure(queuedSave.id, failure.message)
+
+            if (updated && updated.attempts >= MAX_QUEUED_SAVE_ATTEMPTS) {
+              await markQueuedReportSaveConflict(queuedSave.id, {
+                reason: 'exhausted',
+                message: failure.message,
+                httpStatus: failure.httpStatus,
+                serverReport: null,
+              })
+              conflictCount += 1
+              // Operational signal only: the message carries no report values.
+              reportClientError(
+                'offline-sync',
+                `Offline report save gave up after ${MAX_QUEUED_SAVE_ATTEMPTS} attempts: ${failure.message}`,
+                { status: failure.httpStatus },
+              )
+            }
+          }
+        }
+
+        if (syncedSaves.length) {
+          await applyServerSavedReports(syncedSaves)
+        }
+
+        if (authInterrupted) {
+          toast.warning('Your session expired before your offline changes could sync.', {
+            description: 'Sign in again; the saved changes are kept on this device and will sync after sign-in.',
+          })
+          return
+        }
+
+        await refreshQueuedReportSaveState(userId)
+
+        if (syncedCount > 0 && !options?.silent) {
+          toast.success(
+            syncedCount === 1
+              ? 'Offline report save synced.'
+              : `${syncedCount} offline report saves synced.`,
+          )
+        }
+
+        if (conflictCount > 0) {
+          toast.error(
+            conflictCount === 1
+              ? 'An offline report save needs your review before it can be applied.'
+              : `${conflictCount} offline report saves need your review before they can be applied.`,
+            {
+              description: 'Open the report to compare your values with the server copy, then apply or discard them.',
+            },
+          )
+        }
+      } finally {
+        if (shouldEndBackgroundSync) {
+          endBackgroundSync()
+        }
+      }
     },
-    [client, refreshDataWithOptions, applySavedReportDetails],
-  )
-
-  // Batched variant of applyServerSavedReport for flushing the offline queue: one
-  // workspace refresh and one detail fetch for the whole batch, instead of a full
-  // refresh per queued save (which was O(N) refreshes on a slow reconnect - the
-  // exact scenario the offline queue is built for).
-  const applyServerSavedReports = useCallback(
-    async (saves: Array<{ payload: SaveReportPayload; reportId: string | null }>) => {
-      if (!client || !saves.length) {
-        return
-      }
-
-      historyDataLoadedRef.current = false
-      await refreshDataWithOptions()
-
-      const resolved = saves
-        .map(({ payload, reportId }) => {
-          const savedReport =
-            (reportId
-              ? currentStateRef.current.reports.find((report) => report.id === reportId)
-              : null) ??
-            currentStateRef.current.reports.find(
-              (report) =>
-                report.assignmentId === payload.assignmentId &&
-                report.reportingPeriodId === payload.reportingPeriodId,
-            )
-          const savedReportId = reportId ?? savedReport?.id ?? null
-
-          return savedReportId ? { payload, savedReport, savedReportId } : null
-        })
-        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-
-      if (!resolved.length) {
-        return
-      }
-
-      let detailsById: Record<string, ReportDetailRecord> = {}
-      try {
-        detailsById = await fetchReportDetails(
-          client,
-          resolved.map((entry) => entry.savedReportId),
-        )
-      } catch (detailError) {
-        toast.error(
-          getMessage(
-            detailError,
-            'Reports saved, but the saved cell values could not be refreshed.',
-          ),
-        )
-      }
-
-      for (const { payload, savedReport, savedReportId } of resolved) {
-        const reportDetails = detailsById[savedReportId]
-        const savedValues =
-          reportDetails && Object.keys(reportDetails.values).length
-            ? reportDetails.values
-            : payload.values
-
-        applySavedReportDetails(
-          savedReportId,
-          payload,
-          savedValues,
-          reportDetails?.calculatedMetrics ?? savedReport?.calculatedMetrics,
-          reportDetails?.quality ?? savedReport?.quality,
-        )
-      }
-    },
-    [client, refreshDataWithOptions, applySavedReportDetails],
+    [
+      applyServerSavedReports,
+      beginBackgroundSync,
+      client,
+      endBackgroundSync,
+      refreshQueuedReportSaveState,
+    ],
   )
 
   const flushQueuedReportSaves = useCallback(
@@ -1390,87 +1821,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       queuedReportSyncInFlightRef.current = true
-      let shouldEndBackgroundSync = false
-      let syncedCount = 0
-      let discardedCount = 0
 
       try {
-        const queuedSaves = await listQueuedReportSaves(userId)
-        if (!queuedSaves.length) {
-          setQueuedReportSaveIds(new Set())
-          return
-        }
-
-        beginBackgroundSync()
-        shouldEndBackgroundSync = true
-
-        const syncedSaves: Array<{ payload: SaveReportPayload; reportId: string | null }> = []
-
-        for (const queuedSave of queuedSaves) {
-          try {
-            const reportId = await saveReportMutation(client, queuedSave.payload)
-            await removeQueuedReportSave(queuedSave.id)
-            syncedCount += 1
-            syncedSaves.push({ payload: queuedSave.payload, reportId })
-          } catch (syncError) {
-            if (isLikelyOfflineError(syncError)) {
-              await recordQueuedReportSaveFailure(
-                queuedSave.id,
-                getMessage(syncError, 'Unable to sync the queued report save.'),
-              )
-              break
-            }
-
-            // A non-offline failure (e.g. the report was locked or the
-            // assignment removed) will never succeed on retry - count attempts
-            // and dead-letter after the cap instead of retrying forever.
-            const updated = await recordQueuedReportSaveFailure(
-              queuedSave.id,
-              getMessage(syncError, 'Unable to sync the queued report save.'),
-            )
-
-            if (updated && updated.attempts >= MAX_QUEUED_SAVE_ATTEMPTS) {
-              await removeQueuedReportSave(queuedSave.id)
-              discardedCount += 1
-            }
-          }
-        }
-
-        if (syncedSaves.length) {
-          await applyServerSavedReports(syncedSaves)
-        }
-
-        await refreshQueuedReportSaveState(userId)
-
-        if (syncedCount > 0 && !options?.silent) {
-          toast.success(
-            syncedCount === 1
-              ? 'Offline report save synced.'
-              : `${syncedCount} offline report saves synced.`,
-          )
-        }
-
-        if (discardedCount > 0) {
-          toast.error(
-            discardedCount === 1
-              ? 'A queued report save could not be synced after several attempts and was discarded. Please re-enter it.'
-              : `${discardedCount} queued report saves could not be synced and were discarded. Please re-enter them.`,
-          )
-        }
+        // One tab replays the queue at a time. Every open tab listens for the
+        // same online/visibility events, and without this they would each
+        // POST the same queued saves (idempotent on the server, but wasteful
+        // and confusing in the audit trail). Browsers without Web Locks fall
+        // back to the per-tab guard above.
+        await withQueueSyncLock(() => replayQueuedReportSaves(userId, options))
       } finally {
         queuedReportSyncInFlightRef.current = false
-        if (shouldEndBackgroundSync) {
-          endBackgroundSync()
-        }
       }
     },
-    [
-      applyServerSavedReports,
-      beginBackgroundSync,
-      client,
-      endBackgroundSync,
-      refreshQueuedReportSaveState,
-    ],
+    [client, replayQueuedReportSaves],
   )
 
   useEffect(() => {
@@ -1504,7 +1867,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }, [client, flushQueuedReportSaves, signedInUserId])
 
   const login = useCallback(
-    async (email: string, password: string): Promise<UserRole | null> => {
+    async (email: string, password: string): Promise<UserProfile | null> => {
       if (!client) {
         const message = `Laravel API is not configured. ${apiEnvSetupHint}`
         setError(message)
@@ -1535,7 +1898,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
 
         pendingExplicitAuthUserIdRef.current = null
-        return result.currentUser.role
+        return result.currentUser
       } catch (loginError) {
         pendingExplicitAuthUserIdRef.current = null
         suppressNextSignedInLoadRef.current = false
@@ -1557,6 +1920,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       isSigningOutRef.current = true
       await signOutMutation(client)
       clearSignedOutState()
+      isSigningOutRef.current = false
     } catch (logoutError) {
       isSigningOutRef.current = false
       toast.error(getMessage(logoutError, 'Unable to sign out.'))
@@ -1591,6 +1955,21 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [client, applyAuthenticatedProfile, loadUserState],
   )
 
+  const applyNotificationUpdate = useCallback(
+    (update: (notifications: NotificationItem[]) => NotificationItem[]) => {
+      setState((currentState) => {
+        const nextState = {
+          ...currentState,
+          notifications: update(currentState.notifications),
+        }
+        currentStateRef.current = nextState
+        persistWorkspaceCache(nextState)
+        return nextState
+      })
+    },
+    [persistWorkspaceCache],
+  )
+
   const markNotificationsRead = useCallback(
     async (userId: string, notificationIds: string[]): Promise<void> => {
       if (!client || !notificationIds.length) {
@@ -1598,15 +1977,20 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       try {
-        await updateNotificationReadState(client, userId, notificationIds)
-        await refreshDataWithOptions()
+        const response = await updateNotificationReadState(client, userId, notificationIds)
+        const updatedById = new Map(
+          (response?.data ?? []).map((notification) => [notification.id, notification]),
+        )
+        applyNotificationUpdate((notifications) =>
+          notifications.map((notification) => updatedById.get(notification.id) ?? notification),
+        )
       } catch (notificationError) {
         toast.error(
           getMessage(notificationError, 'Unable to mark notifications as read.'),
         )
       }
     },
-    [client, refreshDataWithOptions],
+    [applyNotificationUpdate, client],
   )
 
   const clearNotifications = useCallback(
@@ -1617,12 +2001,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       try {
         await clearNotificationsMutation(client, userId, notificationIds)
-        await refreshDataWithOptions()
+        const removedIds = new Set(notificationIds)
+        applyNotificationUpdate((notifications) =>
+          notifications.filter((notification) => !removedIds.has(notification.id)),
+        )
       } catch (notificationError) {
         toast.error(getMessage(notificationError, 'Unable to clear notifications.'))
       }
     },
-    [client, refreshDataWithOptions],
+    [applyNotificationUpdate, client],
   )
 
   const restoreNotifications = useCallback(
@@ -1632,13 +2019,20 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       try {
-        await restoreNotificationsMutation(client, notifications)
-        await refreshDataWithOptions()
+        const response = await restoreNotificationsMutation(client, notifications)
+        const restored = response?.data ?? notifications
+        applyNotificationUpdate((currentNotifications) => {
+          const restoredIds = new Set(restored.map((notification) => notification.id))
+          return [
+            ...restored,
+            ...currentNotifications.filter((notification) => !restoredIds.has(notification.id)),
+          ].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+        })
       } catch (notificationError) {
         toast.error(getMessage(notificationError, 'Unable to restore notifications.'))
       }
     },
-    [client, refreshDataWithOptions],
+    [applyNotificationUpdate, client],
   )
 
   // Both resolve to the server's own copy on success (null on failure). The
@@ -1745,7 +2139,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       if (!currentUser || !isAdminRole(currentUser.role)) {
-        toast.error('Only an authenticated administrator can create admin accounts.')
+        toast.error('Only an authenticated administrator can create accounts.')
         return false
       }
 
@@ -1756,7 +2150,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         })
         return true
       } catch (createError) {
-        toast.error(getMessage(createError, 'Unable to create the admin account.'))
+        toast.error(getMessage(createError, 'Unable to create the account.'))
         return false
       }
     },
@@ -1806,14 +2200,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       try {
-        const reportId = await saveReportMutation(client, payload)
+        const report = await saveReportMutation(client, payload)
         const userId = currentUserIdRef.current ?? payload.actorId
 
         await removeQueuedReportSave(
           getReportSaveQueueId(userId, payload.assignmentId, payload.reportingPeriodId),
         )
         await refreshQueuedReportSaveState(userId)
-        await applyServerSavedReport(payload, reportId)
+        applyServerSavedReport(payload, report)
 
         return { saved: true, queued: false }
       } catch (saveError) {
@@ -1844,6 +2238,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           }
         }
 
+        // A stale copy (another device or an administrator saved first) is not
+        // an error toast: the form shows both versions and asks the user.
+        if (saveError instanceof ApiError && saveError.status === 409) {
+          const failure = classifyQueuedSaveFailure(saveError)
+          if (failure.kind === 'conflict') {
+            return {
+              saved: false,
+              queued: false,
+              conflict: {
+                reason: failure.reason,
+                message: failure.message,
+                serverReport: failure.serverReport,
+              },
+            }
+          }
+        }
+
         toast.error(getMessage(saveError, 'Unable to save the report.'))
         return { saved: false, queued: false }
       }
@@ -1853,6 +2264,30 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       client,
       refreshQueuedReportSaveState,
     ],
+  )
+
+  const discardQueuedReportSave = useCallback(
+    async (queuedSaveId: string): Promise<void> => {
+      await removeQueuedReportSave(queuedSaveId)
+      await refreshQueuedReportSaveState(currentUserIdRef.current)
+      toast.info('Offline changes discarded. The server copy stands.')
+    },
+    [refreshQueuedReportSaveState],
+  )
+
+  const applyQueuedReportSave = useCallback(
+    async (
+      queuedSaveId: string,
+      options?: { expectedUpdatedAt?: string | null },
+    ): Promise<boolean> => {
+      await retryQueuedReportSave(queuedSaveId, options)
+      await refreshQueuedReportSaveState(currentUserIdRef.current)
+      await flushQueuedReportSaves()
+
+      const remaining = await listQueuedReportSaves(currentUserIdRef.current ?? undefined)
+      return !remaining.some((queuedSave) => queuedSave.id === queuedSaveId)
+    },
+    [flushQueuedReportSaves, refreshQueuedReportSaveState],
   )
 
   const lockReport = useCallback(
@@ -1927,6 +2362,33 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
     },
     [client, state, refreshDataWithOptions],
+  )
+
+  /**
+   * Corrects the role on an account that was created under the wrong one. The
+   * server rejects a change that would strand an active rep batch assignment,
+   * so surface that message rather than swallowing it.
+   */
+  const changeUserRole = useCallback(
+    async (userId: string, role: AssignableRole): Promise<boolean> => {
+      if (!client) {
+        toast.error(`Laravel API is not configured. ${apiEnvSetupHint}`)
+        return false
+      }
+
+      try {
+        await updateUserRoleMutation(client, userId, role)
+        await refreshDataWithOptions({
+          includeProfiles: profileDirectoryLoadedRef.current,
+          includeAccessRequests: accessRequestDataLoadedRef.current,
+        })
+        return true
+      } catch (roleError) {
+        toast.error(getMessage(roleError, 'Unable to change the role.'))
+        return false
+      }
+    },
+    [client, refreshDataWithOptions],
   )
 
   const toggleAssignmentActive = useCallback(
@@ -2037,21 +2499,42 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   )
 
   const ensureProfileDirectoryData = useCallback(
-    async (): Promise<void> => {
-      if (!client || !currentUserIdRef.current || profileDirectoryLoadedRef.current) {
+    async (options?: { force?: boolean }): Promise<void> => {
+      if (
+        !client ||
+        !currentUserIdRef.current ||
+        (profileDirectoryLoadedRef.current && !options?.force)
+      ) {
         return
       }
 
-      try {
-        await loadUserState(currentUserIdRef.current, 'Unable to load the user directory.', {
-          showBootstrapping: false,
-          includeProfiles: true,
-        })
-      } catch (loadError) {
-        toast.error(getMessage(loadError, 'Unable to load the user directory.'))
+      if (profileDirectoryRequestRef.current) {
+        return profileDirectoryRequestRef.current
       }
+
+      const request = (async () => {
+        try {
+        // Targeted fetch: the directory only. Re-running the full workspace
+        // load with includeProfiles=1 re-downloaded ~214 KB of reports, audit
+        // logs, and notifications to obtain one list, which was the second
+        // /api/workspace call on every admin page (INTERACTION_LATENCY_AUDIT).
+        const profiles = await fetchProfileDirectory(client)
+
+        const nextState = { ...currentStateRef.current, profiles }
+        currentStateRef.current = nextState
+        setState(nextState)
+        profileDirectoryLoadedRef.current = true
+        persistWorkspaceCache(nextState, { profileDirectoryLoaded: true })
+        } catch (loadError) {
+          toast.error(getMessage(loadError, 'Unable to load the user directory.'))
+        }
+      })().finally(() => {
+        profileDirectoryRequestRef.current = null
+      })
+      profileDirectoryRequestRef.current = request
+      return request
     },
-    [client, loadUserState],
+    [client, persistWorkspaceCache],
   )
 
   const ensureAccessRequestData = useCallback(
@@ -2060,16 +2543,38 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return
       }
 
-      try {
-        await loadUserState(currentUserIdRef.current, 'Unable to load access requests.', {
-          showBootstrapping: false,
-          includeAccessRequests: true,
-        })
-      } catch (loadError) {
-        toast.error(getMessage(loadError, 'Unable to load access requests.'))
+      if (accessRequestDataRequestRef.current) {
+        return accessRequestDataRequestRef.current
       }
+
+      const request = (async () => {
+        try {
+          const currentProfile = currentStateRef.current.profiles.find(
+            (profile) => profile.id === currentUserIdRef.current,
+          )
+          const accessRequests = await fetchAccessRequests(client, {
+            pendingOnly: currentProfile ? isAdminRole(currentProfile.role) : false,
+          })
+          const nextState = {
+            ...currentStateRef.current,
+            accessRequests,
+          }
+          currentStateRef.current = nextState
+          setState(nextState)
+          accessRequestDataLoadedRef.current = true
+          persistWorkspaceCache(nextState, {
+            accessRequestDataLoaded: true,
+          })
+        } catch (loadError) {
+          toast.error(getMessage(loadError, 'Unable to load access requests.'))
+        }
+      })().finally(() => {
+        accessRequestDataRequestRef.current = null
+      })
+      accessRequestDataRequestRef.current = request
+      return request
     },
-    [client, loadUserState],
+    [client, persistWorkspaceCache],
   )
 
   const ensureUserManagementData = useCallback(
@@ -2083,19 +2588,25 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       try {
-        // Users & Access needs both deferred collections. Fetch them together so
-        // the load-version guard does not discard one of two parallel workspace
-        // requests and trigger a second render/retry cycle.
-        await loadUserState(currentUserIdRef.current, 'Unable to load users and access requests.', {
-          showBootstrapping: false,
-          includeProfiles: true,
-          includeAccessRequests: true,
-        })
+        await Promise.all([
+          ensureProfileDirectoryData(),
+          ensureAccessRequestData(),
+          ensureReportSummaryData({
+            periodIds: currentStateRef.current.reportingPeriods
+              .slice(-1)
+              .map(({ id }) => id),
+          }),
+        ])
       } catch (loadError) {
         toast.error(getMessage(loadError, 'Unable to load users and access requests.'))
       }
     },
-    [client, loadUserState],
+    [
+      client,
+      ensureAccessRequestData,
+      ensureProfileDirectoryData,
+      ensureReportSummaryData,
+    ],
   )
 
   const ensureHistoryData = useCallback(
@@ -2104,16 +2615,45 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return
       }
 
+      beginBackgroundSync()
       try {
-        await loadUserState(currentUserIdRef.current, 'Unable to load report history.', {
-          showBootstrapping: false,
-          includeHistory: true,
+        const currentProfile = currentStateRef.current.profiles.find(
+          ({ id }) => id === currentUserIdRef.current,
+        )
+        const [{ history, reports }, auditLogs] = await Promise.all([
+          fetchReportStatusHistory(client),
+          currentProfile && isAdminRole(currentProfile.role)
+            ? fetchCellAuditLogs(client)
+            : Promise.resolve([]),
+        ])
+        const reportRows = reports.map(reportSummaryRecord)
+
+        setState((currentState) => {
+          const reportsById = new Map(currentState.reports.map((report) => [report.id, report]))
+          reportRows.forEach((report) => {
+            if (!reportsById.has(report.id)) {
+              reportsById.set(report.id, report)
+            }
+          })
+          const nextState = {
+            ...currentState,
+            reports: [...reportsById.values()],
+            statusHistory: history,
+            auditLogs,
+          }
+
+          currentStateRef.current = nextState
+          persistWorkspaceCache(nextState, { historyDataLoaded: true })
+          return nextState
         })
+        historyDataLoadedRef.current = true
       } catch (loadError) {
         toast.error(getMessage(loadError, 'Unable to load report history.'))
+      } finally {
+        endBackgroundSync()
       }
     },
-    [client, loadUserState],
+    [beginBackgroundSync, client, endBackgroundSync, persistWorkspaceCache],
   )
 
   const resolveDepartmentSlug = useCallback((departmentIdOrSlug: string): string | null => {
@@ -2125,6 +2665,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       ([, databaseId]) => databaseId === departmentIdOrSlug,
     )?.[0] ?? null
   }, [])
+
+  const queuedReportSaveList = useMemo(
+    () =>
+      Object.values(queuedReportSaves).sort((left, right) =>
+        left.queuedAt.localeCompare(right.queuedAt),
+      ),
+    [queuedReportSaves],
+  )
 
   const value = useMemo<AppDataContextValue>(
     () => ({
@@ -2150,20 +2698,27 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       approveAdminAccessRequest,
       rejectAdminAccessRequest,
       saveReport,
-      queuedReportSaveCount: queuedReportSaveIds.size,
+      queuedReportSaveCount: queuedReportSaveList.filter((queuedSave) => queuedSave.status === 'pending').length,
+      conflictedReportSaveCount: queuedReportSaveList.filter((queuedSave) => queuedSave.status === 'conflict').length,
+      queuedReportSaves: queuedReportSaveList,
       hasQueuedReportSave,
+      getQueuedReportSave,
+      discardQueuedReportSave,
+      applyQueuedReportSave,
       lockReport,
       unlockReport,
       isReportDetailLoaded,
       getReportDetailLoadState,
       updateSettings,
       toggleUserActive,
+      changeUserRole,
       toggleAssignmentActive,
       assignUserToDepartment,
       ensureProfileDirectoryData,
       ensureAccessRequestData,
       ensureUserManagementData,
       ensureHistoryData,
+      ensureReportSummaryData,
       ensureReportDetails,
       reportPeriodWindow: reportPeriodWindowRef.current,
       resolveDepartmentSlug,
@@ -2192,20 +2747,25 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       approveAdminAccessRequest,
       rejectAdminAccessRequest,
       saveReport,
-      queuedReportSaveIds,
+      queuedReportSaveList,
       hasQueuedReportSave,
+      getQueuedReportSave,
+      discardQueuedReportSave,
+      applyQueuedReportSave,
       lockReport,
       unlockReport,
       isReportDetailLoaded,
       getReportDetailLoadState,
       updateSettings,
       toggleUserActive,
+      changeUserRole,
       toggleAssignmentActive,
       assignUserToDepartment,
       ensureProfileDirectoryData,
       ensureAccessRequestData,
       ensureUserManagementData,
       ensureHistoryData,
+      ensureReportSummaryData,
       ensureReportDetails,
       resolveDepartmentSlug,
       refreshDataWithOptions,

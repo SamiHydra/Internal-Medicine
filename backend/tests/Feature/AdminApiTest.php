@@ -7,11 +7,13 @@ use App\Models\AccessRequestItem;
 use App\Models\AdminAuditLog;
 use App\Models\AuditLog;
 use App\Models\Department;
+use App\Models\RepAssignment;
 use App\Models\Report;
 use App\Models\ReportAssignment;
 use App\Models\ReportFieldDefinition;
 use App\Models\ReportingPeriod;
 use App\Models\ReportTemplate;
+use App\Models\StudentBatch;
 use App\Models\User;
 use Database\Seeders\AppSettingSeeder;
 use Database\Seeders\DepartmentSeeder;
@@ -123,6 +125,90 @@ class AdminApiTest extends TestCase
         $this->assertTrue(Hash::check('NewPassword123!', $managedNurse->password));
         $this->assertTrue((bool) $managedNurse->password_change_required);
         $this->assertGreaterThanOrEqual(4, AdminAuditLog::query()->where('entity_type', 'user')->count());
+    }
+
+    /**
+     * `store` can mint a nurse or a student rep, so `update` must be able to
+     * correct one into the other. Before this the only remedy for a wrong pick
+     * was deactivating the account and rebuilding it under a new email.
+     */
+    public function test_admin_can_correct_a_role_picked_by_mistake(): void
+    {
+        $userId = $this->actingAs($this->admin)
+            ->postJson('/api/admin/users', [
+                'full_name' => 'Selam Tadesse',
+                'email' => 'selam.tadesse@example.test',
+                'username' => 'selam.tadesse',
+                'password' => 'Password123!',
+                'role_key' => 'nurse',
+            ])
+            ->assertCreated()
+            ->json('id');
+
+        User::query()->whereKey($userId)->update(['training_year' => 2, 'rotation_group' => 'A']);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/users/{$userId}", ['role' => 'student_rep'])
+            ->assertOk()
+            ->assertJsonPath('role', 'student_rep');
+
+        $corrected = User::query()->findOrFail($userId);
+        $this->assertSame('student_rep', $corrected->role_key);
+        $this->assertSame('Student representative', $corrected->title);
+        // A rep has no academic placement, so the old role's must not linger.
+        $this->assertNull($corrected->training_year);
+        $this->assertNull($corrected->rotation_group);
+
+        $this->assertTrue(
+            AdminAuditLog::query()
+                ->where('entity_type', 'user')
+                ->where('entity_id', $userId)
+                ->where('action', 'update')
+                ->exists(),
+        );
+
+        // Roles that arrive through signup plus approval, and maintenance, stay
+        // out of reach of a plain role patch.
+        foreach (['resident', 'consultant', 'superadmin'] as $blockedRole) {
+            $this->actingAs($this->admin)
+                ->patchJson("/api/admin/users/{$userId}", ['role' => $blockedRole])
+                ->assertStatus(422);
+        }
+
+        // Promotion to admin still needs the same authority as creating one.
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/users/{$userId}", ['role' => 'admin'])
+            ->assertForbidden();
+
+        $batch = StudentBatch::query()->create([
+            'cohort' => 'C1',
+            'label' => 'C1 2026-A',
+            'starts_on' => '2026-09-14',
+            'ends_on' => '2026-12-06',
+        ]);
+        RepAssignment::query()->create([
+            'user_id' => $userId,
+            'batch_id' => $batch->id,
+            'scope' => 'group',
+        ]);
+
+        // Moving off the rep role would leave the batch with a representative
+        // who can no longer record anything, so it is refused while it stands.
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/users/{$userId}", ['role' => 'nurse'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('role');
+
+        $this->assertSame('student_rep', User::query()->findOrFail($userId)->role_key);
+
+        RepAssignment::query()->where('user_id', $userId)->update(['active' => false]);
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/users/{$userId}", ['role' => 'nurse'])
+            ->assertOk()
+            ->assertJsonPath('role', 'nurse');
+
+        $this->assertSame('Nurse', User::query()->findOrFail($userId)->title);
     }
 
     public function test_user_directory_query_count_does_not_grow_per_assignment(): void
@@ -430,6 +516,56 @@ class AdminApiTest extends TestCase
         );
     }
 
+    /**
+     * QA-006: the deadline time used to be validated by shape only (NN:NN), so
+     * "25:99" was accepted and immediately rewrote every reporting-period
+     * deadline. Only a real 24-hour clock time may reach the recalculation.
+     */
+    public function test_settings_reject_impossible_deadline_times_and_leave_deadlines_untouched(): void
+    {
+        $before = ReportingPeriod::query()
+            ->orderBy('week_start')
+            ->get()
+            ->mapWithKeys(fn (ReportingPeriod $period) => [$period->id => $period->deadline_at?->toDateTimeString()])
+            ->all();
+        $this->assertNotEmpty($before);
+
+        foreach (['24:00', '25:99', '12:60', '99:99', 'abc', '9:30', '09:3', '09:30:00', ''] as $invalid) {
+            $this->actingAs($this->admin)
+                ->patchJson('/api/admin/settings', ['weeklyDeadlineTime' => $invalid])
+                ->assertStatus(422)
+                ->assertJsonValidationErrors('weeklyDeadlineTime');
+
+            $this->actingAs($this->admin)
+                ->patchJson('/api/admin/settings', ['weekly_deadline_time' => $invalid])
+                ->assertStatus(422)
+                ->assertJsonValidationErrors('weekly_deadline_time');
+        }
+
+        $after = ReportingPeriod::query()
+            ->orderBy('week_start')
+            ->get()
+            ->mapWithKeys(fn (ReportingPeriod $period) => [$period->id => $period->deadline_at?->toDateTimeString()])
+            ->all();
+        $this->assertSame($before, $after, 'an invalid time must never reach the deadline recalculation');
+        $this->assertSame('10:00', $this->actingAs($this->admin)->getJson('/api/admin/settings')->json('settings.weeklyDeadlineTime'));
+
+        foreach (['00:00', '09:30', '23:59'] as $valid) {
+            $this->actingAs($this->admin)
+                ->patchJson('/api/admin/settings', ['weeklyDeadlineTime' => $valid])
+                ->assertOk()
+                ->assertJsonPath('settings.weeklyDeadlineTime', $valid);
+        }
+
+        [$hours, $minutes] = [23, 59];
+        $period = ReportingPeriod::query()->orderBy('week_start')->firstOrFail();
+        $this->assertSame(
+            Carbon::parse($period->week_start)->setTime($hours, $minutes)->toDateTimeString(),
+            $period->fresh()->deadline_at->toDateTimeString(),
+            'a valid time recalculates the Monday deadline to exactly that clock time',
+        );
+    }
+
     public function test_template_content_update_preserves_sibling_metadata(): void
     {
         $template = ReportTemplate::query()->where('slug', 'inpatient_weekly')->firstOrFail();
@@ -498,5 +634,44 @@ class AdminApiTest extends TestCase
             'created_by' => $this->nurse->id,
             'updated_by' => $this->nurse->id,
         ]);
+    }
+
+    public function test_case_variant_emails_are_one_identity_for_admin_user_creation_and_edits(): void
+    {
+        // QA-017: the model lowercases on write but the unique rule compared the
+        // raw input, so a case-variant duplicate passed validation and hit the
+        // unique index as an HTTP 500 on SQLite.
+        User::factory()->create(['email' => 'managed.nurse@example.test', 'username' => 'managed.nurse']);
+        $other = User::factory()->create(['email' => 'other.nurse@example.test', 'username' => 'other.nurse']);
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/admin/users', [
+                'full_name' => 'Duplicate Nurse',
+                'email' => 'Managed.Nurse@Example.test',
+                'username' => 'duplicate.nurse',
+                'password' => 'Password123!',
+                'role_key' => 'nurse',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('email');
+
+        $this->actingAs($this->admin)
+            ->patchJson("/api/admin/users/{$other->id}", ['email' => 'MANAGED.NURSE@example.test'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('email');
+        $this->assertSame('other.nurse@example.test', $other->fresh()->email);
+
+        $created = $this->actingAs($this->admin)
+            ->postJson('/api/admin/users', [
+                'full_name' => 'New Nurse',
+                'email' => '  New.Nurse@Example.test ',
+                'username' => 'new.nurse',
+                'password' => 'Password123!',
+                'role_key' => 'nurse',
+            ])
+            ->assertCreated()
+            ->json();
+        $this->assertSame('new.nurse@example.test', $created['email']);
+        $this->assertSame('new.nurse@example.test', User::query()->findOrFail($created['id'])->email);
     }
 }

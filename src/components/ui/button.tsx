@@ -19,11 +19,14 @@ const buttonVariants = cva(
         destructive:
           'bg-[#ba1a1a] text-white shadow-[0_16px_28px_-22px_rgba(186,26,26,0.5)] hover:bg-[#93000a]',
       },
+      // `pointer-coarse:` raises the tap area to the 44px WCAG 2.5.5 minimum on
+      // touch devices only. It keys off the input device, not the viewport, so
+      // desktop rendering is untouched even in a narrowed window (pointer: fine).
       size: {
         default: 'h-12 px-4',
-        sm: 'h-9 rounded-[0.25rem] px-3 text-xs',
+        sm: 'h-9 rounded-[0.25rem] px-3 text-xs pointer-coarse:min-h-11',
         lg: 'h-12 px-6 text-sm',
-        icon: 'h-10 w-10 rounded-[0.25rem]',
+        icon: 'h-10 w-10 rounded-[0.25rem] pointer-coarse:min-h-11 pointer-coarse:min-w-11',
       },
     },
     defaultVariants: {

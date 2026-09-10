@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { CalendarRange, Loader2, Network, Plus, Trash2 } from 'lucide-react';
+import {
+  CalendarRange,
+  Loader2,
+  Network,
+  Plus,
+  TriangleAlert,
+  Trash2,
+} from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +34,7 @@ import {
   createAcademicSection,
   createAcademicWard,
   createRotationCalendar,
+  assignConsultantToSection,
   deleteAcademicDutyType,
   deleteAcademicSection,
   deleteAcademicWard,
@@ -89,7 +98,16 @@ function InactiveBadge({ active }: { active: boolean }) {
 
 export function AcademicStructurePage() {
   const client = getApiBrowserClient();
-  const { state, ensureProfileDirectoryData } = useAppData();
+  const { state, ensureProfileDirectoryData, refreshData } = useAppData();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const activeTab = ['wards', 'sections', 'duty-types', 'calendars'].includes(
+    requestedTab ?? '',
+  )
+    ? requestedTab!
+    : 'wards';
+  const showSectionGaps =
+    searchParams.get('issue') === 'consultants-without-section';
 
   const [wards, setWards] = useState<AcademicWard[] | null>(null);
   const [sections, setSections] = useState<AcademicSection[] | null>(null);
@@ -129,6 +147,10 @@ export function AcademicStructurePage() {
         .sort((a, b) => a.fullName.localeCompare(b.fullName)),
     [state.profiles],
   );
+  const consultantsWithoutSection = useMemo(
+    () => consultants.filter((consultant) => !consultant.sectionId),
+    [consultants],
+  );
 
   const loadAll = useCallback(async () => {
     if (!client) {
@@ -160,6 +182,22 @@ export function AcademicStructurePage() {
     // The section head picker needs the full user directory.
     void ensureProfileDirectoryData();
   }, [loadAll, ensureProfileDirectoryData]);
+
+  useEffect(() => {
+    if (
+      !showSectionGaps ||
+      sections === null ||
+      state.profiles.length <= 1
+    ) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById('section-gaps')
+        ?.scrollIntoView({ block: 'start' });
+    });
+  }, [sections, showSectionGaps, state.profiles.length]);
 
   const run = async (
     key: string,
@@ -232,14 +270,24 @@ export function AcademicStructurePage() {
 
       <section className={panelClass}>
         {loading ? (
-          <div className="flex min-h-[240px] items-center justify-center text-[#74777f]">
+          <div className="flex min-h-[240px] items-center justify-center text-[#666970]">
             <Loader2
               className="h-5 w-5 animate-spin"
               aria-label="Loading structure"
             />
           </div>
         ) : (
-          <Tabs defaultValue="wards">
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => {
+              const next = new URLSearchParams(searchParams);
+              next.set('tab', value);
+              if (value !== 'sections') {
+                next.delete('issue');
+              }
+              setSearchParams(next, { replace: true });
+            }}
+          >
             <TabsList className="max-w-full justify-start overflow-x-auto [&>button]:shrink-0 [&>button]:whitespace-nowrap">
               <TabsTrigger value="wards">Wards ({wards.length})</TabsTrigger>
               <TabsTrigger value="sections">
@@ -365,6 +413,103 @@ export function AcademicStructurePage() {
 
             {/* ---- Sections ---- */}
             <TabsContent value="sections" className="mt-5 space-y-5">
+              {showSectionGaps ? (
+                <div
+                  id="section-gaps"
+                  className="scroll-mt-24 border-l-[3px] border-[#d69e13] bg-[#fff8e8] px-4 py-4"
+                >
+                  <div className="flex items-start gap-3">
+                    <TriangleAlert
+                      className="mt-0.5 h-5 w-5 shrink-0 text-[#9a6b00]"
+                      aria-hidden="true"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-[#1d3047]">
+                        Consultants missing a section
+                      </p>
+                      <p className="mt-1 text-sm leading-6 text-[#657180]">
+                        Assign each consultant below. Section membership is used
+                        for evaluation pairing and scheduling.
+                      </p>
+
+                      {consultantsWithoutSection.length > 0 ? (
+                        <div className="mt-4 divide-y divide-[#ead9ae] border-y border-[#ead9ae]">
+                          {consultantsWithoutSection.map((consultant) => (
+                            <div
+                              key={consultant.id}
+                              className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-[#000a1e]">
+                                  {consultant.fullName}
+                                </p>
+                                <p className="truncate text-xs text-[#657180]">
+                                  {consultant.email}
+                                </p>
+                              </div>
+                              <Select
+                                disabled={
+                                  busy ===
+                                  `consultant-section-${consultant.id}`
+                                }
+                                onValueChange={(sectionId) =>
+                                  void run(
+                                    `consultant-section-${consultant.id}`,
+                                    async () => {
+                                      await assignConsultantToSection(
+                                        client,
+                                        sectionId,
+                                        consultant.id,
+                                      );
+                                      await Promise.all([
+                                        loadAll(),
+                                        ensureProfileDirectoryData({
+                                          force: true,
+                                        }),
+                                        refreshData({
+                                          includeProfiles: false,
+                                        }),
+                                      ]);
+                                      toast.success(
+                                        `${consultant.fullName} assigned to a section.`,
+                                      );
+                                    },
+                                    'Unable to assign the consultant to a section.',
+                                  )
+                                }
+                              >
+                                <SelectTrigger
+                                  className="w-full bg-white sm:w-[220px]"
+                                  aria-label={`Assign section for ${consultant.fullName}`}
+                                >
+                                  <SelectValue placeholder="Choose section" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {sections
+                                    .filter((section) => section.active)
+                                    .map((section) => (
+                                      <SelectItem
+                                        key={section.id}
+                                        value={section.id}
+                                      >
+                                        {section.name}
+                                      </SelectItem>
+                                    ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-3 text-sm font-semibold text-[#1f6b3b]">
+                          Every active consultant now has a section.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
               <form
                 className="flex flex-wrap items-end gap-3"
                 onSubmit={(event) => {

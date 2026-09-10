@@ -60,9 +60,14 @@ final class MorningSessionService
             ->whereDate('session_date', $date->toDateString())
             ->first();
 
+        // The status is set explicitly rather than left to the column default:
+        // a freshly created model carries only the attributes it was given, so
+        // the first read after a lazy open serialised `status: null` and the
+        // recorder page could not tell a pending session from a missing one.
         return $existing ?? MorningSession::query()->create([
             'session_date' => $date->toDateString(),
             'scheduled_start_at' => $this->config()['morningSessionTime'],
+            'status' => 'pending',
         ]);
     }
 
@@ -192,14 +197,33 @@ final class MorningSessionService
                 ]);
             }
 
+            $previousStatus = $locked->status;
+
+            // A recorded session that is cancelled afterwards (a public holiday
+            // recorded by mistake, for example) must not keep its attendance:
+            // the analytics count attendance rows across every session that
+            // exists, so leftover rows would silently inflate the figures for
+            // a day that officially never happened (QA-018). The removed count
+            // is returned so the audit trail records what was discarded.
+            $removedAttendance = $previousStatus === 'recorded'
+                ? MorningAttendance::query()->where('morning_session_id', $locked->id)->delete()
+                : 0;
+
             $locked->forceFill([
                 'status' => 'cancelled',
                 'reason' => trim($reason),
                 'recorded_by' => $by->id,
                 'recorded_at' => now(),
+                'started_on_time' => null,
+                'actual_start_at' => null,
             ])->save();
 
-            return ['session' => $locked->refresh(), 'transitioned' => true];
+            return [
+                'session' => $locked->refresh(),
+                'transitioned' => true,
+                'previousStatus' => $previousStatus,
+                'removedAttendance' => $removedAttendance,
+            ];
         });
     }
 

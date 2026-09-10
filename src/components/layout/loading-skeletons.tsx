@@ -35,10 +35,7 @@ function HeaderSkeleton({ compact = false, dark = false }: { compact?: boolean; 
   return (
     <div className={cn('flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-start sm:justify-between', dark ? 'border-white/10' : 'border-[#eef2f6]')}>
       <div className="min-w-0 flex-1 space-y-3">
-        <div className="flex items-center gap-2">
-          <Skeleton className={cn('h-3 w-[3px] rounded-full', dark && 'bg-white/24')} />
-          <Skeleton className={cn('h-2.5 w-32', dark && 'bg-white/18')} />
-        </div>
+        <Skeleton className={cn('h-2.5 w-32', dark && 'bg-white/18')} />
         <Skeleton className={cn(compact ? 'h-6 w-56' : 'h-8 w-full max-w-md', dark && 'bg-white/20')} />
         {!compact ? <Skeleton className={cn('h-3 w-full max-w-xl', dark && 'bg-white/14')} /> : null}
       </div>
@@ -181,7 +178,7 @@ export function ChartSkeleton({
 
 export function DashboardContentSkeleton() {
   return (
-    <LoadingRegion label="Loading dashboard content" className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+    <LoadingRegion label="Loading dashboard content" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
       <PanelSkeleton>
         <HeaderSkeleton compact />
         <div className="mt-5 space-y-4">

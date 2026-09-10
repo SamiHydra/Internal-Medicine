@@ -73,6 +73,7 @@ class AcademicEligibilityTest extends TestCase
             'medReviewDone' => true,
             'criticalLabsReviewed' => true,
             'roundDelayed' => false,
+            'overallRating' => 4,
         ];
     }
 

@@ -51,7 +51,7 @@ export function AdminPageHero({
           </div>
 
           {meta.length ? (
-            <div className="flex flex-wrap gap-x-5 gap-y-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[#74777f]">
+            <div className="flex flex-wrap gap-x-5 gap-y-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[#666970]">
               {meta.map((item) => (
                 <span key={item}>{item}</span>
               ))}

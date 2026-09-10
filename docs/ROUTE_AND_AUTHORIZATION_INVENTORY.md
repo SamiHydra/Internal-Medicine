@@ -16,8 +16,8 @@ Evidence: `php artisan route:list -v`, `php artisan route:list --json`, `backend
 | Permission constants | 37 |
 | Role keys | 6 |
 | Policy files | 27, including one shared concern |
-| Scheduled entries | 15, including the conditional queue worker entry |
-| Queue job classes | 1 |
+| Scheduled entries | 16, including queue health and the conditional queue worker entry |
+| Queue job classes | 4 |
 
 ## Backend route middleware model
 
@@ -323,18 +323,28 @@ All schedules inherit the application timezone, currently UTC. No schedule speci
 | Sunday 00:05 | `reports:ensure-periods` | 10-minute mutex expiry |
 | Monday 07:00 | `reports:send-digest` | 10-minute mutex expiry |
 | Every minute | Scheduler heartbeat cache callback | Named event, no overlap mutex |
-| Every minute when worker mode is not daemon | `queue:work --stop-when-empty --max-time=50` | 10-minute mutex expiry |
+| Every minute | `queue:monitor-health --json` | 10-minute mutex expiry |
+| Every minute when worker mode is not daemon | `queue:work --stop-when-empty --max-time=50 --queue=analytics,notifications,default` | 10-minute mutex expiry |
 | Hourly | `queue:retry all` | 10-minute mutex expiry |
 | Daily | `queue:prune-failed --hours=720` | None declared |
 | Sunday 01:00 | `reports:prune-notifications` | 10-minute mutex expiry |
 
 ## Queue inventory
 
-- `SendNotificationDelivery` implements `ShouldQueue`, has a 30-second timeout, records failure state, and handles email and SMS delivery.
-- `PasswordResetMail` implements `ShouldQueue`.
+- `WarmDashboardAnalytics`, `WarmAcademicAnalytics`, and `BuildAnalyticsExport`
+  use the `analytics` queue. `BuildAnalyticsExport` has a 300-second timeout.
+- `SendNotificationDelivery`, `PasswordResetMail`, and `LeadershipDigestMail`
+  use the `notifications` queue. Delivery jobs record failure state and handle
+  email and SMS delivery.
 - The local runtime uses the database queue; PHPUnit uses synchronous queues.
-- The systemd unit uses `queue:work --tries=3 --backoff=10 --max-time=3600`.
-- The shared-host scheduler worker does not declare equivalent `--tries` or `--backoff`; hourly `queue:retry all` retries all failed jobs.
+- Production uses two systemd units with `--tries=3 --backoff=10
+  --max-time=3600`: one consumes `analytics,default`, and one consumes
+  `notifications,default`.
+- The shared-host scheduler fallback consumes
+  `analytics,notifications,default`; hourly `queue:retry all` retries all
+  failed jobs.
+- `queue:monitor-health --json` reports per-queue depth and oldest database-job
+  age, and exits non-zero when a configured threshold is exceeded.
 
 ## Administrative mutation inventory
 

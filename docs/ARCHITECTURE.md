@@ -1,6 +1,6 @@
 # System Overview
 
-**St Paul Internal Medicine Weekly Reporting** is a hospital clinical-operations reporting platform. Nurses are assigned to (department × report-template) pairs; each ISO week a *reporting period* opens, and assigned nurses fill in per-day field values for their departments. Reports move through a status lifecycle (draft → submitted → edited-after-submission → locked); the system computes inpatient bed metrics (BOR / BTR / ALOS), aggregates analytics across three service-line "families" (inpatient / outpatient / procedure), raises overdue and critical-event alerts, and maintains two audit trails. Admins (superadmin / admin) review submissions, lock/unlock reports, manage users, departments, templates, and settings, and view aggregated analytics dashboards.
+**St Paul's Internal Medicine Weekly Reporting** is a hospital clinical-operations reporting platform. Nurses are assigned to (department × report-template) pairs; each ISO week a *reporting period* opens, and assigned nurses fill in per-day field values for their departments. Reports move through a status lifecycle (draft → submitted → edited-after-submission → locked); the system computes inpatient bed metrics (BOR / BTR / ALOS), aggregates analytics across three service-line "families" (inpatient / outpatient / procedure), raises overdue and critical-event alerts, and maintains two audit trails. Admins (superadmin / admin) review submissions, lock/unlock reports, manage users, departments, templates, and settings, and view aggregated analytics dashboards.
 
 **Tech stack.** A **React 19 + TypeScript + Vite 8** single-page app talks to a **Laravel API** in `backend/`. Authentication uses **Laravel Sanctum SPA cookie sessions**. TanStack Query owns remote server state while `AppDataContext` retains the existing cross-domain workspace model. UI is Tailwind CSS v4 over Radix primitives. The data store is SQLite locally and MariaDB in production. V2 production runs the SPA and API from one Nginx HTTPS origin on the hospital LAN.
 
@@ -76,7 +76,7 @@ In production there is no Vite proxy. Nginx serves the SPA and Laravel from the 
 │   ├── assets/                      # logo image(s)
 │   ├── index.css                    # Tailwind v4 @theme tokens, fonts, aurora bg, keyframes
 │   └── test/setup.ts                # Vitest jsdom setup
-├── public/manifest.webmanifest      # PWA manifest (theme #002147, "St Paul")
+├── public/manifest.webmanifest      # PWA manifest (theme #002147, "St Paul's")
 ├── index.html                       # PWA shell
 ├── vite.config.ts                   # proxy, alias @ -> src, manualChunks, vitest config
 ├── wrangler.toml                    # Optional Cloudflare preview build config only
@@ -87,7 +87,7 @@ In production there is no Vite proxy. Nginx serves the SPA and Laravel from the 
 │   ├── routes/
 │   │   ├── api.php                  # the entire /api surface
 │   │   ├── web.php                  # welcome view + /up health check
-│   │   └── console.php              # scheduler: overdue/reminders hourly, ensure-periods weekly, queue drain every minute
+│   │   └── console.php              # scheduler: reports, queue health, and shared-host queue drain
 │   ├── app/
 │   │   ├── Http/
 │   │   │   ├── Controllers/Api/         # AuthController, WorkspaceController, ReportWorkflowController, ...
@@ -135,7 +135,7 @@ A Laravel 11/12-style application. All routes live under the `api` middleware gr
 
 - **`$middleware->statefulApi()`** enables Sanctum SPA mode: requests from configured **stateful domains** (`config/sanctum.php → stateful`, sourced from `SANCTUM_STATEFUL_DOMAINS`) are treated as first-party **session-cookie** requests rather than token requests, activating session + CSRF cookie middleware for the API group. The explicit `prepend: [EnsureFrontendRequestsAreStateful]` is redundant but harmless.
 - The guard is **`web`** (session driver = `database` by default), so authenticated state lives server-side in the `sessions` table, carried by an encrypted session cookie. CSRF is enforced via Sanctum's `ValidateCsrfToken`.
-- `routes/web.php` serves a welcome view at `/`; `route('/up')` is the health check.
+- `routes/web.php` serves Laravel's stock welcome view at `/`, which is unreachable in production because nginx serves the SPA at `/`. `/up` is the health check: `deploy/nginx.conf` routes it to Laravel so external monitors and `deploy.sh` get a 200 only when the framework boots.
 - **Production safety:** `AppServiceProvider::boot()` throws `RuntimeException('APP_DEBUG must be false in production.')` if `app.debug` is true in the `production` environment.
 
 ### Custom middleware aliases
@@ -293,7 +293,7 @@ Provides `serializeUser`, `serializeAssignment`, `serializeDepartment`, `seriali
 | Service | Responsibility |
 |---|---|
 | **Reports\ReportSubmissionService** | The submit/draft engine. `save(actor, assignment, period, values, submit)` runs in a transaction: authorizes the edit, finds the report for (assignment, period) with `lockForUpdate()` (rejects locked reports), creates it if missing, `persistValues` writes EAV rows (coercing by `field_kind`, validating day ∈ template `active_days`, logging `audit_logs` for post-submission changes), computes `nextStatus`, records `report_status_history`, notifies admins (`new_report_submitted` / `submitted_report_edited`), fires `CriticalEventAlertService::notify`, then recomputes metrics via `ReportCalculationService::upsertForReport`. |
-| **Reports\ReportLockingService** | `setLockState(actor, report, locked)` - active-admin only; transactional `lockForUpdate`, idempotent. Lock sets `status=locked`/`locked_at`; unlock restores `edited_after_submission` or `submitted` and clears `locked_at`. Notifies the nurse (`report_locked`/`report_unlocked`). |
+| **Reports\ReportLockingService** | `setLockState(actor, report, locked)` - active-admin only; transactional `lockForUpdate`, idempotent. Lock sets `status=locked`/`locked_at` and leaves `submitted_at` untouched; unlock clears `locked_at` and restores the pre-lock lifecycle state: `draft` when `submitted_at` is null (a lock never submits a draft), otherwise `edited_after_submission` when the history carries it or `submitted`. Notifies the nurse (`report_locked`/`report_unlocked`). |
 | **Reports\ReportCalculationService** | `upsertForReport(report)` - inpatient BOR% = `patientDays / (bedCount × 30) × 100`, BTR = `(discharged_home + discharged_ama) / bedCount`, ALOS = `patientDays / totalDischarge`. Null when `bed_count` is falsy. Non-inpatient ⇒ null metrics. |
 | **Reports\OverdueReportService** | `sync()` (cron `hourly`) - upserts `overdue_report` notifications for active assignments lacking a submitted report past the deadline (live periods only, `week_start >= 2026-03-02`); deletes stale ones; no-ops if deadline enforcement is off. |
 | **Reports\CriticalEventAlertService** | `detect`/`notify` - sums configured `critical_non_zero_fields` (default `new_deaths`, `new_pressure_ulcer`, `total_hai`, `hai_clabsi`, `hai_cauti`, `hai_vap`); creates `critical_value_alert` notifications to admins when any weekly total > 0. |
@@ -313,9 +313,14 @@ Provides `serializeUser`, `serializeAssignment`, `serializeDepartment`, `seriali
 Schedule::command('reports:sync-overdue')->hourly();           // OverdueReportService::sync
 Schedule::command('reports:send-reminders')->hourly();         // ReportReminderService::sendDue
 Schedule::command('reports:ensure-periods')->weeklyOn(0, '00:05'); // ReportingPeriodService::ensureRollingWindow
-Schedule::command('queue:work --stop-when-empty --max-time=50')->everyMinute()->withoutOverlapping();
+Schedule::command('queue:monitor-health --json')->everyMinute()->withoutOverlapping();
+Schedule::command('queue:work --stop-when-empty --max-time=50 --queue=analytics,notifications,default')
+    ->everyMinute()->withoutOverlapping(); // shared-host fallback only
 ```
-Commands: `SyncOverdueReports`, `EnsureReportingPeriods` (`--past`/`--future`), `CreateSuperadmin`.
+Production runs separate persistent workers for `analytics,default` and
+`notifications,default`. Commands include `SyncOverdueReports`,
+`EnsureReportingPeriods` (`--past`/`--future`), `MonitorQueueHealth`, and
+`CreateSuperadmin`.
 
 ## Full API Surface
 
@@ -681,7 +686,7 @@ A hand-rolled typed client shaped like the old Supabase client to minimize migra
 
 ## Types, selectors, config
 
-**`src/types/domain.ts`** - `UserRole = 'superadmin'|'admin'|'nurse'|'resident'|'consultant'`; `ReportFamily = 'inpatient'|'outpatient'|'procedure'`; `ReportStatus = 'not_started'|'draft'|'submitted'|'edited_after_submission'|'locked'|'overdue'` (UI/derived; `StoredReportStatus` is the persisted subset); `FieldKind`, `FieldAggregate`, `MetricFormat`; entities `UserProfile`, `Department` (`family`, `templateId`, `accent`, optional `bedCount`), template-config types (`ReportTemplateField`, `TemplateSection`, `SummaryCardConfig`, `ChartMappingConfig`, `ChangeWatchRule`, `ReportTemplateConfig`), `ReportAssignment`, `AccessRequest`, `ReportingPeriod`, `ReportFieldValue` (`dailyValues: Partial<Record<Weekday, CellValue>>`, `CellValue = number|string|null`), `CalculatedMetricSet`, `ReportRecord` (incl. `values: Record<fieldId, ReportFieldValue>` and `calculatedMetrics`), `NotificationItem`, `AppSettings`, `AppState`.
+**`src/types/domain.ts`** - `UserRole = 'superadmin'|'admin'|'nurse'|'resident'|'consultant'`; `ReportFamily = 'inpatient'|'outpatient'|'procedure'`; `ReportStatus = 'not_started'|'draft'|'submitted'|'edited_after_submission'|'locked'|'overdue'` (UI/derived; `StoredReportStatus` is the persisted subset); `FieldKind`, `FieldAggregate`, `MetricFormat`; entities `UserProfile`, `Department` (`family`, `templateId`, `accent`, optional `bedCount`), template-config types (`ReportTemplateField`, `TemplateSection`, `SummaryCardConfig`, `ChartMappingConfig`, `ReportTemplateConfig`), `ReportAssignment`, `AccessRequest`, `ReportingPeriod`, `ReportFieldValue` (`dailyValues: Partial<Record<Weekday, CellValue>>`, `CellValue = number|string|null`), `CalculatedMetricSet`, `ReportRecord` (incl. `values: Record<fieldId, ReportFieldValue>` and `calculatedMetrics`), `NotificationItem`, `AppSettings`, `AppState`.
 
 **`src/data/selectors.ts`** - pure functions over `AppState`; the model is weekly (each `ReportFieldValue` holds a Mon–Sun `dailyValues` map; selectors aggregate via `sumField`/`computeWeeklyValue`). A hard floor `liveReportingStartDate = 2026-03-02` excludes legacy periods.
 - **Periods:** `getSortedReportingPeriods`, `getCurrentPeriod`, `getVisibleReportingPeriods`, `getPreviousPeriod`, `getReportingPeriodsForRange(range, anchor)` where `range: 'current'|'last4'|'last8'|'all'`.
@@ -699,7 +704,7 @@ A hand-rolled typed client shaped like the old Supabase client to minimize migra
 
 ## Tooling
 
-Tailwind CSS v4 via `@tailwindcss/vite` (no `tailwind.config.js`; tokens in `src/index.css` via the v4 `@theme` directive). `clsx` + `tailwind-merge` combined into `cn()` (`src/lib/utils.ts`). Component base: shadcn/ui-style primitives wrapping Radix UI in `src/components/ui/*` (`components.json`: `style: default`, `baseColor: slate`, `cssVariables: false`), **heavily re-skinned** to a navy/blue/gold hospital theme using hard-coded hex values. Variants via `class-variance-authority`. Icons: `lucide-react`. Animation: `framer-motion` (section entrance reveals, count-up `AnimatedMetric`) + CSS keyframes. Toasts: `sonner`. Charts: `recharts`. Forms: `react-hook-form` + `zod`. Path alias `@/` → `src/`. PWA: `index.html` + `public/manifest.webmanifest` (theme `#002147`, "St Paul").
+Tailwind CSS v4 via `@tailwindcss/vite` (no `tailwind.config.js`; tokens in `src/index.css` via the v4 `@theme` directive). `clsx` + `tailwind-merge` combined into `cn()` (`src/lib/utils.ts`). Component base: shadcn/ui-style primitives wrapping Radix UI in `src/components/ui/*` (`components.json`: `style: default`, `baseColor: slate`, `cssVariables: false`), **heavily re-skinned** to a navy/blue/gold hospital theme using hard-coded hex values. Variants via `class-variance-authority`. Icons: `lucide-react`. Animation: `framer-motion` (section entrance reveals, count-up `AnimatedMetric`) + CSS keyframes. Toasts: `sonner`. Charts: `recharts`. Forms: `react-hook-form` + `zod`. Path alias `@/` → `src/`. PWA: `index.html` + `public/manifest.webmanifest` (theme `#002147`, "St Paul's").
 
 ## Design tokens
 
@@ -752,7 +757,7 @@ All accept `className` merged via `cn()`. Radix-based ones forward props through
 ## Layout shell (`src/components/layout/`)
 
 **`app-shell.tsx`** - the authenticated chrome (renders only when `currentUser` exists; otherwise passes children through, so auth pages render full-bleed).
-- **Sidebar (`<aside>`):** fixed left, `hidden sm:block`, navy gradient `linear-gradient(150deg,#000a1e,#07162f,#002147)`. Width animates `w-[292px]` ↔ `w-[84px]`; collapse state persists in `localStorage` key `stpaul:sidebar-collapsed`. Contains the **BrandLockup** (St Paulos logo + "St. Paul Hospital" / "Internal Medicine"), **SidebarNav** (maps `navigationByRole[role]`; active = left gold border `#f0b429`, white text, gold icon, `bg-white/[0.04]`), and a reporting-week footer.
+- **Sidebar (`<aside>`):** fixed left, `hidden sm:block`, navy gradient `linear-gradient(150deg,#000a1e,#07162f,#002147)`. Width animates `w-[292px]` ↔ `w-[84px]`; collapse state persists in `localStorage` key `stpaul:sidebar-collapsed`. Contains the **BrandLockup** (St Paul's logo + "St Paul's Hospital" / "Internal Medicine"), **SidebarNav** (maps `navigationByRole[role]`; active = left gold border `#f0b429`, white text, gold icon, `bg-white/[0.04]`), and a reporting-week footer.
 - **Header (`<header>`):** sticky, `bg-[#f8f9fa]/96 backdrop-blur-sm`. Left: mobile hamburger (opens left `Sheet`), desktop collapse toggle, a "Live reporting period" chip. Right: **Sync indicator** (chip + animated ping dot when `isSyncing`, via `useAppSync()`), **Notifications bell** (unread `bg-[#ba1a1a]` `pulse-ring` badge), **User chip** (avatar initials + name + uppercase title + `LogOut`).
 - **Main:** `<main className="min-w-0 flex-1">`; content wrapper left padding animates with the sidebar.
 - **Dev only:** `ViewportDebugReadout` (gated by `import.meta.env.DEV`).

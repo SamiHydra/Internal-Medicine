@@ -17,6 +17,35 @@ export type SaveReportPayload = {
   actorId: string
   values: Record<string, ReportFieldValue>
   submit?: boolean
+  /**
+   * Optimistic-concurrency token (docs/OFFLINE_SYNC_MODEL.md): the report's
+   * `updatedAt` as the client loaded it, or `null` when the client saw no
+   * report for the week yet. The server answers 409 when it no longer matches.
+   * Leave undefined to skip the check (historical last-write-wins save).
+   */
+  expectedUpdatedAt?: string | null
+}
+
+/** The server's copy of a report as returned inside a 409 conflict response. */
+export type ReportConflictSnapshot = {
+  id: string
+  assignmentId: string
+  reportingPeriodId: string
+  status: string
+  submittedAt: string | null
+  lockedAt: string | null
+  updatedAt: string | null
+  updatedById: string | null
+  updatedByName: string | null
+  values: Record<string, ReportFieldValue>
+}
+
+export type ReportConflictResponse = {
+  message: string
+  conflict: {
+    reason: 'stale' | 'exists'
+    report: ReportConflictSnapshot
+  }
 }
 
 export type AccessRequestPayload = {
@@ -50,14 +79,24 @@ export type AdminAccessRequest = {
   createdUserId: string | null
 }
 
+// Admin-created accounts. Every other role reaches the system through public
+// signup plus an approval queue; these two cannot. `admin` predates that flow,
+// and `student_rep` is appointed rather than self-declared, so it has no public
+// registration path at all and an administrator is the only way to mint one.
 export type CreateAdminAccountPayload = {
   fullName: string
   username: string
   email: string
   password: string
-  role: Extract<UserRole, 'admin'>
+  role: AssignableRole
   title?: string
 }
+
+// The roles an administrator hands out directly, and therefore the only roles a
+// mis-picked account can be corrected to. Residents and consultants are excluded
+// on purpose: they arrive through signup plus approval, which carries the
+// academic placement a bare role switch has no way to supply.
+export type AssignableRole = Extract<UserRole, 'admin' | 'nurse' | 'student_rep'>
 
 export type ApiReferenceState = {
   departmentDbIdBySlug: Record<string, string>
@@ -108,7 +147,6 @@ export type ApiTemplateConfig = {
       sections?: ReportTemplateConfig['sections']
       summaryCards?: ReportTemplateConfig['summaryCards']
       chartMappings?: ReportTemplateConfig['chartMappings']
-      changeRules?: ReportTemplateConfig['changeRules']
     }
   } | null
   fields: ApiTemplateField[]
@@ -137,6 +175,8 @@ export type AcademicWorkspaceState = {
 }
 
 export type WorkspacePayload = {
+  revision: string
+  revisionToken: string
   currentUser: UserProfile
   academic?: AcademicWorkspaceState
   references: ApiReferenceState
@@ -174,6 +214,8 @@ export type ReportResponse = ReportRecord & {
     payload?: unknown
   }
 }
+
+export type ReportSummaryResponse = Omit<ReportResponse, 'values' | 'calculatedMetrics' | 'quality'>
 
 export type ListResponse<T> = {
   data: T[]
@@ -279,6 +321,7 @@ export type ConsultantEvaluationRecord = {
   roundDelayed: boolean
   mdtParticipants: string[]
   systemIssues: string[]
+  overallRating: number | null
   comment: string | null
   qualityScore: number
   extraAnswers?: ExtraEvaluationAnswer[]
@@ -380,11 +423,31 @@ export type AcademicPersonStat = {
   homeWardName: string | null
   evaluationCount: number
   averageScore: number
+  /** Mean 1-to-5 overall rating; null when none of the evaluations carry one. */
+  ratingAverage: number | null
+  /** The rating normalised to 0-100 (rating / 5 * 100); null when unrated. */
+  ratingScore: number | null
+  /** How many of the evaluations carried a rating (rest are legacy/unrated). */
+  ratedCount: number
+  /** Equal-weight blend of ratingScore and averageScore; the rank value. */
+  combinedScore: number
+  /** True when evaluationCount is below the confidence threshold. */
+  provisional: boolean
 }
 
 export type AcademicPeople = {
   direction: AcademicDirection
+  /** Weight given to the rating half of the combined score (0-1). */
+  ratingWeight: number
+  /** Below this evaluation count a person is flagged provisional. */
+  minEvaluationsForRank: number
   people: AcademicPersonStat[]
+}
+
+export type AcademicAnalyticsSnapshot = {
+  summary: AcademicSummary
+  trend: AcademicTrend
+  people: AcademicPeople
 }
 
 export type AcademicMySubmissions =
@@ -462,6 +525,69 @@ export type AdminAuditResponse = {
   }
 }
 
+/** GET /api/admin/system-health (maintenance only). States, ages and counts; never secrets. */
+export type SystemHealthCheck = {
+  key: string
+  label: string
+  status: 'pass' | 'warn' | 'fail'
+  detail: string
+}
+
+export type SystemHealthSnapshot = {
+  status: 'healthy' | 'degraded' | 'unhealthy'
+  checkedAt: string
+  release: { sha: string; builtAt: string | null; source: string }
+  application: {
+    name: string
+    environment: string
+    debug: boolean
+    phpVersion: string
+    frameworkVersion: string
+    opcache: boolean
+    configCached: boolean
+    routesCached: boolean
+    timezone: string
+    hospitalTimezone: string
+  }
+  database: {
+    driver: string
+    connected: boolean
+    latencyMs: number | null
+    pendingMigrations: number | null
+  }
+  queue: {
+    connection: string
+    driver: string
+    workerMode: string
+    thresholds: { depth: number; oldestJobAgeSeconds: number }
+    queues: Array<{ name: string; depth: number; oldestJobAgeSeconds: number | null }>
+    failedJobs: { total: number | null; last24h: number | null; latestFailedAt: string | null }
+  }
+  scheduler: { lastTick: string | null; ageSeconds: number | null; fresh: boolean }
+  backups: {
+    directory: string
+    secondaryDirectory: string
+    latestDump: { at: string | null; ageHours: number | null }
+    latestStorageArchive: { at: string | null; ageHours: number | null }
+    latestSecondaryDump: { at: string | null; ageHours: number | null }
+    restoreDrillVerifiedAt: string | null
+    restoreDrillMaxAgeDays: number
+  }
+  storage: { writable: boolean; freeDiskGb: number | null; minFreeDiskGb: number; uploadsDisk: string }
+  transports: {
+    mail: { driver: string; configured: boolean }
+    sms: { driver: string; configured: boolean }
+  }
+  observability: {
+    webhookConfigured: boolean
+    errorMonitoringChannel: string | null
+    slowRequestThresholdMs: number
+    clientErrorReporting: boolean
+    counters: Record<string, { lastHour: number; previousHour: number }>
+  }
+  checks: SystemHealthCheck[]
+}
+
 export type AdminAuditQuery = {
   workspace?: 'clinical' | 'academic'
   entityType?: string
@@ -473,28 +599,120 @@ export type AdminAuditQuery = {
   limit?: number
 }
 
-export type ActionItemStatus = 'open' | 'in_progress' | 'resolved'
+export type ActionItemStatus = 'open' | 'assigned' | 'in_progress' | 'resolved' | 'closed'
+
+export type ActionItemHistoryEntry = {
+  id: string
+  event: string
+  fromStatus: ActionItemStatus | null
+  toStatus: ActionItemStatus | null
+  note: string | null
+  changedBy: string | null
+  changedByName: string
+  createdAt: string | null
+}
+
+export type ActionItemComment = {
+  id: string
+  body: string
+  authorId: string | null
+  authorName: string
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export type ActionItemEvidence = {
+  id: string
+  originalName: string
+  mimeType: string
+  sizeBytes: number
+  uploadedByName: string
+  createdAt: string | null
+  downloadUrl: string
+}
+
+export type ActionItemSummary = {
+  open: number
+  assigned: number
+  inProgress: number
+  outstanding: number
+  highSeverity: number
+  overdue: number
+  oldestOpenedAt: string | null
+  averageResolutionHours: number | null
+  byDepartment: {
+    departmentId: string | null
+    departmentSlug: string | null
+    departmentName: string
+    total: number
+  }[]
+}
 
 export type ActionItem = {
   id: string
   reportId: string | null
+  reportAssignmentId: string | null
+  reportingPeriodId: string | null
   departmentId: string | null
   departmentName: string | null
+  clinicalAlertRuleId: string | null
+  ruleVersion: number | null
   source: string
+  fieldKey: string | null
+  observedValue: number | null
+  triggerThreshold: number | null
+  triggerOperator: 'gt' | 'gte' | 'eq' | null
   title: string
   description: string | null
   severity: 'low' | 'medium' | 'high'
   status: ActionItemStatus
+  conditionState: 'triggered' | 'corrected_pending_review' | 'manual'
   assignedTo: string | null
   assignedToName: string | null
+  responsibleRole: string | null
+  dueAt: string | null
+  isOverdue: boolean
   createdBy: string | null
   createdByName: string | null
   resolvedBy: string | null
   resolvedByName: string | null
+  verifiedBy: string | null
+  verifiedByName: string | null
   resolutionNote: string | null
   resolvedAt: string | null
+  verifiedAt: string | null
   createdAt: string | null
   updatedAt: string | null
+  history?: ActionItemHistoryEntry[]
+  comments?: ActionItemComment[]
+  evidence?: ActionItemEvidence[]
+}
+
+export type ClinicalAlertRule = {
+  id: string
+  templateId: string
+  templateName: string | null
+  fieldDefinitionId: string
+  fieldKey: string
+  fieldLabel: string
+  operator: 'gt' | 'gte' | 'eq'
+  threshold: number
+  severity: 'low' | 'medium' | 'high'
+  deadlineHours: number
+  responsibleRole: 'admin' | 'superadmin' | null
+  notificationRoles: ('admin' | 'superadmin')[]
+  active: boolean
+  version: number
+  effectiveFrom: string | null
+  effectiveUntil: string | null
+  updatedAt: string | null
+}
+
+export type ClinicalAlertRuleTemplateOption = {
+  id: string
+  slug: string
+  name: string
+  fields: { id: string; fieldKey: string; label: string }[]
 }
 
 export type ReportComment = {
@@ -535,7 +753,10 @@ export type AcademicAnalyticsQuery = {
 
 export type AcademicListQuery = {
   direction?: AcademicDirection
+  /** Evaluations written ABOUT this person. */
   subjectId?: string
+  /** Evaluations written BY this person; the mirror of subjectId. */
+  authorId?: string
   wardId?: string
   dateFrom?: string
   dateTo?: string

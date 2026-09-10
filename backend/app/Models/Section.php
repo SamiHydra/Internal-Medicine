@@ -39,4 +39,16 @@ class Section extends Model
     {
         return $this->hasMany(DutyType::class);
     }
+
+    /** Transfers filed out of this section (transfer_requests.from_section_id, restrict on delete). */
+    public function outboundTransferRequests(): HasMany
+    {
+        return $this->hasMany(TransferRequest::class, 'from_section_id');
+    }
+
+    /** Transfers filed into this section (transfer_requests.to_section_id, restrict on delete). */
+    public function inboundTransferRequests(): HasMany
+    {
+        return $this->hasMany(TransferRequest::class, 'to_section_id');
+    }
 }

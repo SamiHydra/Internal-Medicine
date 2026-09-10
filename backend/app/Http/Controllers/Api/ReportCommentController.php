@@ -7,14 +7,20 @@ use App\Models\Notification;
 use App\Models\Report;
 use App\Models\ReportComment;
 use App\Models\User;
+use App\Services\Admin\AdminAuditService;
 use App\Support\Authorization\Permissions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
 
 class ReportCommentController extends Controller
 {
+    public function __construct(
+        private readonly AdminAuditService $auditService,
+    ) {}
+
     public function index(Request $request, Report $report): JsonResponse
     {
         Gate::authorize('view', $report);
@@ -56,12 +62,20 @@ class ReportCommentController extends Controller
         }
 
         $author = $request->user();
-        $comment = ReportComment::query()->create([
-            'report_id' => $report->id,
-            'author_id' => $author->id,
-            'parent_id' => $parentId,
-            'body' => trim($validated['body']),
-        ]);
+        $comment = DB::transaction(function () use ($request, $report, $author, $parentId, $validated): ReportComment {
+            $comment = ReportComment::query()->create([
+                'report_id' => $report->id,
+                'author_id' => $author->id,
+                'parent_id' => $parentId,
+                'body' => trim($validated['body']),
+            ]);
+
+            // A comment is the written explanation behind a submitted number,
+            // so its arrival is part of the report's trail, whoever wrote it.
+            $this->auditService->record($author, 'comment', 'report_comment', $comment->id, null, $this->auditValues($comment), $request);
+
+            return $comment;
+        });
 
         $this->notifyParticipants($report, $author);
 
@@ -80,7 +94,12 @@ class ReportCommentController extends Controller
             abort(403, 'You cannot delete this comment.');
         }
 
-        $comment->delete();
+        // The row is hard-deleted, so the audit entry is the only place the
+        // removed text survives. Same transaction: no delete without its trail.
+        DB::transaction(function () use ($request, $user, $comment): void {
+            $this->auditService->record($user, 'delete', 'report_comment', $comment->id, $this->auditValues($comment), null, $request);
+            $comment->delete();
+        });
 
         return response()->json(['deleted' => true]);
     }
@@ -131,6 +150,19 @@ class ReportCommentController extends Controller
         ])->all();
 
         Notification::query()->insert($rows);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function auditValues(ReportComment $comment): array
+    {
+        return [
+            'reportId' => $comment->report_id,
+            'authorId' => $comment->author_id,
+            'parentId' => $comment->parent_id,
+            'body' => $comment->body,
+        ];
     }
 
     /**

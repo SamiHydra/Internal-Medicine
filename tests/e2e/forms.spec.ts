@@ -8,7 +8,7 @@ test.describe('Academic evaluation form (resident)', () => {
   test('renders and blocks an empty submit with validation', async ({ page }, testInfo) => {
     const diag = captureDiagnostics(page)
     await page.goto('/academic/submit', { waitUntil: 'domcontentloaded' })
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible({ timeout: 20_000 })
 
     const submit = page
       .getByRole('button', { name: /submit|save|record|file evaluation|send/i })
@@ -32,7 +32,7 @@ test.describe('Nurse clinical report flow', () => {
   test('report selection lists assignments; opening one renders the form', async ({ page }, testInfo) => {
     const diag = captureDiagnostics(page)
     await page.goto('/nurse/reports', { waitUntil: 'domcontentloaded' })
-    await expect(page.getByRole('button', { name: 'Sign out' }).first()).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByRole('button', { name: 'Notifications' }).first()).toBeVisible({ timeout: 20_000 })
     await testInfo.attach('nurse-reports.png', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
 
     // Find a link into a specific report (/reports/:assignmentId/:periodId).

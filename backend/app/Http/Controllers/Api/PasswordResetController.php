@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Mail\PasswordResetMail;
 use App\Models\User;
+use App\Services\Admin\AdminAuditService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -15,6 +16,10 @@ use Illuminate\Validation\ValidationException;
 
 class PasswordResetController extends Controller
 {
+    public function __construct(
+        private readonly AdminAuditService $auditService,
+    ) {}
+
     public function forgot(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -52,12 +57,27 @@ class PasswordResetController extends Controller
             ]);
         }
 
+        $oldValues = $user->only(['password_change_required']);
+
         $user->forceFill([
             'password' => Hash::make($validated['password']),
             'password_change_required' => false,
             'remember_token' => Str::random(60),
         ])->save();
         Password::broker()->deleteToken($user);
+
+        // The account holder proved control of the mailbox, so they are the
+        // actor. Only the fact of the change is recorded: never the token, the
+        // password, or its hash (the admin-driven reset keeps the same rule).
+        $this->auditService->record(
+            $user,
+            'change_password',
+            'user',
+            $user->id,
+            $oldValues,
+            ['password_change_required' => false, 'method' => 'reset_link'],
+            $request,
+        );
 
         return response()->json([
             'message' => 'Password updated.',

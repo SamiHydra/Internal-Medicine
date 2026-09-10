@@ -7,6 +7,7 @@ use App\Models\Notification;
 use App\Models\ReportAssignment;
 use App\Models\User;
 use App\Services\Analytics\DashboardAnalyticsService;
+use App\Support\RoleTitles;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -32,7 +33,11 @@ class AccessRequestReviewService
                 ->with(['user', 'items.department', 'items.template'])
                 ->lockForUpdate()
                 ->findOrFail($accessRequest->id);
-            $oldValues = $lockedRequest->only(['status', 'reviewed_at', 'reviewed_by']);
+            $oldValues = [
+                ...$lockedRequest->only(['status', 'reviewed_at', 'reviewed_by']),
+                'userActive' => (bool) $lockedRequest->user?->active,
+            ];
+            $grantedAssignments = [];
 
             $lockedRequest->forceFill([
                 'status' => $decision,
@@ -45,12 +50,27 @@ class AccessRequestReviewService
                 // created inactive (AccessRequestSubmissionController), so this is the
                 // step that first lets them authenticate. Existing active nurses
                 // requesting more access are unaffected (already active).
-                if ($lockedRequest->user && ! $lockedRequest->user->active) {
-                    $lockedRequest->user->forceFill(['active' => true])->save();
+                if ($lockedRequest->user) {
+                    $userUpdates = [];
+
+                    if (! $lockedRequest->user->active) {
+                        $userUpdates['active'] = true;
+                    }
+
+                    // "Applicant Nurse" is an internal marker for an unvetted
+                    // self-registration. It must not remain the person's visible
+                    // job title after approval.
+                    if ($lockedRequest->user->title === 'Applicant Nurse') {
+                        $userUpdates['title'] = RoleTitles::default('nurse');
+                    }
+
+                    if ($userUpdates !== []) {
+                        $lockedRequest->user->forceFill($userUpdates)->save();
+                    }
                 }
 
                 foreach ($lockedRequest->items as $item) {
-                    ReportAssignment::query()->updateOrCreate(
+                    $assignment = ReportAssignment::query()->updateOrCreate(
                         [
                             'nurse_id' => $lockedRequest->user_id,
                             'department_id' => $item->department_id,
@@ -62,6 +82,11 @@ class AccessRequestReviewService
                             'approved_by' => $actor->id,
                         ],
                     );
+                    $grantedAssignments[] = [
+                        'id' => $assignment->id,
+                        'departmentId' => $item->department_id,
+                        'templateId' => $item->template_id,
+                    ];
                 }
             }
 
@@ -72,7 +97,14 @@ class AccessRequestReviewService
                 'access_request',
                 $lockedRequest->id,
                 $oldValues,
-                $lockedRequest->fresh()->only(['status', 'reviewed_at', 'reviewed_by']),
+                // Approval also activates the applicant and grants the requested
+                // assignments; the row records those side effects, not only the
+                // decision, so the trail explains where a nurse's access came from.
+                [
+                    ...$lockedRequest->fresh()->only(['status', 'reviewed_at', 'reviewed_by']),
+                    'userActive' => (bool) $lockedRequest->user?->active,
+                    'grantedAssignments' => $grantedAssignments,
+                ],
                 request(),
             );
 

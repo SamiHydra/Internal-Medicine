@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { ClipboardList, LockKeyhole, Rows3 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import {
@@ -12,6 +12,7 @@ import {
 } from '@/components/dashboard/section-panel'
 import { ReportingScopePanel } from '@/components/admin/reporting-scope-panel'
 import { SubmissionBoardGrid } from '@/components/dashboard/submission-board-grid'
+import { OfflineSaveBanner } from '@/components/reports/offline-save-banner'
 import { ReportAssignmentCard } from '@/components/reports/report-assignment-card'
 import { Button } from '@/components/ui/button'
 import {
@@ -32,7 +33,7 @@ const serviceLineOptions = [
 ] as const
 
 export function ReportSelectionPage() {
-  const { state, currentUser } = useAppData()
+  const { state, currentUser, ensureReportSummaryData } = useAppData()
   const [serviceLineFilter, setServiceLineFilter] = useState<'all' | ReportFamily>('all')
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>('')
 
@@ -42,6 +43,14 @@ export function ReportSelectionPage() {
   const effectivePeriodId = availablePeriods.some((period) => period.id === selectedPeriodId)
     ? selectedPeriodId
     : fallbackPeriodId
+  const reportingPeriodIdsKey = state.reportingPeriods.map(({ id }) => id).join('|')
+
+  useEffect(() => {
+    const periodIds = reportingPeriodIdsKey ? reportingPeriodIdsKey.split('|') : []
+    if (periodIds.length) {
+      void ensureReportSummaryData({ periodIds })
+    }
+  }, [ensureReportSummaryData, reportingPeriodIdsKey])
 
   if (!currentUser) {
     return null
@@ -77,6 +86,7 @@ export function ReportSelectionPage() {
 
   return (
     <div className="space-y-6 px-4 py-6 md:px-6 md:py-8">
+      <OfflineSaveBanner />
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -117,13 +127,14 @@ export function ReportSelectionPage() {
           actions={<HeaderChip>{formatCompactNumber(periodCards.length)} items</HeaderChip>}
         />
         {periodCards.length ? (
-          <div className="mt-5 grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2 xl:grid-cols-3">
             {periodCards.map((card, index) => (
               <motion.div
                 key={`${card.assignment.id}:${card.period.id}`}
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.22, ease: 'easeOut', delay: index * 0.02 }}
+                className="min-w-0"
               >
                 <ReportAssignmentCard
                   departmentName={card.department.name}

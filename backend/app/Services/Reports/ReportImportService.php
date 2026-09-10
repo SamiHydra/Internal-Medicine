@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\Analytics\DashboardAnalyticsService;
 use App\Support\Export\SpreadsheetSafe;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -108,8 +109,65 @@ class ReportImportService
         $skipped = 0;
         $errors = [];
 
+        // Resolve reference data once for the entire upload. Previously every
+        // department/week group repeated the same period, department, assignment,
+        // template, and definition queries before reaching the save service.
+        $weeks = collect($groups)
+            ->pluck('week')
+            ->map(fn (string $week): string => $this->normalizeDate($week))
+            ->unique()
+            ->values();
+        $departments = Department::query()
+            ->whereIn('slug', collect($groups)->pluck('department')->unique()->values())
+            ->get()
+            ->keyBy('slug');
+        $weekRanges = $weeks
+            ->map(function (string $week): ?array {
+                try {
+                    $start = Carbon::parse($week)->startOfDay();
+
+                    return [$start, $start->copy()->addDay()];
+                } catch (\Throwable) {
+                    return null;
+                }
+            })
+            ->filter()
+            ->values();
+        $periods = ReportingPeriod::query()
+            ->where(function ($query) use ($weekRanges): void {
+                if ($weekRanges->isEmpty()) {
+                    $query->whereRaw('1 = 0');
+                }
+
+                foreach ($weekRanges as [$start, $end]) {
+                    // Works for SQLite's datetime text and MariaDB DATE/DATETIME
+                    // columns while keeping week_start indexable (no whereDate()).
+                    $query->orWhere(function ($range) use ($start, $end): void {
+                        $range->where('week_start', '>=', $start)
+                            ->where('week_start', '<', $end);
+                    });
+                }
+            })
+            ->get()
+            ->keyBy(fn (ReportingPeriod $period): string => $period->week_start->toDateString());
+        $assignments = ReportAssignment::query()
+            ->whereIn('department_id', $departments->pluck('id'))
+            ->where('active', true)
+            ->with('template.fieldDefinitions')
+            ->orderByDesc('approved_at')
+            ->get()
+            ->groupBy('department_id')
+            ->map(fn (Collection $items): ReportAssignment => $items->first());
+
         foreach ($groups as $group) {
-            $result = $this->importGroup($group, $actor, $submit);
+            $result = $this->importGroup(
+                $group,
+                $actor,
+                $submit,
+                $periods,
+                $departments,
+                $assignments,
+            );
 
             if ($result === true) {
                 $imported++;
@@ -135,10 +193,19 @@ class ReportImportService
 
     /**
      * @param  array<string, mixed>  $group
+     * @param  Collection<string, ReportingPeriod>  $periods
+     * @param  Collection<string, Department>  $departments
+     * @param  Collection<string, ReportAssignment>  $assignments
      * @return true|string true on success, or a human error message
      */
-    private function importGroup(array $group, User $actor, bool $submit): bool|string
-    {
+    private function importGroup(
+        array $group,
+        User $actor,
+        bool $submit,
+        Collection $periods,
+        Collection $departments,
+        Collection $assignments,
+    ): bool|string {
         $week = (string) $group['week'];
         $departmentSlug = (string) $group['department'];
 
@@ -147,28 +214,21 @@ class ReportImportService
             return "Week start '{$week}' is not a date - format the column as text/date in Excel.";
         }
 
-        $period = ReportingPeriod::query()
-            ->whereDate('week_start', $this->normalizeDate($week))
-            ->first();
+        $period = $periods->get($this->normalizeDate($week));
         if (! $period) {
             return "No reporting period starts the week of {$week}.";
         }
 
-        $department = Department::query()->where('slug', $departmentSlug)->first();
+        $department = $departments->get($departmentSlug);
         if (! $department) {
             return "Unknown department '{$departmentSlug}'.";
         }
 
-        $assignment = ReportAssignment::query()
-            ->where('department_id', $department->id)
-            ->where('active', true)
-            ->latest('approved_at')
-            ->first();
+        $assignment = $assignments->get($department->id);
         if (! $assignment) {
             return "No active assignment for department '{$departmentSlug}'.";
         }
 
-        $assignment->loadMissing('template.fieldDefinitions');
         $activeDays = $assignment->template?->active_days ?? [];
         $inactiveFieldKeys = ($assignment->template?->fieldDefinitions ?? collect())
             ->reject(fn (ReportFieldDefinition $definition): bool => (bool) $definition->active)

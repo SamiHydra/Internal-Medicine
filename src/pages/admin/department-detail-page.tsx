@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { ArrowLeft } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
@@ -39,26 +39,26 @@ export function DepartmentDetailPage() {
   const {
     state,
     ensureHistoryData,
+    ensureReportSummaryData,
     ensureReportDetails,
-    reportPeriodWindow,
-    refreshData,
     resolveDepartmentSlug,
   } = useAppData()
   const resolvedDepartmentId = resolveDepartmentSlug(departmentId) ?? departmentId
   const [timeRange, setTimeRange] = useState<ReportingTimeRange>('last8')
   const [selectedPeriodId, setSelectedPeriodId] = useState('')
-  const requestedReportWindowRef = useRef<'default' | 'all' | null>(null)
   const currentPeriod = getCurrentPeriod(state)
   const availablePeriods = [...getVisibleReportingPeriods(state)].reverse()
   const fallbackPeriodId = currentPeriod?.id ?? availablePeriods[0]?.id ?? ''
   const effectivePeriodId = availablePeriods.some((period) => period.id === selectedPeriodId)
     ? selectedPeriodId
     : fallbackPeriodId
-  const reportingPeriodIds = new Set(
-    getReportingPeriodsForRange(state, timeRange, effectivePeriodId).map(
-      (period) => period.id,
-    ),
-  )
+  const reportingPeriodIdsList = getReportingPeriodsForRange(
+    state,
+    timeRange,
+    effectivePeriodId,
+  ).map((period) => period.id)
+  const reportingPeriodIdsKey = reportingPeriodIdsList.join('|')
+  const reportingPeriodIds = new Set(reportingPeriodIdsList)
   const departmentReportIdsKey = state.reports
     .filter(
       (report) =>
@@ -73,20 +73,11 @@ export function DepartmentDetailPage() {
   }, [ensureHistoryData])
 
   useEffect(() => {
-    const nextReportWindow = timeRange === 'all' ? 'all' : 'default'
-
-    if (reportPeriodWindow === nextReportWindow) {
-      requestedReportWindowRef.current = null
-      return
+    const periodIds = reportingPeriodIdsKey ? reportingPeriodIdsKey.split('|') : []
+    if (periodIds.length) {
+      void ensureReportSummaryData({ periodIds })
     }
-
-    if (requestedReportWindowRef.current === nextReportWindow) {
-      return
-    }
-
-    requestedReportWindowRef.current = nextReportWindow
-    void refreshData({ reportPeriodWindow: nextReportWindow })
-  }, [refreshData, reportPeriodWindow, timeRange])
+  }, [ensureReportSummaryData, reportingPeriodIdsKey])
 
   useEffect(() => {
     const departmentReportIds = departmentReportIdsKey
@@ -131,7 +122,8 @@ export function DepartmentDetailPage() {
     { value: 'current' as const, label: 'Current week' },
     { value: 'last4' as const, label: 'Last 4 weeks' },
     { value: 'last8' as const, label: 'Last 8 weeks' },
-    { value: 'all' as const, label: 'All available data' },
+    { value: 'quarter' as const, label: 'Last quarter (13 weeks)' },
+    { value: 'last26' as const, label: 'Last 26 weeks' },
   ] as const
   const reportingPeriodOptions = availablePeriods.map((period) => ({
     label: period.label,
@@ -252,7 +244,7 @@ export function DepartmentDetailPage() {
           <CardContent>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 0, height: 1 }}>
-                <LineChart data={detail.trends.activity}>
+                <LineChart title="Historical trend" data={detail.trends.activity}>
                   <CartesianGrid strokeDasharray="3 8" stroke="#d4dde8" vertical={false} />
                   <XAxis dataKey="shortLabel" />
                   <YAxis />
@@ -307,7 +299,7 @@ export function DepartmentDetailPage() {
                 <p className="mt-1 text-sm text-[#44474e]">
                   {String(audit.oldValue ?? '-')} → {String(audit.newValue ?? '-')}
                 </p>
-                <p className="mt-2 text-xs text-[#74777f]">
+                <p className="mt-2 text-xs text-[#666970]">
                   {audit.changedByName} at {formatTimestamp(audit.changedAt)}
                 </p>
               </div>

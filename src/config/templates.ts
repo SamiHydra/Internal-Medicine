@@ -270,18 +270,6 @@ export const reportTemplates: ReportTemplateConfig[] = [
         ],
       },
     ],
-    changeRules: [
-      {
-        fieldId: 'total_admitted_patients',
-        percentThreshold: 10,
-        messageTemplate: '{department} inpatient admissions changed by {deltaPercent}% compared with last week.',
-      },
-      {
-        fieldId: 'total_hai',
-        percentThreshold: 1,
-        messageTemplate: '{department} reported {currentValue} HAIs this week.',
-      },
-    ],
   },
   {
     id: 'outpatient_weekly',
@@ -352,18 +340,6 @@ export const reportTemplates: ReportTemplateConfig[] = [
         ],
       },
     ],
-    changeRules: [
-      {
-        fieldId: 'total_patients_seen',
-        percentThreshold: 12,
-        messageTemplate: '{department} ART visits changed by {deltaPercent}% compared with last week.',
-      },
-      {
-        fieldId: 'failed_to_come',
-        percentThreshold: 10,
-        messageTemplate: '{department} clinic no-shows moved from {previousValue} to {currentValue}.',
-      },
-    ],
   },
   {
     id: 'eeg_weekly',
@@ -397,13 +373,6 @@ export const reportTemplates: ReportTemplateConfig[] = [
           { sourceType: 'field', sourceId: 'ncs_done', label: 'NCS', color: '#1a5f7a' },
           { sourceType: 'field', sourceId: 'emg_done', label: 'EMG', color: '#0f766e' },
         ],
-      },
-    ],
-    changeRules: [
-      {
-        fieldId: 'eeg_done',
-        percentThreshold: 10,
-        messageTemplate: '{department} EEG throughput changed by {deltaPercent}% versus last week.',
       },
     ],
   },
@@ -443,13 +412,6 @@ export const reportTemplates: ReportTemplateConfig[] = [
           { sourceType: 'field', sourceId: 'ecg_done', label: 'ECG', color: '#1a5f7a' },
           { sourceType: 'field', sourceId: 'stress_ecg', label: 'Stress ECG', color: '#0f766e' },
         ],
-      },
-    ],
-    changeRules: [
-      {
-        fieldId: 'echo_done',
-        percentThreshold: 10,
-        messageTemplate: '{department} echocardiography throughput changed by {deltaPercent}% versus last week.',
       },
     ],
   },
@@ -494,13 +456,6 @@ export const reportTemplates: ReportTemplateConfig[] = [
         ],
       },
     ],
-    changeRules: [
-      {
-        fieldId: 'upper_gi_elective',
-        percentThreshold: 10,
-        messageTemplate: '{department} elective endoscopy volume changed by {deltaPercent}% versus last week.',
-      },
-    ],
   },
   {
     id: 'hematology_procedures_weekly',
@@ -528,13 +483,6 @@ export const reportTemplates: ReportTemplateConfig[] = [
         ],
       },
     ],
-    changeRules: [
-      {
-        fieldId: 'bone_marrow_biopsy',
-        percentThreshold: 10,
-        messageTemplate: '{department} hematology procedures changed by {deltaPercent}% versus last week.',
-      },
-    ],
   },
   {
     id: 'bronchoscopy_weekly',
@@ -560,13 +508,6 @@ export const reportTemplates: ReportTemplateConfig[] = [
         series: [
           { sourceType: 'field', sourceId: 'bronchoscopy_done', label: 'Bronchoscopy', color: '#0f8ea8' },
         ],
-      },
-    ],
-    changeRules: [
-      {
-        fieldId: 'bronchoscopy_done',
-        percentThreshold: 10,
-        messageTemplate: '{department} bronchoscopy volume changed by {deltaPercent}% versus last week.',
       },
     ],
   },
@@ -614,7 +555,6 @@ export const reportTemplates: ReportTemplateConfig[] = [
         ],
       },
     ],
-    changeRules: [],
   },
   {
     id: 'dialysis_weekly',
@@ -641,13 +581,6 @@ export const reportTemplates: ReportTemplateConfig[] = [
           { sourceType: 'field', sourceId: 'dialysis_acute', label: 'Acute HD', color: '#0f766e' },
           { sourceType: 'field', sourceId: 'dialysis_chronic', label: 'Chronic HD', color: '#005db6' },
         ],
-      },
-    ],
-    changeRules: [
-      {
-        fieldId: 'dialysis_chronic',
-        percentThreshold: 8,
-        messageTemplate: '{department} chronic haemodialysis throughput changed by {deltaPercent}% versus last week.',
       },
     ],
   },

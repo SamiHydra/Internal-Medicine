@@ -133,7 +133,7 @@ export function MorningAttendancePage() {
         />
 
         {isLoading ? (
-          <div className="flex min-h-[220px] items-center justify-center text-[#74777f]">
+          <div className="flex min-h-[220px] items-center justify-center text-[#666970]">
             <Loader2 className="h-5 w-5 animate-spin" aria-label="Loading session" />
           </div>
         ) : !isSessionDay ? (
@@ -185,7 +185,7 @@ export function MorningAttendancePage() {
               </label>
               {!onTime ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-[#74777f]">Actual start</span>
+                  <span className="text-sm text-[#666970]">Actual start</span>
                   <Input
                     type="time"
                     className="w-[130px]"
@@ -198,7 +198,7 @@ export function MorningAttendancePage() {
             </div>
 
             <div>
-              <p className="mb-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-[#74777f]">
+              <p className="mb-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-[#666970]">
                 Expected attendees, {presentCount} of {session.people?.length ?? 0} present
               </p>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -216,7 +216,7 @@ export function MorningAttendancePage() {
                         <span className="block truncate text-sm font-medium text-[#000a1e]">
                           {person.fullName}
                         </span>
-                        <span className="block text-[11px] uppercase tracking-[0.1em] text-[#9aa7b8]">
+                        <span className="block text-[11px] uppercase tracking-[0.1em] text-[#69727d]">
                           {person.role}
                         </span>
                       </span>
